@@ -10,9 +10,11 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session
+from app.models.user import User
 from app.models.conversation import Conversation, Message
 from app.models.document import Document, Chunk
 from app.services.rag_chain import rag_chain
+from app.services.auth import get_current_user
 from app.schemas.chat import (
     ChatRequest,
     ConversationResponse,
@@ -25,6 +27,7 @@ router = APIRouter(prefix="/api", tags=["Chat"])
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """SSE streaming RAG chat endpoint.
@@ -142,8 +145,11 @@ async def chat_stream(
 # ---- Conversation Management ----
 
 @router.get("/conversations", response_model=list[ConversationResponse])
-async def list_conversations(db: AsyncSession = Depends(get_db)):
-    """List all conversations with message counts."""
+async def list_conversations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List conversations for current user."""
     result = await db.execute(
         select(Conversation).order_by(Conversation.updated_at.desc())
     )
@@ -167,7 +173,7 @@ async def list_conversations(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/conversations/{conv_id}", response_model=ConversationDetail)
-async def get_conversation(conv_id: str, db: AsyncSession = Depends(get_db)):
+async def get_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get a conversation with all messages."""
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
@@ -177,7 +183,7 @@ async def get_conversation(conv_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/conversations/{conv_id}")
-async def delete_conversation(conv_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Delete a conversation."""
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()

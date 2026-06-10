@@ -48,12 +48,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="EnterpriseRAG-Lite",
-    version="0.1.0",
-    description="企业级 RAG 知识中台 · 精简版",
+    version="0.2.0",
+    description="企业级 RAG 知识中台 · 精简版（多租户）",
     lifespan=lifespan,
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -63,7 +62,9 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import documents, knowledge_bases, retrieval, chat, stats
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats
+app.include_router(auth.router)
+app.include_router(users.router)
 app.include_router(documents.router)
 app.include_router(knowledge_bases.router)
 app.include_router(retrieval.router)
@@ -73,7 +74,7 @@ app.include_router(stats.router)
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "EnterpriseRAG-Lite"}
+    return {"status": "ok", "service": "EnterpriseRAG-Lite", "version": "0.2.0"}
 
 
 # --- Static Frontend (Vue3 dist) ---

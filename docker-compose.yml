@@ -8,12 +8,10 @@ services:
       - "8000:8000"
     volumes:
       - erag_data:/app/data
+    env_file:
+      - .env
     environment:
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      - HF_ENDPOINT=https://hf-mirror.com
     restart: unless-stopped
 
 volumes:
