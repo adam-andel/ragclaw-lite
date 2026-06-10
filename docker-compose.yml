@@ -1,0 +1,21 @@
+services:
+  erag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erag-lite
+    ports:
+      - "8000:8000"
+    volumes:
+      - erag_data:/app/data
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.openai.com/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+    restart: unless-stopped
+
+volumes:
+  erag_data:
+    driver: local
