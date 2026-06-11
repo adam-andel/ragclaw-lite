@@ -1,5 +1,10 @@
 import type { Conversation, SSEEvent } from '@/types'
 
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem('token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 // SSE Streaming Chat
 export async function* streamChat(
   query: string,
@@ -8,13 +13,16 @@ export async function* streamChat(
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+    },
     body: JSON.stringify({ query, kb_id: kbId, conversation_id: conversationId }),
   })
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: 'Chat failed' }))
-    yield { type: 'error', message: err.detail || 'Chat failed' }
+    const err = await response.json().catch(() => ({ detail: 'Request failed' }))
+    yield { type: 'error', message: err.detail || 'Request failed' }
     return
   }
 
@@ -37,9 +45,7 @@ export async function* streamChat(
         try {
           const event: SSEEvent = JSON.parse(line.slice(6))
           yield event
-        } catch {
-          // skip malformed lines
-        }
+        } catch { /* skip */ }
       }
     }
   }
@@ -47,10 +53,10 @@ export async function* streamChat(
 
 // Conversations
 export const listConversations = () =>
-  fetch('/api/conversations').then((r) => r.json()) as Promise<Conversation[]>
+  fetch('/api/conversations', { headers: authHeaders() }).then((r) => r.json()) as Promise<Conversation[]>
 
 export const getConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`).then((r) => r.json())
+  fetch(`/api/conversations/${id}`, { headers: authHeaders() }).then((r) => r.json())
 
 export const deleteConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`, { method: 'DELETE' })
+  fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() })

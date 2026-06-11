@@ -44,6 +44,12 @@ const router = createRouter({
       component: () => import('@/views/Dashboard.vue'),
       meta: { title: '仪表盘', requiresAuth: true },
     },
+    {
+      path: '/users',
+      name: 'users',
+      component: () => import('@/views/UserManagement.vue'),
+      meta: { title: '用户管理', requiresAuth: true, admin: true },
+    },
   ],
 })
 
@@ -57,6 +63,8 @@ router.beforeEach(async (to, _from, next) => {
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next('/login')
+  } else if (to.meta.admin && !auth.isAdmin) {
+    next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')
   } else {

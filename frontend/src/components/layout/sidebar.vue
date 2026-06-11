@@ -10,12 +10,18 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const menuOptions: MenuOption[] = [
-  { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
-  { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
-  { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
-  { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
-]
+const menuOptions = computed<MenuOption[]>(() => {
+  const items: MenuOption[] = [
+    { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+    { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
+    { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
+    { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
+  ]
+  if (auth.isAdmin) {
+    items.push({ label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) })
+  }
+  return items
+})
 
 const selectedKey = computed(() => {
   const path = route.path
