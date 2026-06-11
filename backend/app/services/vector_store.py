@@ -52,6 +52,7 @@ class VectorStore:
             } for c in chunks]
             try:
                 collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+                print(f"[ChromaDB] add {len(ids)} vectors to kb={kb_id[:8]}, cnt={collection.count()}", flush=True)
             except Exception as e:
                 raise RuntimeError(f"[chromadb_add] {e}") from e
 
@@ -65,6 +66,7 @@ class VectorStore:
                 query_embeddings=[query_embedding], n_results=top_k,
                 include=["documents", "metadatas", "distances"],
             )
+            print(f"[ChromaDB] search kb={kb_id[:8]} q={query[:20]} got={len(results.get('ids', [[]])[0])}", flush=True)
         hits = []
         if results["ids"] and results["ids"][0]:
             for i, chunk_id in enumerate(results["ids"][0]):

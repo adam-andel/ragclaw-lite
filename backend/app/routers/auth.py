@@ -1,49 +1,19 @@
-"""Authentication routes: login, register, profile."""
+"""Authentication routes: login, profile."""
 
-import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.user import (
-    LoginRequest, RegisterRequest, TokenResponse, UserResponse, UserUpdateRequest,
+    LoginRequest, TokenResponse, UserResponse, UserUpdateRequest,
 )
 from app.services.auth import (
-    hash_password, verify_password, create_access_token,
-    get_current_user, get_current_admin,
+    hash_password, verify_password, create_access_token, get_current_user,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
-
-
-@router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Register a new user."""
-    existing = await db.execute(select(User).where(User.username == data.username))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="用户名已存在")
-
-    # First user becomes admin
-    count_result = await db.execute(select(User))
-    is_first = len(count_result.scalars().all()) == 0
-
-    user = User(
-        id=str(uuid.uuid4()),
-        username=data.username,
-        hashed_password=hash_password(data.password),
-        display_name=data.display_name or data.username,
-        email=data.email,
-        role=UserRole.ADMIN if is_first else UserRole.USER,
-        tenant_id=data.tenant_id or str(uuid.uuid4()),
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-
-    token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 
 
 @router.post("/login", response_model=TokenResponse)

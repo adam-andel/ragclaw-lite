@@ -82,8 +82,17 @@ class HybridSearchService:
         for cid, s in scores.items():
             vec = s["vector_score"] * vector_weight
             bm = s["bm25_score"] * bm25_weight
-            total_w = vector_weight + bm25_weight
-            s["fusion_score"] = (vec + bm) / max(total_w, 0.001)
+            # If one source is missing, don't penalize; use available score directly
+            has_vec = s["vector_score"] > 0
+            has_bm = s["bm25_score"] > 0
+            if has_vec and has_bm:
+                s["fusion_score"] = (vec + bm) / (vector_weight + bm25_weight)
+            elif has_vec:
+                s["fusion_score"] = s["vector_score"]
+            elif has_bm:
+                s["fusion_score"] = s["bm25_score"]
+            else:
+                s["fusion_score"] = 0
 
         # Filter by threshold & doc_ids, sort, limit
         results = list(scores.values())
