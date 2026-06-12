@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NSelect, NCard, NPopconfirm, NEmpty } from 'naive-ui'
 import { Send, Add, Trash } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, listConversations, getConversation, deleteConversation } from '@/api/chat'
+import { streamChat, listConversations, getConversation, deleteConversation, authHeaders } from '@/api/chat'
+import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
 import type { ChatMessage as ChatMsg } from '@/types'
 
@@ -12,6 +13,22 @@ interface ConvItem { id: string; title: string; updated_at: string }
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+
+const isReadonly = ref(false)
+const conversationOwnerId = ref<string>()
+const viewUserId = computed(() => route.query.view_user as string | undefined)
+
+// Force readonly if viewing another user's conversation (even for admin)
+function checkReadonly(convUserId?: string | null) {
+  if (convUserId && convUserId !== auth.user?.id) {
+    isReadonly.value = true
+    conversationOwnerId.value = convUserId
+  } else {
+    isReadonly.value = false
+    conversationOwnerId.value = undefined
+  }
+}
 
 const messages = ref<ChatMsg[]>([])
 const inputText = ref('')
@@ -22,24 +39,49 @@ const kbs = ref<any[]>([])
 const selectedKbId = ref('')
 
 onMounted(async () => {
+  // Reset readonly state on every mount
+  isReadonly.value = false
+
   try {
     const res = await listKnowledgeBases()
     kbs.value = res.data
     if (kbs.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbs.value[0].id
   } catch { /* noop */ }
 
+  // If URL has view_user param, force readonly from start
+  if (viewUserId.value && viewUserId.value !== auth.user?.id) {
+    isReadonly.value = true
+  }
+
   await loadConversations()
 
   const id = route.params.id as string | undefined
   if (id) {
     await loadConversation(id)
-  } else if (conversations.value.length > 0) {
+  } else if (!isReadonly.value && conversations.value.length > 0) {
     await loadConversation(conversations.value[0].id)
   }
 })
 
+// Listen for reset-chat event from sidebar
+onMounted(() => {
+  window.addEventListener('erag:reset-chat', () => {
+    isReadonly.value = false
+    conversationId.value = undefined
+    messages.value = []
+    loadConversations()
+  })
+})
+
 async function loadConversations() {
-  try { conversations.value = await listConversations() } catch { /* noop */ }
+  try {
+    // Always use current user's ID unless explicitly in readonly mode
+    const uid = (isReadonly.value && viewUserId.value) ? viewUserId.value : (auth.user?.id || '')
+    const url = `/api/conversations?user_id=${uid}`
+    const r = await fetch(url, { headers: authHeaders() })
+    if (!r.ok) throw new Error('Failed')
+    conversations.value = await r.json()
+  } catch { conversations.value = [] }
 }
 
 async function loadConversation(id: string) {
@@ -47,14 +89,20 @@ async function loadConversation(id: string) {
     const conv = await getConversation(id)
     messages.value = conv.messages || []
     conversationId.value = id
-    router.replace(`/chat/${id}`)
+    checkReadonly((conv as any).user_id)
+    if (isReadonly.value) {
+      router.replace({ path: `/chat/${id}`, query: { view_user: (conv as any).user_id } })
+    } else {
+      router.replace(`/chat/${id}`)
+    }
   } catch { newConversation() }
 }
 
 function newConversation() {
   messages.value = []
   conversationId.value = undefined
-  router.replace('/chat')
+  isReadonly.value = false
+  router.replace({ path: '/chat' })
 }
 
 async function handleDelete(id: string) {
@@ -106,7 +154,7 @@ function handleKeydown(e: KeyboardEvent) {
     <div class="conv-sidebar">
       <div class="conv-header">
         <span class="conv-title">对话历史</span>
-        <NButton size="tiny" @click="newConversation">
+        <NButton v-if="!isReadonly" size="tiny" @click="newConversation">
           <template #icon><NIcon><Add /></NIcon></template>
         </NButton>
       </div>
@@ -121,7 +169,7 @@ function handleKeydown(e: KeyboardEvent) {
             <span class="conv-name line-clamp-1">{{ c.title }}</span>
             <span class="conv-time">{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) }}</span>
           </div>
-          <NPopconfirm @positive-click="handleDelete(c.id)">
+          <NPopconfirm v-if="!isReadonly" @positive-click="handleDelete(c.id)">
             <template #trigger>
               <NButton text size="tiny" type="error" @click.stop>
                 <NIcon size="14"><Trash /></NIcon>
@@ -137,7 +185,8 @@ function handleKeydown(e: KeyboardEvent) {
     <div class="chat-main">
       <div class="chat-header">
         <h2>💬 RAG 对话</h2>
-        <NSelect
+        <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
+        <NSelect v-if="!isReadonly"
           v-model:value="selectedKbId"
           :options="kbs.map(k => ({ label: k.name, value: k.id }))"
           placeholder="选择知识库" style="width:180px" size="small"
@@ -156,7 +205,7 @@ function handleKeydown(e: KeyboardEvent) {
         />
       </div>
 
-      <div class="chat-input-area">
+      <div class="chat-input-area" v-if="!isReadonly">
         <NInput
           v-model:value="inputText" type="textarea"
           placeholder="输入问题... (Enter 发送)"

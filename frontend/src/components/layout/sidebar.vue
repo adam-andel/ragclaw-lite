@@ -34,7 +34,14 @@ const selectedKey = computed(() => {
 })
 
 function handleMenuUpdate(key: string) {
-  router.push(key)
+  if (key === '/chat') {
+    // Force full navigation to own chat
+    router.push('/chat').then(() => {
+      window.dispatchEvent(new CustomEvent('erag:reset-chat'))
+    })
+  } else {
+    router.push(key)
+  }
 }
 </script>
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NDataTable, NEmpty } from 'naive-ui'
-import { Add, Trash } from '@vicons/ionicons5'
+import { Add, Trash, Eye } from '@vicons/ionicons5'
 import client from '@/api/client'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 interface UserRow {
@@ -17,6 +18,7 @@ interface UserRow {
 }
 
 const auth = useAuthStore()
+const router = useRouter()
 const users = ref<UserRow[]>([])
 const loading = ref(false)
 
@@ -48,6 +50,10 @@ async function deleteUser(id: string) {
   try { await client.delete(`/users/${id}`); await loadUsers() } catch (e: any) { console.error(e.message) }
 }
 
+function viewConversations(userId: string) {
+  router.push({ path: '/chat', query: { view_user: userId } })
+}
+
 async function toggleStatus(user: UserRow) {
   try { await client.put(`/users/${user.id}`, { is_active: !user.is_active }); await loadUsers() } catch { /* noop */ }
 }
@@ -71,11 +77,12 @@ const columns = [
   },
   { title: '创建时间', key: 'created_at', width: 170, render: (r: UserRow) => new Date(r.created_at).toLocaleString('zh-CN') },
   {
-    title: '操作', key: 'actions', width: 220,
+    title: '操作', key: 'actions', width: 280,
     render: (r: UserRow) => {
       if (r.id === auth.user?.id) return h('span', { style: 'color: var(--color-text-muted)' }, '当前用户')
       return h(NSpace, { size: 'small' }, {
         default: () => [
+          h(NButton, { text: true, size: 'tiny', onClick: () => viewConversations(r.id) }, { default: () => h(NIcon, null, { default: () => h(Eye) }) }),
           h(NButton, { text: true, size: 'tiny', type: 'warning', onClick: () => toggleRole(r) }, { default: () => r.role === 'admin' ? '降为用户' : '升管理员' }),
           h(NButton, { text: true, size: 'tiny', onClick: () => toggleStatus(r) }, { default: () => r.is_active ? '禁用' : '启用' }),
           h(NPopconfirm, { onPositiveClick: () => deleteUser(r.id) }, {

@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -49,6 +49,9 @@ async def chat_stream(
         conv = result.scalar_one_or_none()
         if not conv:
             raise HTTPException(404, "Conversation not found")
+        # Verify ownership: cannot continue someone else's conversation
+        if conv.user_id and conv.user_id != current_user.id:
+            raise HTTPException(403, "不能在其他用户的对话中发言")
     else:
         title = request.query[:50] + ("..." if len(request.query) > 50 else "")
         conv = Conversation(
@@ -149,20 +152,20 @@ async def chat_stream(
 
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List conversations for current user."""
-    if current_user.role.value == "admin":
-        result = await db.execute(
-            select(Conversation).order_by(Conversation.updated_at.desc())
-        )
-    else:
-        result = await db.execute(
-            select(Conversation)
-            .where(Conversation.user_id == current_user.id)
-            .order_by(Conversation.updated_at.desc())
-        )
+    """List conversations: filter by user_id. Admin can view any user via param."""
+    user_id_filter = request.query_params.get("user_id") or current_user.id
+    # Only admin can view other users' conversations
+    if user_id_filter != current_user.id and current_user.role.value != "admin":
+        user_id_filter = current_user.id
+    result = await db.execute(
+        select(Conversation)
+        .where(Conversation.user_id == user_id_filter)
+        .order_by(Conversation.updated_at.desc())
+    )
     convs = result.scalars().all()
 
     responses = []
@@ -200,11 +203,17 @@ async def get_conversation(conv_id: str, current_user: User = Depends(get_curren
 
 @router.delete("/conversations/{conv_id}")
 async def delete_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Delete a conversation."""
+    """Delete a conversation. Only the owner (or admin) can delete."""
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:
         raise HTTPException(404, "Conversation not found")
+    # Only owner or admin can delete
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
+        raise HTTPException(403, "无权删除")
+    # Admin can only delete their own conversations
+    if conv.user_id and conv.user_id != current_user.id:
+        raise HTTPException(403, "管理员只能删除自己的对话")
     await db.delete(conv)
     await db.commit()
     return {"status": "deleted"}

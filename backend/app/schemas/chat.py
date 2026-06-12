@@ -46,6 +46,7 @@ class ConversationDetail(BaseModel):
     id: str
     title: str
     kb_id: str | None = None
+    user_id: str | None = None
     created_at: datetime
     updated_at: datetime
     messages: list[MessageResponse] = []

@@ -1,6 +1,6 @@
 import type { Conversation, SSEEvent } from '@/types'
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
