@@ -119,7 +119,7 @@ function handleKeydown(e: KeyboardEvent) {
         >
           <div class="conv-item-text">
             <span class="conv-name line-clamp-1">{{ c.title }}</span>
-            <span class="conv-time">{{ new Date(c.updated_at).toLocaleDateString('zh-CN') }}</span>
+            <span class="conv-time">{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) }}</span>
           </div>
           <NPopconfirm @positive-click="handleDelete(c.id)">
             <template #trigger>
