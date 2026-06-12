@@ -55,6 +55,7 @@ async def chat_stream(
             id=str(uuid.uuid4()),
             title=title,
             kb_id=request.kb_id,
+            user_id=current_user.id,
         )
         db.add(conv)
         await db.commit()
@@ -152,9 +153,16 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
 ):
     """List conversations for current user."""
-    result = await db.execute(
-        select(Conversation).order_by(Conversation.updated_at.desc())
-    )
+    if current_user.role.value == "admin":
+        result = await db.execute(
+            select(Conversation).order_by(Conversation.updated_at.desc())
+        )
+    else:
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.user_id == current_user.id)
+            .order_by(Conversation.updated_at.desc())
+        )
     convs = result.scalars().all()
 
     responses = []
@@ -178,11 +186,15 @@ async def list_conversations(
 async def get_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get a conversation with all messages."""
     result = await db.execute(
-        select(Conversation).options(selectinload(Conversation.messages)).where(Conversation.id == conv_id)
+        select(Conversation).options(selectinload(Conversation.messages))
+        .where(Conversation.id == conv_id)
     )
     conv = result.scalar_one_or_none()
     if not conv:
         raise HTTPException(404, "Conversation not found")
+    # Verify ownership
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
+        raise HTTPException(403, "无权访问")
     return conv
 
 
