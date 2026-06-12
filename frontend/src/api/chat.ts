@@ -5,6 +5,15 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+function handleResponse(r: Response) {
+  if (r.status === 401) {
+    localStorage.removeItem('token')
+    window.location.href = '/login'
+    throw new Error('登录已过期')
+  }
+  return r
+}
+
 // SSE Streaming Chat
 export async function* streamChat(
   query: string,
@@ -53,10 +62,10 @@ export async function* streamChat(
 
 // Conversations
 export const listConversations = () =>
-  fetch('/api/conversations', { headers: authHeaders() }).then((r) => r.json()) as Promise<Conversation[]>
+  fetch('/api/conversations', { headers: authHeaders() }).then(handleResponse).then((r) => r.json()) as Promise<Conversation[]>
 
 export const getConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`, { headers: authHeaders() }).then((r) => r.json())
+  fetch(`/api/conversations/${id}`, { headers: authHeaders() }).then(handleResponse).then((r) => r.json())
 
 export const deleteConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() })
+  fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)

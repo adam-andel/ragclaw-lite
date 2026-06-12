@@ -62,7 +62,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -70,6 +70,7 @@ app.include_router(knowledge_bases.router)
 app.include_router(retrieval.router)
 app.include_router(chat.router)
 app.include_router(stats.router)
+app.include_router(memory.router)
 
 
 @app.get("/api/health")

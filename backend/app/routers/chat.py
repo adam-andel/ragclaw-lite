@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session
@@ -93,7 +94,8 @@ async def chat_stream(
             async for event in rag_chain.query_stream(
                 request.query,
                 request.kb_id,
-                history,
+                user_id=current_user.id,
+                conversation_history=history,
             ):
                 if event["type"] == "done":
                     cache_hit = event.get("cache_hit", False)
@@ -175,7 +177,9 @@ async def list_conversations(
 @router.get("/conversations/{conv_id}", response_model=ConversationDetail)
 async def get_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get a conversation with all messages."""
-    result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
+    result = await db.execute(
+        select(Conversation).options(selectinload(Conversation.messages)).where(Conversation.id == conv_id)
+    )
     conv = result.scalar_one_or_none()
     if not conv:
         raise HTTPException(404, "Conversation not found")
