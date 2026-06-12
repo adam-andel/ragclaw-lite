@@ -151,15 +151,6 @@ function formatSize(bytes: number) {
         <NCard v-for="kb in kbs" :key="kb.id" :class="['kb-card', { active: kb.id === selectedKbId }]" size="small" @click="selectKb(kb.id)">
           <div class="kb-card-header">
             <strong>{{ kb.name }}</strong>
-            <NSpace size="small">
-              <NButton v-if="auth.isAdmin" text size="tiny" @click.stop="openShare(kb.id)">
-                <NIcon><People /></NIcon>
-              </NButton>
-              <NPopconfirm @positive-click="handleDeleteKb(kb.id)">
-                <template #trigger><NButton text size="tiny" type="error" @click.stop><NIcon><Trash /></NIcon></NButton></template>
-                确定删除此知识库？
-              </NPopconfirm>
-            </NSpace>
           </div>
         </NCard>
       </div>
@@ -169,10 +160,23 @@ function formatSize(bytes: number) {
         <template v-else>
           <div class="docs-header">
             <h3>{{ selectedKb()?.name }} · 文档</h3>
-            <NButton dashed size="small" @click="triggerFileUpload">
-              <template #icon><NIcon><CloudUpload /></NIcon></template>
-              上传文档
-            </NButton>
+            <NSpace>
+              <NButton v-if="auth.isAdmin" size="small" @click="openShare(selectedKbId)">
+                <template #icon><NIcon><People /></NIcon></template>
+                共享
+              </NButton>
+              <NButton dashed size="small" @click="triggerFileUpload">
+                <template #icon><NIcon><CloudUpload /></NIcon></template>
+                上传文档
+              </NButton>
+              <NPopconfirm @positive-click="handleDeleteKb(selectedKbId)">
+                <template #trigger><NButton size="small" type="error">
+                  <template #icon><NIcon><Trash /></NIcon></template>
+                  删除
+                </NButton></template>
+                确定删除此知识库及其所有文档？
+              </NPopconfirm>
+            </NSpace>
           </div>
 
           <NEmpty v-if="documents.length === 0" description="暂无文档" />
@@ -219,26 +223,37 @@ function formatSize(bytes: number) {
       </div>
     </NModal>
 
-    <NModal v-model:show="showShare" title="共享管理" style="max-width:500px">
+    <NModal v-model:show="showShare" title="共享管理" style="width:70vw; max-width:1000px; height:70vh; max-height:800px" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
       <div class="share-form">
-        <NSpace>
+        <div class="share-add-row">
           <NSelect
             v-model:value="shareAddUser"
             :options="allUserOptions"
-            placeholder="搜索用户名..."
-            filterable
-            clearable
+            placeholder="搜索用户..."
+            filterable clearable size="large"
             style="flex:1"
           />
-          <NButton type="primary" size="small" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">添加</NButton>
-        </NSpace>
-        <div v-if="shareUsers.length === 0" style="padding:16px 0;color:var(--color-text-muted);text-align:center">
-          暂无共享用户
+          <NButton type="primary" size="large" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
+            <template #icon><NIcon><Add /></NIcon></template>
+            添加
+          </NButton>
         </div>
-        <div v-for="u in shareUsers" :key="u.id" class="share-user-row">
-          <span>{{ u.display_name || u.username }}</span>
-          <NTag size="small">{{ u.role === 'admin' ? '管理员' : '用户' }}</NTag>
-          <NButton text size="tiny" type="error" @click="removeKbUser(u.id)">移除</NButton>
+
+        <div v-if="shareUsers.length === 0" class="share-empty">
+          <NEmpty description="暂无共享用户" />
+        </div>
+
+        <div class="share-list">
+          <div v-for="u in shareUsers" :key="u.id" class="share-row">
+            <div class="share-user-info">
+              <span class="share-user-avatar">👤</span>
+              <div>
+                <div class="share-user-name">{{ u.display_name || u.username }}</div>
+                <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+              </div>
+            </div>
+            <NButton text type="error" @click="removeKbUser(u.id)">移除</NButton>
+          </div>
         </div>
       </div>
     </NModal>
@@ -265,6 +280,14 @@ function formatSize(bytes: number) {
 .chunk-card { margin-bottom: 8px; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .create-kb-form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: 350px; }
-.share-form { padding: 8px 0; }
-.share-user-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+.share-form { padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
+.share-add-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.share-empty { padding: 20px 0; }
+.share-list { max-height: calc(100% - 80px); overflow-y: auto; }
+.share-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--color-border); transition: background .15s; }
+.share-row:hover { background: rgba(88,166,255,0.04); }
+.share-user-info { display: flex; align-items: center; gap: 10px; }
+.share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
+.share-user-name { font-weight: 500; font-size: 0.9rem; }
+.share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); }
 </style>
