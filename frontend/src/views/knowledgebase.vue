@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty, NPopconfirm, NIcon } from 'naive-ui'
-import { Add, Trash, CloudUpload } from '@vicons/ionicons5'
+import { NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty, NPopconfirm, NIcon, NSelect } from 'naive-ui'
+import { Add, Trash, CloudUpload, People } from '@vicons/ionicons5'
 import { listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, uploadDocument, listDocuments, getDocumentChunks, deleteDocument } from '@/api/documents'
+import client from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import type { KnowledgeBase, DocumentItem, ChunkItem } from '@/types'
 
 const kbs = ref<KnowledgeBase[]>([])
@@ -16,6 +18,7 @@ const showCreateKb = ref(false)
 const newKbName = ref('')
 const newKbDesc = ref('')
 const creating = ref(false)
+const auth = useAuthStore()
 
 onMounted(() => loadKBs())
 
@@ -79,6 +82,43 @@ async function showChunks(docId: string) {
   try { const res = await getDocumentChunks(docId); chunks.value = res.data; showChunksFor.value = true } catch { console.error('获取分块失败') }
 }
 
+// ---- Sharing ----
+const showShare = ref(false)
+const shareKbId = ref('')
+const shareUsers = ref<any[]>([])
+const shareAddUser = ref('')
+const allUsers = ref<any[]>([])
+const allUserOptions = ref<{label:string;value:string}[]>([])
+
+async function openShare(kbId: string) {
+  shareKbId.value = kbId
+  try { const r = await client.get(`/kb/${kbId}/users`); shareUsers.value = r.data } catch { shareUsers.value = [] }
+  // Load all users for the dropdown
+  try { const r = await client.get('/users'); allUsers.value = r.data } catch { allUsers.value = [] }
+  allUserOptions.value = allUsers.value
+    .filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
+    .map((u: any) => ({ label: `${u.display_name || u.username} (${u.username})`, value: u.id }))
+  showShare.value = true
+}
+async function addKbUser(uid: string) {
+  if (!uid) return
+  try {
+    await client.post(`/kb/${shareKbId.value}/users/${uid}`)
+    const r = await client.get(`/kb/${shareKbId.value}/users`); shareUsers.value = r.data
+    // Refresh options
+    allUserOptions.value = allUsers.value
+      .filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
+      .map((u: any) => ({ label: `${u.display_name || u.username} (${u.username})`, value: u.id }))
+    shareAddUser.value = ''
+  } catch (e: any) { console.error(e.message) }
+}
+async function removeKbUser(uid: string) {
+  try {
+    await client.delete(`/kb/${shareKbId.value}/users/${uid}`)
+    const r = await client.get(`/kb/${shareKbId.value}/users`); shareUsers.value = r.data
+  } catch { /* noop */ }
+}
+
 const selectedKb = () => kbs.value.find((k) => k.id === selectedKbId.value)
 
 const statusColors: Record<string, string> = {
@@ -111,10 +151,15 @@ function formatSize(bytes: number) {
         <NCard v-for="kb in kbs" :key="kb.id" :class="['kb-card', { active: kb.id === selectedKbId }]" size="small" @click="selectKb(kb.id)">
           <div class="kb-card-header">
             <strong>{{ kb.name }}</strong>
-            <NPopconfirm @positive-click="handleDeleteKb(kb.id)">
-              <template #trigger><NButton text size="tiny" type="error"><NIcon><Trash /></NIcon></NButton></template>
-              确定删除此知识库？
-            </NPopconfirm>
+            <NSpace size="small">
+              <NButton v-if="auth.isAdmin" text size="tiny" @click.stop="openShare(kb.id)">
+                <NIcon><People /></NIcon>
+              </NButton>
+              <NPopconfirm @positive-click="handleDeleteKb(kb.id)">
+                <template #trigger><NButton text size="tiny" type="error" @click.stop><NIcon><Trash /></NIcon></NButton></template>
+                确定删除此知识库？
+              </NPopconfirm>
+            </NSpace>
           </div>
         </NCard>
       </div>
@@ -173,6 +218,30 @@ function formatSize(bytes: number) {
         <NButton type="primary" :loading="creating" @click="handleCreateKb" block>创建</NButton>
       </div>
     </NModal>
+
+    <NModal v-model:show="showShare" title="共享管理" style="max-width:500px">
+      <div class="share-form">
+        <NSpace>
+          <NSelect
+            v-model:value="shareAddUser"
+            :options="allUserOptions"
+            placeholder="搜索用户名..."
+            filterable
+            clearable
+            style="flex:1"
+          />
+          <NButton type="primary" size="small" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">添加</NButton>
+        </NSpace>
+        <div v-if="shareUsers.length === 0" style="padding:16px 0;color:var(--color-text-muted);text-align:center">
+          暂无共享用户
+        </div>
+        <div v-for="u in shareUsers" :key="u.id" class="share-user-row">
+          <span>{{ u.display_name || u.username }}</span>
+          <NTag size="small">{{ u.role === 'admin' ? '管理员' : '用户' }}</NTag>
+          <NButton text size="tiny" type="error" @click="removeKbUser(u.id)">移除</NButton>
+        </div>
+      </div>
+    </NModal>
   </div>
 </template>
 
@@ -196,4 +265,6 @@ function formatSize(bytes: number) {
 .chunk-card { margin-bottom: 8px; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .create-kb-form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: 350px; }
+.share-form { padding: 8px 0; }
+.share-user-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
 </style>

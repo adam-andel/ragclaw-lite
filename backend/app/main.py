@@ -15,6 +15,8 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    # Ensure all models are loaded for create_all
+    from app.models import kb_access  # noqa: F401
     # Rebuild BM25 indexes from DB
     try:
         from app.models.document import Chunk, Document, DocStatus
