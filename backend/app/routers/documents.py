@@ -14,7 +14,7 @@ from app.models.document import Document, Chunk, DocStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.document import DocumentResponse, DocumentStatusResponse, ChunkResponse
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, get_current_admin
 from app.services.parser import parser_service
 from app.services.chunker import chunker_service
 from app.services.vector_store import vector_store
@@ -36,7 +36,7 @@ def _check_kb_access(user: User, kb: KnowledgeBase):
 async def upload_document(
     file: UploadFile = File(...),
     kb_id: str = Form(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     filename = file.filename or "unknown"

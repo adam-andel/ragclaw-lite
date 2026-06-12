@@ -12,7 +12,7 @@ from app.models.kb_access import KBUserAccess
 from app.models.user import User
 from app.schemas.document import KBResponse, KBCreate
 from app.schemas.user import UserResponse
-from app.services.auth import get_current_user, get_current_admin
+from app.services.auth import get_current_user, get_current_admin, get_current_admin
 from app.services.vector_store import vector_store
 
 router = APIRouter(prefix="/api/kb", tags=["Knowledge Bases"])
@@ -35,7 +35,7 @@ async def _user_has_kb_access(user_id: str, kb_id: str, db: AsyncSession) -> boo
 
 
 @router.post("", response_model=KBResponse, status_code=201)
-async def create_kb(data: KBCreate, current_user: User = Depends(get_current_user),
+async def create_kb(data: KBCreate, current_user: User = Depends(get_current_admin),
                     db: AsyncSession = Depends(get_db)):
     kb = KnowledgeBase(
         id=str(uuid.uuid4()), name=data.name, description=data.description,
@@ -95,7 +95,7 @@ async def get_kb(kb_id: str, current_user: User = Depends(get_current_user),
 
 
 @router.delete("/{kb_id}")
-async def delete_kb(kb_id: str, current_user: User = Depends(get_current_user),
+async def delete_kb(kb_id: str, current_user: User = Depends(get_current_admin),
                     db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     kb = result.scalar_one_or_none()

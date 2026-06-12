@@ -56,14 +56,13 @@ const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   const auth = useAuthStore()
 
-  // Fetch user if token exists but user not loaded
-  if (auth.token && !auth.user) {
-    await auth.fetchMe()
-  }
+  if (auth.token && !auth.user) await auth.fetchMe()
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next('/login')
   } else if (to.meta.admin && !auth.isAdmin) {
+    next('/chat')
+  } else if (!auth.isAdmin && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login') {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')
