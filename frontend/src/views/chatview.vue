@@ -121,20 +121,32 @@ async function sendMessage() {
   messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() })
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+  let ttft = 0
   messages.value.push(assistantMsg)
+  await nextTick()
+  const msgEl = document.getElementById(`msg-${assistantMsg.id}`)
   isStreaming.value = true
 
   try {
+    let streamedText = ''
     for await (const event of streamChat(text, selectedKbId.value, conversationId.value)) {
-      if (event.type === 'token') assistantMsg.content += event.content
-      else if (event.type === 'citation') assistantMsg.citations.push(event.citation)
-      else if (event.type === 'error') assistantMsg.content = `❌ 错误: ${event.message}`
+      if (event.type === 'token') {
+        streamedText += event.content
+        const el = document.getElementById('stream-' + assistantMsg.id)
+        if (el) el.textContent = streamedText + '▌'
+      } else if (event.type === 'citation') { assistantMsg.citations.push(event.citation) }
+      else if (event.type === 'error') { streamedText = '❌ 错误: ' + event.message; break }
       else if (event.type === 'done') {
+        assistantMsg.content = streamedText
+        ;(assistantMsg as any)._ttft = event.ttft_ms || 0
+        ;(assistantMsg as any)._retrieval = event.retrieval_ms || 0
+        ;(assistantMsg as any)._llm = event.llm_ms || 0
         conversationId.value = event.conversation_id
         router.replace(`/chat/${event.conversation_id}`)
         await loadConversations()
       }
     }
+    assistantMsg.content = streamedText
   } catch (e: any) {
     assistantMsg.content = `❌ 连接失败: ${e.message}`
   } finally {

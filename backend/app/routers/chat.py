@@ -93,6 +93,9 @@ async def chat_stream(
         collected_content = ""
         collected_citations = []
         cache_hit = False
+        final_ttft = 0
+        final_retr = 0
+        final_llm = 0
 
         try:
             async for event in rag_chain.query_stream(
@@ -103,6 +106,9 @@ async def chat_stream(
             ):
                 if event["type"] == "done":
                     cache_hit = event.get("cache_hit", False)
+                    final_ttft = event.get("ttft_ms", 0)
+                    final_retr = event.get("retrieval_ms", 0)
+                    final_llm = event.get("llm_ms", 0)
                     break
                 elif event["type"] == "citation":
                     collected_citations.append(event["citation"])
@@ -121,6 +127,9 @@ async def chat_stream(
                 content=collected_content,
                 citations=collected_citations,
                 cache_hit=cache_hit,
+                ttft_ms=final_ttft,
+                retrieval_ms=final_retr,
+                llm_ms=final_llm,
                 created_at=datetime.utcnow(),
             )
 
@@ -132,7 +141,7 @@ async def chat_stream(
                     conv.updated_at = datetime.utcnow()
                 await session.commit()
 
-            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'cache_hit': cache_hit}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'cache_hit': cache_hit, 'ttft_ms': final_ttft, 'retrieval_ms': final_retr, 'llm_ms': final_llm}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"

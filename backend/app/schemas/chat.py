@@ -26,6 +26,9 @@ class MessageResponse(BaseModel):
     citations: list[CitationSchema] = []
     cache_hit: bool = False
     token_count: int | None = None
+    ttft_ms: int = 0
+    retrieval_ms: int = 0
+    llm_ms: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}

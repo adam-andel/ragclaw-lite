@@ -15,6 +15,15 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    # Pre-warm BGE model to avoid cold-start on first request
+    try:
+        import asyncio
+        from app.services.embedder import embedder_service
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, embedder_service.embed, ["warmup"])
+        print("BGE model pre-warmed")
+    except Exception as e:
+        print(f"BGE warmup warning: {e}")
     # Ensure all models are loaded for create_all
     from app.models import kb_access  # noqa: F401
     # Rebuild BM25 indexes from DB

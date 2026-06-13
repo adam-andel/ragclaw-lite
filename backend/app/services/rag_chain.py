@@ -6,6 +6,7 @@ Memory storage runs after chat completes (fire-and-forget).
 
 import asyncio
 import logging
+import time
 from typing import AsyncGenerator
 
 from app.services.hybrid_search import hybrid_search
@@ -53,8 +54,12 @@ class RAGChain:
             yield {"type": "done", "cache_hit": True}
             return
 
+        t_total = time.time()
+
         # Retrieval (fast, local)
+        t_retr_start = time.time()
         retrieved = hybrid_search.search(kb_id, question)
+        retrieval_ms = round((time.time() - t_retr_start) * 1000)
         print(f"[RAG] kb={kb_id[:8]} q={question[:30]} results={len(retrieved)}", flush=True)
         context_text, citations = _build_context(retrieved)
 
@@ -66,8 +71,14 @@ class RAGChain:
 
         # LLM streaming
         full_answer = ""
+        ttft_ms = 0.0
+        t_start = time.time()
+        first_token = True
         try:
             async for token in llm_client.chat_stream(messages):
+                if first_token:
+                    ttft_ms = (time.time() - t_start) * 1000
+                    first_token = False
                 full_answer += token
                 yield {"type": "token", "content": token}
             for c in citations:
@@ -80,7 +91,8 @@ class RAGChain:
                 )
 
             answer_cache.put(question, kb_id, full_answer, citations)
-            yield {"type": "done", "cache_hit": False}
+            total_ttft = round((time.time() - t_total) * 1000)
+            yield {"type": "done", "cache_hit": False, "ttft_ms": total_ttft, "retrieval_ms": retrieval_ms, "llm_ms": round(ttft_ms)}
         except Exception as e:
             logger.error("RAG stream error: %s", e)
             yield {"type": "error", "message": str(e)}

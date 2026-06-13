@@ -46,8 +46,9 @@ switch ($Action) {
             return
         }
 
+        $env:WATCHFILES_FORCE_POLLING = "true"
         $proc = Start-Process -FilePath "py" `
-            -ArgumentList "-3.12","-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000" `
+            -ArgumentList "-3.12","-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000","--reload" `
             -WorkingDirectory $Root -PassThru -WindowStyle Minimized
 
         Write-Host "Waiting for startup (loading model, may take ~20s)..." -NoNewline

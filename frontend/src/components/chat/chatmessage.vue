@@ -3,10 +3,14 @@ import { computed } from 'vue'
 import { NTag } from 'naive-ui'
 import type { ChatMessage } from '@/types'
 
+import { useAuthStore } from '@/stores/auth'
+
 const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
 }>()
+
+const auth = useAuthStore()
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
@@ -25,7 +29,7 @@ const renderedContent = computed(() => simpleRender(props.message.content))
 </script>
 
 <template>
-  <div :class="['message-wrapper', message.role]">
+  <div :class="['message-wrapper', message.role]" :id="'msg-' + message.id">
     <div class="message-avatar">
       {{ message.role === 'user' ? '👤' : '🤖' }}
     </div>
@@ -34,7 +38,10 @@ const renderedContent = computed(() => simpleRender(props.message.content))
         <span class="role-label">{{ message.role === 'user' ? '你' : 'ERAG' }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
-      <div class="message-content">{{ message.content }}<span v-if="isStreaming" class="cursor-blink">▌</span></div>
+      <div class="message-content"><span v-once :id="'stream-' + message.id">{{ message.content }}</span><span v-if="isStreaming" class="cursor-blink">▌</span></div>
+      <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">
+        ⏱ TTFT {{ (message as any)._ttft || (message as any).ttft_ms || 0 }}ms &nbsp;|&nbsp; 🔍 检索 {{ (message as any)._retrieval || (message as any).retrieval_ms || 0 }}ms &nbsp;|&nbsp; 🧠 LLM {{ (message as any)._llm || (message as any).llm_ms || 0 }}ms
+      </div>
 
       <div v-if="message.citations.length > 0 && !isStreaming" class="citations">
         <div class="citations-title">📎 引用来源</div>
@@ -94,6 +101,10 @@ const renderedContent = computed(() => simpleRender(props.message.content))
 .message-content :deep(pre code) { background: none; padding: 0; }
 .cursor-blink { animation: blink 1s infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.ttft-badge {
+  margin-top: 6px; font-size: 0.72rem; color: var(--color-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
 
 .citations {
   margin-top: 12px; padding-top: 10px;
