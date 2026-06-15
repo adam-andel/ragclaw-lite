@@ -12,6 +12,7 @@ from app.models.document import gen_uuid
 
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
+    MODERATOR = "moderator"
     USER = "user"
 
 

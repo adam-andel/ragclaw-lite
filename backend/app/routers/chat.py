@@ -168,7 +168,7 @@ async def list_conversations(
     """List conversations: filter by user_id. Admin can view any user via param."""
     user_id_filter = request.query_params.get("user_id") or current_user.id
     # Only admin can view other users' conversations
-    if user_id_filter != current_user.id and current_user.role.value != "admin":
+    if user_id_filter != current_user.id and current_user.role.value not in ("admin", "moderator"):
         user_id_filter = current_user.id
     result = await db.execute(
         select(Conversation)
@@ -205,7 +205,7 @@ async def get_conversation(conv_id: str, current_user: User = Depends(get_curren
     if not conv:
         raise HTTPException(404, "Conversation not found")
     # Verify ownership
-    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value not in ("admin", "moderator"):
         raise HTTPException(403, "无权访问")
     return conv
 

@@ -59,7 +59,8 @@ async function toggleStatus(user: UserRow) {
 }
 
 async function toggleRole(user: UserRow) {
-  const newRole = user.role === 'admin' ? 'user' : 'admin'
+  const next: Record<string, string> = { user: 'moderator', moderator: 'user' }
+  const newRole = next[user.role] || 'user'
   try { await client.put(`/users/${user.id}`, { role: newRole }); await loadUsers() } catch { /* noop */ }
 }
 
@@ -69,7 +70,11 @@ const columns = [
   { title: '邮箱', key: 'email', width: 180, render: (r: UserRow) => r.email || '-' },
   {
     title: '角色', key: 'role', width: 80,
-    render: (r: UserRow) => h(NTag, { type: r.role === 'admin' ? 'error' : 'info', size: 'small' as const }, { default: () => r.role === 'admin' ? '管理员' : '用户' }),
+    render: (r: UserRow) => {
+      const label = r.role === 'admin' ? '超级管理员' : r.role === 'moderator' ? '普通管理员' : '用户'
+      const type = r.role === 'admin' ? 'error' : r.role === 'moderator' ? 'warning' : 'info'
+      return h(NTag, { type: type as any, size: 'small' as const }, { default: () => label })
+    },
   },
   {
     title: '状态', key: 'is_active', width: 80,
@@ -83,7 +88,7 @@ const columns = [
       return h(NSpace, { size: 'small' }, {
         default: () => [
           h(NButton, { text: true, size: 'tiny', onClick: () => viewConversations(r.id) }, { default: () => h(NIcon, null, { default: () => h(Eye) }) }),
-          h(NButton, { text: true, size: 'tiny', type: 'warning', onClick: () => toggleRole(r) }, { default: () => r.role === 'admin' ? '降为用户' : '升管理员' }),
+          auth.isAdmin ? h(NButton, { text: true, size: 'tiny', type: 'warning', onClick: () => toggleRole(r) }, { default: () => r.role === 'admin' ? '降为普通管理员' : r.role === 'moderator' ? '降为用户' : '升普通管理员' }) : null,
           h(NButton, { text: true, size: 'tiny', onClick: () => toggleStatus(r) }, { default: () => r.is_active ? '禁用' : '启用' }),
           h(NPopconfirm, { onPositiveClick: () => deleteUser(r.id) }, {
             trigger: () => h(NButton, { text: true, size: 'tiny', type: 'error' }, { default: () => h(NIcon, null, { default: () => h(Trash) }) }),
@@ -121,17 +126,18 @@ import { h } from 'vue'
       </template>
     </NDataTable>
 
-    <NModal v-model:show="showCreate" title="新建用户">
-      <div class="form">
-        <NInput v-model:value="newUser.username" placeholder="用户名" />
-        <NInput v-model:value="newUser.password" type="password" placeholder="密码" />
-        <NInput v-model:value="newUser.display_name" placeholder="显示名称（可选）" />
+    <NModal v-model:show="showCreate" title="新建用户" style="width:70vw; max-width:600px; height:70vh; max-height:460px" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
+      <div class="create-form">
+        <NInput v-model:value="newUser.username" placeholder="用户名" size="large" />
+        <NInput v-model:value="newUser.password" type="password" placeholder="密码" size="large" />
+        <NInput v-model:value="newUser.display_name" placeholder="显示名称（可选）" size="large" />
         <NSelect
           v-model:value="newUser.role"
-          :options="[{ label: '普通用户', value: 'user' }, { label: '管理员', value: 'admin' }]"
+          :options="auth.isAdmin ? [{ label: '普通用户', value: 'user' }, { label: '普通管理员', value: 'moderator' }, { label: '超级管理员', value: 'admin' }] : [{ label: '普通用户', value: 'user' }]"
           placeholder="角色"
+          size="large"
         />
-        <NButton type="primary" :loading="creating" @click="createUser" block>创建</NButton>
+        <NButton type="primary" :loading="creating" @click="createUser" block size="large">创建</NButton>
       </div>
     </NModal>
   </div>
@@ -144,5 +150,5 @@ import { h } from 'vue'
   margin-bottom: 20px;
 }
 .header h2 { font-size: 1.25rem; }
-.form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: 350px; }
+.create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
 </style>

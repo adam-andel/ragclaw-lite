@@ -68,6 +68,23 @@ class StructureChunker:
                 continue
             para_tokens = self._count_tokens(para)
 
+            # If a single paragraph is too large, split it into sub-chunks
+            if para_tokens > settings.chunk_max_tokens:
+                sub_chunks = self._split_large_text(para, section)
+                # Flush any accumulated content first
+                if current_text:
+                    chunks.append({
+                        "content": current_text.strip(),
+                        "token_count": current_tokens,
+                        "heading": section.heading,
+                        "page": section.page,
+                        "chunk_index": len(chunks),
+                    })
+                    current_text = ""
+                    current_tokens = 0
+                chunks.extend(sub_chunks)
+                continue
+
             # If adding this paragraph exceeds max, flush current chunk
             if current_tokens + para_tokens > settings.chunk_max_tokens and current_tokens >= settings.chunk_min_tokens:
                 chunks.append({
@@ -117,6 +134,57 @@ class StructureChunker:
                 merged.append(chunk)
 
         return merged
+
+    def _split_large_text(self, text: str, section: ParsedSection) -> list[dict]:
+        """Split a single paragraph that exceeds max_tokens into sub-chunks."""
+        chunks = []
+        # Try splitting by single newlines first
+        parts = text.split("\n")
+        if len(parts) <= 1:
+            # No newlines: split by character count
+            estimated_chars_per_chunk = settings.chunk_max_tokens * 3  # rough char→token ratio
+            for start in range(0, len(text), estimated_chars_per_chunk):
+                sub = text[start:start + estimated_chars_per_chunk].strip()
+                if sub:
+                    chunks.append({
+                        "content": sub,
+                        "token_count": self._count_tokens(sub),
+                        "heading": section.heading,
+                        "page": section.page,
+                        "chunk_index": 0,
+                    })
+            return chunks
+
+        # Split by lines, grouping to max_tokens
+        current = ""
+        current_tk = 0
+        for line in parts:
+            line = line.strip()
+            if not line:
+                continue
+            tk = self._count_tokens(line)
+            if current_tk + tk > settings.chunk_max_tokens and current_tk >= settings.chunk_min_tokens:
+                chunks.append({
+                    "content": current.strip(),
+                    "token_count": current_tk,
+                    "heading": section.heading,
+                    "page": section.page,
+                    "chunk_index": len(chunks),
+                })
+                current = line
+                current_tk = tk
+            else:
+                current = (current + "\n" + line).strip() if current else line
+                current_tk += tk
+        if current:
+            chunks.append({
+                "content": current.strip(),
+                "token_count": current_tk,
+                "heading": section.heading,
+                "page": section.page,
+                "chunk_index": len(chunks),
+            })
+        return chunks
 
     def _count_tokens(self, text: str) -> int:
         """Estimate token count. Falls back to character-based estimate."""

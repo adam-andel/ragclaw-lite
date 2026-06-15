@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.services.hybrid_search import hybrid_search
-from app.services.auth import get_current_admin
+from app.services.auth import get_current_staff
 from app.services.vector_store import vector_store
 from app.services.bm25_index import bm25_index
 from app.schemas.retrieval import SearchRequest, SearchResultResponse
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/retrieval", tags=["Retrieval"])
 
 
 @router.post("/search", response_model=list[SearchResultResponse])
-async def search(request: SearchRequest, current_user: User = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+async def search(request: SearchRequest, current_user: User = Depends(get_current_staff), db: AsyncSession = Depends(get_db)):
     """Hybrid search endpoint for debugging retrieval quality.
 
     Returns results with individual vector/BM25/fusion scores.

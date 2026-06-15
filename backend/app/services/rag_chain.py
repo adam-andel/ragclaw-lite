@@ -29,7 +29,7 @@ RAG_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的文档
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
     parts, citations = [], []
     for i, r in enumerate(retrieved):
-        doc_name = r.get("doc_id", "?")[:8]
+        doc_name = r.get("doc_name", r.get("doc_id", "?")[:8])
         heading = r.get("heading", "") or ""
         parts.append(f"[{i+1}] {doc_name} {heading}\n{r['content']}")
         citations.append({

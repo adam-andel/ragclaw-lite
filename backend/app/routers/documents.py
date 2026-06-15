@@ -14,7 +14,7 @@ from app.models.document import Document, Chunk, DocStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.document import DocumentResponse, DocumentStatusResponse, ChunkResponse
-from app.services.auth import get_current_user, get_current_admin
+from app.services.auth import get_current_user, get_current_staff
 from app.services.parser import parser_service
 from app.services.chunker import chunker_service
 from app.services.vector_store import vector_store
@@ -28,7 +28,7 @@ def _gen_id() -> str:
 
 
 def _check_kb_access(user: User, kb: KnowledgeBase):
-    if user.role.value != "admin" and kb.owner_id != user.id:
+    if user.role.value not in ("admin", "moderator") and kb.owner_id != user.id:
         raise HTTPException(403, "无权操作该知识库")
 
 
@@ -36,7 +36,7 @@ def _check_kb_access(user: User, kb: KnowledgeBase):
 async def upload_document(
     file: UploadFile = File(...),
     kb_id: str = Form(...),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
     filename = file.filename or "unknown"
@@ -93,6 +93,7 @@ async def upload_document(
                 "token_count": rc.get("token_count", 0),
                 "heading": rc.get("heading", ""), "page": rc.get("page"),
                 "chunk_index": i, "doc_id": doc_id,
+                "filename": filename,
             })
 
         for co in chunk_objs:

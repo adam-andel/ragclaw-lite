@@ -12,18 +12,19 @@ const auth = useAuthStore()
 
 const menuOptions = computed<MenuOption[]>(() => {
   // Regular users only see chat
-  if (!auth.isAdmin) {
+  if (!auth.isStaff) {
     return [
       { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     ]
   }
-  return [
+  const items: MenuOption[] = [
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
     { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
   ]
+  return items
 })
 
 const selectedKey = computed(() => {
@@ -65,8 +66,8 @@ function handleMenuUpdate(key: string) {
         <div class="user-detail">
           <div class="user-name">{{ auth.user?.display_name || auth.user?.username }}</div>
           <div class="user-role">
-            <NTag size="tiny" :type="auth.isAdmin ? 'error' : 'info'">
-              {{ auth.isAdmin ? '管理员' : '用户' }}
+            <NTag size="tiny" :type="auth.isAdmin ? 'error' : auth.isStaff ? 'warning' : 'info'">
+              {{ auth.isAdmin ? '超级管理员' : auth.isStaff ? '普通管理员' : '用户' }}
             </NTag>
           </div>
         </div>

@@ -161,7 +161,7 @@ function formatSize(bytes: number) {
           <div class="docs-header">
             <h3>{{ selectedKb()?.name }} · 文档</h3>
             <NSpace>
-              <NButton v-if="auth.isAdmin" size="small" @click="openShare(selectedKbId)">
+              <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKbId)">
                 <template #icon><NIcon><People /></NIcon></template>
                 共享
               </NButton>

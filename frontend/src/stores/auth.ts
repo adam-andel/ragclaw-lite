@@ -20,6 +20,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
+  const isStaff = computed(() => user.value?.role === 'admin' || user.value?.role === 'moderator')
 
   function setAuth(t: string, u: UserInfo) {
     token.value = t
@@ -68,5 +69,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, user, isLoggedIn, isAdmin, login, register, logout, fetchMe, setAuth, clearAuth }
+  return { token, user, isLoggedIn, isAdmin, isStaff, login, register, logout, fetchMe, setAuth, clearAuth }
 })

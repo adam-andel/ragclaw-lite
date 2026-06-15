@@ -84,6 +84,27 @@ async def get_current_admin(
     return current_user
 
 
+async def get_current_staff(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Dependency: require admin or moderator."""
+    if current_user.role not in (UserRole.ADMIN, UserRole.MODERATOR):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return current_user
+
+
+def can_manage_user(actor: User, target: User) -> bool:
+    """Check if actor can manage target user.
+    ADMIN can manage everyone.
+    MODERATOR can only manage USER role.
+    """
+    if actor.role == UserRole.ADMIN:
+        return True
+    if actor.role == UserRole.MODERATOR and target.role == UserRole.USER:
+        return True
+    return False
+
+
 async def get_optional_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),

@@ -60,9 +60,9 @@ router.beforeEach(async (to, _from, next) => {
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next('/login')
-  } else if (to.meta.admin && !auth.isAdmin) {
+  } else if (to.meta.admin && !auth.isStaff) {
     next('/chat')
-  } else if (!auth.isAdmin && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login') {
+  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login') {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')

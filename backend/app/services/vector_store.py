@@ -48,7 +48,7 @@ class VectorStore:
             metadatas = [{
                 "doc_id": c.get("doc_id", ""), "chunk_index": c.get("chunk_index", 0),
                 "heading": c.get("heading", ""), "page": c.get("page") or 0,
-                "token_count": c.get("token_count", 0),
+                "token_count": c.get("token_count", 0), "filename": c.get("filename", ""),
             } for c in chunks]
             try:
                 collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)

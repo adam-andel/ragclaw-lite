@@ -58,6 +58,7 @@ class HybridSearchService:
                 "vector_score": r["score"],
                 "bm25_score": 0.0,
                 "doc_id": r["metadata"].get("doc_id", ""),
+                "doc_name": r["metadata"].get("filename", r["metadata"].get("doc_id", "")[:8]),
                 "heading": r["metadata"].get("heading", ""),
                 "page": r["metadata"].get("page"),
             }
@@ -74,6 +75,7 @@ class HybridSearchService:
                     "vector_score": 0.0,
                     "bm25_score": r["score"],
                     "doc_id": r.get("doc_id", ""),
+                    "doc_name": r.get("filename", r.get("doc_id", "")[:8]),
                     "heading": r.get("heading", ""),
                     "page": r.get("page"),
                 }
