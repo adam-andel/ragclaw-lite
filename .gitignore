@@ -27,3 +27,8 @@ data/uploads/*
 # OS
 .DS_Store
 Thumbs.db
+
+#CLAUDE
+.claude/
+CLAUDE.md
+
