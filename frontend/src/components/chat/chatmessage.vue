@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import MarkdownIt from 'markdown-it'
 import { NTag } from 'naive-ui'
 import type { ChatMessage } from '@/types'
 
@@ -12,20 +13,13 @@ const props = defineProps<{
 
 const auth = useAuthStore()
 
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function simpleRender(text: string): string {
-  return text
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>')
-}
-
-const renderedContent = computed(() => simpleRender(props.message.content))
+const renderedContent = computed(() => md.render(props.message.content || ''))
 </script>
 
 <template>
@@ -38,7 +32,20 @@ const renderedContent = computed(() => simpleRender(props.message.content))
         <span class="role-label">{{ message.role === 'user' ? '你' : 'ERAG' }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
-      <div class="message-content"><span v-once :id="'stream-' + message.id">{{ message.content }}</span><span v-if="isStreaming" class="cursor-blink">▌</span></div>
+
+      <!-- 阶段 1：流式中 — v-once + textContent 保逐字效果 -->
+      <template v-if="isStreaming">
+        <div class="message-content streaming">
+          <span v-once :id="'stream-' + message.id"></span>
+          <span class="cursor-blink">▌</span>
+        </div>
+      </template>
+
+      <!-- 阶段 2：完成后 — v-html 渲染 Markdown -->
+      <template v-else>
+        <div class="message-content" v-html="renderedContent"></div>
+      </template>
+
       <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">
         ⏱ TTFT {{ (message as any)._ttft || (message as any).ttft_ms || 0 }}ms &nbsp;|&nbsp; 🔍 检索 {{ (message as any)._retrieval || (message as any).retrieval_ms || 0 }}ms &nbsp;|&nbsp; 🧠 LLM {{ (message as any)._llm || (message as any).llm_ms || 0 }}ms
       </div>
@@ -90,17 +97,52 @@ const renderedContent = computed(() => simpleRender(props.message.content))
 .time { color: var(--color-text-muted); }
 .user .time { color: rgba(255,255,255,0.7); }
 .message-content { line-height: 1.65; word-break: break-word; }
+.message-content.streaming { display: flex; align-items: baseline; gap: 2px; }
+.cursor-blink { animation: blink 1s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Markdown 渲染样式 — 仅对 v-html 分支生效 */
+.message-content :deep(h1),
+.message-content :deep(h2),
+.message-content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
+.message-content :deep(h1) { font-size: 1.25em; }
+.message-content :deep(h2) { font-size: 1.1em; }
+.message-content :deep(h3) { font-size: 1em; }
+.message-content :deep(p) { margin: 6px 0; }
+.message-content :deep(ul),
+.message-content :deep(ol) { padding-left: 1.5em; margin: 6px 0; }
+.message-content :deep(li) { margin: 2px 0; }
+.message-content :deep(blockquote) {
+  border-left: 3px solid var(--color-primary);
+  padding: 4px 12px; margin: 8px 0;
+  color: var(--color-text-muted); background: rgba(79,110,247,0.04);
+  border-radius: 0 6px 6px 0;
+}
+.message-content :deep(table) {
+  border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em;
+}
+.message-content :deep(th),
+.message-content :deep(td) {
+  border: 1px solid var(--color-border); padding: 6px 10px; text-align: left;
+}
+.message-content :deep(th) { background: rgba(79,110,247,0.06); font-weight: 600; }
 .message-content :deep(pre) {
-  background: rgba(0,0,0,0.08); border-radius: 6px;
-  padding: 8px 12px; overflow-x: auto; font-size: 0.85em;
+  background: rgba(0,0,0,0.08); border-radius: 8px;
+  padding: 12px 16px; overflow-x: auto; font-size: 0.85em; margin: 8px 0;
 }
 .message-content :deep(code) {
   font-family: 'JetBrains Mono', monospace;
-  background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 0.88em;
+  background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 0.88em;
 }
-.message-content :deep(pre code) { background: none; padding: 0; }
-.cursor-blink { animation: blink 1s infinite; }
-@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.message-content :deep(pre code) { background: none; padding: 0; font-size: 1em; }
+.user .message-content :deep(code) { background: rgba(255,255,255,0.15); }
+.user .message-content :deep(pre) { background: rgba(255,255,255,0.1); }
+.user .message-content :deep(blockquote) { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.05); }
+.user .message-content :deep(th) { background: rgba(255,255,255,0.1); }
+.user .message-content :deep(th),
+.user .message-content :deep(td) { border-color: rgba(255,255,255,0.2); }
+.user .message-content :deep(a) { color: rgba(255,255,255,0.9); }
+
 .ttft-badge {
   margin-top: 6px; font-size: 0.72rem; color: var(--color-text-muted);
   font-family: 'JetBrains Mono', monospace;

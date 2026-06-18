@@ -121,11 +121,10 @@ async function sendMessage() {
   messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() })
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
-  let ttft = 0
   messages.value.push(assistantMsg)
   await nextTick()
-  const msgEl = document.getElementById(`msg-${assistantMsg.id}`)
   isStreaming.value = true
+  await nextTick()  // 等 ChatMessage 的 v-if 分支渲染完毕，stream- span 进入 DOM
 
   try {
     let streamedText = ''
