@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, async_session
 
 
 @asynccontextmanager
@@ -15,6 +15,26 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    # Seed default admin user on first launch (empty users table)
+    try:
+        from app.models.user import User
+        from app.services.auth import hash_password
+        from sqlalchemy import func, select
+        async with async_session() as db:
+            count = await db.scalar(select(func.count()).select_from(User))
+            if count == 0:
+                default_user = User(
+                    username="admin",
+                    hashed_password=hash_password("admin123"),
+                    display_name="Administrator",
+                    role="admin",
+                    is_active=True,
+                )
+                db.add(default_user)
+                await db.commit()
+                print(f"[seed] Default admin user created (admin / admin123)")
+    except Exception as e:
+        print(f"[seed] warning: {e}")
     # Pre-warm BGE model to avoid cold-start on first request
     try:
         import asyncio
@@ -30,7 +50,6 @@ async def lifespan(app: FastAPI):
     try:
         from app.models.document import Chunk, Document, DocStatus
         from app.services.bm25_index import bm25_index
-        from app.database import async_session
         from sqlalchemy import select
         async with async_session() as db:
             docs_result = await db.execute(select(Document).where(Document.status == DocStatus.COMPLETED))
