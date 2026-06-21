@@ -122,6 +122,9 @@ async function sendMessage() {
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
   messages.value.push(assistantMsg)
+  // 通过 reactive 数组索引获取 Proxy 引用 — 后续所有修改必须走 Proxy，Vue 才能追踪到
+  const proxyMsg = messages.value[messages.value.length - 1]
+  const aid = assistantMsg.id
   await nextTick()
   isStreaming.value = true
   await nextTick()  // 等 ChatMessage 的 v-if 分支渲染完毕，stream- span 进入 DOM
@@ -131,23 +134,23 @@ async function sendMessage() {
     for await (const event of streamChat(text, selectedKbId.value, conversationId.value)) {
       if (event.type === 'token') {
         streamedText += event.content
-        const el = document.getElementById('stream-' + assistantMsg.id)
+        const el = document.getElementById('stream-' + aid)
         if (el) el.textContent = streamedText + '▌'
-      } else if (event.type === 'citation') { assistantMsg.citations.push(event.citation) }
+      } else if (event.type === 'citation') { proxyMsg.citations.push(event.citation) }
       else if (event.type === 'error') { streamedText = '❌ 错误: ' + event.message; break }
       else if (event.type === 'done') {
-        assistantMsg.content = streamedText
-        ;(assistantMsg as any)._ttft = event.ttft_ms || 0
-        ;(assistantMsg as any)._retrieval = event.retrieval_ms || 0
-        ;(assistantMsg as any)._llm = event.llm_ms || 0
+        proxyMsg.content = streamedText
+        ;(proxyMsg as any)._ttft = event.ttft_ms || 0
+        ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
+        ;(proxyMsg as any)._llm = event.llm_ms || 0
         conversationId.value = event.conversation_id
         router.replace(`/chat/${event.conversation_id}`)
         await loadConversations()
       }
     }
-    assistantMsg.content = streamedText
+    proxyMsg.content = streamedText
   } catch (e: any) {
-    assistantMsg.content = `❌ 连接失败: ${e.message}`
+    proxyMsg.content = `❌ 连接失败: ${e.message}`
   } finally {
     isStreaming.value = false
     await nextTick()
