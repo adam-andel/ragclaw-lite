@@ -34,6 +34,22 @@ switch ($Action) {
             }
         }
 
+        # Install dependencies on first run (no node_modules)
+        if (-not (Test-Path (Join-Path $FrontendDir "node_modules"))) {
+            Write-Host "Installing frontend dependencies (pnpm install)..." -ForegroundColor Yellow
+            Push-Location $FrontendDir
+            try {
+                pnpm install
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "pnpm install failed (exit code: $LASTEXITCODE)" -ForegroundColor Red
+                    Write-Host "  Try manually: cd $FrontendDir && pnpm install" -ForegroundColor Gray
+                    return
+                }
+            } finally {
+                Pop-Location
+            }
+        }
+
         # Use cmd /c for reliable PATH resolution in new process
         $cmd = "cd /d `"$FrontendDir`" && npx vite --host --port 5173"
         $proc = Start-Process -FilePath "cmd" -ArgumentList "/c", $cmd -PassThru -WindowStyle Minimized

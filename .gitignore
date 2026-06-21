@@ -8,6 +8,7 @@ venv/
 # Node
 node_modules/
 frontend/dist/
+pnpm-workspace.yaml
 
 # Data
 data/chroma/
