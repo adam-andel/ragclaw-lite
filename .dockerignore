@@ -28,3 +28,10 @@ docs
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment
+.env
+
+# CLAUDE
+CLAUDE.md
+.claude
