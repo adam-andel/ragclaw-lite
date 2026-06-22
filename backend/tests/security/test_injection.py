@@ -110,7 +110,6 @@ class TestSQLInjectionSearch:
 # ===========================================================================
 
 class TestPathTraversalUpload:
-    @pytest.mark.xfail(reason="Known bug: filename not sanitized — path traversal chars (../, \\) crash write_bytes. Fix: strip path separators from filename before saving.")
     @pytest.mark.asyncio
     async def test_path_traversal_filename(self, client, admin_token, test_kb):
         """Upload with ../../ traversal in filename → safe, file stays in upload_dir."""
@@ -123,6 +122,7 @@ class TestPathTraversalUpload:
         doc = r.json()
 
         # Verify the saved file path is inside upload_dir
+        from app.database import async_session
         async with async_session() as db:
             result = await db.execute(
                 select(Document).where(Document.id == doc["id"])
