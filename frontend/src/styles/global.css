@@ -1,29 +1,97 @@
-/* ===== CSS Variables ===== */
+/* ========================================
+   Design Tokens
+   ======================================== */
+
 :root {
+  /* ── Colors: Primary ── */
   --color-primary: #4f6ef7;
   --color-primary-hover: #3b5de7;
+  --color-primary-soft: #eef2ff;
+
+  /* ── Colors: Semantic ── */
+  --color-secondary: #8b5cf6;
+  --color-secondary-soft: #f3f0ff;
+  --color-accent: #06b6d4;
+  --color-accent-soft: #ecfeff;
   --color-success: #22c55e;
+  --color-success-soft: #f0fdf4;
   --color-warning: #f59e0b;
+  --color-warning-soft: #fffbeb;
   --color-danger: #ef4444;
+  --color-danger-soft: #fef2f2;
+
+  /* ── Colors: Surface ── */
   --color-bg: #f8fafc;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
+
+  /* ── Colors: Text ── */
   --color-text: #1e293b;
   --color-text-muted: #94a3b8;
+
+  /* ── Spacing ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ── Radii ── */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 10px 30px rgba(15, 23, 42, 0.10);
+
+  /* ── Typography ── */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+
+  /* ── Layout ── */
   --sidebar-width: 240px;
   --header-height: 56px;
-  --radius: 8px;
 }
 
+/* ── Dark Mode ── */
 html.dark {
+  --color-primary-soft: rgba(79, 110, 247, 0.15);
+  --color-secondary-soft: rgba(139, 92, 246, 0.15);
+  --color-accent-soft: rgba(6, 182, 212, 0.15);
+  --color-success-soft: rgba(34, 197, 94, 0.15);
+  --color-warning-soft: rgba(245, 158, 11, 0.15);
+  --color-danger-soft: rgba(239, 68, 68, 0.15);
+
   --color-bg: #0f172a;
   --color-surface: #1e293b;
   --color-border: #334155;
   --color-text: #e2e8f0;
   --color-text-muted: #64748b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.50);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.60);
 }
 
-/* ===== Reset ===== */
+/* ========================================
+   Reset
+   ======================================== */
+
 *,
 *::before,
 *::after {
@@ -39,16 +107,25 @@ html, body, #app {
   color: var(--color-text);
 }
 
-/* ===== Scrollbar ===== */
+/* ========================================
+   Scrollbar
+   ======================================== */
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
 
-/* ===== Typography ===== */
+/* ========================================
+   Typography
+   ======================================== */
+
 a { color: var(--color-primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-/* ===== Utility ===== */
+/* ========================================
+   Utility
+   ======================================== */
+
 .line-clamp-1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

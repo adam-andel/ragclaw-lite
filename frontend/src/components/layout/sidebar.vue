@@ -146,7 +146,7 @@ onUnmounted(() => {
         </div>
       </div>
       <div v-show="convExpanded" class="conv-list">
-        <NEmpty v-if="conversations.length === 0" description="暂无对话" style="padding:12px" />
+        <NEmpty v-if="conversations.length === 0" description="暂无对话" style="padding: var(--space-3)" />
         <div
           v-for="c in conversations"
           :key="c.id"
@@ -202,21 +202,21 @@ onUnmounted(() => {
 .sidebar-header {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 20px 20px 16px;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-5) var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
 .logo {
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   font-weight: 700;
   color: var(--color-primary);
 }
 .version {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   background: var(--color-border);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 /* ── Conversation section ── */
@@ -226,24 +226,24 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   border-top: 1px solid var(--color-border);
-  margin-top: 8px;
+  margin-top: var(--space-2);
   overflow: hidden;
 }
 .conv-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 20px 8px;
+  padding: var(--space-2) var(--space-5) var(--space-2);
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
 }
 .conv-section-header:hover {
-  background: rgba(88,166,255,0.04);
+  background: var(--color-primary-soft);
 }
 .conv-section-title {
   font-weight: 600;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -251,7 +251,7 @@ onUnmounted(() => {
 .conv-section-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .chevron-icon {
   transition: transform 0.2s;
@@ -263,30 +263,30 @@ onUnmounted(() => {
 .conv-list {
   flex: 1;
   overflow-y: auto;
-  padding-bottom: 8px;
+  padding-bottom: var(--space-2);
 }
 .conv-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 20px;
+  padding: 6px var(--space-5);
   cursor: pointer;
   transition: background .15s;
 }
 .conv-item:hover {
-  background: rgba(88,166,255,0.06);
+  background: var(--color-primary-soft);
 }
 .conv-item.active {
-  background: rgba(88,166,255,0.1);
+  background: rgba(79, 110, 247, 0.1);
 }
 .conv-item-text {
   flex: 1;
   min-width: 0;
-  margin-right: 4px;
+  margin-right: var(--space-1);
 }
 .conv-name {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -299,7 +299,7 @@ onUnmounted(() => {
 /* ── Footer ── */
 .sidebar-footer {
   margin-top: auto;
-  padding: 12px 16px;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--color-border);
   display: flex;
   align-items: center;
@@ -309,7 +309,7 @@ onUnmounted(() => {
 .user-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .user-avatar {
   width: 28px;
@@ -319,10 +319,10 @@ onUnmounted(() => {
   justify-content: center;
   background: var(--color-border);
   border-radius: 50%;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 .user-name {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 .user-role {

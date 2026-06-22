@@ -207,40 +207,40 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 0 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 .chat-header h2 {
-  font-size: 1.15rem;
+  font-size: var(--text-lg);
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: var(--space-3) 0;
 }
 
 .empty-state {
   text-align: center;
-  padding: 60px 20px;
+  padding: 60px var(--space-5);
   color: var(--color-text-muted);
 }
 .empty-icon {
   font-size: 3rem;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 .empty-state h3 {
-  font-size: 1.15rem;
+  font-size: var(--text-lg);
   color: var(--color-text);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
 }
 
 .chat-input-area {
   display: flex;
-  gap: 8px;
-  padding: 12px 0;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
 }

@@ -57,22 +57,22 @@ watch(() => route.path, () => {
 .main-content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: var(--space-6) var(--space-8);
   background: var(--color-bg);
 }
 .mobile-menu-btn {
   position: fixed;
-  top: 8px;
-  left: 8px;
+  top: var(--space-2);
+  left: var(--space-2);
   z-index: 100;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
 @media (max-width: 767px) {
   .main-content {
-    padding: 12px 12px;
-    padding-top: 48px; /* space for hamburger */
+    padding: var(--space-3);
+    padding-top: var(--space-12);
   }
 }
 </style>

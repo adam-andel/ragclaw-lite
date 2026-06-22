@@ -66,8 +66,8 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 <style scoped>
 .message-wrapper {
   display: flex;
-  gap: 12px;
-  padding: 12px 0;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
   animation: fadeIn 0.3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -76,22 +76,27 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 .message-avatar {
   width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--color-border);
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
   flex-shrink: 0;
 }
 .message-body {
   max-width: 75%;
   background: var(--color-surface);
-  border-radius: 12px;
-  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
 }
-.user .message-body { background: var(--color-primary); color: white; border-color: transparent; }
+.user .message-body {
+  background: var(--color-primary);
+  color: white;
+  border-color: transparent;
+}
 .message-meta {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 6px; font-size: 0.8rem;
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: 6px; font-size: var(--text-sm);
 }
 .role-label { font-weight: 600; }
 .time { color: var(--color-text-muted); }
@@ -104,7 +109,7 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 /* Markdown 渲染样式 — 仅对 v-html 分支生效 */
 .message-content :deep(h1),
 .message-content :deep(h2),
-.message-content :deep(h3) { margin: 12px 0 6px; font-weight: 600; line-height: 1.4; }
+.message-content :deep(h3) { margin: var(--space-3) 0 6px; font-weight: 600; line-height: 1.4; }
 .message-content :deep(h1) { font-size: 1.25em; }
 .message-content :deep(h2) { font-size: 1.1em; }
 .message-content :deep(h3) { font-size: 1em; }
@@ -114,25 +119,25 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 .message-content :deep(li) { margin: 2px 0; }
 .message-content :deep(blockquote) {
   border-left: 3px solid var(--color-primary);
-  padding: 4px 12px; margin: 8px 0;
-  color: var(--color-text-muted); background: rgba(79,110,247,0.04);
-  border-radius: 0 6px 6px 0;
+  padding: var(--space-1) var(--space-3); margin: var(--space-2) 0;
+  color: var(--color-text-muted); background: var(--color-primary-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 .message-content :deep(table) {
-  border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em;
+  border-collapse: collapse; width: 100%; margin: var(--space-2) 0; font-size: 0.9em;
 }
 .message-content :deep(th),
 .message-content :deep(td) {
   border: 1px solid var(--color-border); padding: 6px 10px; text-align: left;
 }
-.message-content :deep(th) { background: rgba(79,110,247,0.06); font-weight: 600; }
+.message-content :deep(th) { background: var(--color-primary-soft); font-weight: 600; }
 .message-content :deep(pre) {
-  background: rgba(0,0,0,0.08); border-radius: 8px;
-  padding: 12px 16px; overflow-x: auto; font-size: 0.85em; margin: 8px 0;
+  background: rgba(0,0,0,0.08); border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4); overflow-x: auto; font-size: 0.85em; margin: var(--space-2) 0;
 }
 .message-content :deep(code) {
   font-family: 'JetBrains Mono', monospace;
-  background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px; font-size: 0.88em;
+  background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: var(--radius-sm); font-size: 0.88em;
 }
 .message-content :deep(pre code) { background: none; padding: 0; font-size: 1em; }
 .user .message-content :deep(code) { background: rgba(255,255,255,0.15); }
@@ -144,19 +149,19 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 .user .message-content :deep(a) { color: rgba(255,255,255,0.9); }
 
 .ttft-badge {
-  margin-top: 6px; font-size: 0.72rem; color: var(--color-text-muted);
+  margin-top: 6px; font-size: var(--text-xs); color: var(--color-text-muted);
   font-family: 'JetBrains Mono', monospace;
 }
 
 .citations {
-  margin-top: 12px; padding-top: 10px;
+  margin-top: var(--space-3); padding-top: var(--space-2);
   border-top: 1px solid var(--color-border);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 .citations-title { font-weight: 600; margin-bottom: 6px; }
 .citation-item {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 0; color: var(--color-text-muted);
+  padding: var(--space-1) 0; color: var(--color-text-muted);
 }
 .citation-doc { font-weight: 500; color: var(--color-text); }
 .citation-heading { color: var(--color-primary); }
