@@ -11,6 +11,7 @@ frontend/dist/
 pnpm-workspace.yaml
 
 # Data
+data/memory.db
 data/chroma/
 data/sqlite/
 data/uploads/*
@@ -33,4 +34,5 @@ Thumbs.db
 .claude/
 CLAUDE.md
 
+docs/
 ux-research/
