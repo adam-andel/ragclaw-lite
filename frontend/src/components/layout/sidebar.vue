@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NMenu, NIcon, NButton, NTag, NPopconfirm, NEmpty } from 'naive-ui'
+import { NMenu, NIcon, NButton, NTag, NPopconfirm, NEmpty, NTooltip } from 'naive-ui'
 import {
   Chatbubbles, FolderOpen, Search, StatsChart,
   LogOut, People, Add, Trash, ChevronDown,
@@ -157,14 +157,21 @@ onUnmounted(() => {
             <span class="conv-name">{{ c.title || '新对话' }}</span>
             <span class="conv-time">{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
           </div>
-          <NPopconfirm @positive-click="handleDelete(c.id)">
-            <template #trigger>
-              <NButton text size="tiny" type="error" @click.stop>
-                <NIcon size="14"><Trash /></NIcon>
-              </NButton>
-            </template>
-            删除此对话？
-          </NPopconfirm>
+          <div class="conv-item-actions">
+            <NPopconfirm @positive-click="handleDelete(c.id)" positive-text="确认" negative-text="取消">
+              <template #trigger>
+                <NTooltip>
+                  <template #trigger>
+                    <NButton text size="tiny" type="error" @click.stop>
+                      <NIcon size="14"><Trash /></NIcon>
+                    </NButton>
+                  </template>
+                  删除对话
+                </NTooltip>
+              </template>
+              确定删除此对话？
+            </NPopconfirm>
+          </div>
         </div>
       </div>
     </div>
@@ -283,6 +290,16 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   margin-right: var(--space-1);
+}
+.conv-item-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+.conv-item:hover .conv-item-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 .conv-name {
   display: block;
