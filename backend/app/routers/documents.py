@@ -52,7 +52,8 @@ async def upload_document(
     _check_kb_access(current_user, kb)
 
     doc_id = _gen_id()
-    saved_path = settings.upload_dir / f"{doc_id}_{filename}"
+    safe_filename = Path(filename).name
+    saved_path = settings.upload_dir / f"{doc_id}_{safe_filename}"
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
 
     content = await file.read()
