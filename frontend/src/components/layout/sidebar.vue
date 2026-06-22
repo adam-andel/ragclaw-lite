@@ -134,7 +134,16 @@ onUnmounted(() => {
 
     <!-- Conversation history – collapsible, only on /chat -->
     <div v-if="isOnChatRoute" class="conv-section">
-      <div class="conv-section-header" @click="convExpanded = !convExpanded">
+      <div
+        class="conv-section-header"
+        role="button"
+        tabindex="0"
+        :aria-expanded="convExpanded"
+        aria-controls="conv-list"
+        @click="convExpanded = !convExpanded"
+        @keydown.enter="convExpanded = !convExpanded"
+        @keydown.space.prevent="convExpanded = !convExpanded"
+      >
         <span class="conv-section-title">对话历史</span>
         <div class="conv-section-actions">
           <NButton size="tiny" @click.stop="newConversation">
@@ -145,13 +154,18 @@ onUnmounted(() => {
           </NIcon>
         </div>
       </div>
-      <div v-show="convExpanded" class="conv-list">
+      <div id="conv-list" v-show="convExpanded" class="conv-list" role="list" aria-label="对话历史列表">
         <NEmpty v-if="conversations.length === 0" description="暂无对话" style="padding: var(--space-3)" />
         <div
           v-for="c in conversations"
           :key="c.id"
           :class="['conv-item', { active: c.id === conversationId }]"
+          role="button"
+          tabindex="0"
+          :aria-current="c.id === conversationId ? 'location' : undefined"
           @click="selectConversation(c.id)"
+          @keydown.enter="selectConversation(c.id)"
+          @keydown.space.prevent="selectConversation(c.id)"
         >
           <div class="conv-item-text">
             <span class="conv-name">{{ c.title || '新对话' }}</span>

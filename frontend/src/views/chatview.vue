@@ -199,7 +199,7 @@ function handleKeydown(e: KeyboardEvent) {
       />
     </div>
 
-    <div class="chat-messages">
+    <div class="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
         <h3>开始 RAG 对话</h3>
