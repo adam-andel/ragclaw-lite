@@ -34,5 +34,6 @@ Thumbs.db
 .claude/
 CLAUDE.md
 
+backend/.pytest_cache/
 docs/
 ux-research/
