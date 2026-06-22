@@ -5,6 +5,7 @@ import { NTag, NButton, NIcon, NTooltip, NModal } from 'naive-ui'
 import type { Citation } from '@/types'
 import { Copy, Refresh } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/types'
+import { escapeHtml } from '@/utils/think'
 
 import { useAuthStore } from '@/stores/auth'
 
@@ -25,7 +26,40 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-const renderedContent = computed(() => md.render(props.message.content || ''))
+const renderedContent = computed(() => {
+  const raw = props.message.content || ''
+  let html = ''
+  let remaining = raw
+
+  while (remaining.length > 0) {
+    const startIdx = remaining.indexOf('<think>')
+    if (startIdx === -1) {
+      html += md.render(remaining)
+      break
+    }
+
+    // Render text before think as normal markdown
+    html += md.render(remaining.slice(0, startIdx))
+    remaining = remaining.slice(startIdx + '<think>'.length)
+
+    const endIdx = remaining.indexOf('</think>')
+    if (endIdx === -1) {
+      // Unclosed — render rest as markdown (shouldn't happen after stream finishes)
+      html += md.render(remaining)
+      break
+    }
+
+    // Build collapsible think block
+    html +=
+      `<details class="think-block">` +
+      `<summary>💭 思考过程</summary>` +
+      `<div class="think-content">${escapeHtml(remaining.slice(0, endIdx))}</div>` +
+      `</details>`
+    remaining = remaining.slice(endIdx + '</think>'.length)
+  }
+
+  return html
+})
 
 async function copyText(content: string) {
   try {
@@ -69,11 +103,10 @@ function openCitation(c: Citation) {
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
 
-      <!-- 阶段 1：流式中 — v-once + textContent 保逐字效果 -->
+      <!-- 阶段 1：流式中 — innerHTML 由 chatview 写入（含 think-block + cursor） -->
       <template v-if="isStreaming">
         <div class="message-content streaming">
           <span v-once :id="'stream-' + message.id"></span>
-          <span class="cursor-blink">▌</span>
         </div>
       </template>
 
@@ -133,6 +166,55 @@ function openCitation(c: Citation) {
     </div>
   </div>
 </template>
+
+<style>
+/* think-block — shared between streaming (innerHTML) and completed (v-html) */
+.think-block {
+  margin: var(--space-2) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-primary-soft);
+}
+.think-block > summary {
+  cursor: pointer;
+  padding: 6px var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.think-block > summary::-webkit-details-marker {
+  display: none;
+}
+.think-block > summary::before {
+  content: '▸';
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 0.8em;
+  margin-right: 2px;
+}
+.think-block[open] > summary::before {
+  transform: rotate(90deg);
+}
+.think-block > summary:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+}
+.think-content {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--color-border);
+}
+</style>
 
 <style scoped>
 .message-wrapper {

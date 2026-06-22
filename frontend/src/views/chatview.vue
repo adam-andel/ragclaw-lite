@@ -7,6 +7,7 @@ import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
+import { renderStreamingHtml } from '@/utils/think'
 import type { ChatMessage as ChatMsg } from '@/types'
 
 const route = useRoute()
@@ -106,7 +107,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
-        if (el) el.textContent = streamedText + '▌'
+        if (el) el.innerHTML = renderStreamingHtml(streamedText) + '<span class="cursor-blink">▌</span>'
       } else if (event.type === 'citation') {
         proxyMsg.citations.push(event.citation)
       } else if (event.type === 'error') {
