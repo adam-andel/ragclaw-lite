@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NSelect, NCard } from 'naive-ui'
-import { Send } from '@vicons/ionicons5'
+import { Send, StopCircle } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -31,6 +31,7 @@ function checkReadonly(convUserId?: string | null) {
 const messages = ref<ChatMsg[]>([])
 const inputText = ref('')
 const isStreaming = ref(false)
+let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
@@ -112,7 +113,8 @@ async function sendMessage() {
 
   try {
     let streamedText = ''
-    for await (const event of streamChat(text, selectedKbId.value, conversationId.value)) {
+    abortCtl = new AbortController()
+    for await (const event of streamChat(text, selectedKbId.value, conversationId.value, abortCtl.signal)) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
@@ -135,11 +137,20 @@ async function sendMessage() {
     }
     proxyMsg.content = streamedText
   } catch (e: any) {
-    proxyMsg.content = `❌ 连接失败: ${e.message}`
+    if (e?.name !== 'AbortError') {
+      proxyMsg.content = `❌ 连接失败: ${e.message}`
+    }
   } finally {
     isStreaming.value = false
+    abortCtl = null
     await nextTick()
   }
+}
+
+function stopStream() {
+  abortCtl?.abort()
+  isStreaming.value = false
+  abortCtl = null
 }
 
 const isComposing = ref(false)
@@ -189,7 +200,11 @@ function handleKeydown(e: KeyboardEvent) {
         @compositionstart="isComposing = true"
         @compositionend="isComposing = false"
       />
-      <NButton type="primary" :disabled="!inputText.trim() || isStreaming" @click="sendMessage">
+      <NButton v-if="isStreaming" type="warning" @click="stopStream">
+        <template #icon><NIcon><StopCircle /></NIcon></template>
+        停止
+      </NButton>
+      <NButton v-else type="primary" :disabled="!inputText.trim()" @click="sendMessage">
         <template #icon><NIcon><Send /></NIcon></template>
       </NButton>
     </div>

@@ -19,6 +19,7 @@ export async function* streamChat(
   query: string,
   kbId: string,
   conversationId?: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
@@ -27,6 +28,7 @@ export async function* streamChat(
       ...authHeaders(),
     },
     body: JSON.stringify({ query, kb_id: kbId, conversation_id: conversationId }),
+    signal,
   })
 
   if (!response.ok) {
