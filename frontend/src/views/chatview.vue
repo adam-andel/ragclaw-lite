@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NSelect, NCard } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NSelect, NCard, useMessage } from 'naive-ui'
 import { Send, StopCircle } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation } from '@/api/chat'
@@ -12,6 +12,7 @@ import type { ChatMessage as ChatMsg } from '@/types'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const nmessage = useMessage()
 
 const isReadonly = ref(false)
 const conversationOwnerId = ref<string>()
@@ -96,7 +97,7 @@ async function loadConversation(id: string) {
   }
 }
 
-async function doStream(query: string, proxyMsg: ChatMsg) {
+async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
   const aid = proxyMsg.id
   let streamedText = ''
   abortCtl = new AbortController()
@@ -124,7 +125,10 @@ async function doStream(query: string, proxyMsg: ChatMsg) {
     proxyMsg.content = streamedText
   } catch (e: any) {
     if (e?.name !== 'AbortError') {
-      proxyMsg.content = `❌ 连接失败: ${e.message}`
+      // Remove failed user + assistant messages and restore input
+      messages.value = messages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
+      inputText.value = query
+      nmessage.error(`发送失败: ${e.message}，已恢复输入`)
     }
   } finally {
     isStreaming.value = false
@@ -136,9 +140,10 @@ async function doStream(query: string, proxyMsg: ChatMsg) {
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isStreaming.value) return
-  inputText.value = ''
 
-  messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() })
+  const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() }
+  messages.value.push(userMsg)
+  inputText.value = ''
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
   messages.value.push(assistantMsg)
@@ -146,7 +151,7 @@ async function sendMessage() {
   await nextTick()
   isStreaming.value = true
   await nextTick()
-  doStream(text, proxyMsg)
+  doStream(text, proxyMsg, userMsg.id)
 }
 
 async function regenerateAnswer(assistantMsgId: string) {
@@ -163,7 +168,7 @@ async function regenerateAnswer(assistantMsgId: string) {
   await nextTick()
   isStreaming.value = true
   await nextTick()
-  doStream(userMsg.content, proxyMsg)
+  doStream(userMsg.content, proxyMsg, userMsg.id)
 }
 
 function stopStream() {
