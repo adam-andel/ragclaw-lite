@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag, NButton, NIcon } from 'naive-ui'
+import { NTag, NButton, NIcon, NTooltip, NModal } from 'naive-ui'
+import type { Citation } from '@/types'
 import { Copy, Refresh } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/types'
 
@@ -46,6 +47,15 @@ async function copyText(content: string) {
 function regenerate(msg: ChatMessage) {
   emit('regenerate', msg.id)
 }
+
+// --- Citation modal state ---
+const showCitationModal = ref(false)
+const activeCitation = ref<Citation | null>(null)
+
+function openCitation(c: Citation) {
+  activeCitation.value = c
+  showCitationModal.value = true
+}
 </script>
 
 <template>
@@ -78,13 +88,37 @@ function regenerate(msg: ChatMessage) {
 
       <div v-if="message.citations.length > 0 && !isStreaming" class="citations">
         <div class="citations-title">📎 引用来源</div>
-        <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
-          <NTag size="small" type="info">#{{ i + 1 }}</NTag>
-          <span class="citation-doc">{{ c.doc_name }}</span>
-          <span v-if="c.heading" class="citation-heading">{{ c.heading }}</span>
-          <NTag size="small" :bordered="false">相似度 {{ (c.score * 100).toFixed(0) }}%</NTag>
+        <div v-for="(c, i) in message.citations" :key="i" class="citation-row">
+          <NTooltip trigger="hover" placement="top" :width="340">
+            <template #trigger>
+              <button class="citation-chip" @click="openCitation(c)">
+                <NTag size="small" type="info">#{{ i + 1 }}</NTag>
+                <span class="citation-doc">{{ c.doc_name }}</span>
+                <span class="citation-score">{{ (c.score * 100).toFixed(0) }}%</span>
+              </button>
+            </template>
+            <div class="citation-tooltip">
+              <div class="citation-source">{{ c.doc_name }}{{ c.heading ? ' · ' + c.heading : '' }}</div>
+              <div class="citation-snippet">{{ (c.content_snippet || '').slice(0, 200) }}</div>
+            </div>
+          </NTooltip>
         </div>
       </div>
+
+      <!-- Citation 全屏查看 Modal -->
+      <NModal v-model:show="showCitationModal" preset="card" title="引用详情" style="max-width: 680px;">
+        <template v-if="activeCitation">
+          <div class="citation-modal-body">
+            <div class="cm-row"><span class="cm-label">文档</span><span>{{ activeCitation.doc_name }}</span></div>
+            <div v-if="activeCitation.heading" class="cm-row"><span class="cm-label">章节</span><span>{{ activeCitation.heading }}</span></div>
+            <div class="cm-row"><span class="cm-label">Chunk #</span><span>{{ activeCitation.chunk_index }}</span></div>
+            <div v-if="activeCitation.page != null" class="cm-row"><span class="cm-label">页码</span><span>{{ activeCitation.page }}</span></div>
+            <div class="cm-row"><span class="cm-label">相似度</span><span>{{ (activeCitation.score * 100).toFixed(1) }}%</span></div>
+            <div class="cm-snippet-label">Chunk 全文</div>
+            <pre class="cm-snippet">{{ activeCitation.content_snippet }}</pre>
+          </div>
+        </template>
+      </NModal>
 
       <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
         <NButton text size="tiny" @click="copyText(message.content)">
@@ -196,12 +230,50 @@ function regenerate(msg: ChatMessage) {
   font-size: var(--text-sm);
 }
 .citations-title { font-weight: 600; margin-bottom: 6px; }
-.citation-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: var(--space-1) 0; color: var(--color-text-muted);
+.citation-row { padding: 2px 0; }
+.citation-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px 2px 2px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+  font-size: inherit;
+  color: var(--color-text-muted);
+  transition: background 0.12s, border-color 0.12s;
+}
+.citation-chip:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
 }
 .citation-doc { font-weight: 500; color: var(--color-text); }
-.citation-heading { color: var(--color-primary); }
+.citation-score { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
+
+.citation-tooltip { font-size: var(--text-sm); line-height: 1.5; }
+.citation-source { font-weight: 600; margin-bottom: 4px; }
+.citation-snippet {
+  color: var(--color-text-muted);
+  max-height: 160px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid var(--color-primary);
+  padding-left: 8px;
+}
+
+.citation-modal-body { font-size: var(--text-sm); }
+.cm-row {
+  display: flex; gap: var(--space-2);
+  padding: 4px 0;
+}
+.cm-label { font-weight: 600; color: var(--color-text-muted); min-width: 60px; }
+.cm-snippet-label { font-weight: 600; margin: var(--space-3) 0 6px; }
+.cm-snippet {
+  background: var(--color-primary-soft);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  font-size: var(--text-sm); line-height: 1.7;
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 360px; overflow-y: auto;
+}
 
 .message-actions {
   display: flex;
