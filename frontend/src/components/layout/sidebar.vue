@@ -1,30 +1,38 @@
 <script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { computed, h } from 'vue'
-import { NMenu, NIcon, NButton, NTag } from 'naive-ui'
-import { Chatbubbles, FolderOpen, Search, StatsChart, LogOut, People } from '@vicons/ionicons5'
+import { NMenu, NIcon, NButton, NTag, NPopconfirm, NEmpty } from 'naive-ui'
+import {
+  Chatbubbles, FolderOpen, Search, StatsChart,
+  LogOut, People, Add, Trash, ChevronDown,
+} from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { deleteConversation, authHeaders } from '@/api/chat'
+
+interface ConvItem { id: string; title: string; updated_at: string }
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
+const isOnChatRoute = computed(() => route.path.startsWith('/chat'))
+
+// ── Menu ──
+
 const menuOptions = computed<MenuOption[]>(() => {
-  // Regular users only see chat
   if (!auth.isStaff) {
     return [
       { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     ]
   }
-  const items: MenuOption[] = [
+  return [
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
     { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
   ]
-  return items
 })
 
 const selectedKey = computed(() => {
@@ -36,7 +44,6 @@ const selectedKey = computed(() => {
 
 function handleMenuUpdate(key: string) {
   if (key === '/chat') {
-    // Force full navigation to own chat
     router.push('/chat').then(() => {
       window.dispatchEvent(new CustomEvent('erag:reset-chat'))
     })
@@ -44,6 +51,71 @@ function handleMenuUpdate(key: string) {
     router.push(key)
   }
 }
+
+// ── Conversations ──
+
+const conversations = ref<ConvItem[]>([])
+const conversationId = computed(() => route.params.id as string | undefined)
+const convExpanded = ref(true)
+const initialLoadDone = ref(false)
+
+async function loadConversations() {
+  try {
+    const uid = auth.user?.id || ''
+    const r = await fetch(`/api/conversations?user_id=${uid}`, { headers: authHeaders() })
+    if (!r.ok) throw new Error('Failed')
+    conversations.value = await r.json()
+
+    // Auto-navigate to first conversation when landing on /chat without an id
+    if (!initialLoadDone.value && !conversationId.value && conversations.value.length > 0) {
+      initialLoadDone.value = true
+      router.replace(`/chat/${conversations.value[0].id}`)
+    }
+    initialLoadDone.value = true
+  } catch {
+    conversations.value = []
+  }
+}
+
+function selectConversation(id: string) {
+  router.push(`/chat/${id}`)
+}
+
+async function handleDelete(id: string) {
+  try {
+    await deleteConversation(id)
+    if (conversationId.value === id) {
+      router.replace('/chat')
+      window.dispatchEvent(new CustomEvent('erag:reset-chat'))
+    }
+    await loadConversations()
+  } catch { /* noop */ }
+}
+
+function newConversation() {
+  router.replace('/chat')
+  window.dispatchEvent(new CustomEvent('erag:reset-chat'))
+}
+
+// Refresh when a conversation is created/updated in ChatView
+function onConversationUpdated() {
+  loadConversations()
+}
+
+// Refresh on route enter
+watch(() => route.path, (path) => {
+  if (path.startsWith('/chat')) {
+    loadConversations()
+  }
+})
+
+onMounted(() => {
+  if (isOnChatRoute.value) loadConversations()
+  window.addEventListener('erag:conversation-updated', onConversationUpdated)
+})
+onUnmounted(() => {
+  window.removeEventListener('erag:conversation-updated', onConversationUpdated)
+})
 </script>
 
 <template>
@@ -59,6 +131,43 @@ function handleMenuUpdate(key: string) {
       :indent="16"
       @update:value="handleMenuUpdate"
     />
+
+    <!-- Conversation history – collapsible, only on /chat -->
+    <div v-if="isOnChatRoute" class="conv-section">
+      <div class="conv-section-header" @click="convExpanded = !convExpanded">
+        <span class="conv-section-title">对话历史</span>
+        <div class="conv-section-actions">
+          <NButton size="tiny" @click.stop="newConversation">
+            <template #icon><NIcon><Add /></NIcon></template>
+          </NButton>
+          <NIcon size="16" :class="{ rotated: !convExpanded }" class="chevron-icon">
+            <ChevronDown />
+          </NIcon>
+        </div>
+      </div>
+      <div v-show="convExpanded" class="conv-list">
+        <NEmpty v-if="conversations.length === 0" description="暂无对话" style="padding:12px" />
+        <div
+          v-for="c in conversations"
+          :key="c.id"
+          :class="['conv-item', { active: c.id === conversationId }]"
+          @click="selectConversation(c.id)"
+        >
+          <div class="conv-item-text">
+            <span class="conv-name">{{ c.title || '新对话' }}</span>
+            <span class="conv-time">{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
+          </div>
+          <NPopconfirm @positive-click="handleDelete(c.id)">
+            <template #trigger>
+              <NButton text size="tiny" type="error" @click.stop>
+                <NIcon size="14"><Trash /></NIcon>
+              </NButton>
+            </template>
+            删除此对话？
+          </NPopconfirm>
+        </div>
+      </div>
+    </div>
 
     <div class="sidebar-footer">
       <div class="user-info">
@@ -83,30 +192,140 @@ function handleMenuUpdate(key: string) {
 <style scoped>
 .sidebar {
   width: var(--sidebar-width);
-  height: 100vh;
+  height: 100%;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
-  display: flex; flex-direction: column; flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
 }
 .sidebar-header {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 20px 20px 16px; border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--color-border);
 }
-.logo { font-size: 1.25rem; font-weight: 700; color: var(--color-primary); }
+.logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
 .version {
-  font-size: 0.7rem; color: var(--color-text-muted);
-  background: var(--color-border); padding: 1px 6px; border-radius: 4px;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  background: var(--color-border);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
-.sidebar-footer {
-  margin-top: auto; padding: 12px 16px;
+
+/* ── Conversation section ── */
+.conv-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-top: 1px solid var(--color-border);
-  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 8px;
+  overflow: hidden;
 }
-.user-info { display: flex; align-items: center; gap: 8px; }
+.conv-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px 8px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+.conv-section-header:hover {
+  background: rgba(88,166,255,0.04);
+}
+.conv-section-title {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.conv-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chevron-icon {
+  transition: transform 0.2s;
+  color: var(--color-text-muted);
+}
+.chevron-icon.rotated {
+  transform: rotate(-90deg);
+}
+.conv-list {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+.conv-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 20px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.conv-item:hover {
+  background: rgba(88,166,255,0.06);
+}
+.conv-item.active {
+  background: rgba(88,166,255,0.1);
+}
+.conv-item-text {
+  flex: 1;
+  min-width: 0;
+  margin-right: 4px;
+}
+.conv-name {
+  display: block;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-time {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+}
+
+/* ── Footer ── */
+.sidebar-footer {
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .user-avatar {
-  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  background: var(--color-border); border-radius: 50%; font-size: 0.85rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-border);
+  border-radius: 50%;
+  font-size: 0.85rem;
 }
-.user-name { font-size: 0.82rem; font-weight: 500; }
-.user-role { margin-top: 1px; }
+.user-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.user-role {
+  margin-top: 1px;
+}
 </style>
