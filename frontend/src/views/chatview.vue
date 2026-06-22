@@ -96,25 +96,12 @@ async function loadConversation(id: string) {
   }
 }
 
-async function sendMessage() {
-  const text = inputText.value.trim()
-  if (!text || isStreaming.value) return
-  inputText.value = ''
-
-  messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() })
-
-  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
-  messages.value.push(assistantMsg)
-  const proxyMsg = messages.value[messages.value.length - 1]
-  const aid = assistantMsg.id
-  await nextTick()
-  isStreaming.value = true
-  await nextTick()
-
+async function doStream(query: string, proxyMsg: ChatMsg) {
+  const aid = proxyMsg.id
+  let streamedText = ''
+  abortCtl = new AbortController()
   try {
-    let streamedText = ''
-    abortCtl = new AbortController()
-    for await (const event of streamChat(text, selectedKbId.value, conversationId.value, abortCtl.signal)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, abortCtl.signal)) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
@@ -131,7 +118,6 @@ async function sendMessage() {
         ;(proxyMsg as any)._llm = event.llm_ms || 0
         conversationId.value = event.conversation_id
         router.replace(`/chat/${event.conversation_id}`)
-        // Notify sidebar to refresh conversation list
         window.dispatchEvent(new CustomEvent('erag:conversation-updated'))
       }
     }
@@ -145,6 +131,39 @@ async function sendMessage() {
     abortCtl = null
     await nextTick()
   }
+}
+
+async function sendMessage() {
+  const text = inputText.value.trim()
+  if (!text || isStreaming.value) return
+  inputText.value = ''
+
+  messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() })
+
+  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+  messages.value.push(assistantMsg)
+  const proxyMsg = messages.value[messages.value.length - 1]
+  await nextTick()
+  isStreaming.value = true
+  await nextTick()
+  doStream(text, proxyMsg)
+}
+
+async function regenerateAnswer(assistantMsgId: string) {
+  if (isStreaming.value) return
+  const idx = messages.value.findIndex(m => m.id === assistantMsgId)
+  if (idx < 1) return
+  const userMsg = messages.value[idx - 1]
+  if (userMsg.role !== 'user') return
+
+  // replace old assistant message with fresh placeholder
+  const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+  messages.value.splice(idx, 1, newAssistant)
+  const proxyMsg = messages.value[idx]
+  await nextTick()
+  isStreaming.value = true
+  await nextTick()
+  doStream(userMsg.content, proxyMsg)
 }
 
 function stopStream() {
@@ -186,6 +205,7 @@ function handleKeydown(e: KeyboardEvent) {
         :key="msg.id"
         :message="msg"
         :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
+        @regenerate="regenerateAnswer"
       />
     </div>
 

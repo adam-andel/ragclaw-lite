@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag } from 'naive-ui'
+import { NTag, NButton, NIcon } from 'naive-ui'
+import { Copy, Refresh } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/types'
 
 import { useAuthStore } from '@/stores/auth'
@@ -9,6 +10,10 @@ import { useAuthStore } from '@/stores/auth'
 const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
+}>()
+
+const emit = defineEmits<{
+  regenerate: [assistantMsgId: string]
 }>()
 
 const auth = useAuthStore()
@@ -20,6 +25,27 @@ function formatTime(iso: string) {
 }
 
 const renderedContent = computed(() => md.render(props.message.content || ''))
+
+async function copyText(content: string) {
+  try {
+    await navigator.clipboard.writeText(content)
+  } catch {
+    // fallback for older browsers / non-HTTPS
+    const ta = document.createElement('textarea')
+    ta.value = content
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+}
+
+function regenerate(msg: ChatMessage) {
+  emit('regenerate', msg.id)
+}
 </script>
 
 <template>
@@ -58,6 +84,17 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
           <span v-if="c.heading" class="citation-heading">{{ c.heading }}</span>
           <NTag size="small" :bordered="false">相似度 {{ (c.score * 100).toFixed(0) }}%</NTag>
         </div>
+      </div>
+
+      <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
+        <NButton text size="tiny" @click="copyText(message.content)">
+          <template #icon><NIcon><Copy /></NIcon></template>
+          复制
+        </NButton>
+        <NButton text size="tiny" @click="regenerate(message)">
+          <template #icon><NIcon><Refresh /></NIcon></template>
+          重新生成
+        </NButton>
       </div>
     </div>
   </div>
@@ -165,4 +202,17 @@ const renderedContent = computed(() => md.render(props.message.content || ''))
 }
 .citation-doc { font-weight: 500; color: var(--color-text); }
 .citation-heading { color: var(--color-primary); }
+
+.message-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.message-body:hover .message-actions {
+  opacity: 1;
+}
 </style>
