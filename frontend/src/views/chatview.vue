@@ -157,7 +157,9 @@ async function sendMessage() {
   }
 }
 
+const isComposing = ref(false)
 function handleKeydown(e: KeyboardEvent) {
+  if (isComposing.value) return
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
 }
 </script>
@@ -225,6 +227,8 @@ function handleKeydown(e: KeyboardEvent) {
           placeholder="输入问题... (Enter 发送)"
           :autosize="{ minRows: 1, maxRows: 4 }" :disabled="isStreaming"
           @keydown="handleKeydown"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
         />
         <NButton type="primary" :disabled="!inputText.trim() || isStreaming" @click="sendMessage">
           <template #icon><NIcon><Send /></NIcon></template>
