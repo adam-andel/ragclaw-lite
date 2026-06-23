@@ -51,6 +51,12 @@ const router = createRouter({
       meta: { title: '仪表盘', requiresAuth: true },
     },
     {
+      path: '/profile',
+      name: 'profile',
+      component: () => import('@/views/ProfileView.vue'),
+      meta: { title: '个人信息', requiresAuth: true },
+    },
+    {
       path: '/users',
       name: 'users',
       component: () => import('@/views/UserManagement.vue'),
@@ -68,7 +74,7 @@ router.beforeEach(async (to, _from, next) => {
     next('/login')
   } else if (to.meta.admin && !auth.isStaff) {
     next('/chat')
-  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login') {
+  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile') {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')

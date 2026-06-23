@@ -16,6 +16,8 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
+const userAvatar = computed(() => localStorage.getItem('erag:avatar') || '👤')
+
 const isOnChatRoute = computed(() => route.path.startsWith('/chat'))
 
 // ── Menu ──
@@ -193,8 +195,8 @@ onUnmounted(() => {
     </div>
 
     <div class="sidebar-footer">
-      <div class="user-info">
-        <div class="user-avatar">👤</div>
+      <div class="user-info" role="button" tabindex="0" @click="router.push('/profile')" @keydown.enter="router.push('/profile')">
+        <div class="user-avatar">{{ userAvatar }}</div>
         <div class="user-detail">
           <div class="user-name">{{ auth.user?.display_name || auth.user?.username }}</div>
           <div class="user-role">
@@ -343,6 +345,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius);
+  transition: background 0.15s;
+}
+.user-info:hover {
+  background: var(--color-primary-soft);
 }
 .user-avatar {
   width: 28px;
