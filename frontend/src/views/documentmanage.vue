@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
@@ -36,6 +36,29 @@ const dragOver = ref(false)
 const showChunks = ref(false)
 const chunks = ref<ChunkItem[]>([])
 const chunksLoading = ref(false)
+const chunksPerPage = 10
+const chunkSearch = ref('')
+const chunkPage = ref(1)
+const expandedChunks = ref(new Set<string>())
+
+const filteredChunks = computed(() => {
+  if (!chunkSearch.value.trim()) return chunks.value
+  const q = chunkSearch.value.trim().toLowerCase()
+  return chunks.value.filter(c => c.content.toLowerCase().includes(q))
+})
+
+const paginatedChunks = computed(() => {
+  const start = (chunkPage.value - 1) * chunksPerPage
+  return filteredChunks.value.slice(start, start + chunksPerPage)
+})
+
+const totalChunkPages = computed(() => Math.max(1, Math.ceil(filteredChunks.value.length / chunksPerPage)))
+
+function toggleChunkExpand(id: string) {
+  const s = new Set(expandedChunks.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  expandedChunks.value = s
+}
 
 // Progress polling
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -155,6 +178,9 @@ async function handleDelete(id: string) {
 
 async function openChunks(docId: string) {
   chunksLoading.value = true
+  chunkSearch.value = ''
+  chunkPage.value = 1
+  expandedChunks.value = new Set()
   showChunks.value = true
   try {
     const res = await getDocumentChunks(docId)
@@ -195,6 +221,28 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
+// File type → icon + color
+const fileTypeConfig: Record<string, { icon: string; color: string; label: string }> = {
+  pdf: { icon: '📕', color: '#ef4444', label: 'PDF' },
+  docx: { icon: '📘', color: '#3b82f6', label: 'Word' },
+  doc: { icon: '📘', color: '#3b82f6', label: 'Word' },
+  md: { icon: '📗', color: '#22c55e', label: 'MD' },
+  txt: { icon: '📄', color: '#64748b', label: 'TXT' },
+  csv: { icon: '📊', color: '#f59e0b', label: 'CSV' },
+  pptx: { icon: '📙', color: '#f97316', label: 'PPT' },
+  xlsx: { icon: '📈', color: '#22c55e', label: 'Excel' },
+}
+
+function getFileTypeConfig(ext: string) {
+  return fileTypeConfig[ext.toLowerCase()] || { icon: '📄', color: '#64748b', label: ext.toUpperCase() }
+}
+
+const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
+
+function isProcessing(status: string) {
+  return processingStatuses.includes(status)
 }
 </script>
 <template>
@@ -246,35 +294,55 @@ function formatSize(bytes: number) {
       <NEmpty v-if="!loading && docs.length === 0" description="暂无文档，请上传" />
       <div class="dm-list" v-if="docs.length > 0">
         <NCard v-for="doc in docs" :key="doc.id" size="small" class="dm-card">
-          <div class="dm-card-row">
-            <div class="dm-card-info">
-              <span class="dm-card-name">📄 {{ doc.filename }}</span>
-              <NSpace size="small">
-                <NTag :type="statusColors[doc.status] as any" size="small">{{ statusLabels[doc.status] || doc.status }}</NTag>
-                <NProgress
-                  v-if="['pending','parsing','chunking','embedding'].includes(doc.status)"
-                  type="line" :percentage="doc.progress" :height="14" :border-radius="3" style="width:80px"
-                />
-                <NTag size="small">{{ doc.file_type.toUpperCase() }}</NTag>
-                <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
-                <NTag size="small" v-if="doc.chunk_count > 0">{{ doc.chunk_count }} 分块</NTag>
-                <NTag size="small" type="error" v-if="doc.status === 'failed'" :title="doc.error_message">⚠ 失败</NTag>
-              </NSpace>
-            </div>
-            <div class="dm-card-meta">
-              <span class="dm-kb-tags" v-if="doc.kb_ids.length > 0">
-                {{ doc.kb_ids.length }} 个知识库
+          <!-- Row 1: file icon + name + status + actions -->
+          <div class="doc-row-top">
+            <div class="doc-name-group">
+              <span class="doc-type-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
+                {{ getFileTypeConfig(doc.file_type).icon }}
               </span>
-              <span class="dm-kb-tags muted" v-else>未关联</span>
-              <span class="dm-date">{{ new Date(doc.created_at).toLocaleDateString('zh-CN') }}</span>
+              <span class="doc-name">{{ doc.filename }}</span>
+              <NTag :type="statusColors[doc.status] as any" size="small">
+                {{ statusLabels[doc.status] || doc.status }}
+              </NTag>
+              <NTag v-if="doc.status === 'failed' && doc.error_message" size="small" type="error" class="doc-error-tag">
+                {{ doc.error_message }}
+              </NTag>
             </div>
-            <div class="dm-card-actions">
+            <div class="doc-actions">
               <NButton text size="tiny" @click="openChunks(doc.id)">查看分块</NButton>
               <NPopconfirm @positive-click="handleDelete(doc.id)">
                 <template #trigger><NButton text size="tiny" type="error">删除</NButton></template>
                 确定删除文档「{{ doc.filename }}」？将从所有知识库中移除。
               </NPopconfirm>
             </div>
+          </div>
+          <!-- Row 2: progress bar or metadata -->
+          <div v-if="isProcessing(doc.status)" class="doc-row-bottom">
+            <NProgress
+              type="line"
+              :percentage="doc.progress"
+              :height="6"
+              :border-radius="3"
+              :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#4f6ef7'"
+              :rail-color="'var(--color-border)'"
+              style="flex:1; min-width:100px"
+            />
+            <span class="doc-progress-text">{{ doc.progress }}%</span>
+          </div>
+          <div v-else class="doc-row-bottom doc-meta">
+            <span class="doc-meta-label">{{ getFileTypeConfig(doc.file_type).label }}</span>
+            <span class="doc-meta-sep">·</span>
+            <span>{{ formatSize(doc.file_size) }}</span>
+            <template v-if="doc.chunk_count > 0">
+              <span class="doc-meta-sep">·</span>
+              <span>{{ doc.chunk_count }} 分块</span>
+            </template>
+            <span class="doc-meta-sep">·</span>
+            <span :class="doc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'">
+              {{ doc.kb_ids.length > 0 ? `${doc.kb_ids.length} 个知识库` : '未关联' }}
+            </span>
+            <span class="doc-meta-sep">·</span>
+            <span class="doc-meta-muted">{{ new Date(doc.created_at).toLocaleDateString('zh-CN') }}</span>
           </div>
         </NCard>
       </div>
@@ -286,20 +354,57 @@ function formatSize(bytes: number) {
 
     <!-- Chunks Modal -->
     <NModal v-model:show="showChunks" title="分块预览" style="max-width: 95vw; width: 800px">
-      <NSpin :show="chunksLoading">
-        <div class="chunks-modal">
+      <div class="chunks-modal">
+        <NInput
+          v-if="chunks.length > 0"
+          v-model:value="chunkSearch"
+          placeholder="搜索分块内容…"
+          size="small"
+          clearable
+          @update:value="chunkPage = 1"
+          style="margin-bottom:12px"
+        >
+          <template #prefix><NIcon size="15"><Search /></NIcon></template>
+        </NInput>
+
+        <NSpin :show="chunksLoading">
           <NEmpty v-if="!chunksLoading && chunks.length === 0" description="暂无分块数据" />
-          <NCard v-for="c in chunks" :key="c.id" size="small" class="chunk-card">
-            <div class="chunk-meta">
-              <NTag size="tiny">#{{ c.chunk_index }}</NTag>
-              <NTag size="tiny" v-if="c.heading">{{ c.heading }}</NTag>
-              <span>{{ c.token_count }} tokens</span>
+          <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" description="无匹配的分块" />
+
+          <div v-if="filteredChunks.length > 0">
+            <div class="chunk-count">共 {{ filteredChunks.length }} 个分块</div>
+            <NCard v-for="c in paginatedChunks" :key="c.id" size="small" class="chunk-card">
+              <div class="chunk-meta">
+                <NTag size="tiny">#{{ c.chunk_index }}</NTag>
+                <NTag size="tiny" v-if="c.heading">{{ c.heading }}</NTag>
+                <span class="chunk-meta-tokens">{{ c.token_count }} tokens</span>
+              </div>
+              <div
+                :class="['chunk-content', { expanded: expandedChunks.has(c.id) }]"
+                @click="toggleChunkExpand(c.id)"
+                role="button"
+                tabindex="0"
+                :aria-expanded="expandedChunks.has(c.id)"
+                @keydown.enter.prevent="toggleChunkExpand(c.id)"
+                @keydown.space.prevent="toggleChunkExpand(c.id)"
+              >
+                <p>{{ c.content }}</p>
+              </div>
+              <NButton text size="tiny" class="chunk-expand-btn" @click="toggleChunkExpand(c.id)">
+                {{ expandedChunks.has(c.id) ? '收起' : '展开' }}
+              </NButton>
+            </NCard>
+
+            <div v-if="totalChunkPages > 1" class="chunk-pagination">
+              <NButton size="tiny" :disabled="chunkPage <= 1" @click="chunkPage--">上一页</NButton>
+              <span class="chunk-page-indicator">{{ chunkPage }} / {{ totalChunkPages }}</span>
+              <NButton size="tiny" :disabled="chunkPage >= totalChunkPages" @click="chunkPage++">下一页</NButton>
             </div>
-            <p class="chunk-content">{{ c.content }}</p>
-          </NCard>
-          <NButton @click="showChunks = false">关闭</NButton>
-        </div>
-      </NSpin>
+          </div>
+
+          <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
+        </NSpin>
+      </div>
     </NModal>
   </div>
 </template>
@@ -323,20 +428,122 @@ function formatSize(bytes: number) {
 
 /* Doc list */
 .dm-list { display: flex; flex-direction: column; gap: 8px; }
-.dm-card-row { display: flex; flex-direction: column; gap: 6px; }
-.dm-card-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dm-card-name { font-weight: 500; }
-.dm-card-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--color-text-muted); }
-.dm-kb-tags { color: var(--color-primary); }
-.dm-kb-tags.muted { color: var(--color-text-muted); }
-.dm-card-actions { display: flex; gap: 8px; }
-.dm-date { color: var(--color-text-muted); }
+.dm-card { transition: box-shadow .2s, border-color .2s; }
+.dm-card:hover { box-shadow: var(--shadow-sm); }
+.dm-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
+
+.doc-row-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.doc-name-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.doc-type-icon { font-size: 1.1rem; flex-shrink: 0; line-height: 1; }
+.doc-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+.doc-error-tag { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+.doc-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.doc-progress-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+  text-align: right;
+  flex-shrink: 0;
+}
+.doc-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.doc-meta-label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.doc-meta-sep {
+  color: var(--color-border);
+  margin: 0 2px;
+}
+.doc-meta-muted { color: var(--color-text-muted); }
+.doc-kb-link { color: var(--color-primary); }
 
 .dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
 
 /* Chunks */
-.chunks-modal { max-height: 60vh; overflow-y: auto; }
+.chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
+.chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
 .chunk-card { margin-bottom: 8px; }
+.chunk-card:last-of-type { margin-bottom: 0; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-.chunk-content { white-space: pre-wrap; word-break: break-word; font-size: var(--text-sm); line-height: 1.6; max-height: 200px; overflow-y: auto; }
+.chunk-meta-tokens { font-size: var(--text-xs); color: var(--color-text-muted); }
+.chunk-content {
+  cursor: pointer;
+  position: relative;
+}
+.chunk-content:not(.expanded) p {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.chunk-content.expanded p {
+  display: block;
+}
+.chunk-content p {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.chunk-content:not(.expanded)::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: linear-gradient(transparent, var(--color-surface));
+  pointer-events: none;
+}
+.chunk-expand-btn {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+}
+
+.chunk-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.chunk-page-indicator {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 4em;
+  text-align: center;
+}
 </style>
