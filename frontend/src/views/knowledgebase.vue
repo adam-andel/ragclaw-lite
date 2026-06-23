@@ -1,11 +1,11 @@
 ﻿<script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty,
   NPopconfirm, NIcon, NSelect, NSpin, NProgress, NDataTable,
   NCheckbox, useMessage,
 } from 'naive-ui'
-import { Add, Trash, People, Create, Search } from '@vicons/ionicons5'
+import { Add, Trash, People, Create, Search, Filter } from '@vicons/ionicons5'
 import {
   listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase,
   updateKnowledgeBase, listKBDocuments, addDocumentsToKB,
@@ -51,6 +51,41 @@ const availableSearch = ref('')
 const availableStatus = ref<string | null>(null)
 const availableType = ref<string | null>(null)
 const linkingDocs = ref(false)
+
+// KB search & sort
+const kbSearch = ref('')
+const kbSortBy = ref<'name' | 'doc_count' | 'recent'>('recent')
+
+const kbSortOptions = [
+  { label: '最近更新', value: 'recent' },
+  { label: '名称', value: 'name' },
+  { label: '文档数量', value: 'doc_count' },
+]
+
+const filteredKbs = computed(() => {
+  let list = [...kbs.value]
+  // filter by search
+  if (kbSearch.value.trim()) {
+    const q = kbSearch.value.trim().toLowerCase()
+    list = list.filter(kb =>
+      kb.name.toLowerCase().includes(q) ||
+      (kb.description && kb.description.toLowerCase().includes(q))
+    )
+  }
+  // sort
+  list.sort((a, b) => {
+    switch (kbSortBy.value) {
+      case 'name':
+        return a.name.localeCompare(b.name, 'zh-CN')
+      case 'doc_count':
+        return b.doc_count - a.doc_count
+      case 'recent':
+      default:
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    }
+  })
+  return list
+})
 
 onMounted(() => loadKBs())
 
@@ -170,6 +205,10 @@ watch(selectedKbId, (newId, oldId) => {
       }
     }, 3000)
   }
+})
+
+onUnmounted(() => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 })
 
 // ── Select Documents Modal ──
@@ -343,30 +382,53 @@ function formatSize(bytes: number) {
     <div class="kb-body">
       <!-- KB List -->
       <div class="kb-list" role="list" aria-label="知识库列表">
-        <NSpin :show="loadingKbs" v-if="loadingKbs || kbs.length === 0" />
-        <NEmpty v-if="!loadingKbs && kbs.length === 0" description="暂无知识库" />
-        <NCard
-          v-for="kb in kbs" :key="kb.id"
-          :class="['kb-card', { active: kb.id === selectedKbId }]"
-          size="small" role="button" tabindex="0"
-          :aria-selected="kb.id === selectedKbId"
-          :aria-label="`知识库：${kb.name}`"
-          @click="selectKb(kb.id)"
-          @keydown.enter.prevent="selectKb(kb.id)"
-          @keydown.space.prevent="selectKb(kb.id)"
-        >
-          <div class="kb-card-header">
-            <strong class="kb-card-name">{{ kb.name }}</strong>
-            <NButton text size="tiny" @click="openRename(kb, $event)" title="改名">
-              <template #icon><NIcon size="14"><Create /></NIcon></template>
-            </NButton>
-          </div>
-          <div v-if="kb.description" class="kb-card-desc">{{ kb.description }}</div>
-          <div class="kb-card-meta">
-            <span class="kb-card-stat">📄 {{ kb.doc_count }}</span>
-            <span class="kb-card-stat">🧬 {{ kb.vector_count }}</span>
-          </div>
-        </NCard>
+        <!-- Search & sort bar -->
+        <!-- Search & sort bar -->
+        <div v-if="!loadingKbs && kbs.length > 0" class="kb-list-toolbar">
+          <NInput
+            v-model:value="kbSearch"
+            placeholder="搜索知识库…"
+            size="small"
+            clearable
+          >
+            <template #prefix><NIcon size="16"><Search /></NIcon></template>
+          </NInput>
+          <NSelect
+            v-model:value="kbSortBy"
+            :options="kbSortOptions"
+            size="small"
+            style="width:100%"
+          />
+        </div>
+
+        <!-- Card list (scrollable) -->
+        <div class="kb-cards">
+          <NSpin :show="loadingKbs" v-if="loadingKbs || kbs.length === 0" />
+          <NEmpty v-if="!loadingKbs && kbs.length === 0" description="暂无知识库" />
+          <NEmpty v-if="!loadingKbs && kbs.length > 0 && filteredKbs.length === 0" description="无匹配的知识库" />
+          <NCard
+            v-for="kb in filteredKbs" :key="kb.id"
+            :class="['kb-card', { active: kb.id === selectedKbId }]"
+            size="small" role="button" tabindex="0"
+            :aria-selected="kb.id === selectedKbId"
+            :aria-label="`知识库：${kb.name}`"
+            @click="selectKb(kb.id)"
+            @keydown.enter.prevent="selectKb(kb.id)"
+            @keydown.space.prevent="selectKb(kb.id)"
+          >
+            <div class="kb-card-header">
+              <strong class="kb-card-name">{{ kb.name }}</strong>
+              <NButton text size="tiny" @click="openRename(kb, $event)" title="改名">
+                <template #icon><NIcon size="14"><Create /></NIcon></template>
+              </NButton>
+            </div>
+            <div v-if="kb.description" class="kb-card-desc">{{ kb.description }}</div>
+            <div class="kb-card-meta">
+              <span class="kb-card-stat">📄 {{ kb.doc_count }}</span>
+              <span class="kb-card-stat">🧬 {{ kb.vector_count }}</span>
+            </div>
+          </NCard>
+        </div>
       </div>
 
       <!-- Documents -->
@@ -553,7 +615,9 @@ function formatSize(bytes: number) {
 .kb-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
 .kb-header h2 { font-size: 1.25rem; }
 .kb-body { display: flex; gap: 24px; flex: 1; overflow: hidden; padding-top: 16px; }
-.kb-list { width: 220px; overflow-y: auto; flex-shrink: 0; }
+.kb-list { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.kb-list-toolbar { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); margin-bottom: 8px; flex-shrink: 0; }
+.kb-cards { flex: 1; overflow-y: auto; min-height: 0; }
 .kb-docs { flex: 1; overflow-y: auto; }
 
 /* KB Card */
@@ -610,8 +674,12 @@ function formatSize(bytes: number) {
 /* Responsive */
 @media (max-width: 767px) {
   .kb-body { flex-direction: column; }
-  .kb-list { width: 100%; max-height: 160px; display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; padding-bottom: 4px; }
-  .kb-list :deep(.n-card) { min-width: 160px; flex-shrink: 0; margin-bottom: 0; }
+  .kb-list { width: 100%; max-height: none; flex-shrink: 0; }
+  .kb-list-toolbar { flex-direction: row; gap: 8px; padding-bottom: 10px; }
+  .kb-list-toolbar :deep(.n-input) { flex: 1; min-width: 0; }
+  .kb-list-toolbar :deep(.n-base-selection) { width: 120px; flex-shrink: 0; }
+  .kb-cards { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; flex: none; }
+  .kb-cards :deep(.n-card) { min-width: 160px; flex-shrink: 0; margin-bottom: 0; }
   .kb-docs { flex: 1; overflow-y: auto; }
   .docs-header { flex-direction: column; align-items: flex-start; }
 }
