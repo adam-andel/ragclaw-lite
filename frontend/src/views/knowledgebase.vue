@@ -333,6 +333,58 @@ async function removeKbUser(uid: string) {
   }
 }
 
+// ── Doc search, sort & filter ──
+
+const docSearch = ref('')
+const docSortBy = ref<'name' | 'date' | 'size' | 'status'>('date')
+const docStatusFilter = ref<string | null>(null)
+
+const docSortOptions = [
+  { label: '最近添加', value: 'date' },
+  { label: '文件名', value: 'name' },
+  { label: '文件大小', value: 'size' },
+  { label: '状态', value: 'status' },
+]
+
+const docStatusFilterOptions = [
+  { label: '全部状态', value: null },
+  { label: '已完成', value: 'completed' },
+  { label: '处理中', value: 'processing' },
+  { label: '失败', value: 'failed' },
+]
+
+const filteredDocs = computed(() => {
+  let list = [...documents.value]
+  // filter by search
+  if (docSearch.value.trim()) {
+    const q = docSearch.value.trim().toLowerCase()
+    list = list.filter(d => d.filename.toLowerCase().includes(q))
+  }
+  // filter by status
+  if (docStatusFilter.value) {
+    if (docStatusFilter.value === 'processing') {
+      list = list.filter(d => processingStatuses.includes(d.status))
+    } else {
+      list = list.filter(d => d.status === docStatusFilter.value)
+    }
+  }
+  // sort
+  list.sort((a, b) => {
+    switch (docSortBy.value) {
+      case 'name':
+        return a.filename.localeCompare(b.filename, 'zh-CN')
+      case 'size':
+        return b.file_size - a.file_size
+      case 'status':
+        return a.status.localeCompare(b.status)
+      case 'date':
+      default:
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    }
+  })
+  return list
+})
+
 // ── Helpers ──
 
 const selectedKb = computed(() => kbs.value.find(k => k.id === selectedKbId.value))
@@ -459,7 +511,7 @@ function isProcessing(status: string) {
         </div>
         <template v-else>
           <div class="docs-header">
-            <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档 ({{ documents.length }})</h3>
+            <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档 ({{ filteredDocs.length }}{{ docSearch || docStatusFilter ? ` / ${documents.length}` : '' }})</h3>
             <NSpace>
               <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKbId)">
                 <template #icon><NIcon><People /></NIcon></template>
@@ -481,9 +533,35 @@ function isProcessing(status: string) {
             </NSpace>
           </div>
 
+          <!-- Doc filter bar -->
+          <div v-if="documents.length > 0" class="docs-filter">
+            <NInput
+              v-model:value="docSearch"
+              placeholder="搜索文档名…"
+              size="small"
+              clearable
+              style="flex:1; min-width:160px"
+            >
+              <template #prefix><NIcon size="15"><Search /></NIcon></template>
+            </NInput>
+            <NSelect
+              v-model:value="docStatusFilter"
+              :options="docStatusFilterOptions"
+              size="small"
+              style="width:110px"
+            />
+            <NSelect
+              v-model:value="docSortBy"
+              :options="docSortOptions"
+              size="small"
+              style="width:110px"
+            />
+          </div>
+
           <NSpin :show="loadingDocs">
             <NEmpty v-if="!loadingDocs && documents.length === 0" description="暂无文档，点击「选择文档」添加" />
-            <NCard v-for="doc in documents" :key="doc.id" size="small" class="doc-card"
+            <NEmpty v-if="!loadingDocs && documents.length > 0 && filteredDocs.length === 0" description="无匹配的文档" />
+            <NCard v-for="doc in filteredDocs" :key="doc.id" size="small" class="doc-card"
               tabindex="0" role="listitem"
               :aria-label="`文档：${doc.filename}，状态：${statusLabels[doc.status] || doc.status}`"
             >
@@ -674,7 +752,14 @@ function isProcessing(status: string) {
 .kb-card-stat { font-size: 0.65rem; color: var(--color-text-muted); }
 
 /* Docs */
-.docs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+.docs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+.docs-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.docs-filter :deep(.n-input) { flex: 1; min-width: 140px; }
 .doc-card { margin-bottom: 8px; transition: box-shadow .2s, border-color .2s; }
 .doc-card:hover { box-shadow: var(--shadow-sm); }
 .doc-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
@@ -777,5 +862,7 @@ function isProcessing(status: string) {
   .kb-cards :deep(.n-card) { min-width: 160px; flex-shrink: 0; margin-bottom: 0; }
   .kb-docs { flex: 1; overflow-y: auto; }
   .docs-header { flex-direction: column; align-items: flex-start; }
+  .docs-filter { flex-direction: column; }
+  .docs-filter :deep(.n-base-selection) { width: 100% !important; }
 }
 </style>
