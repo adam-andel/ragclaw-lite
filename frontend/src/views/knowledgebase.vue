@@ -5,7 +5,7 @@ import {
   NPopconfirm, NIcon, NSelect, NSpin, NProgress, NDataTable,
   NCheckbox, useMessage,
 } from 'naive-ui'
-import { Add, Trash, People, Create, Search, Filter } from '@vicons/ionicons5'
+import { Add, Trash, People, Create, Search, Library } from '@vicons/ionicons5'
 import {
   listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase,
   updateKnowledgeBase, listKBDocuments, addDocumentsToKB,
@@ -448,7 +448,11 @@ function isProcessing(status: string) {
 <template>
   <div class="kb-view">
     <div class="kb-header">
-      <h2>🗂️ 知识库管理</h2>
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><Library /></NIcon>
+        <h2>知识库</h2>
+        <span v-if="kbs.length > 0" class="kb-header-badge">{{ kbs.length }}</span>
+      </div>
       <NButton type="primary" size="small" @click="showCreateKb = true">
         <template #icon><NIcon><Add /></NIcon></template>
         新建知识库
@@ -493,14 +497,14 @@ function isProcessing(status: string) {
           >
             <div class="kb-card-header">
               <strong class="kb-card-name">{{ kb.name }}</strong>
-              <NButton text size="tiny" @click="openRename(kb, $event)" title="改名">
+              <NButton text size="tiny" class="kb-card-rename" @click="openRename(kb, $event)" title="改名">
                 <template #icon><NIcon size="14"><Create /></NIcon></template>
               </NButton>
             </div>
             <div v-if="kb.description" class="kb-card-desc">{{ kb.description }}</div>
             <div class="kb-card-meta">
-              <span class="kb-card-stat">📄 {{ kb.doc_count }}</span>
-              <span class="kb-card-stat">🧬 {{ kb.vector_count }}</span>
+              <span class="kb-pill">📄 {{ kb.doc_count }} 文档</span>
+              <span class="kb-pill">🧬 {{ kb.vector_count }} 向量</span>
             </div>
           </NCard>
         </div>
@@ -508,7 +512,8 @@ function isProcessing(status: string) {
 
       <!-- Documents -->
       <div class="kb-docs">
-        <div v-if="!selectedKbId" class="empty-hint">
+        <Transition name="doc-panel" mode="out-in">
+          <div v-if="!selectedKbId" key="empty" class="empty-hint">
           <NEmpty description="选择一个知识库查看文档" />
           <div class="empty-guide">
             <div class="empty-guide-title">📚 快速开始</div>
@@ -540,9 +545,12 @@ function isProcessing(status: string) {
             </div>
           </div>
         </div>
-        <template v-else>
+        <div v-else key="docs">
           <div class="docs-header">
-            <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档 ({{ filteredDocs.length }}{{ docSearch || docStatusFilter ? ` / ${documents.length}` : '' }})</h3>
+            <div class="docs-header-title">
+              <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档 ({{ filteredDocs.length }}{{ docSearch || docStatusFilter ? ` / ${documents.length}` : '' }})</h3>
+              <span v-if="selectedKb?.description" class="docs-header-desc">{{ selectedKb.description }}</span>
+            </div>
             <NSpace>
               <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKbId)">
                 <template #icon><NIcon><People /></NIcon></template>
@@ -598,7 +606,8 @@ function isProcessing(status: string) {
               </NButton>
             </div>
             <NEmpty v-if="!loadingDocs && documents.length > 0 && filteredDocs.length === 0" description="无匹配的文档" />
-            <NCard v-for="doc in filteredDocs" :key="doc.id" size="small" class="doc-card"
+            <TransitionGroup name="doc-list" tag="div" class="doc-list-wrapper">
+              <NCard v-for="doc in filteredDocs" :key="doc.id" size="small" class="doc-card"
               tabindex="0" role="listitem"
               :aria-label="`文档：${doc.filename}，状态：${statusLabels[doc.status] || doc.status}`"
             >
@@ -648,9 +657,11 @@ function isProcessing(status: string) {
                   <span>{{ doc.chunk_count }} 分块</span>
                 </template>
               </div>
-            </NCard>
+              </NCard>
+            </TransitionGroup>
           </NSpin>
-        </template>
+        </div>
+        </Transition>
       </div>
     </div>
 
@@ -781,26 +792,114 @@ function isProcessing(status: string) {
 </template>
 <style scoped>
 .kb-view { display: flex; flex-direction: column; height: 100%; }
-.kb-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
-.kb-header h2 { font-size: 1.25rem; }
-.kb-body { display: flex; gap: 24px; flex: 1; overflow: hidden; padding-top: 16px; }
+.kb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.kb-header-title { display: flex; align-items: center; gap: 10px; }
+.kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
+.kb-header-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+}
+
+/* ── Transitions ── */
+
+/* KB panel cross-fade + slide */
+.doc-panel-enter-active,
+.doc-panel-leave-active {
+  transition: opacity .2s ease, transform .2s ease;
+}
+.doc-panel-enter-from {
+  opacity: 0;
+  transform: translateX(12px);
+}
+.doc-panel-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+/* Document card stagger */
+.doc-list-move,
+.doc-list-enter-active,
+.doc-list-leave-active {
+  transition: all .3s ease;
+}
+.doc-list-enter-from,
+.doc-list-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.doc-list-leave-active {
+  position: absolute;
+}
+.doc-list-wrapper {
+  position: relative;
+}
+.kb-body { display: flex; gap: 24px; flex: 1; overflow: hidden; }
 .kb-list { width: 220px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .kb-list-toolbar { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); margin-bottom: 8px; flex-shrink: 0; }
 .kb-cards { flex: 1; overflow-y: auto; min-height: 0; }
 .kb-docs { flex: 1; overflow-y: auto; }
 
 /* KB Card */
-.kb-card { margin-bottom: 8px; cursor: pointer; transition: border-color .2s; user-select: none; }
+.kb-card {
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+  user-select: none;
+  border-left: 3px solid transparent;
+}
+.kb-card:hover { box-shadow: var(--shadow-sm); }
 .kb-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; border-radius: var(--radius); }
-.kb-card.active { border-color: var(--color-primary); }
-.kb-card-header { display: flex; justify-content: space-between; align-items: center; }
-.kb-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-card.active {
+  border-color: var(--color-primary);
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: var(--shadow-sm);
+}
+.kb-card-header { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.kb-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.kb-card-rename { opacity: 0; transition: opacity .15s; flex-shrink: 0; }
+.kb-card:hover .kb-card-rename { opacity: 1; }
+.kb-card.active .kb-card-rename { opacity: 1; }
 .kb-card-desc { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-card-meta { margin-top: 6px; display: flex; gap: 8px; }
-.kb-card-stat { font-size: 0.65rem; color: var(--color-text-muted); }
+.kb-card-meta { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.kb-pill {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+}
 
 /* Docs */
-.docs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+.docs-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; }
+.docs-header-title { flex: 1; min-width: 0; }
+.docs-header-title h3 { font-size: var(--text-lg); }
+.docs-header-desc {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .docs-filter {
   display: flex;
   gap: 8px;
