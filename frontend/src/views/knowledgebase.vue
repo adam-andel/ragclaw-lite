@@ -368,6 +368,28 @@ function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
+
+// File type → icon + color
+const fileTypeConfig: Record<string, { icon: string; color: string; label: string }> = {
+  pdf: { icon: '📕', color: '#ef4444', label: 'PDF' },
+  docx: { icon: '📘', color: '#3b82f6', label: 'Word' },
+  doc: { icon: '📘', color: '#3b82f6', label: 'Word' },
+  md: { icon: '📗', color: '#22c55e', label: 'MD' },
+  txt: { icon: '📄', color: '#64748b', label: 'TXT' },
+  csv: { icon: '📊', color: '#f59e0b', label: 'CSV' },
+  pptx: { icon: '📙', color: '#f97316', label: 'PPT' },
+  xlsx: { icon: '📈', color: '#22c55e', label: 'Excel' },
+}
+
+function getFileTypeConfig(ext: string) {
+  return fileTypeConfig[ext.toLowerCase()] || { icon: '📄', color: '#64748b', label: ext.toUpperCase() }
+}
+
+const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
+
+function isProcessing(status: string) {
+  return processingStatuses.includes(status)
+}
 </script>
 <template>
   <div class="kb-view">
@@ -382,7 +404,6 @@ function formatSize(bytes: number) {
     <div class="kb-body">
       <!-- KB List -->
       <div class="kb-list" role="list" aria-label="知识库列表">
-        <!-- Search & sort bar -->
         <!-- Search & sort bar -->
         <div v-if="!loadingKbs && kbs.length > 0" class="kb-list-toolbar">
           <NInput
@@ -466,29 +487,51 @@ function formatSize(bytes: number) {
               tabindex="0" role="listitem"
               :aria-label="`文档：${doc.filename}，状态：${statusLabels[doc.status] || doc.status}`"
             >
-              <div class="doc-info">
-                <span class="doc-name">📄 {{ doc.filename }}</span>
-                <NSpace size="small">
+              <!-- Row 1: file icon + name + status + actions -->
+              <div class="doc-row-top">
+                <div class="doc-name-group">
+                  <span class="doc-type-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
+                    {{ getFileTypeConfig(doc.file_type).icon }}
+                  </span>
+                  <span class="doc-name">{{ doc.filename }}</span>
                   <NTag :type="statusColors[doc.status] as any" size="small">
                     {{ statusLabels[doc.status] || doc.status }}
                   </NTag>
-                  <NProgress
-                    v-if="['pending','parsing','chunking','embedding'].includes(doc.status)"
-                    type="line" :percentage="doc.progress" :height="16"
-                    :border-radius="3" style="width:80px"
-                  />
-                  <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
-                  <NTag size="small" v-if="doc.chunk_count > 0">{{ doc.chunk_count }} 分块</NTag>
-                </NSpace>
+                  <NTag v-if="doc.status === 'failed' && doc.error_message" size="small" type="error" class="doc-error-tag">
+                    {{ doc.error_message }}
+                  </NTag>
+                </div>
+                <div class="doc-actions">
+                  <NButton text size="tiny" @click="showChunks(doc.id)">查看分块</NButton>
+                  <NPopconfirm @positive-click="handleRemoveDoc(doc.id)">
+                    <template #trigger>
+                      <NButton text size="tiny" type="warning">移除</NButton>
+                    </template>
+                    从知识库移除「{{ doc.filename }}」？（文档本身不会被删除）
+                  </NPopconfirm>
+                </div>
               </div>
-              <div class="doc-actions">
-                <NButton text size="tiny" @click="showChunks(doc.id)">查看分块</NButton>
-                <NPopconfirm @positive-click="handleRemoveDoc(doc.id)">
-                  <template #trigger>
-                    <NButton text size="tiny" type="warning">移除</NButton>
-                  </template>
-                  从知识库移除「{{ doc.filename }}」？（文档本身不会被删除）
-                </NPopconfirm>
+              <!-- Row 2: progress bar (processing) or metadata (completed/failed) -->
+              <div v-if="isProcessing(doc.status)" class="doc-row-bottom">
+                <NProgress
+                  type="line"
+                  :percentage="doc.progress"
+                  :height="6"
+                  :border-radius="3"
+                  :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#4f6ef7'"
+                  :rail-color="'var(--color-border)'"
+                  style="flex:1; min-width:100px"
+                />
+                <span class="doc-progress-text">{{ doc.progress }}%</span>
+              </div>
+              <div v-else class="doc-row-bottom doc-meta">
+                <span class="doc-meta-label">{{ getFileTypeConfig(doc.file_type).label }}</span>
+                <span class="doc-meta-sep">·</span>
+                <span>{{ formatSize(doc.file_size) }}</span>
+                <template v-if="doc.chunk_count > 0">
+                  <span class="doc-meta-sep">·</span>
+                  <span>{{ doc.chunk_count }} 分块</span>
+                </template>
               </div>
             </NCard>
           </NSpin>
@@ -632,11 +675,63 @@ function formatSize(bytes: number) {
 
 /* Docs */
 .docs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-.doc-card { margin-bottom: 8px; }
+.doc-card { margin-bottom: 8px; transition: box-shadow .2s, border-color .2s; }
+.doc-card:hover { box-shadow: var(--shadow-sm); }
 .doc-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
-.doc-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.doc-name { font-weight: 500; }
-.doc-actions { display: flex; gap: 8px; margin-top: 6px; }
+
+.doc-row-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.doc-name-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.doc-type-icon { font-size: 1.1rem; flex-shrink: 0; line-height: 1; }
+.doc-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+.doc-error-tag { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+.doc-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.doc-progress-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+  text-align: right;
+  flex-shrink: 0;
+}
+.doc-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.doc-meta-label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.doc-meta-sep {
+  color: var(--color-border);
+  margin: 0 2px;
+}
+
 .empty-hint { display: flex; align-items: center; justify-content: center; height: 100%; }
 
 /* Chunks Modal */
