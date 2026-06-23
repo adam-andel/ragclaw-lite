@@ -49,6 +49,8 @@ const kbHasMore = computed(() => kbs.value.length > 3)
 
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
+const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
+
 function selectAndClose(convId: string) {
   emptyMode.value = ''
   showMoreConv.value = false
@@ -303,6 +305,19 @@ function handleKeydown(e: KeyboardEvent) {
             </NSpace>
           </div>
         </div>
+      </div>
+
+      <!-- KB selected, ready to chat -->
+      <div v-else-if="messages.length === 0 && !conversationId && selectedKbId" class="empty-state">
+        <template v-if="selectedKb">
+          <div class="empty-icon">🧠</div>
+          <h3>{{ selectedKb.name }}</h3>
+          <p v-if="selectedKb.description">{{ selectedKb.description }}</p>
+          <p v-else>在下方输入问题开始对话</p>
+          <div class="center-panel-actions" style="margin-top:12px; gap:4px; justify-content:center">
+            <NButton size="small" @click="emptyMode = 'kb'">更换知识库</NButton>
+          </div>
+        </template>
       </div>
 
       <!-- Fallback empty: no conversation, picker not yet opened -->
