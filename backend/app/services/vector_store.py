@@ -35,6 +35,7 @@ class VectorStore:
         )
 
     def add_chunks(self, kb_id: str, chunks: list[dict]):
+        """Add chunks with fresh embedding computation."""
         if not chunks:
             return
         with self._lock:
@@ -53,6 +54,29 @@ class VectorStore:
             try:
                 collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
                 print(f"[ChromaDB] add {len(ids)} vectors to kb={kb_id[:8]}, cnt={collection.count()}", flush=True)
+            except Exception as e:
+                raise RuntimeError(f"[chromadb_add] {e}") from e
+
+    def add_chunks_cached(self, kb_id: str, chunks: list[dict]):
+        """Add chunks using pre-computed embeddings (no model call).
+
+        Each chunk dict must include an 'embedding' key with a list[float].
+        """
+        if not chunks:
+            return
+        with self._lock:
+            collection = self.get_or_create_collection(kb_id)
+            ids = [c["id"] for c in chunks]
+            texts = [c["content"] for c in chunks]
+            embeddings = [c["embedding"] for c in chunks]
+            metadatas = [{
+                "doc_id": c.get("doc_id", ""), "chunk_index": c.get("chunk_index", 0),
+                "heading": c.get("heading", ""), "page": c.get("page") or 0,
+                "token_count": c.get("token_count", 0), "filename": c.get("filename", ""),
+            } for c in chunks]
+            try:
+                collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
+                print(f"[ChromaDB] add {len(ids)} cached vectors to kb={kb_id[:8]}, cnt={collection.count()}", flush=True)
             except Exception as e:
                 raise RuntimeError(f"[chromadb_add] {e}") from e
 

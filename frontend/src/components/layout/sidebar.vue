@@ -29,6 +29,7 @@ const menuOptions = computed<MenuOption[]>(() => {
   return [
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
+    { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
     { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
@@ -39,6 +40,7 @@ const selectedKey = computed(() => {
   const path = route.path
   if (path.startsWith('/chat')) return '/chat'
   if (path.startsWith('/knowledge')) return '/knowledge'
+  if (path.startsWith('/documents')) return '/documents'
   return path
 })
 

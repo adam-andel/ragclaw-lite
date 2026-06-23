@@ -33,6 +33,12 @@ const router = createRouter({
       meta: { title: '知识库', requiresAuth: true },
     },
     {
+      path: '/documents',
+      name: 'documents',
+      component: () => import('@/views/DocumentManage.vue'),
+      meta: { title: '文档管理', requiresAuth: true },
+    },
+    {
       path: '/debug',
       name: 'debug',
       component: () => import('@/views/DebugView.vue'),

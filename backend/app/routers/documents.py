@@ -1,24 +1,24 @@
-"""Document upload & management API routes — protected with auth."""
+﻿"""Document upload & management API routes — many-to-many refactor."""
 
 import asyncio
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.config import settings
-from app.models.document import Document, Chunk, DocStatus
-from app.models.knowledge_base import KnowledgeBase
+from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.user import User
-from app.schemas.document import DocumentResponse, DocumentStatusResponse, ChunkResponse
+from app.schemas.document import (
+    DocumentResponse, DocumentStatusResponse, ChunkResponse,
+    DocumentListResponse,
+)
 from app.services.auth import get_current_user, get_current_staff
 from app.services.parser import parser_service
-from app.services.chunker import chunker_service
-from app.services.vector_store import vector_store
-from app.services.bm25_index import bm25_index
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
@@ -27,146 +27,194 @@ def _gen_id() -> str:
     return str(uuid.uuid4())
 
 
-def _check_kb_access(user: User, kb: KnowledgeBase):
-    if user.role.value not in ("admin", "moderator") and kb.owner_id != user.id:
-        raise HTTPException(403, "无权操作该知识库")
+def _status_str(doc: Document) -> str:
+    return doc.status.value if hasattr(doc.status, "value") else doc.status
 
+
+def _model_to_response(doc: Document, kb_ids: list[str] | None = None) -> DocumentResponse:
+    return DocumentResponse(
+        id=doc.id, kb_id=doc.kb_id, filename=doc.filename,
+        file_type=doc.file_type, file_size=doc.file_size,
+        status=_status_str(doc), error_message=doc.error_message,
+        chunk_count=doc.chunk_count or 0, progress=doc.progress or 0,
+        owner_id=doc.owner_id, kb_ids=kb_ids or [],
+        created_at=doc.created_at or datetime.utcnow(),
+        updated_at=doc.updated_at or datetime.utcnow(),
+    )
+
+
+async def _get_doc_kb_ids(doc_id: str, db: AsyncSession) -> list[str]:
+    result = await db.execute(
+        select(KBDocument.kb_id).where(KBDocument.doc_id == doc_id)
+    )
+    return [row[0] for row in result.all()]
+
+
+# ---- Upload (single file, no KB binding) ----
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    kb_id: str = Form(...),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower().lstrip(".")
     if ext not in parser_service.supported_types():
-        raise HTTPException(400, f"Unsupported: .{ext}")
-
-    # Verify KB ownership
-    kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-    kb = kb_result.scalar_one_or_none()
-    if not kb:
-        raise HTTPException(404, "知识库不存在")
-    _check_kb_access(current_user, kb)
+        raise HTTPException(400, f"不支持的文件类型: .{ext}")
 
     doc_id = _gen_id()
-    safe_filename = Path(filename).name
-    saved_path = settings.upload_dir / f"{doc_id}_{safe_filename}"
+    saved_path = settings.upload_dir / f"{doc_id}_{Path(filename).name}"
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
 
     content = await file.read()
     saved_path.write_bytes(content)
-    file_size = len(content)
 
     doc = Document(
-        id=doc_id, kb_id=kb_id, filename=filename, file_type=ext,
-        file_size=file_size, file_path=str(saved_path), status=DocStatus.PARSING,
+        id=doc_id, filename=filename, file_type=ext,
+        file_size=len(content), file_path=str(saved_path),
+        status=DocStatus.PENDING, progress=0,
+        owner_id=current_user.id, tenant_id=current_user.tenant_id,
     )
     db.add(doc)
     await db.commit()
+    await db.refresh(doc)
 
-    error_step = ""
-    chunk_objs = []
+    # Auto-trigger async processing
+    from app.services.doc_processor import process_document
+    asyncio.create_task(process_document(doc.id))
 
-    try:
-        error_step = "parse"
-        parsed = parser_service.parse(saved_path, ext)
+    return _model_to_response(doc)
+# ---- Upload (batch) ----
 
-        error_step = "chunk"
-        doc.status = DocStatus.CHUNKING
-        await db.commit()
-        raw_chunks = chunker_service.chunk(parsed)
+@router.post("/upload/batch", response_model=list[DocumentResponse])
+async def upload_documents_batch(
+    files: list[UploadFile] = File(...),
+    current_user: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    if not files:
+        raise HTTPException(400, "请选择至少一个文件")
+    if len(files) > 20:
+        raise HTTPException(400, "单次最多上传 20 个文件")
 
-        error_step = "save_chunks"
-        chunk_dicts_for_vector = []
-        for i, rc in enumerate(raw_chunks):
-            cid = _gen_id()
-            chunk_obj = Chunk(
-                id=cid, doc_id=doc_id, chunk_index=i,
-                content=rc["content"], token_count=rc.get("token_count", 0),
-                heading=rc.get("heading"), page=rc.get("page"),
-            )
-            chunk_objs.append(chunk_obj)
-            chunk_dicts_for_vector.append({
-                "id": cid, "content": rc["content"],
-                "token_count": rc.get("token_count", 0),
-                "heading": rc.get("heading", ""), "page": rc.get("page"),
-                "chunk_index": i, "doc_id": doc_id,
-                "filename": filename,
-            })
+    results = []
+    for file in files:
+        filename = file.filename or "unknown"
+        ext = Path(filename).suffix.lower().lstrip(".")
+        if ext not in parser_service.supported_types():
+            results.append(DocumentResponse(
+                id="", filename=filename, file_type=ext, file_size=0,
+                status="skipped", progress=0, error_message=f"不支持的类型: .{ext}",
+                chunk_count=0, kb_ids=[], kb_id=None,
+                created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+                owner_id=None,
+            ))
+            continue
 
-        for co in chunk_objs:
-            db.add(co)
-        await db.commit()
+        doc_id = _gen_id()
+        saved_path = settings.upload_dir / f"{doc_id}_{Path(filename).name}"
+        content = await file.read()
+        saved_path.write_bytes(content)
 
-        error_step = "embedding"
-        doc.status = DocStatus.EMBEDDING
-        await db.commit()
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, vector_store.add_chunks, kb_id, chunk_dicts_for_vector)
+        doc = Document(
+            id=doc_id, filename=filename, file_type=ext,
+            file_size=len(content), file_path=str(saved_path),
+            status=DocStatus.PENDING, progress=0,
+            owner_id=current_user.id, tenant_id=current_user.tenant_id,
+        )
+        db.add(doc)
+        await db.flush()
+        results.append(_model_to_response(doc))
 
-        error_step = "bm25"
-        try:
-            bm25_index.build(kb_id, [
-                {"id": c.id, "content": c.content, "doc_id": c.doc_id,
-                 "heading": c.heading or "", "page": c.page}
-                for c in chunk_objs
-            ])
-        except Exception:
-            pass
+    await db.commit()
 
-        doc.status = DocStatus.COMPLETED
-        doc.chunk_count = len(chunk_objs)
-        await db.commit()
-        await db.refresh(doc)
+    # Auto-trigger async processing for each uploaded document
+    from app.services.doc_processor import process_document
+    for r in results:
+        if r.id:  # skip skipped
+            asyncio.create_task(process_document(r.id))
 
-    except Exception as e:
-        doc.status = DocStatus.FAILED
-        doc.error_message = f"[{error_step}] {e}"[:500]
-        doc.chunk_count = len(chunk_objs)
-        await db.commit()
-        await db.refresh(doc)
+    return results
 
-    return doc
+# ---- List all documents (paginated, filterable) ----
 
-
-@router.get("", response_model=list[DocumentResponse])
-async def list_documents(
-    kb_id: str = Query(...),
+@router.get("", response_model=DocumentListResponse)
+async def list_all_documents(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    status: str | None = Query(None),
+    file_type: str | None = Query(None),
+    search: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-    kb = kb_result.scalar_one_or_none()
-    if not kb:
-        raise HTTPException(404, "知识库不存在")
-    _check_kb_access(current_user, kb)
+    conditions = []
+    if current_user.role.value not in ("admin", "moderator"):
+        conditions.append(Document.owner_id == current_user.id)
+    if status:
+        conditions.append(Document.status == status)
+    if file_type:
+        conditions.append(Document.file_type == file_type)
+    if search:
+        conditions.append(Document.filename.ilike(f"%{search}%"))
 
-    result = await db.execute(
-        select(Document).where(Document.kb_id == kb_id).order_by(Document.created_at.desc())
-    )
-    return result.scalars().all()
+    count_q = select(func.count()).select_from(Document)
+    if conditions:
+        count_q = count_q.where(*conditions)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    items_q = select(Document).order_by(Document.created_at.desc())
+    if conditions:
+        items_q = items_q.where(*conditions)
+    items_q = items_q.offset((page - 1) * size).limit(size)
+    docs = (await db.execute(items_q)).scalars().all()
+
+    items = []
+    for doc in docs:
+        kb_ids = await _get_doc_kb_ids(doc.id, db)
+        items.append(_model_to_response(doc, kb_ids))
+    return DocumentListResponse(items=items, total=total, page=page, size=size)
 
 
-@router.get("/{doc_id}/status", response_model=DocumentStatusResponse)
-async def get_document_status(
-    doc_id: str,
-    current_user: User = Depends(get_current_user),
+# ---- Document detail ----
+
+@router.get("/{doc_id}", response_model=DocumentResponse)
+async def get_document(
+    doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        raise HTTPException(404, "Document not found")
-    return doc
+        raise HTTPException(404, "文档不存在")
+    kb_ids = await _get_doc_kb_ids(doc_id, db)
+    return _model_to_response(doc, kb_ids)
 
+
+# ---- Document status / progress ----
+
+@router.get("/{doc_id}/status", response_model=DocumentStatusResponse)
+async def get_document_status(
+    doc_id: str, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    return DocumentStatusResponse(
+        id=doc.id, status=_status_str(doc),
+        error_message=doc.error_message,
+        chunk_count=doc.chunk_count, progress=doc.progress,
+    )
+
+
+# ---- Document chunks ----
 
 @router.get("/{doc_id}/chunks", response_model=list[ChunkResponse])
 async def get_document_chunks(
-    doc_id: str,
-    current_user: User = Depends(get_current_user),
+    doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -175,28 +223,92 @@ async def get_document_chunks(
     return result.scalars().all()
 
 
-@router.delete("/{doc_id}")
-async def delete_document(
-    doc_id: str,
-    current_user: User = Depends(get_current_user),
+# ---- Document KBs ----
+
+@router.get("/{doc_id}/kbs", response_model=list[str])
+async def get_document_kbs(
+    doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    return await _get_doc_kb_ids(doc_id, db)
+
+# ---- Delete document (cleans up vectors across all linked KBs) ----
+
+@router.delete("/{doc_id}")
+async def delete_document(
+    doc_id: str, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.vector_store import vector_store
+    from app.services.bm25_index import bm25_index
+
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(404, "文档不存在")
+    if current_user.role.value not in ("admin", "moderator") and doc.owner_id != current_user.id:
+        raise HTTPException(403, "无权删除该文档")
 
-    # Check KB ownership
-    kb_result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == doc.kb_id))
-    kb = kb_result.scalar_one_or_none()
-    if kb:
-        _check_kb_access(current_user, kb)
+    kb_links = (await db.execute(
+        select(KBDocument).where(KBDocument.doc_id == doc_id)
+    )).scalars().all()
+    for link in kb_links:
+        vector_store.delete_by_doc(link.kb_id, doc_id)
+        try:
+            bm25_index.remove_doc(link.kb_id, doc_id)
+        except Exception:
+            pass
 
-    vector_store.delete_by_doc(doc.kb_id, doc_id)
-    try:
-        Path(doc.file_path).unlink(missing_ok=True)
-    except Exception:
-        pass
+    # Note: uploaded file cleanup is done by a periodic maintenance task
     await db.delete(doc)
     await db.commit()
     return {"status": "deleted"}
+
+
+# ---- Legacy: list documents by KB (backward compat) ----
+
+@router.get("/by-kb/{kb_id}", response_model=list[DocumentResponse])
+async def list_documents_by_kb(
+    kb_id: str, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(KBDocument).where(KBDocument.kb_id == kb_id).order_by(KBDocument.added_at.desc())
+    )
+    links = result.scalars().all()
+    items = []
+    for link in links:
+        doc_result = await db.execute(select(Document).where(Document.id == link.doc_id))
+        doc = doc_result.scalar_one_or_none()
+        if doc:
+            items.append(_model_to_response(doc, [kb_id]))
+    return items
+# ---- Trigger document processing ----
+
+@router.post("/{doc_id}/process")
+async def trigger_process_document(
+    doc_id: str, current_user: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger async processing for a single pending document."""
+    doc = await db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    if doc.status not in (DocStatus.PENDING, DocStatus.UPLOADED, DocStatus.FAILED):
+        raise HTTPException(400, f"文档状态为 {_status_str(doc)}，无需处理")
+
+    from app.services.doc_processor import process_document
+    import asyncio
+    asyncio.create_task(process_document(doc_id))
+    return {"status": "processing", "doc_id": doc_id}
+
+
+@router.post("/process-all")
+async def trigger_process_all(
+    current_user: User = Depends(get_current_staff),
+):
+    """Process all pending documents."""
+    from app.services.doc_processor import process_pending_documents
+    import asyncio
+    asyncio.create_task(process_pending_documents())
+    return {"status": "started"}

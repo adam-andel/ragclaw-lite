@@ -1,11 +1,20 @@
-<script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty, NPopconfirm, NIcon, NSelect, NSpin, NProgress, useMessage } from 'naive-ui'
-import { Add, Trash, CloudUpload, People } from '@vicons/ionicons5'
-import { listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase, uploadDocument, listDocuments, getDocumentChunks, deleteDocument, getDocumentStatus } from '@/api/documents'
+﻿<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import {
+  NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty,
+  NPopconfirm, NIcon, NSelect, NSpin, NProgress, NDataTable,
+  NCheckbox, useMessage,
+} from 'naive-ui'
+import { Add, Trash, People, Create, Search } from '@vicons/ionicons5'
+import {
+  listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase,
+  updateKnowledgeBase, listKBDocuments, addDocumentsToKB,
+  removeDocumentFromKB, listAllDocuments, getDocumentChunks,
+  getDocumentStatus,
+} from '@/api/documents'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import type { KnowledgeBase, DocumentItem, ChunkItem } from '@/types'
+import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse } from '@/types'
 
 const message = useMessage()
 const kbs = ref<KnowledgeBase[]>([])
@@ -15,20 +24,33 @@ const chunks = ref<ChunkItem[]>([])
 const showChunksFor = ref(false)
 const loadingDocs = ref(false)
 const loadingKbs = ref(false)
-
-// Upload state
-const uploading = ref(false)
-const uploadProgress = ref(0)
-const uploadFileName = ref('')
-
-// Chunks loading
 const chunksLoading = ref(false)
+const auth = useAuthStore()
 
+// KB create
 const showCreateKb = ref(false)
 const newKbName = ref('')
 const newKbDesc = ref('')
 const creating = ref(false)
-const auth = useAuthStore()
+
+// KB rename
+const showRenameKb = ref(false)
+const renameKbId = ref('')
+const renameKbName = ref('')
+const renameKbDesc = ref('')
+const renaming = ref(false)
+
+// Select documents modal
+const showSelectDocs = ref(false)
+const availableDocs = ref<DocumentItem[]>([])
+const selectedDocIds = ref<string[]>([])
+const loadingAvailableDocs = ref(false)
+const availableTotal = ref(0)
+const availablePage = ref(1)
+const availableSearch = ref('')
+const availableStatus = ref<string | null>(null)
+const availableType = ref<string | null>(null)
+const linkingDocs = ref(false)
 
 onMounted(() => loadKBs())
 
@@ -37,13 +59,12 @@ async function loadKBs() {
   try {
     const res = await listKnowledgeBases()
     kbs.value = res.data
-    // 校验当前选中的 KB 是否仍然存在
     if (selectedKbId.value && !kbs.value.find(k => k.id === selectedKbId.value)) {
       selectedKbId.value = ''
       documents.value = []
     }
   } catch (e: any) {
-    message.error('加载知识库失败：' + (e?.response?.data?.detail || e.message || '请检查网络连接'))
+    message.error('加载知识库失败：' + (e?.response?.data?.detail || e.message))
   } finally {
     loadingKbs.value = false
   }
@@ -66,24 +87,30 @@ async function handleCreateKb() {
   }
 }
 
-function triggerFileUpload() {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.pdf,.docx,.md,.txt'
-  input.setAttribute('aria-label', '选择要上传的文档文件')
-  input.onchange = (e: Event) => {
-    const file = (e.target as HTMLInputElement).files?.[0]
-    if (file) {
-      // 文件大小校验：限制 50MB
-      const maxSize = 50 * 1024 * 1024
-      if (file.size > maxSize) {
-        message.warning(`文件过大（${(file.size / 1024 / 1024).toFixed(1)}MB），最大支持 50MB`)
-        return
-      }
-      handleUpload(file)
-    }
+function openRename(kb: KnowledgeBase, e: Event) {
+  e.stopPropagation()
+  renameKbId.value = kb.id
+  renameKbName.value = kb.name
+  renameKbDesc.value = kb.description || ''
+  showRenameKb.value = true
+}
+
+async function handleRenameKb() {
+  if (!renameKbName.value.trim()) return
+  renaming.value = true
+  try {
+    await updateKnowledgeBase(renameKbId.value, {
+      name: renameKbName.value,
+      description: renameKbDesc.value || undefined,
+    })
+    await loadKBs()
+    showRenameKb.value = false
+    message.success('知识库已更新')
+  } catch (e: any) {
+    message.error('更新失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    renaming.value = false
   }
-  input.click()
 }
 
 async function handleDeleteKb(id: string) {
@@ -109,66 +136,96 @@ async function loadDocuments() {
   if (!selectedKbId.value) return
   loadingDocs.value = true
   try {
-    const res = await listDocuments(selectedKbId.value)
-    documents.value = res.data
+    const res = await listKBDocuments(selectedKbId.value)
+    documents.value = res.data || []
   } catch (e: any) {
-    message.error('加载文档列表失败：' + (e?.response?.data?.detail || e.message))
+    message.error('加载文档失败：' + (e?.response?.data?.detail || e.message))
   } finally {
     loadingDocs.value = false
   }
 }
 
-async function handleUpload(file: File) {
-  if (!selectedKbId.value) {
-    message.warning('请先选择一个知识库')
-    return
-  }
-  uploading.value = true
-  uploadProgress.value = 0
-  uploadFileName.value = file.name
-  try {
-    await uploadDocument(selectedKbId.value, file, (pct: number) => {
-      uploadProgress.value = pct
-    })
-    message.success('上传成功，正在解析文档…')
-    // 轮询文档状态直到完成
-    await pollDocumentStatus()
-    await loadDocuments()
-  } catch (e: any) {
-    message.error('上传失败：' + (e?.response?.data?.detail || e.message))
-  } finally {
-    uploading.value = false
-    uploadFileName.value = ''
-  }
-}
-
-async function pollDocumentStatus() {
-  // 等待文档列表刷新后获取最新文档，轮询直到全部完成
-  const maxAttempts = 30
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 2000))
-    try {
-      const res = await listDocuments(selectedKbId.value)
-      documents.value = res.data
-      const pending = res.data.some((d: DocumentItem) =>
-        ['uploaded', 'parsing', 'chunking', 'embedding'].includes(d.status)
+// Poll processing progress
+let pollTimer: ReturnType<typeof setInterval> | null = null
+watch(selectedKbId, (newId, oldId) => {
+  if (oldId && pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (newId) {
+    pollTimer = setInterval(async () => {
+      const processing = documents.value.filter(d =>
+        ['pending', 'parsing', 'chunking', 'embedding'].includes(d.status)
       )
-      if (!pending) break
-    } catch {
-      // 轮询失败继续重试
-    }
+      if (processing.length === 0) return
+      // Refresh individual document statuses
+      for (const doc of processing) {
+        try {
+          const res = await getDocumentStatus(doc.id)
+          const data = res.data
+          Object.assign(doc, {
+            status: data.status,
+            progress: data.progress,
+            error_message: data.error_message,
+            chunk_count: data.chunk_count,
+          })
+        } catch { /* ignore */ }
+      }
+    }, 3000)
+  }
+})
+
+// ── Select Documents Modal ──
+
+async function openSelectDocs() {
+  showSelectDocs.value = true
+  selectedDocIds.value = []
+  availablePage.value = 1
+  availableSearch.value = ''
+  availableStatus.value = 'completed'
+  await loadAvailableDocs()
+}
+
+async function loadAvailableDocs() {
+  loadingAvailableDocs.value = true
+  try {
+    const params: any = { page: availablePage.value, size: 20 }
+    if (availableSearch.value) params.search = availableSearch.value
+    if (availableStatus.value) params.status = availableStatus.value
+    if (availableType.value) params.file_type = availableType.value
+    const res = await listAllDocuments(params)
+    availableDocs.value = res.data.items
+    availableTotal.value = res.data.total
+  } catch (e: any) {
+    message.error('加载文档失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    loadingAvailableDocs.value = false
   }
 }
 
-async function handleDeleteDoc(id: string) {
+async function handleSelectDocs() {
+  if (selectedDocIds.value.length === 0) return
+  linkingDocs.value = true
   try {
-    await deleteDocument(id)
+    const res = await addDocumentsToKB(selectedKbId.value, selectedDocIds.value)
+    message.success(`已添加 ${res.data.added} 个文档${res.data.skipped > 0 ? '，跳过 ' + res.data.skipped + ' 个' : ''}`)
+    showSelectDocs.value = false
     await loadDocuments()
-    message.success('文档已删除')
   } catch (e: any) {
-    message.error('删除失败：' + (e?.response?.data?.detail || e.message))
+    message.error('添加失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    linkingDocs.value = false
   }
 }
+
+async function handleRemoveDoc(docId: string) {
+  try {
+    await removeDocumentFromKB(selectedKbId.value, docId)
+    documents.value = documents.value.filter(d => d.id !== docId)
+    message.success('文档已从知识库移除')
+  } catch (e: any) {
+    message.error('移除失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+// ── Chunks ──
 
 async function showChunks(docId: string) {
   chunksLoading.value = true
@@ -183,8 +240,8 @@ async function showChunks(docId: string) {
     chunksLoading.value = false
   }
 }
+// ── Sharing ──
 
-// ---- Sharing ----
 const showShare = ref(false)
 const shareKbId = ref('')
 const shareUsers = ref<any[]>([])
@@ -204,16 +261,11 @@ async function openShare(kbId: string) {
   try {
     const r = await client.get(`/kb/${kbId}/users`)
     shareUsers.value = r.data
-  } catch (e: any) {
-    message.error('加载共享用户失败')
-    shareUsers.value = []
-  }
+  } catch { shareUsers.value = [] }
   try {
     const r = await client.get('/users')
     allUsers.value = r.data
-  } catch {
-    allUsers.value = []
-  }
+  } catch { allUsers.value = [] }
   shareLoading.value = false
   showShare.value = true
 }
@@ -242,14 +294,35 @@ async function removeKbUser(uid: string) {
   }
 }
 
-const selectedKb = computed(() => kbs.value.find((k) => k.id === selectedKbId.value))
+// ── Helpers ──
+
+const selectedKb = computed(() => kbs.value.find(k => k.id === selectedKbId.value))
 
 const statusColors: Record<string, string> = {
-  uploaded: 'default', parsing: 'warning', chunking: 'warning', embedding: 'info', completed: 'success', failed: 'error',
+  pending: 'default', uploaded: 'default',
+  parsing: 'warning', chunking: 'warning',
+  embedding: 'info', completed: 'success', failed: 'error',
 }
 const statusLabels: Record<string, string> = {
-  uploaded: '已上传', parsing: '解析中', chunking: '分块中', embedding: '向量化', completed: '已完成', failed: '失败',
+  pending: '等待中', uploaded: '已上传',
+  parsing: '解析中', chunking: '分块中',
+  embedding: '向量化', completed: '已完成', failed: '失败',
 }
+
+const fileTypeOptions = [
+  { label: '全部类型', value: null },
+  { label: 'PDF', value: 'pdf' },
+  { label: 'Word', value: 'docx' },
+  { label: 'Markdown', value: 'md' },
+  { label: '文本', value: 'txt' },
+]
+
+const docStatusOptions = [
+  { label: '已完成', value: 'completed' },
+  { label: '处理中', value: 'pending' },
+  { label: '失败', value: 'failed' },
+  { label: '全部', value: null },
+]
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`
@@ -257,7 +330,6 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 </script>
-
 <template>
   <div class="kb-view">
     <div class="kb-header">
@@ -274,12 +346,9 @@ function formatSize(bytes: number) {
         <NSpin :show="loadingKbs" v-if="loadingKbs || kbs.length === 0" />
         <NEmpty v-if="!loadingKbs && kbs.length === 0" description="暂无知识库" />
         <NCard
-          v-for="kb in kbs"
-          :key="kb.id"
+          v-for="kb in kbs" :key="kb.id"
           :class="['kb-card', { active: kb.id === selectedKbId }]"
-          size="small"
-          role="button"
-          tabindex="0"
+          size="small" role="button" tabindex="0"
           :aria-selected="kb.id === selectedKbId"
           :aria-label="`知识库：${kb.name}`"
           @click="selectKb(kb.id)"
@@ -288,10 +357,14 @@ function formatSize(bytes: number) {
         >
           <div class="kb-card-header">
             <strong class="kb-card-name">{{ kb.name }}</strong>
+            <NButton text size="tiny" @click="openRename(kb, $event)" title="改名">
+              <template #icon><NIcon size="14"><Create /></NIcon></template>
+            </NButton>
           </div>
           <div v-if="kb.description" class="kb-card-desc">{{ kb.description }}</div>
           <div class="kb-card-meta">
-            <span class="kb-card-date">{{ new Date(kb.created_at).toLocaleDateString('zh-CN') }}</span>
+            <span class="kb-card-stat">📄 {{ kb.doc_count }}</span>
+            <span class="kb-card-stat">🧬 {{ kb.vector_count }}</span>
           </div>
         </NCard>
       </div>
@@ -303,15 +376,15 @@ function formatSize(bytes: number) {
         </div>
         <template v-else>
           <div class="docs-header">
-            <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档</h3>
+            <h3>{{ selectedKb?.name ?? '未知知识库' }} · 文档 ({{ documents.length }})</h3>
             <NSpace>
               <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKbId)">
                 <template #icon><NIcon><People /></NIcon></template>
                 共享
               </NButton>
-              <NButton type="primary" size="small" @click="triggerFileUpload" :loading="uploading">
-                <template #icon><NIcon><CloudUpload /></NIcon></template>
-                上传文档
+              <NButton type="primary" size="small" @click="openSelectDocs">
+                <template #icon><NIcon><Search /></NIcon></template>
+                选择文档
               </NButton>
               <NPopconfirm @positive-click="handleDeleteKb(selectedKbId)">
                 <template #trigger>
@@ -320,32 +393,15 @@ function formatSize(bytes: number) {
                     删除
                   </NButton>
                 </template>
-                确定删除「{{ selectedKb?.name }}」及其所有文档？
+                确定删除「{{ selectedKb?.name }}」？文档不会被删除，仅解除关联。
               </NPopconfirm>
             </NSpace>
           </div>
 
-          <!-- Upload progress -->
-          <div v-if="uploading" class="upload-progress">
-            <span class="upload-progress-label">上传中：{{ uploadFileName }}</span>
-            <NProgress
-              type="line"
-              :percentage="uploadProgress"
-              :indicator-placement="'inside'"
-              :height="20"
-              :border-radius="4"
-            />
-          </div>
-
           <NSpin :show="loadingDocs">
-            <NEmpty v-if="!loadingDocs && documents.length === 0" description="暂无文档" />
-            <NCard
-              v-for="doc in documents"
-              :key="doc.id"
-              size="small"
-              class="doc-card"
-              tabindex="0"
-              role="listitem"
+            <NEmpty v-if="!loadingDocs && documents.length === 0" description="暂无文档，点击「选择文档」添加" />
+            <NCard v-for="doc in documents" :key="doc.id" size="small" class="doc-card"
+              tabindex="0" role="listitem"
               :aria-label="`文档：${doc.filename}，状态：${statusLabels[doc.status] || doc.status}`"
             >
               <div class="doc-info">
@@ -354,17 +410,22 @@ function formatSize(bytes: number) {
                   <NTag :type="statusColors[doc.status] as any" size="small">
                     {{ statusLabels[doc.status] || doc.status }}
                   </NTag>
+                  <NProgress
+                    v-if="['pending','parsing','chunking','embedding'].includes(doc.status)"
+                    type="line" :percentage="doc.progress" :height="16"
+                    :border-radius="3" style="width:80px"
+                  />
                   <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
                   <NTag size="small" v-if="doc.chunk_count > 0">{{ doc.chunk_count }} 分块</NTag>
                 </NSpace>
               </div>
               <div class="doc-actions">
                 <NButton text size="tiny" @click="showChunks(doc.id)">查看分块</NButton>
-                <NPopconfirm @positive-click="handleDeleteDoc(doc.id)">
+                <NPopconfirm @positive-click="handleRemoveDoc(doc.id)">
                   <template #trigger>
-                    <NButton text size="tiny" type="error">删除</NButton>
+                    <NButton text size="tiny" type="warning">移除</NButton>
                   </template>
-                  确定删除文档「{{ doc.filename }}」？
+                  从知识库移除「{{ doc.filename }}」？（文档本身不会被删除）
                 </NPopconfirm>
               </div>
             </NCard>
@@ -393,42 +454,83 @@ function formatSize(bytes: number) {
 
     <!-- Create KB Modal -->
     <NModal v-model:show="showCreateKb" title="新建知识库">
-      <div class="create-kb-form">
+      <div class="kb-form">
         <NInput v-model:value="newKbName" placeholder="知识库名称" />
         <NInput v-model:value="newKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2 }" />
         <NButton type="primary" :loading="creating" @click="handleCreateKb" block>创建</NButton>
       </div>
     </NModal>
 
+    <!-- Rename KB Modal -->
+    <NModal v-model:show="showRenameKb" title="编辑知识库">
+      <div class="kb-form">
+        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
+        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2 }" />
+        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
+      </div>
+    </NModal>
+
+    <!-- Select Documents Modal -->
+    <NModal v-model:show="showSelectDocs" title="选择文档加入知识库" style="width: 90vw; max-width: 1000px">
+      <div class="select-docs-modal">
+        <div class="select-docs-filters">
+          <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="loadAvailableDocs" style="flex:1">
+            <template #prefix><NIcon><Search /></NIcon></template>
+          </NInput>
+          <NSelect v-model:value="availableStatus" :options="docStatusOptions" placeholder="状态" style="width:110px" @update:value="loadAvailableDocs" />
+          <NSelect v-model:value="availableType" :options="fileTypeOptions" placeholder="类型" style="width:110px" @update:value="loadAvailableDocs" />
+          <NButton @click="loadAvailableDocs" secondary>筛选</NButton>
+        </div>
+        <NSpin :show="loadingAvailableDocs">
+          <NEmpty v-if="!loadingAvailableDocs && availableDocs.length === 0" description="没有可用的已完成文档，请先在文档管理页面上传并处理" />
+          <div class="select-docs-list" v-if="availableDocs.length > 0">
+            <div v-for="doc in availableDocs" :key="doc.id"
+              :class="['select-doc-row', { selected: selectedDocIds.includes(doc.id) }]"
+              @click="selectedDocIds.includes(doc.id)
+                ? selectedDocIds = selectedDocIds.filter(id => id !== doc.id)
+                : selectedDocIds.push(doc.id)"
+            >
+              <NCheckbox :checked="selectedDocIds.includes(doc.id)" style="flex-shrink:0" />
+              <span class="select-doc-name">📄 {{ doc.filename }}</span>
+              <NSpace size="small">
+                <NTag size="small">{{ doc.file_type.toUpperCase() }}</NTag>
+                <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
+                <NTag size="small" type="success">已完成</NTag>
+              </NSpace>
+            </div>
+          </div>
+        </NSpin>
+        <div class="select-docs-actions">
+          <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
+          <NSpace>
+            <NButton @click="showSelectDocs = false">取消</NButton>
+            <NButton type="primary" :disabled="selectedDocIds.length === 0" :loading="linkingDocs" @click="handleSelectDocs">
+              加入知识库
+            </NButton>
+          </NSpace>
+        </div>
+      </div>
+    </NModal>
+
     <!-- Share Modal -->
-    <NModal
-      v-model:show="showShare"
-      title="共享管理"
+    <NModal v-model:show="showShare" title="共享管理"
       style="width:70vw; max-width:1000px; height:70vh; max-height:800px"
       :title-style="{ fontSize: '1.25rem', fontWeight: 'bold' }"
     >
       <div class="share-form">
         <NSpin :show="shareLoading">
           <div class="share-add-row">
-            <NSelect
-              v-model:value="shareAddUser"
-              :options="allUserOptions"
-              placeholder="搜索用户…"
-              filterable
-              clearable
-              size="large"
-              style="flex:1"
+            <NSelect v-model:value="shareAddUser" :options="allUserOptions"
+              placeholder="搜索用户…" filterable clearable size="large" style="flex:1"
             />
             <NButton type="primary" size="large" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
               <template #icon><NIcon><Add /></NIcon></template>
               添加
             </NButton>
           </div>
-
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
             <NEmpty description="暂无共享用户" />
           </div>
-
           <div class="share-list" v-if="shareUsers.length > 0">
             <div v-for="u in shareUsers" :key="u.id" class="share-row">
               <div class="share-user-info">
@@ -446,7 +548,6 @@ function formatSize(bytes: number) {
     </NModal>
   </div>
 </template>
-
 <style scoped>
 .kb-view { display: flex; flex-direction: column; height: 100%; }
 .kb-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); flex-shrink: 0; }
@@ -456,137 +557,61 @@ function formatSize(bytes: number) {
 .kb-docs { flex: 1; overflow-y: auto; }
 
 /* KB Card */
-.kb-card {
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color .2s;
-  user-select: none;
-}
-.kb-card:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
-  border-radius: var(--radius);
-}
+.kb-card { margin-bottom: 8px; cursor: pointer; transition: border-color .2s; user-select: none; }
+.kb-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; border-radius: var(--radius); }
 .kb-card.active { border-color: var(--color-primary); }
 .kb-card-header { display: flex; justify-content: space-between; align-items: center; }
-.kb-card-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kb-card-desc {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kb-card-meta {
-  margin-top: 6px;
-}
-.kb-card-date {
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
-}
+.kb-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-card-desc { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-card-meta { margin-top: 6px; display: flex; gap: 8px; }
+.kb-card-stat { font-size: 0.65rem; color: var(--color-text-muted); }
 
 /* Docs */
 .docs-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
 .doc-card { margin-bottom: 8px; }
-.doc-card:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -1px;
-  border-radius: var(--radius);
-}
+.doc-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
 .doc-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .doc-name { font-weight: 500; }
 .doc-actions { display: flex; gap: 8px; margin-top: 6px; }
 .empty-hint { display: flex; align-items: center; justify-content: center; height: 100%; }
 
-/* Upload Progress */
-.upload-progress {
-  margin-bottom: 12px;
-  padding: 12px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-.upload-progress-label {
-  display: block;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  margin-bottom: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Chunks Modal */
 .chunks-modal { max-height: 60vh; overflow-y: auto; }
 .chunk-card { margin-bottom: 8px; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-.chunk-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  max-height: 200px;
-  overflow-y: auto;
-}
+.chunk-content { white-space: pre-wrap; word-break: break-word; font-size: var(--text-sm); line-height: 1.6; max-height: 200px; overflow-y: auto; }
 
-/* Create KB Form */
-.create-kb-form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: min(350px, 80vw); }
+/* KB Form */
+.kb-form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: min(350px, 80vw); }
+
+/* Select Docs Modal */
+.select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
+.select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.select-docs-list { max-height: 50vh; overflow-y: auto; }
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border-bottom: 1px solid var(--color-border); transition: background .15s; }
+.select-doc-row:hover { background: rgba(88, 166, 255, 0.04); }
+.select-doc-row.selected { background: rgba(88, 166, 255, 0.1); }
+.select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
 
 /* Share Form */
-.share-form {
-  padding: 20px 24px;
-  background: var(--color-surface);
-  border-radius: 12px;
-  height: 100%;
-  box-sizing: border-box;
-  color: var(--color-text);
-}
+.share-form { padding: 20px 24px; background: var(--color-surface); border-radius: 12px; height: 100%; box-sizing: border-box; color: var(--color-text); }
 .share-add-row { display: flex; gap: 8px; margin-bottom: 20px; }
 .share-empty { padding: 20px 0; }
 .share-list { max-height: calc(100% - 80px); overflow-y: auto; }
-.share-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 8px;
-  border-bottom: 1px solid var(--color-border);
-  transition: background .15s;
-}
+.share-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--color-border); transition: background .15s; }
 .share-row:hover { background: rgba(88, 166, 255, 0.04); }
 .share-user-info { display: flex; align-items: center; gap: 10px; }
-.share-user-avatar {
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--color-border);
-  border-radius: 50%;
-  font-size: 0.9rem;
-}
+.share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
 .share-user-name { font-weight: 500; font-size: 0.9rem; }
 .share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); }
 
 /* Responsive */
 @media (max-width: 767px) {
   .kb-body { flex-direction: column; }
-  .kb-list {
-    width: 100%;
-    max-height: 160px;
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    flex-shrink: 0;
-    padding-bottom: 4px;
-  }
-  .kb-list :deep(.n-card) {
-    min-width: 160px;
-    flex-shrink: 0;
-    margin-bottom: 0;
-  }
+  .kb-list { width: 100%; max-height: 160px; display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; flex-shrink: 0; padding-bottom: 4px; }
+  .kb-list :deep(.n-card) { min-width: 160px; flex-shrink: 0; margin-bottom: 0; }
   .kb-docs { flex: 1; overflow-y: auto; }
   .docs-header { flex-direction: column; align-items: flex-start; }
 }

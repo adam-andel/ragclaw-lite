@@ -3,14 +3,33 @@
 // ---- Document ----
 export interface DocumentItem {
   id: string
-  kb_id: string
+  kb_id?: string | null          // legacy, may be null in new model
   filename: string
   file_type: string
   file_size: number
-  status: 'uploaded' | 'parsing' | 'chunking' | 'embedding' | 'completed' | 'failed'
-  error_message?: string
+  status: 'pending' | 'uploaded' | 'parsing' | 'chunking' | 'embedding' | 'completed' | 'failed' | 'skipped'
+  error_message?: string | null
   chunk_count: number
+  progress: number               // 0-100 processing progress
+  owner_id?: string | null
+  kb_ids: string[]               // which KBs this doc belongs to (m2m)
   created_at: string
+  updated_at?: string | null
+}
+
+export interface DocumentListResponse {
+  items: DocumentItem[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface DocumentStatusResponse {
+  id: string
+  status: string
+  error_message?: string | null
+  chunk_count: number
+  progress: number
 }
 
 export interface ChunkItem {
@@ -28,7 +47,25 @@ export interface KnowledgeBase {
   id: string
   name: string
   description?: string
+  doc_count: number
+  vector_count: number
   created_at: string
+  updated_at: string
+}
+
+export interface KBCreatePayload {
+  name: string
+  description?: string
+}
+
+export interface KBUpdatePayload {
+  name?: string
+  description?: string
+}
+
+export interface DocKBLinkResponse {
+  added: number
+  skipped: number
 }
 
 // ---- Chat ----

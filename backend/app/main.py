@@ -46,21 +46,20 @@ async def lifespan(app: FastAPI):
         print(f"BGE warmup warning: {e}")
     # Ensure all models are loaded for create_all
     from app.models import kb_access  # noqa: F401
-    # Rebuild BM25 indexes from DB
+    # Rebuild BM25 indexes from DB (using new kb_documents junction table)
     try:
-        from app.models.document import Chunk, Document, DocStatus
+        from app.models.document import Chunk, Document, DocStatus, KBDocument
         from app.services.bm25_index import bm25_index
-        from sqlalchemy import select
+        from sqlalchemy import select, and_
         async with async_session() as db:
-            docs_result = await db.execute(select(Document).where(Document.status == DocStatus.COMPLETED))
-            kb_ids = set()
-            for doc in docs_result.scalars().all():
-                kb_ids.add(doc.kb_id)
+            # Collect all kb_ids from the junction table
+            kb_result = await db.execute(select(KBDocument.kb_id).distinct())
+            kb_ids = {row[0] for row in kb_result.fetchall()}
             for kb_id in kb_ids:
                 chunks_result = await db.execute(
-                    select(Chunk).where(
-                        Chunk.doc_id.in_(select(Document.id).where(Document.kb_id == kb_id))
-                    )
+                    select(Chunk).join(Document, Chunk.doc_id == Document.id).join(
+                        KBDocument, and_(KBDocument.doc_id == Document.id, KBDocument.kb_id == kb_id)
+                    ).where(Document.status == DocStatus.COMPLETED)
                 )
                 chunks = chunks_result.scalars().all()
                 if chunks:
@@ -72,6 +71,14 @@ async def lifespan(app: FastAPI):
             print(f"BM25 rebuilt for {len(kb_ids)} knowledge bases")
     except Exception as e:
         print(f"BM25 rebuild warning: {e}")
+    # Process any pending documents on startup
+    try:
+        from app.services.doc_processor import process_pending_documents
+        import asyncio as _asyncio
+        _asyncio.create_task(process_pending_documents())
+        print("Document processor started for pending documents")
+    except Exception as e:
+        print(f"Doc processor startup warning: {e}")
     yield
     # Shutdown
 

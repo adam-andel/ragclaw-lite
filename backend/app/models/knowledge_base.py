@@ -17,8 +17,9 @@ class KnowledgeBase(Base):
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
-    documents: Mapped[list["Document"]] = relationship(
-        "Document", back_populates="knowledge_base", cascade="all, delete-orphan"
+    # Many-to-many via kb_documents
+    doc_links: Mapped[list["KBDocument"]] = relationship(
+        "KBDocument", back_populates="knowledge_base", cascade="all, delete-orphan"
     )
