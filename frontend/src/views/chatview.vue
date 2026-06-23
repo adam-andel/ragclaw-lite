@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NSelect, NCard, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NSelect, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
 import { Send, StopCircle, Chatbubbles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation } from '@/api/chat'
+import { streamChat, getConversation, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
 import { renderStreamingHtml } from '@/utils/think'
@@ -37,6 +37,29 @@ let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
+const conversations = ref<any[]>([])
+const emptyMode = ref<'conv' | 'kb' | ''>('')
+const showMoreConv = ref(false)
+const showMoreKb = ref(false)
+
+const convPreview = computed(() => conversations.value.slice(0, 3))
+const convHasMore = computed(() => conversations.value.length > 3)
+const kbPreview = computed(() => kbs.value.slice(0, 3))
+const kbHasMore = computed(() => kbs.value.length > 3)
+
+const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
+
+function selectAndClose(convId: string) {
+  emptyMode.value = ''
+  showMoreConv.value = false
+  router.push(`/chat/${convId}`)
+}
+
+async function loadConversations() {
+  try {
+    conversations.value = await listConversations()
+  } catch { conversations.value = [] }
+}
 
 onMounted(async () => {
   isReadonly.value = false
@@ -46,6 +69,8 @@ onMounted(async () => {
     kbs.value = res.data
     if (kbs.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbs.value[0].id
   } catch { /* noop */ }
+
+  await loadConversations()
 
   // If URL has view_user param, force readonly from start
   if (viewUserId.value && viewUserId.value !== auth.user?.id) {
@@ -68,16 +93,9 @@ watch(() => route.params.id, async (id) => {
     messages.value = []
     conversationId.value = undefined
     isReadonly.value = false
+    emptyMode.value = 'conv'
+    await loadConversations()
   }
-})
-
-// Listen for reset-chat event from sidebar
-onMounted(() => {
-  window.addEventListener('erag:reset-chat', () => {
-    isReadonly.value = false
-    conversationId.value = undefined
-    messages.value = []
-  })
 })
 
 async function loadConversation(id: string) {
@@ -97,6 +115,17 @@ async function loadConversation(id: string) {
     router.replace('/chat')
   }
 }
+
+// Listen for reset-chat event from sidebar
+onMounted(() => {
+  window.addEventListener('erag:reset-chat', () => {
+    isReadonly.value = false
+    conversationId.value = undefined
+    messages.value = []
+    emptyMode.value = 'conv'
+    loadConversations()
+  })
+})
 
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
   const aid = proxyMsg.id
@@ -194,22 +223,106 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
       <div class="chat-header-right">
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
-        <NSelect
-          v-if="!isReadonly"
-          v-model:value="selectedKbId"
-          :options="kbs.map((k: any) => ({ label: k.name, value: k.id }))"
-          placeholder="选择知识库"
-          style="width:180px"
-          size="small"
-        />
+        <template v-if="!isReadonly">
+          <span class="kb-select-label">当前知识库</span>
+          <NSelect
+            v-model:value="selectedKbId"
+            :options="kbs.map((k: any) => ({ label: k.name, value: k.id }))"
+            placeholder="选择知识库"
+            style="width:180px"
+            size="small"
+          />
+        </template>
       </div>
     </div>
 
     <div class="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
-      <div v-if="messages.length === 0" class="empty-state">
+      <!-- Centered panel: conversation list preview -->
+      <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
+        <div class="center-panel-box">
+          <div class="empty-icon">💬</div>
+          <h3>选择一个对话</h3>
+          <div class="center-panel-list">
+            <NCard v-for="c in convPreview" :key="c.id" size="small" class="conv-pick-card"
+              role="button" tabindex="0"
+              @click="selectAndClose(c.id)"
+              @keydown.enter.prevent="selectAndClose(c.id)"
+              @keydown.space.prevent="selectAndClose(c.id)"
+            >
+              <div class="conv-pick-name">{{ c.title || '新对话' }}</div>
+              <div class="conv-pick-meta">
+                <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
+                <NTag v-if="c.message_count" size="tiny">{{ c.message_count }} 条消息</NTag>
+              </div>
+            </NCard>
+          </div>
+          <NButton v-if="convHasMore" text size="small" type="primary" @click="showMoreConv = true">
+            更多对话 ({{ conversations.length }})
+          </NButton>
+          <NEmpty v-if="conversations.length === 0" description="暂无对话记录" style="padding:8px 0" />
+          <div class="center-panel-actions">
+            <NButton type="primary" @click="emptyMode = 'kb'">新建对话</NButton>
+          </div>
+        </div>
+      </div>
+
+      <!-- Centered panel: KB list preview -->
+      <div v-else-if="showPicker && emptyMode === 'kb'" class="center-panel">
+        <div class="center-panel-box">
+          <div class="empty-icon">🧠</div>
+          <h3>新建对话 — 选择知识库</h3>
+          <div class="center-panel-list">
+            <NCard v-for="kb in kbPreview" :key="kb.id" size="small" class="kb-pick-card"
+              :class="{ active: kb.id === selectedKbId }"
+              role="button" tabindex="0"
+              @click="selectedKbId = kb.id"
+              @keydown.enter.prevent="selectedKbId = kb.id"
+              @keydown.space.prevent="selectedKbId = kb.id"
+            >
+              <strong>{{ kb.name }}</strong>
+              <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+              <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+            </NCard>
+          </div>
+          <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
+            更多知识库 ({{ kbs.length }})
+          </NButton>
+          <div v-if="kbs.length === 0" class="picker-empty">
+            <NEmpty description="还没有知识库" style="padding:8px 0" />
+            <NButton type="primary" dashed size="small" @click="router.push('/knowledge')">
+              前往创建知识库
+            </NButton>
+          </div>
+          <div class="center-panel-actions">
+            <div class="picker-footer-hint">
+              已选：<strong>{{ selectedKbId ? (kbs.find(k => k.id === selectedKbId)?.name ?? '...') : '未选择' }}</strong>
+            </div>
+            <NSpace>
+              <NButton v-if="conversations.length > 0" @click="emptyMode = 'conv'">← 返回</NButton>
+              <NButton type="primary" @click="emptyMode = ''" :disabled="!selectedKbId">开始对话</NButton>
+            </NSpace>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fallback empty: no conversation, picker not yet opened -->
+      <div v-else-if="messages.length === 0 && !conversationId" class="empty-state">
+        <div class="empty-icon">💬</div>
+        <h3>开始对话</h3>
+        <p>选择一个已有对话继续，或开始新的对话</p>
+        <NButton type="primary" size="small" @click="emptyMode = 'conv'" style="margin-top:8px">
+          选择对话
+        </NButton>
+        <NButton secondary size="small" @click="emptyMode = 'kb'" style="margin-top:8px">
+          新建对话
+        </NButton>
+      </div>
+
+      <!-- Edge case: conversation loaded but no messages -->
+      <div v-else-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
-        <h3>开始 RAG 对话</h3>
-        <p>选择一个知识库，输入问题开始对话</p>
+        <h3>对话为空</h3>
+        <p>输入问题开始对话</p>
       </div>
       <ChatMessage
         v-for="msg in messages"
@@ -219,6 +332,45 @@ function handleKeydown(e: KeyboardEvent) {
         @regenerate="regenerateAnswer"
       />
     </div>
+
+    <!-- Modal: full conversation list -->
+    <NModal v-model:show="showMoreConv" preset="card" title="所有对话"
+      style="width: 90vw; max-width: 520px"
+    >
+      <div class="picker-scroll">
+        <NCard v-for="c in conversations" :key="c.id" size="small" class="conv-pick-card"
+          role="button" tabindex="0"
+          @click="selectAndClose(c.id)"
+          @keydown.enter.prevent="selectAndClose(c.id)"
+          @keydown.space.prevent="selectAndClose(c.id)"
+        >
+          <div class="conv-pick-name">{{ c.title || '新对话' }}</div>
+          <div class="conv-pick-meta">
+            <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
+            <NTag v-if="c.message_count" size="tiny">{{ c.message_count }} 条消息</NTag>
+          </div>
+        </NCard>
+      </div>
+    </NModal>
+
+    <!-- Modal: full KB list -->
+    <NModal v-model:show="showMoreKb" preset="card" title="所有知识库"
+      style="width: 90vw; max-width: 520px"
+    >
+      <div class="picker-scroll">
+        <NCard v-for="kb in kbs" :key="kb.id" size="small" class="kb-pick-card"
+          :class="{ active: kb.id === selectedKbId }"
+          role="button" tabindex="0"
+          @click="selectedKbId = kb.id; showMoreKb = false"
+          @keydown.enter.prevent="selectedKbId = kb.id; showMoreKb = false"
+          @keydown.space.prevent="selectedKbId = kb.id; showMoreKb = false"
+        >
+          <strong>{{ kb.name }}</strong>
+          <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+          <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+        </NCard>
+      </div>
+    </NModal>
 
     <div v-if="!isReadonly" class="chat-input-area">
       <NInput
@@ -265,6 +417,12 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
 .chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
 .chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.kb-select-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
 
 .chat-messages {
   flex: 1;
@@ -286,7 +444,75 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-text);
   margin-bottom: var(--space-2);
 }
+.empty-state p {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 360px;
+  margin: 0 auto;
+}
 
+/* Centered picker panel (inline, up to 3 items) */
+.center-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+}
+.center-panel-box {
+  text-align: center;
+  max-width: 440px;
+  width: 100%;
+}
+.center-panel-box h3 {
+  font-size: var(--text-lg);
+  margin: 4px 0 8px;
+  color: var(--color-text);
+}
+.center-panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 8px;
+  text-align: left;
+}
+.center-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Modal scrollable list (shared by "更多对话" and "更多知识库") */
+.picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.conv-pick-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+}
+.conv-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.conv-pick-name { font-weight: 600; font-size: var(--text-sm); margin-bottom: 4px; }
+.conv-pick-meta { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--color-text-muted); }
+
+.kb-pick-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+  border-left: 3px solid transparent;
+}
+.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.kb-pick-card.active {
+  border-color: var(--color-primary);
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
+.kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
+.picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
+.picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
+.picker-footer-hint strong { color: var(--color-text); }
 .chat-input-area {
   display: flex;
   gap: var(--space-2);
