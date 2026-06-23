@@ -13,10 +13,12 @@ import {
   getDocumentStatus,
 } from '@/api/documents'
 import client from '@/api/client'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse } from '@/types'
 
 const message = useMessage()
+const router = useRouter()
 const kbs = ref<KnowledgeBase[]>([])
 const selectedKbId = ref<string>('')
 const documents = ref<DocumentItem[]>([])
@@ -508,6 +510,35 @@ function isProcessing(status: string) {
       <div class="kb-docs">
         <div v-if="!selectedKbId" class="empty-hint">
           <NEmpty description="选择一个知识库查看文档" />
+          <div class="empty-guide">
+            <div class="empty-guide-title">📚 快速开始</div>
+            <div class="empty-guide-steps">
+              <div class="guide-step">
+                <span class="guide-step-num">1</span>
+                <div class="guide-step-body">
+                  <strong>创建知识库</strong>
+                  <span>为不同场景创建独立的知识空间</span>
+                </div>
+                <NButton size="tiny" @click="showCreateKb = true">创建</NButton>
+              </div>
+              <div class="guide-step">
+                <span class="guide-step-num">2</span>
+                <div class="guide-step-body">
+                  <strong>选择文档</strong>
+                  <span>将已上传的文档加入知识库</span>
+                </div>
+                <NButton size="tiny" secondary @click="router.push('/documents')">文档管理</NButton>
+              </div>
+              <div class="guide-step">
+                <span class="guide-step-num">3</span>
+                <div class="guide-step-body">
+                  <strong>开始对话</strong>
+                  <span>在对话中引用知识库，获取精准回答</span>
+                </div>
+                <NButton size="tiny" secondary @click="router.push('/chat')">去对话</NButton>
+              </div>
+            </div>
+          </div>
         </div>
         <template v-else>
           <div class="docs-header">
@@ -559,7 +590,13 @@ function isProcessing(status: string) {
           </div>
 
           <NSpin :show="loadingDocs">
-            <NEmpty v-if="!loadingDocs && documents.length === 0" description="暂无文档，点击「选择文档」添加" />
+            <div v-if="!loadingDocs && documents.length === 0" class="empty-docs">
+              <NEmpty description="知识库中还没有文档" />
+              <NButton type="primary" dashed @click="openSelectDocs">
+                <template #icon><NIcon><Add /></NIcon></template>
+                选择文档加入知识库
+              </NButton>
+            </div>
             <NEmpty v-if="!loadingDocs && documents.length > 0 && filteredDocs.length === 0" description="无匹配的文档" />
             <NCard v-for="doc in filteredDocs" :key="doc.id" size="small" class="doc-card"
               tabindex="0" role="listitem"
@@ -665,7 +702,13 @@ function isProcessing(status: string) {
           <NButton @click="loadAvailableDocs" secondary>筛选</NButton>
         </div>
         <NSpin :show="loadingAvailableDocs">
-          <NEmpty v-if="!loadingAvailableDocs && availableDocs.length === 0" description="没有可用的已完成文档，请先在文档管理页面上传并处理" />
+          <div v-if="!loadingAvailableDocs && availableDocs.length === 0" class="select-docs-empty">
+            <NEmpty description="还没有可添加的已完成文档" />
+            <NButton type="primary" dashed @click="showSelectDocs = false; router.push('/documents')">
+              <template #icon><NIcon><Add /></NIcon></template>
+              前往文档管理页上传文档
+            </NButton>
+          </div>
           <div class="select-docs-list" v-if="availableDocs.length > 0">
             <div v-for="doc in availableDocs" :key="doc.id"
               :class="['select-doc-row', { selected: selectedDocIds.includes(doc.id) }]"
@@ -684,7 +727,12 @@ function isProcessing(status: string) {
           </div>
         </NSpin>
         <div class="select-docs-actions">
-          <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
+          <div class="select-docs-left">
+            <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
+            <NButton text size="tiny" type="primary" @click="showSelectDocs = false; router.push('/documents')">
+              上传更多文档 →
+            </NButton>
+          </div>
           <NSpace>
             <NButton @click="showSelectDocs = false">取消</NButton>
             <NButton type="primary" :disabled="selectedDocIds.length === 0" :loading="linkingDocs" @click="handleSelectDocs">
@@ -817,7 +865,35 @@ function isProcessing(status: string) {
   margin: 0 2px;
 }
 
-.empty-hint { display: flex; align-items: center; justify-content: center; height: 100%; }
+.empty-hint { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 24px; }
+.empty-guide { max-width: 420px; width: 100%; }
+.empty-guide-title { font-size: var(--text-lg); font-weight: 700; margin-bottom: 16px; text-align: center; }
+.empty-guide-steps { display: flex; flex-direction: column; gap: 0; }
+.guide-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 12px;
+  border-radius: var(--radius);
+  transition: background .15s;
+}
+.guide-step:hover { background: var(--color-primary-soft); }
+.guide-step + .guide-step { border-top: 1px solid var(--color-border); }
+.guide-step-num {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.guide-step-body { flex: 1; min-width: 0; }
+.guide-step-body strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
+.guide-step-body span { display: block; font-size: var(--text-xs); color: var(--color-text-muted); }
+
+.empty-docs { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 32px 0; }
 
 /* Chunks Modal */
 .chunks-modal { max-height: 60vh; overflow-y: auto; }
@@ -837,6 +913,8 @@ function isProcessing(status: string) {
 .select-doc-row.selected { background: rgba(88, 166, 255, 0.1); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.select-docs-left { display: flex; align-items: center; gap: 12px; }
+.select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
 .select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
 
 /* Share Form */
