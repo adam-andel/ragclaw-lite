@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NSelect, NCard, useMessage } from 'naive-ui'
-import { Send, StopCircle } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -188,16 +188,21 @@ function handleKeydown(e: KeyboardEvent) {
 <template>
   <div class="chat-view">
     <div class="chat-header">
-      <h2>💬 RAG 对话</h2>
-      <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
-      <NSelect
-        v-if="!isReadonly"
-        v-model:value="selectedKbId"
-        :options="kbs.map((k: any) => ({ label: k.name, value: k.id }))"
-        placeholder="选择知识库"
-        style="width:180px"
-        size="small"
-      />
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><Chatbubbles /></NIcon>
+        <h2>RAG 对话</h2>
+      </div>
+      <div class="chat-header-right">
+        <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
+        <NSelect
+          v-if="!isReadonly"
+          v-model:value="selectedKbId"
+          :options="kbs.map((k: any) => ({ label: k.name, value: k.id }))"
+          placeholder="选择知识库"
+          style="width:180px"
+          size="small"
+        />
+      </div>
     </div>
 
     <div class="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
@@ -248,14 +253,18 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--color-border);
+  padding: 14px 20px;
+  margin-bottom: 4px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-.chat-header h2 {
-  font-size: var(--text-lg);
-}
+.chat-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
+.chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
+.chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .chat-messages {
   flex: 1;

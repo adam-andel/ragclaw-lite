@@ -5,7 +5,7 @@ import {
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
   NIcon, NModal, NCard,
 } from 'naive-ui'
-import { CloudUpload, Search, Trash } from '@vicons/ionicons5'
+import { CloudUpload, Search, Trash, DocumentText } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -248,7 +248,11 @@ function isProcessing(status: string) {
 <template>
   <div class="dm-view">
     <div class="dm-header">
-      <h2>📁 文档管理</h2>
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><DocumentText /></NIcon>
+        <h2>文档管理</h2>
+        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
+      </div>
     </div>
 
     <!-- Upload Zone -->
@@ -410,8 +414,28 @@ function isProcessing(status: string) {
 </template>
 <style scoped>
 .dm-view { height: 100%; overflow-y: auto; }
-.dm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.dm-header h2 { font-size: 1.25rem; }
+.dm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.dm-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
+.dm-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
+.dm-header .kb-header-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+}
 
 /* Upload Zone */
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all .2s; margin-bottom: 16px; }
