@@ -391,9 +391,9 @@ function handleKeydown(e: KeyboardEvent) {
       <NInput
         v-model:value="inputText"
         type="textarea"
-        placeholder="输入问题... (Enter 发送)"
+        :placeholder="auth.llmConfigured ? '输入问题... (Enter 发送)' : '请先前往系统设置页面配置API KEY'"
         :autosize="{ minRows: 1, maxRows: 4 }"
-        :disabled="isStreaming"
+        :disabled="isStreaming || !auth.llmConfigured"
         @keydown="handleKeydown"
         @compositionstart="isComposing = true"
         @compositionend="isComposing = false"

@@ -17,6 +17,7 @@ export interface UserInfo {
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token') || '')
   const user = ref<UserInfo | null>(null)
+  const llmConfigured = ref(false)
 
   const isLoggedIn = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -54,6 +55,10 @@ export const useAuthStore = defineStore('auth', () => {
       client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
       const res = await client.get('/auth/me')
       user.value = res.data
+      // Fetch LLM config status once
+      const hr = await fetch('/api/health')
+      const health = await hr.json()
+      llmConfigured.value = !!health.llm_configured
     } catch {
       clearAuth()
     }
@@ -69,5 +74,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, user, isLoggedIn, isAdmin, isStaff, login, register, logout, fetchMe, setAuth, clearAuth }
+  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, login, register, logout, fetchMe, setAuth, clearAuth }
 })

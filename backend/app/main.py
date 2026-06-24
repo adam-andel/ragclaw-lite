@@ -116,7 +116,13 @@ app.include_router(config.router)
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "EnterpriseRAG-Lite", "version": "0.2.0"}
+    from app.services.config_manager import config_manager
+    return {
+        "status": "ok",
+        "service": "EnterpriseRAG-Lite",
+        "version": "0.2.0",
+        "llm_configured": config_manager.is_configured,
+    }
 
 
 # --- Static Frontend (Vue3 dist) ---
