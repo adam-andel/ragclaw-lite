@@ -279,8 +279,17 @@ async def _store_memory_and_cache(
     if user_id and answer:
         try:
             from app.services.memory import add_memory
+            import json as _json
+            # Structured format for better Mem0 extraction
+            memory_text = _json.dumps({
+                "type": "qa",
+                "query": query[:200],
+                "answer": answer[:500],
+                "kb_id": kb_id,
+                "skill_id": skill_id or "",
+            }, ensure_ascii=False)
             await add_memory(
-                f"Q: {query}\nA: {answer[:500]}",
+                memory_text,
                 user_id=user_id,
                 metadata={"kb_id": kb_id, "skill_id": skill_id},
             )

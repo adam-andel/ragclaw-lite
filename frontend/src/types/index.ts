@@ -73,6 +73,7 @@ export interface ChatRequest {
   query: string
   kb_id: string
   conversation_id?: string
+  skill_id?: string
 }
 
 export interface ChatMessage {

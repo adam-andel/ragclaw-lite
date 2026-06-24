@@ -19,6 +19,7 @@ export async function* streamChat(
   query: string,
   kbId: string,
   conversationId?: string,
+  skillId?: string,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch('/api/chat/stream', {
@@ -27,7 +28,7 @@ export async function* streamChat(
       'Content-Type': 'application/json',
       ...authHeaders(),
     },
-    body: JSON.stringify({ query, kb_id: kbId, conversation_id: conversationId }),
+    body: JSON.stringify({ query, kb_id: kbId, conversation_id: conversationId, skill_id: skillId }),
     signal,
   })
 
