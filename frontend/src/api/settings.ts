@@ -1,0 +1,35 @@
+import client from './client'
+
+export interface LLMConfig {
+  llm_provider: string
+  llm_model: string
+  llm_api_key: string         // masked, or empty if not configured
+  llm_base_url: string
+  llm_temperature: number
+  llm_max_tokens: number
+  is_configured: boolean       // whether API key has been set
+}
+
+export interface LLMConfigUpdate {
+  llm_provider?: string
+  llm_model?: string
+  llm_api_key?: string
+  llm_base_url?: string
+  llm_temperature?: number
+  llm_max_tokens?: number
+}
+
+export async function getLLMConfig(): Promise<LLMConfig> {
+  const res = await client.get('/config/llm')
+  return res.data
+}
+
+export async function updateLLMConfig(data: LLMConfigUpdate): Promise<{ message: string; config: LLMConfig }> {
+  const res = await client.put('/config/llm', data)
+  return res.data
+}
+
+export async function testLLMConnection(query?: string): Promise<{ ok: boolean; reply?: string; error?: string; model?: string }> {
+  const res = await client.post('/config/llm/test', { query: query || 'Hello, respond with OK only.' })
+  return res.data
+}

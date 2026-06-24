@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 import httpx
 
 from app.config import settings
+from app.services.config_manager import config_manager
 
 
 class LLMClient:
@@ -16,15 +17,15 @@ class LLMClient:
 
     @property
     def base_url(self) -> str:
-        return settings.llm_base_url.rstrip("/")
+        return config_manager.base_url.rstrip("/")
 
     @property
     def model(self) -> str:
-        return settings.llm_model
+        return config_manager.model
 
     @property
     def api_key(self) -> str:
-        return settings.llm_api_key
+        return config_manager.api_key
 
     async def chat(
         self,

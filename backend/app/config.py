@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     retrieval_rrf_k: int = 60
     retrieval_similarity_threshold: float = 0.5
 
-    # --- LLM ---
+    # --- LLM (non-sensitive defaults; api_key configured via web UI, not .env) ---
     llm_provider: str = "openai"       # openai | qwen | ollama
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""

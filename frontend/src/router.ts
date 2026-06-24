@@ -62,6 +62,12 @@ const router = createRouter({
       component: () => import('@/views/UserManagement.vue'),
       meta: { title: '用户管理', requiresAuth: true, admin: true },
     },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+      meta: { title: '系统设置', requiresAuth: true, admin: true },
+    },
   ],
 })
 

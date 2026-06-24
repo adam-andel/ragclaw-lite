@@ -15,6 +15,9 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    # Init runtime config manager (LLM key from encrypted file, not .env)
+    from app.services.config_manager import config_manager
+    config_manager.init()
     # Seed default admin user on first launch (empty users table)
     try:
         from app.models.user import User
@@ -99,7 +102,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -108,6 +111,7 @@ app.include_router(retrieval.router)
 app.include_router(chat.router)
 app.include_router(stats.router)
 app.include_router(memory.router)
+app.include_router(config.router)
 
 
 @app.get("/api/health")

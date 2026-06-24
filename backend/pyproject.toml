@@ -24,6 +24,7 @@ dependencies = [
     "sse-starlette>=2.0.0",
     "pydantic-settings>=2.3.0",
     "python-multipart>=0.0.9",
+    "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
