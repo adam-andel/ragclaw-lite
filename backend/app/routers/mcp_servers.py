@@ -163,6 +163,16 @@ async def delete_server(
     return {"status": "deleted"}
 
 
+@router.post("/servers/refresh-tools")
+async def refresh_tools(
+    current_user: User = Depends(get_current_staff),
+):
+    """Manually refresh the in-memory tool registry from all active MCP servers."""
+    from app.services.tool_registry import tool_registry
+    await tool_registry.refresh()
+    return {"status": "refreshed", **tool_registry.stats}
+
+
 # ── Test Connection ──
 
 @router.post("/servers/{server_id}/test")

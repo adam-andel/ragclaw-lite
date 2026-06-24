@@ -110,6 +110,61 @@ class LLMClient:
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict:
+        """Non-streaming chat with tool calling support.
+
+        Args:
+            messages: Chat messages
+            tools: List of tool definitions in OpenAI function-calling format
+            temperature: Override default temperature
+            max_tokens: Override default max tokens
+
+        Returns:
+            dict with:
+                content: str — text response (may be empty if tool_calls present)
+                tool_calls: list[dict] | None — tool calls to execute
+                    Each: {id, type: "function", function: {name, arguments}}
+                finish_reason: str — "stop" | "tool_calls"
+        """
+        temp = temperature if temperature is not None else config_manager.temperature
+        max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temp,
+            "max_tokens": max_tok,
+            "stream": False,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+
+        url = f"{self.base_url}/chat/completions"
+
+        response = await self._client.post(url, headers=headers, json=body)
+        response.raise_for_status()
+
+        data = response.json()
+        choice = data["choices"][0]
+        message = choice.get("message", {})
+
+        return {
+            "content": message.get("content", "") or "",
+            "tool_calls": message.get("tool_calls"),
+            "finish_reason": choice.get("finish_reason", "stop"),
+        }
+
     async def close(self):
         await self._client.aclose()
 

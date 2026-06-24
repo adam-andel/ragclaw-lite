@@ -83,6 +83,13 @@ async def lifespan(app: FastAPI):
         print("Document processor started for pending documents")
     except Exception as e:
         print(f"Doc processor startup warning: {e}")
+    # Initialize MCP tool registry
+    try:
+        from app.services.tool_registry import tool_registry
+        _asyncio.create_task(tool_registry.refresh())
+        print("Tool registry refresh scheduled")
+    except Exception as e:
+        print(f"Tool registry init warning: {e}")
     yield
     # Shutdown
 
