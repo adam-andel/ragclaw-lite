@@ -45,6 +45,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('kb_id_nullable', ?)",
                      (datetime.utcnow().isoformat(),))
 
+    if "skill_system" not in applied:
+        _migrate_skill_system(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('skill_system', ?)",
+                     (datetime.utcnow().isoformat(),))
+
     raw.commit()
 
 
@@ -127,6 +132,60 @@ def _migrate_nullable_kb_id(raw):
     raw.execute("CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status)")
     raw.execute("CREATE INDEX IF NOT EXISTS idx_documents_owner_id ON documents(owner_id)")
     print(f"[migrate] kb_id_nullable done: {count} rows")
+
+
+def _migrate_skill_system(raw):
+    """Create skill_tools, skills, and mcp_servers tables (v0.3.0)."""
+    print("[migrate] Running skill_system...")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS skills (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            system_prompt TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_skills_tenant ON skills(tenant_id)")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            name TEXT NOT NULL,
+            transport_type TEXT NOT NULL DEFAULT 'http',
+            endpoint TEXT,
+            command TEXT,
+            args_json TEXT,
+            env_json TEXT,
+            timeout_seconds INTEGER NOT NULL DEFAULT 30,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_tenant ON mcp_servers(tenant_id)")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS skill_tools (
+            id TEXT PRIMARY KEY,
+            skill_id TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            mcp_server_id TEXT NOT NULL,
+            config_json TEXT,
+            FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+            FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_skill_tools_skill ON skill_tools(skill_id)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_skill_tools_mcp ON skill_tools(mcp_server_id)")
+    raw.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_tools_unique ON skill_tools(skill_id, tool_name, mcp_server_id)")
+
+    print("[migrate] skill_system done")
 
 
 # ─── Public API ───

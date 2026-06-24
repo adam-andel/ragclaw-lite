@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
         print(f"BGE warmup warning: {e}")
     # Ensure all models are loaded for create_all
     from app.models import kb_access  # noqa: F401
+    from app.models import skill as _skill_models  # noqa: F401
     # Rebuild BM25 indexes from DB (using new kb_documents junction table)
     try:
         from app.models.document import Chunk, Document, DocStatus, KBDocument
@@ -102,7 +103,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -112,15 +113,18 @@ app.include_router(chat.router)
 app.include_router(stats.router)
 app.include_router(memory.router)
 app.include_router(config.router)
+app.include_router(skills.router)
+app.include_router(mcp_servers.router)
 
 
 @app.get("/api/health")
 async def health_check():
     from app.services.config_manager import config_manager
+    from app.database import engine
     return {
         "status": "ok",
         "service": "EnterpriseRAG-Lite",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "llm_configured": config_manager.is_configured,
     }
 
