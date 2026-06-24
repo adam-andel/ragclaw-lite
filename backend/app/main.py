@@ -96,8 +96,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="EnterpriseRAG-Lite",
-    version="0.2.0",
-    description="企业级 RAG 知识中台 · 精简版（多租户）",
+    version="0.5.0",
+    description="企业级 Agentic RAG 知识中台 · 精简版（多租户 · SKILL + MCP）",
     lifespan=lifespan,
 )
 
