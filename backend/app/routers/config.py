@@ -17,6 +17,9 @@ class LLMConfigUpdate(BaseModel):
     llm_base_url: str | None = None
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
+    embedding_model: str | None = None
+    server_host: str | None = None
+    server_port: int | None = None
 
     @field_validator("llm_temperature")
     @classmethod
@@ -25,7 +28,12 @@ class LLMConfigUpdate(BaseModel):
             raise ValueError("temperature 必须在 0-2 之间")
         return v
 
-    @field_validator("llm_max_tokens")
+    @field_validator("server_port")
+    @classmethod
+    def port_range(cls, v):
+        if v is not None and not (1 <= v <= 65535):
+            raise ValueError("port 必须在 1-65535 之间")
+        return v
     @classmethod
     def tokens_range(cls, v):
         if v is not None and not (128 <= v <= 131072):

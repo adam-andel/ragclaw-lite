@@ -2,9 +2,9 @@
 import { ref, onMounted } from 'vue'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider,
+  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, type LLMConfig } from '@/api/settings'
 
 const message = useMessage()
@@ -26,6 +26,8 @@ const urlDefaults: Record<string, string> = {
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
   llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 2048,
+  embedding_model: 'BAAI/bge-small-zh-v1.5',
+  server_host: '0.0.0.0', server_port: 8000,
   is_configured: false,
 })
 
@@ -61,6 +63,9 @@ async function handleSave() {
       llm_base_url: config.value.llm_base_url,
       llm_temperature: config.value.llm_temperature,
       llm_max_tokens: config.value.llm_max_tokens,
+      embedding_model: config.value.embedding_model,
+      server_host: config.value.server_host,
+      server_port: config.value.server_port,
     }
     if (apiKeyInput.value.trim()) {
       payload.llm_api_key = apiKeyInput.value.trim()
@@ -97,7 +102,7 @@ async function handleTest() {
   <div class="settings-page">
     <div class="settings-header">
       <h1 class="page-title">系统设置</h1>
-      <p class="page-subtitle">LLM 配置 · 仅超级管理员可访问</p>
+      <p class="page-subtitle">LLM · Embedding · 服务器 · 仅超级管理员可访问</p>
     </div>
 
     <!-- 未配置警告 -->
@@ -153,7 +158,20 @@ async function handleTest() {
         </NFormItem>
 
         <!-- Temperature -->
-        <NFormItem label="Temperature">
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              Temperature
+              <NTooltip trigger="hover" :width="280">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                控制 LLM 输出的随机性与创造性。范围 0~2。<br/>
+                <b>0</b> = 最确定，每次回答一致；<b>2</b> = 最随机。<br/>
+                RAG 场景建议 <b>0.1~0.5</b>，让 LLM 严格遵循检索文档，减少自由发挥。
+              </NTooltip>
+            </span>
+          </template>
           <NSpace align="center">
             <NSlider v-model:value="config.llm_temperature" :min="0" :max="2" :step="0.05" style="width: 200px" @update:value="clearTest" />
             <span class="slider-value">{{ config.llm_temperature.toFixed(2) }}</span>
@@ -161,8 +179,69 @@ async function handleTest() {
         </NFormItem>
 
         <!-- Max Tokens -->
-        <NFormItem label="Max Tokens">
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              Max Tokens
+              <NTooltip trigger="hover" :width="280">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                LLM 单次输出的最大 token 数（≈ 中文字数 × 1.5~2）。<br/>
+                设太小回答会被截断，设太大浪费额度。<br/>
+                RAG 场景 <b>1024~2048</b> 通常足够。
+              </NTooltip>
+            </span>
+          </template>
           <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
+        </NFormItem>
+
+        <NDivider />
+
+        <!-- Embedding Model -->
+        <NFormItem label="Embedding 模型">
+          <NInput v-model:value="config.embedding_model" placeholder="BAAI/bge-small-zh-v1.5" @input="clearTest">
+            <template #prefix><NIcon :component="HardwareChip" /></template>
+          </NInput>
+        </NFormItem>
+
+        <NDivider />
+
+        <!-- Server Host -->
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              监听地址
+              <NTooltip trigger="hover" :width="260">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                服务器绑定的 IP 地址。<br/>
+                <b>0.0.0.0</b> = 接受所有网络接口的连接。<br/>
+                <b>修改后需重启服务生效</b>。
+              </NTooltip>
+            </span>
+          </template>
+          <NInput v-model:value="config.server_host" placeholder="0.0.0.0" @input="clearTest">
+            <template #prefix><NIcon :component="Server" /></template>
+          </NInput>
+        </NFormItem>
+
+        <!-- Server Port -->
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              监听端口
+              <NTooltip trigger="hover" :width="260">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                服务器监听的 TCP 端口，范围 1~65535。<br/>
+                <b>修改后需重启服务生效</b>。
+              </NTooltip>
+            </span>
+          </template>
+          <NInputNumber v-model:value="config.server_port" :min="1" :max="65535" :step="1" @update:value="clearTest" />
         </NFormItem>
 
         <NDivider />
@@ -208,6 +287,10 @@ async function handleTest() {
 .page-subtitle { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: var(--space-1); }
 .settings-card { background: var(--color-surface); border-radius: var(--radius-xl); }
 .slider-value { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--color-text-muted); }
+
+.label-with-help { display: inline-flex; align-items: center; gap: 4px; }
+.help-icon { color: var(--color-text-muted); cursor: help; transition: color 0.15s; }
+.help-icon:hover { color: var(--color-primary); }
 
 .test-result {
   display: flex; align-items: center; gap: 8px;

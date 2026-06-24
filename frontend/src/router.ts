@@ -78,7 +78,7 @@ router.beforeEach(async (to, _from, next) => {
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next('/login')
-  } else if (to.meta.admin && !auth.isStaff) {
+  } else if (to.meta.admin && !auth.isAdmin) {
     next('/chat')
   } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile') {
     next('/chat')

@@ -1,11 +1,15 @@
-"""Application configuration via environment variables."""
+"""Application configuration — hardcoded defaults only.
+
+Runtime overrides are stored in the encrypted config.enc file,
+managed by config_manager. No .env file needed.
+"""
 
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": str(Path(__file__).resolve().parent.parent.parent / ".env"), "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = {"extra": "ignore"}
 
     # --- Paths ---
     project_root: Path = Path(__file__).resolve().parent.parent.parent

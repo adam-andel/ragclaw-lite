@@ -35,7 +35,7 @@ const menuOptions = computed<MenuOption[]>(() => {
     { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
-    { label: '系统设置', key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
+    ...(auth.isAdmin ? [{ label: '系统设置', key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) }] : []),
   ]
 })
 

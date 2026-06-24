@@ -7,6 +7,9 @@ export interface LLMConfig {
   llm_base_url: string
   llm_temperature: number
   llm_max_tokens: number
+  embedding_model: string
+  server_host: string
+  server_port: number
   is_configured: boolean       // whether API key has been set
 }
 
@@ -17,6 +20,9 @@ export interface LLMConfigUpdate {
   llm_base_url?: string
   llm_temperature?: number
   llm_max_tokens?: number
+  embedding_model?: string
+  server_host?: string
+  server_port?: number
 }
 
 export async function getLLMConfig(): Promise<LLMConfig> {

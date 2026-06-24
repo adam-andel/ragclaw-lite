@@ -1,7 +1,7 @@
-"""Runtime LLM configuration manager — memory + AES-256-GCM encrypted file.
+"""Runtime configuration manager — memory + AES-256-GCM encrypted file.
 
-The .env file is NOT used as an API key source.
-Admin sets the key through the web UI (SettingsView → PUT /api/config/llm).
+All runtime-configurable settings live here. Admin manages them through the web UI.
+No .env file is needed or used as a key source.
 """
 
 import json
@@ -51,7 +51,7 @@ def _mask(key: str) -> str:
 
 
 class ConfigManager:
-    """Thread-safe singleton for LLM runtime configuration."""
+    """Thread-safe singleton for runtime configuration."""
 
     _instance = None
     _lock = threading.Lock()
@@ -72,20 +72,21 @@ class ConfigManager:
     # ── Lifecycle ──
 
     def init(self):
-        """Called once at startup.
-
-        Defaults come from Settings for non-sensitive fields (model, url, etc.).
-        api_key is always empty by default — admin must configure via web UI.
-        If config.enc exists, its values override the defaults.
-        """
+        """Called once at startup. Defaults from Settings; config.enc overrides if present."""
         with self._lock:
             self._config = {
+                # LLM
                 "llm_provider": settings.llm_provider,
                 "llm_model": settings.llm_model,
                 "llm_api_key": "",
                 "llm_base_url": settings.llm_base_url,
                 "llm_temperature": settings.llm_temperature,
                 "llm_max_tokens": settings.llm_max_tokens,
+                # Embedding
+                "embedding_model": settings.embedding_model,
+                # Server (startup-time only)
+                "server_host": "0.0.0.0",
+                "server_port": 8000,
             }
             if self._config_file.exists():
                 try:
@@ -103,7 +104,7 @@ class ConfigManager:
         plain = json.dumps(self._config, ensure_ascii=False)
         self._config_file.write_bytes(_encrypt(plain))
 
-    # ── Properties (used by llm_client) ──
+    # ── Properties ──
 
     @property
     def api_key(self) -> str:
@@ -134,6 +135,21 @@ class ConfigManager:
         with self._lock:
             return self._config.get("llm_max_tokens", 2048)
 
+    @property
+    def embedding_model(self) -> str:
+        with self._lock:
+            return self._config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+
+    @property
+    def server_host(self) -> str:
+        with self._lock:
+            return self._config.get("server_host", "0.0.0.0")
+
+    @property
+    def server_port(self) -> int:
+        with self._lock:
+            return self._config.get("server_port", 8000)
+
     # ── Public API ──
 
     def get_config_safe(self) -> dict:
@@ -145,10 +161,11 @@ class ConfigManager:
             return c
 
     def update(self, data: dict) -> dict:
-        """Partial update. Writes memory + encrypted file. First-time setup uses this too."""
+        """Partial update. Writes memory + encrypted file."""
         allowed = {
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
+            "embedding_model", "server_host", "server_port",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
         with self._lock:

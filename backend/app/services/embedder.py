@@ -2,6 +2,7 @@
 
 from sentence_transformers import SentenceTransformer
 from app.config import settings
+from app.services.config_manager import config_manager
 
 
 class EmbedderService:
@@ -13,7 +14,7 @@ class EmbedderService:
     def _ensure_model(self):
         if self._model is None:
             self._model = SentenceTransformer(
-                settings.embedding_model,
+                config_manager.embedding_model,
                 device=settings.embedding_device,
             )
         return self._model
