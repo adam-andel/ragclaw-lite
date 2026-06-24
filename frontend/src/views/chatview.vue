@@ -42,6 +42,7 @@ const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
 const kbSearchText = ref('')
+const convKbMap = ref<Record<string, string>>({})
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
@@ -73,6 +74,12 @@ async function loadConversations() {
 onMounted(async () => {
   isReadonly.value = false
 
+  // Load persisted conversation→KB mapping
+  try {
+    const stored = localStorage.getItem('erag:conv-kb-map')
+    if (stored) convKbMap.value = JSON.parse(stored)
+  } catch { /* ignore */ }
+
   try {
     const res = await listKnowledgeBases()
     kbs.value = res.data
@@ -97,6 +104,14 @@ onMounted(async () => {
   }
 })
 
+// Persist KB selection when conversation has messages
+watch(selectedKbId, (newKbId) => {
+  if (newKbId && conversationId.value && messages.value.length > 0) {
+    convKbMap.value[conversationId.value] = newKbId
+    localStorage.setItem('erag:conv-kb-map', JSON.stringify(convKbMap.value))
+  }
+})
+
 // Watch route param changes (conversation selected from sidebar)
 watch(() => route.params.id, async (id) => {
   const cid = id as string | undefined
@@ -117,6 +132,11 @@ async function loadConversation(id: string) {
     const conv = await getConversation(id)
     messages.value = conv.messages || []
     conversationId.value = id
+    // Restore the KB that was used with this conversation
+    const savedKbId = convKbMap.value[id]
+    if (savedKbId && kbs.value.find(k => k.id === savedKbId)) {
+      selectedKbId.value = savedKbId
+    }
     checkReadonly((conv as any).user_id)
     if (isReadonly.value) {
       router.replace({ path: `/chat/${id}`, query: { view_user: (conv as any).user_id } })
@@ -162,6 +182,11 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
         ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
         ;(proxyMsg as any)._llm = event.llm_ms || 0
         conversationId.value = event.conversation_id
+        // Persist KB for newly created conversation
+        if (!convKbMap.value[event.conversation_id]) {
+          convKbMap.value[event.conversation_id] = selectedKbId.value
+          localStorage.setItem('erag:conv-kb-map', JSON.stringify(convKbMap.value))
+        }
         router.replace(`/chat/${event.conversation_id}`)
         window.dispatchEvent(new CustomEvent('erag:conversation-updated'))
       }
