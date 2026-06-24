@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NSelect, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
-import { Send, StopCircle, Chatbubbles } from '@vicons/ionicons5'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
+import { Send, StopCircle, Chatbubbles, List, Add } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -41,6 +41,7 @@ const conversations = ref<any[]>([])
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
+const kbSearchText = ref('')
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
@@ -50,6 +51,12 @@ const kbHasMore = computed(() => kbs.value.length > 3)
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
 const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
+const currentKbName = computed(() => selectedKb.value?.name || '选择知识库')
+const filteredKbs = computed(() =>
+  kbs.value.filter((kb: any) =>
+    !kbSearchText.value || kb.name.toLowerCase().includes(kbSearchText.value.toLowerCase())
+  )
+)
 
 function selectAndClose(convId: string) {
   emptyMode.value = ''
@@ -209,6 +216,15 @@ function stopStream() {
   abortCtl = null
 }
 
+function newConversation() {
+  conversationId.value = undefined
+  messages.value = []
+  isReadonly.value = false
+  emptyMode.value = 'kb'
+  loadConversations()
+  router.replace('/chat')
+}
+
 const isComposing = ref(false)
 function handleKeydown(e: KeyboardEvent) {
   if (isComposing.value) return
@@ -227,14 +243,18 @@ function handleKeydown(e: KeyboardEvent) {
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
         <template v-if="!isReadonly">
           <span class="kb-select-label">当前知识库</span>
-          <NSelect
-            v-model:value="selectedKbId"
-            :options="kbs.map((k: any) => ({ label: k.name, value: k.id }))"
-            placeholder="选择知识库"
-            style="width:180px"
-            size="small"
-          />
+          <NButton size="small" @click="showMoreKb = true" class="kb-trigger-btn">
+            {{ currentKbName }}
+          </NButton>
         </template>
+        <NButton size="small" @click="showMoreConv = true">
+          <template #icon><NIcon size="16"><List /></NIcon></template>
+          对话历史
+        </NButton>
+        <NButton v-if="!isReadonly" size="small" type="primary" @click="newConversation">
+          <template #icon><NIcon size="16"><Add /></NIcon></template>
+          新建对话
+        </NButton>
       </div>
     </div>
 
@@ -368,23 +388,28 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
     </NModal>
 
-    <!-- Modal: full KB list -->
-    <NModal v-model:show="showMoreKb" preset="card" title="所有知识库"
+    <!-- Modal: KB picker with search -->
+    <NModal v-model:show="showMoreKb" preset="card" title="选择知识库"
       style="width: 90vw; max-width: 520px"
+      @after-leave="kbSearchText = ''"
     >
-      <div class="picker-scroll">
-        <NCard v-for="kb in kbs" :key="kb.id" size="small" class="kb-pick-card"
-          :class="{ active: kb.id === selectedKbId }"
-          role="button" tabindex="0"
-          @click="selectedKbId = kb.id; showMoreKb = false"
-          @keydown.enter.prevent="selectedKbId = kb.id; showMoreKb = false"
-          @keydown.space.prevent="selectedKbId = kb.id; showMoreKb = false"
-        >
-          <strong>{{ kb.name }}</strong>
-          <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-          <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
-        </NCard>
-      </div>
+      <NInput v-model:value="kbSearchText" placeholder="搜索知识库名称..." clearable style="margin-bottom:12px" />
+      <template v-if="filteredKbs.length > 0">
+        <div class="picker-scroll">
+          <NCard v-for="kb in filteredKbs" :key="kb.id" size="small" class="kb-pick-card"
+            :class="{ active: kb.id === selectedKbId }"
+            role="button" tabindex="0"
+            @click="selectedKbId = kb.id; showMoreKb = false"
+            @keydown.enter.prevent="selectedKbId = kb.id; showMoreKb = false"
+            @keydown.space.prevent="selectedKbId = kb.id; showMoreKb = false"
+          >
+            <strong>{{ kb.name }}</strong>
+            <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+            <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+          </NCard>
+        </div>
+      </template>
+      <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
     </NModal>
 
     <div v-if="!isReadonly" class="chat-input-area">
@@ -537,5 +562,35 @@ function handleKeydown(e: KeyboardEvent) {
 }
 .chat-input-area :deep(.n-input) {
   flex: 1;
+}
+
+/* ── KB trigger button ── */
+.kb-trigger-btn {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Mobile: header wraps gracefully ── */
+@media (max-width: 767px) {
+  .chat-header {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    gap: 6px;
+  }
+  .chat-header .kb-header-title h2 {
+    font-size: var(--text-base);
+  }
+  .chat-header-right {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .kb-select-label {
+    display: none;
+  }
+  .kb-trigger-btn {
+    max-width: 120px;
+  }
 }
 </style>

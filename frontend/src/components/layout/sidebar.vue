@@ -1,24 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
+import { computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NMenu, NIcon, NButton, NTag, NPopconfirm, NEmpty, NTooltip } from 'naive-ui'
+import { NMenu, NIcon, NButton, NTag } from 'naive-ui'
 import {
   Chatbubbles, FolderOpen, Search, StatsChart,
-  LogOut, People, Add, Trash, ChevronDown, Settings,
+  LogOut, People, Settings,
 } from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import { deleteConversation, authHeaders } from '@/api/chat'
-
-interface ConvItem { id: string; title: string; updated_at: string }
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
 const userAvatar = computed(() => localStorage.getItem('erag:avatar') || '👤')
-
-const isOnChatRoute = computed(() => route.path.startsWith('/chat'))
 
 // ── Menu ──
 
@@ -56,71 +51,6 @@ function handleMenuUpdate(key: string) {
     router.push(key)
   }
 }
-
-// ── Conversations ──
-
-const conversations = ref<ConvItem[]>([])
-const conversationId = computed(() => route.params.id as string | undefined)
-const convExpanded = ref(true)
-const initialLoadDone = ref(false)
-
-async function loadConversations() {
-  try {
-    const uid = auth.user?.id || ''
-    const r = await fetch(`/api/conversations?user_id=${uid}`, { headers: authHeaders() })
-    if (!r.ok) throw new Error('Failed')
-    conversations.value = await r.json()
-
-    // Auto-navigate to first conversation when landing on /chat without an id
-    if (!initialLoadDone.value && !conversationId.value && conversations.value.length > 0) {
-      initialLoadDone.value = true
-      router.replace(`/chat/${conversations.value[0].id}`)
-    }
-    initialLoadDone.value = true
-  } catch {
-    conversations.value = []
-  }
-}
-
-function selectConversation(id: string) {
-  router.push(`/chat/${id}`)
-}
-
-async function handleDelete(id: string) {
-  try {
-    await deleteConversation(id)
-    if (conversationId.value === id) {
-      router.replace('/chat')
-      window.dispatchEvent(new CustomEvent('erag:reset-chat'))
-    }
-    await loadConversations()
-  } catch { /* noop */ }
-}
-
-function newConversation() {
-  router.replace('/chat')
-  window.dispatchEvent(new CustomEvent('erag:reset-chat'))
-}
-
-// Refresh when a conversation is created/updated in ChatView
-function onConversationUpdated() {
-  loadConversations()
-}
-
-// Refresh on route enter
-watch(() => route.path, (path) => {
-  if (path.startsWith('/chat')) {
-    loadConversations()
-  }
-})
-
-onMounted(() => {
-  if (isOnChatRoute.value) loadConversations()
-  window.addEventListener('erag:conversation-updated', onConversationUpdated)
-})
-onUnmounted(() => {
-  window.removeEventListener('erag:conversation-updated', onConversationUpdated)
-})
 </script>
 
 <template>
@@ -137,63 +67,7 @@ onUnmounted(() => {
       @update:value="handleMenuUpdate"
     />
 
-    <!-- Conversation history – collapsible, only on /chat -->
-    <div v-if="isOnChatRoute" class="conv-section">
-      <div
-        class="conv-section-header"
-        role="button"
-        tabindex="0"
-        :aria-expanded="convExpanded"
-        aria-controls="conv-list"
-        @click="convExpanded = !convExpanded"
-        @keydown.enter="convExpanded = !convExpanded"
-        @keydown.space.prevent="convExpanded = !convExpanded"
-      >
-        <span class="conv-section-title">对话历史</span>
-        <div class="conv-section-actions">
-          <NButton size="tiny" @click.stop="newConversation">
-            <template #icon><NIcon><Add /></NIcon></template>
-          </NButton>
-          <NIcon size="16" :class="{ rotated: !convExpanded }" class="chevron-icon">
-            <ChevronDown />
-          </NIcon>
-        </div>
-      </div>
-      <div id="conv-list" v-show="convExpanded" class="conv-list" role="list" aria-label="对话历史列表">
-        <NEmpty v-if="conversations.length === 0" description="暂无对话" style="padding: var(--space-3)" />
-        <div
-          v-for="c in conversations"
-          :key="c.id"
-          :class="['conv-item', { active: c.id === conversationId }]"
-          role="button"
-          tabindex="0"
-          :aria-current="c.id === conversationId ? 'location' : undefined"
-          @click="selectConversation(c.id)"
-          @keydown.enter="selectConversation(c.id)"
-          @keydown.space.prevent="selectConversation(c.id)"
-        >
-          <div class="conv-item-text">
-            <span class="conv-name">{{ c.title || '新对话' }}</span>
-            <span class="conv-time">{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
-          </div>
-          <div class="conv-item-actions">
-            <NPopconfirm @positive-click="handleDelete(c.id)" positive-text="确认" negative-text="取消">
-              <template #trigger>
-                <NTooltip>
-                  <template #trigger>
-                    <NButton text size="tiny" type="error" @click.stop>
-                      <NIcon size="14"><Trash /></NIcon>
-                    </NButton>
-                  </template>
-                  删除对话
-                </NTooltip>
-              </template>
-              确定删除此对话？
-            </NPopconfirm>
-          </div>
-        </div>
-      </div>
-    </div>
+    <div class="sidebar-spacer" />
 
     <div class="sidebar-footer">
       <div class="user-info" role="button" tabindex="0" @click="router.push('/profile')" @keydown.enter="router.push('/profile')">
@@ -245,96 +119,13 @@ onUnmounted(() => {
   border-radius: var(--radius-sm);
 }
 
-/* ── Conversation section ── */
-.conv-section {
+/* ── Spacer to push footer to bottom ── */
+.sidebar-spacer {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-top: 1px solid var(--color-border);
-  margin-top: var(--space-2);
-  overflow: hidden;
-}
-.conv-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-5) var(--space-2);
-  cursor: pointer;
-  user-select: none;
-  flex-shrink: 0;
-}
-.conv-section-header:hover {
-  background: var(--color-primary-soft);
-}
-.conv-section-title {
-  font-weight: 600;
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.conv-section-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-.chevron-icon {
-  transition: transform 0.2s;
-  color: var(--color-text-muted);
-}
-.chevron-icon.rotated {
-  transform: rotate(-90deg);
-}
-.conv-list {
-  flex: 1;
-  overflow-y: auto;
-  padding-bottom: var(--space-2);
-}
-.conv-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px var(--space-5);
-  cursor: pointer;
-  transition: background .15s;
-}
-.conv-item:hover {
-  background: var(--color-primary-soft);
-}
-.conv-item.active {
-  background: rgba(79, 110, 247, 0.1);
-}
-.conv-item-text {
-  flex: 1;
-  min-width: 0;
-  margin-right: var(--space-1);
-}
-.conv-item-actions {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  flex-shrink: 0;
-}
-.conv-item:hover .conv-item-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-.conv-name {
-  display: block;
-  font-size: var(--text-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.conv-time {
-  font-size: 0.65rem;
-  color: var(--color-text-muted);
 }
 
 /* ── Footer ── */
 .sidebar-footer {
-  margin-top: auto;
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--color-border);
   display: flex;
