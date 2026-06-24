@@ -76,7 +76,12 @@ onMounted(async () => {
   try {
     const res = await listKnowledgeBases()
     kbs.value = res.data
-    if (kbs.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbs.value[0].id
+    const kbFromQuery = route.query.kb as string | undefined
+    if (kbFromQuery && kbs.value.find(k => k.id === kbFromQuery)) {
+      selectedKbId.value = kbFromQuery
+    } else if (kbs.value.length > 0 && !selectedKbId.value) {
+      selectedKbId.value = kbs.value[0].id
+    }
   } catch { /* noop */ }
 
   await loadConversations()

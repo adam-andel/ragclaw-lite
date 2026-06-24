@@ -6,7 +6,7 @@ import {
   NPopconfirm, NIcon, NSelect, NSpin, NProgress, NDataTable,
   NCheckbox, useMessage,
 } from 'naive-ui'
-import { Add, Trash, People, Create, Search, Library } from '@vicons/ionicons5'
+import { Add, Trash, People, Create, Search, Library, Chatbubbles } from '@vicons/ionicons5'
 import {
   listKnowledgeBases, createKnowledgeBase, deleteKnowledgeBase,
   updateKnowledgeBase, listKBDocuments, addDocumentsToKB,
@@ -220,6 +220,10 @@ onUnmounted(() => {
 })
 
 // ── Select Documents Modal ──
+
+function goToChat(kbId: string) {
+  router.push({ path: '/chat', query: { kb: kbId } })
+}
 
 async function openSelectDocs() {
   showSelectDocs.value = true
@@ -585,6 +589,10 @@ function isProcessing(status: string) {
               <span v-if="selectedKb?.description" class="docs-header-desc">{{ selectedKb.description }}</span>
             </div>
             <NSpace>
+              <NButton size="small" @click="goToChat(selectedKbId)">
+                <template #icon><NIcon><Chatbubbles /></NIcon></template>
+                发起对话
+              </NButton>
               <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKbId)">
                 <template #icon><NIcon><People /></NIcon></template>
                 共享
