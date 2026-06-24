@@ -32,17 +32,17 @@ class AnswerCache:
         self._hit_count: int = 0
         self._miss_count: int = 0
 
-    def _make_key(self, query: str, kb_id: str) -> str:
-        """Generate cache key from query + kb_id."""
-        raw = f"{kb_id}:{query.strip().lower()}"
+    def _make_key(self, query: str, kb_id: str, skill_id: str = "") -> str:
+        """Generate cache key from query + kb_id + optional skill_id."""
+        raw = f"{skill_id}:{kb_id}:{query.strip().lower()}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def get(self, query: str, kb_id: str) -> CacheEntry | None:
+    def get(self, query: str, kb_id: str, skill_id: str = "") -> CacheEntry | None:
         """Look up a cached answer. Returns None on miss or expiry."""
         if not settings.cache_enabled:
             return None
 
-        key = self._make_key(query, kb_id)
+        key = self._make_key(query, kb_id, skill_id)
 
         with self._lock:
             entry = self._store.get(key)
@@ -61,12 +61,12 @@ class AnswerCache:
             self._hit_count += 1
             return entry
 
-    def put(self, query: str, kb_id: str, answer: str, citations: list[dict]):
+    def put(self, query: str, kb_id: str, answer: str, citations: list[dict], skill_id: str = ""):
         """Store an answer in the cache."""
         if not settings.cache_enabled:
             return
 
-        key = self._make_key(query, kb_id)
+        key = self._make_key(query, kb_id, skill_id)
 
         with self._lock:
             # Evict oldest if at capacity
