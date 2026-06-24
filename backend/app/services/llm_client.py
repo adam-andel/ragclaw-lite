@@ -5,7 +5,6 @@ from typing import AsyncGenerator
 
 import httpx
 
-from app.config import settings
 from app.services.config_manager import config_manager
 
 
@@ -43,8 +42,8 @@ class LLMClient:
         Returns:
             The full response text
         """
-        temp = temperature if temperature is not None else settings.llm_temperature
-        max_tok = max_tokens if max_tokens is not None else settings.llm_max_tokens
+        temp = temperature if temperature is not None else config_manager.temperature
+        max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
 
         headers = {
             "Content-Type": "application/json",
@@ -77,8 +76,8 @@ class LLMClient:
 
         Yields text tokens one at a time.
         """
-        temp = temperature if temperature is not None else settings.llm_temperature
-        max_tok = max_tokens if max_tokens is not None else settings.llm_max_tokens
+        temp = temperature if temperature is not None else config_manager.temperature
+        max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
 
         headers = {
             "Content-Type": "application/json",

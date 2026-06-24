@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from mem0 import Memory
 
 from app.config import settings
+from app.services.config_manager import config_manager
 
 logger = logging.getLogger("erag")
 
@@ -34,9 +35,9 @@ def _get_memory() -> Memory:
             "llm": {
                 "provider": "openai",
                 "config": {
-                    "model": settings.llm_model,
-                    "api_key": settings.llm_api_key,
-                    "openai_base_url": settings.llm_base_url,
+                    "model": config_manager.model,
+                    "api_key": config_manager.api_key,
+                    "openai_base_url": config_manager.base_url,
                     "temperature": 0.1,
                     "max_tokens": 500,
                 },

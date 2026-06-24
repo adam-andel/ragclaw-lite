@@ -11,9 +11,8 @@ frontend/dist/
 pnpm-workspace.yaml
 
 # Data
-data/memory.db
-data/chroma/
-data/sqlite/
+data/*
+!data/uploads/
 data/uploads/*
 !data/uploads/.gitkeep
 
