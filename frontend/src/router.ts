@@ -68,6 +68,18 @@ const router = createRouter({
       component: () => import('@/views/SettingsView.vue'),
       meta: { title: '系统设置', requiresAuth: true, admin: true },
     },
+    {
+      path: '/skills',
+      name: 'skills',
+      component: () => import('@/views/SkillsView.vue'),
+      meta: { title: '技能管理', requiresAuth: true },
+    },
+    {
+      path: '/mcp',
+      name: 'mcp',
+      component: () => import('@/views/McpServersView.vue'),
+      meta: { title: 'MCP 服务', requiresAuth: true },
+    },
   ],
 })
 

@@ -132,3 +132,109 @@ export type SSEEvent =
   | { type: 'citation'; citation: Citation }
   | { type: 'error'; message: string }
   | { type: 'done'; conversation_id: string; message_id: string }
+
+// ---- SKILL ----
+export interface Skill {
+  id: string
+  tenant_id?: string | null
+  name: string
+  description?: string | null
+  system_prompt: string
+  is_active: boolean
+  created_by?: string | null
+  created_at: string
+  updated_at: string
+  tools: SkillToolInfo[]
+}
+
+export interface SkillToolInfo {
+  id: string
+  tool_name: string
+  mcp_server_id: string
+  mcp_server_name: string
+}
+
+export interface SkillCreatePayload {
+  name: string
+  description?: string
+  system_prompt?: string
+  is_active?: boolean
+}
+
+export interface SkillUpdatePayload {
+  name?: string
+  description?: string
+  system_prompt?: string
+  is_active?: boolean
+}
+
+export interface SkillToolBindPayload {
+  tool_name: string
+  mcp_server_id: string
+  config_json?: string
+}
+
+export interface SkillToolBindResult {
+  id: string
+  skill_id: string
+  tool_name: string
+  mcp_server_id: string
+}
+
+export interface SkillListResponse {
+  items: Skill[]
+  total: number
+  page: number
+  size: number
+}
+
+// ---- MCP Server ----
+export interface MCPServer {
+  id: string
+  tenant_id?: string | null
+  name: string
+  transport_type: 'http' | 'stdio'
+  endpoint?: string | null
+  command?: string | null
+  args_json?: string | null
+  env_json?: string | null
+  timeout_seconds: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface MCPServerCreatePayload {
+  name: string
+  transport_type?: 'http' | 'stdio'
+  endpoint?: string
+  command?: string
+  args_json?: string
+  env_json?: string
+  timeout_seconds?: number
+  is_active?: boolean
+}
+
+export interface MCPServerUpdatePayload {
+  name?: string
+  transport_type?: 'http' | 'stdio'
+  endpoint?: string
+  command?: string
+  args_json?: string
+  env_json?: string
+  timeout_seconds?: number
+  is_active?: boolean
+}
+
+export interface MCPServerListResponse {
+  items: MCPServer[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface MCPServerTestResult {
+  ok: boolean
+  message?: string
+  error?: string
+  tools?: { name: string; description: string }[]
+}

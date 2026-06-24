@@ -27,6 +27,8 @@ const menuOptions = computed<MenuOption[]>(() => {
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: '知识库', key: '/knowledge', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
     { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
+    { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
+    { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
