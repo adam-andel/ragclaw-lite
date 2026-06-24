@@ -152,7 +152,7 @@ async def chat_stream(
                     kb_id=request.kb_id,
                     user_id=current_user.id,
                     citations=collected_citations,
-                    skill_id=request.skill_id or state.get("active_skill", {}).get("id", ""),
+                    skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", ""),
                 ))
 
             # Save assistant message
@@ -179,6 +179,8 @@ async def chat_stream(
             yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'cache_hit': cache_hit, 'ttft_ms': 0, 'retrieval_ms': final_retr, 'llm_ms': 0}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

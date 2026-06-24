@@ -106,7 +106,7 @@ async def run_agent_and_stream(state: dict):
         kb_id=state["kb_id"],
         user_id=state.get("user_id", ""),
         citations=state.get("citations", []),
-        skill_id=state.get("active_skill", {}).get("id") if state.get("active_skill") else "",
+        skill_id=(state.get("active_skill") or {}).get("id", ""),
     ))
 
 

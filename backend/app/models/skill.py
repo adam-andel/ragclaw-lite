@@ -27,7 +27,7 @@ class Skill(Base):
     __tablename__ = "skills"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
-    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -60,7 +60,7 @@ class MCPServer(Base):
     __tablename__ = "mcp_servers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
-    tenant_id: Mapped[str] = mapped_column(String(36), index=True, nullable=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     transport_type: Mapped[str] = mapped_column(String(20), nullable=False, default="http")  # http | stdio
     # HTTP

@@ -69,7 +69,11 @@ async def create_skill(
     )
     db.add(skill)
     await db.commit()
-    await db.refresh(skill)
+    # Re-query with eager loading to avoid async lazy-load greenlet error
+    result = await db.execute(
+        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill.id)
+    )
+    skill = result.scalar_one()
     return _skill_to_response(skill)
 
 
@@ -148,7 +152,11 @@ async def update_skill(
         skill.is_active = data.is_active
     skill.updated_at = datetime.utcnow()
     await db.commit()
-    await db.refresh(skill)
+    # Re-query with eager loading to avoid async lazy-load greenlet error
+    result = await db.execute(
+        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill_id)
+    )
+    skill = result.scalar_one()
     return _skill_to_response(skill)
 
 
