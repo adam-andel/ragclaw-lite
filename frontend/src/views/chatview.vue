@@ -282,8 +282,8 @@ function handleKeydown(e: KeyboardEvent) {
             更多对话 ({{ conversations.length }})
           </NButton>
           <NEmpty v-if="conversations.length === 0" description="暂无对话记录" style="padding:8px 0" />
-          <div class="center-panel-actions">
-            <NButton type="primary" @click="emptyMode = 'kb'">新建对话</NButton>
+          <div class="center-panel-actions" style="justify-content:center">
+            <span class="fallback-hint">或者<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline;font-size:inherit">新建对话</NButton></span>
           </div>
         </div>
       </div>
@@ -348,9 +348,7 @@ function handleKeydown(e: KeyboardEvent) {
         <NButton type="primary" size="small" @click="emptyMode = 'conv'" style="margin-top:8px">
           选择对话
         </NButton>
-        <NButton secondary size="small" @click="emptyMode = 'kb'" style="margin-top:8px">
-          新建对话
-        </NButton>
+        <p class="fallback-hint">或者<NButton text size="tiny" type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline">新建对话</NButton></p>
       </div>
 
       <!-- Edge case: conversation loaded but no messages -->
@@ -553,6 +551,7 @@ function handleKeydown(e: KeyboardEvent) {
 .picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
+.fallback-hint { margin-top: 8px; font-size: var(--text-base); color: var(--color-text-muted); }
 .chat-input-area {
   display: flex;
   gap: var(--space-2);

@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NButton, NModal, NInput, NCard, NSpace, NTag, NEmpty,
   NPopconfirm, NIcon, NSelect, NSpin, NProgress, NDataTable,
@@ -19,6 +20,7 @@ import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse } fro
 
 const message = useMessage()
 const router = useRouter()
+const route = useRoute()
 const kbs = ref<KnowledgeBase[]>([])
 const selectedKbId = ref<string>('')
 const documents = ref<DocumentItem[]>([])
@@ -89,7 +91,11 @@ const filteredKbs = computed(() => {
   return list
 })
 
-onMounted(() => loadKBs())
+onMounted(() => {
+  loadKBs()
+  const kbId = route.query.kb as string
+  if (kbId) selectedKbId.value = kbId
+})
 
 async function loadKBs() {
   loadingKbs.value = true

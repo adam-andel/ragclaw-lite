@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
@@ -9,12 +10,14 @@ import { CloudUpload, Search, Trash, DocumentText } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
+  listKnowledgeBases,
 } from '@/api/documents'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem } from '@/types'
 
 const message = useMessage()
 const auth = useAuthStore()
+const router = useRouter()
 
 // List state
 const docs = ref<DocumentItem[]>([])
@@ -41,6 +44,22 @@ const chunkSearch = ref('')
 const chunkPage = ref(1)
 const expandedChunks = ref(new Set<string>())
 
+// KB modal
+const allKbs = ref<any[]>([])
+const showDocKbs = ref(false)
+const docKbSearchText = ref('')
+const selectedDocKbIds = ref<string[]>([])
+
+const filteredDocKbs = computed(() => {
+  if (!docKbSearchText.value.trim()) {
+    return allKbs.value.filter(kb => selectedDocKbIds.value.includes(kb.id))
+  }
+  const q = docKbSearchText.value.trim().toLowerCase()
+  return allKbs.value.filter(kb =>
+    selectedDocKbIds.value.includes(kb.id) && kb.name.toLowerCase().includes(q)
+  )
+})
+
 const filteredChunks = computed(() => {
   if (!chunkSearch.value.trim()) return chunks.value
   const q = chunkSearch.value.trim().toLowerCase()
@@ -63,7 +82,7 @@ function toggleChunkExpand(id: string) {
 // Progress polling
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => { loadDocs(); startPolling() })
+onMounted(() => { loadDocs(); startPolling(); loadKBs() })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -244,6 +263,25 @@ const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
 function isProcessing(status: string) {
   return processingStatuses.includes(status)
 }
+
+async function loadKBs() {
+  try {
+    const res = await listKnowledgeBases()
+    allKbs.value = res.data
+  } catch { allKbs.value = [] }
+}
+
+function openDocKbs(kbIds: string[]) {
+  if (kbIds.length === 0) return
+  selectedDocKbIds.value = kbIds
+  docKbSearchText.value = ''
+  showDocKbs.value = true
+}
+
+function goToKb(kbId: string) {
+  showDocKbs.value = false
+  router.push({ path: '/knowledge', query: { kb: kbId } })
+}
 </script>
 <template>
   <div class="dm-view">
@@ -342,7 +380,14 @@ function isProcessing(status: string) {
               <span>{{ doc.chunk_count }} 分块</span>
             </template>
             <span class="doc-meta-sep">·</span>
-            <span :class="doc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'">
+            <span
+              :class="doc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'"
+              @click="openDocKbs(doc.kb_ids)"
+              role="button"
+              tabindex="0"
+              @keydown.enter.prevent="openDocKbs(doc.kb_ids)"
+              @keydown.space.prevent="openDocKbs(doc.kb_ids)"
+            >
               {{ doc.kb_ids.length > 0 ? `${doc.kb_ids.length} 个知识库` : '未关联' }}
             </span>
             <span class="doc-meta-sep">·</span>
@@ -409,6 +454,42 @@ function isProcessing(status: string) {
           <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
         </NSpin>
       </div>
+    </NModal>
+
+    <!-- Doc KBs Modal -->
+    <NModal v-model:show="showDocKbs" preset="card" title="关联知识库"
+      style="width: 90vw; max-width: 480px"
+      @after-leave="docKbSearchText = ''"
+    >
+      <NInput
+        v-if="allKbs.length > 0"
+        v-model:value="docKbSearchText"
+        placeholder="搜索知识库名称..."
+        clearable
+        style="margin-bottom:12px"
+      >
+        <template #prefix><NIcon size="15"><Search /></NIcon></template>
+      </NInput>
+      <template v-if="filteredDocKbs.length > 0">
+        <div class="picker-scroll">
+          <NCard
+            v-for="kb in filteredDocKbs"
+            :key="kb.id"
+            size="small"
+            class="kb-pick-card"
+            role="button"
+            tabindex="0"
+            @click="goToKb(kb.id)"
+            @keydown.enter.prevent="goToKb(kb.id)"
+            @keydown.space.prevent="goToKb(kb.id)"
+          >
+            <strong>{{ kb.name }}</strong>
+            <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+            <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+          </NCard>
+        </div>
+      </template>
+      <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
     </NModal>
   </div>
 </template>
@@ -509,7 +590,9 @@ function isProcessing(status: string) {
   margin: 0 2px;
 }
 .doc-meta-muted { color: var(--color-text-muted); }
-.doc-kb-link { color: var(--color-primary); }
+.doc-kb-link { color: var(--color-primary); cursor: pointer; }
+.doc-kb-link:hover { text-decoration: underline; }
+.doc-kb-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
 .dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
 
@@ -570,4 +653,16 @@ function isProcessing(status: string) {
   min-width: 4em;
   text-align: center;
 }
+
+/* KB picker modal (shared) */
+.picker-scroll { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.kb-pick-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+  border-left: 3px solid transparent;
+}
+.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
+.kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
 </style>
