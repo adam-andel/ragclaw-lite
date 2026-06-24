@@ -764,25 +764,31 @@ function isProcessing(status: string) {
     </NModal>
 
     <!-- Create KB Modal -->
-    <NModal v-model:show="showCreateKb" title="新建知识库">
+    <NModal v-model:show="showCreateKb" preset="card" title="新建知识库"
+      style="width: 90vw; max-width: 440px"
+    >
       <div class="kb-form">
         <NInput v-model:value="newKbName" placeholder="知识库名称" />
-        <NInput v-model:value="newKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2 }" />
+        <NInput v-model:value="newKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
         <NButton type="primary" :loading="creating" @click="handleCreateKb" block>创建</NButton>
       </div>
     </NModal>
 
     <!-- Rename KB Modal -->
-    <NModal v-model:show="showRenameKb" title="编辑知识库">
+    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
+      style="width: 90vw; max-width: 440px"
+    >
       <div class="kb-form">
         <NInput v-model:value="renameKbName" placeholder="知识库名称" />
-        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2 }" />
+        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
         <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
       </div>
     </NModal>
 
     <!-- Select Documents Modal -->
-    <NModal v-model:show="showSelectDocs" title="选择文档加入知识库" style="width: 90vw; max-width: 1000px">
+    <NModal v-model:show="showSelectDocs" preset="card" title="选择文档加入知识库"
+      style="width: 90vw; max-width: 720px"
+    >
       <div class="select-docs-modal">
         <div class="select-docs-filters">
           <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="loadAvailableDocs" style="flex:1">
@@ -835,17 +841,16 @@ function isProcessing(status: string) {
     </NModal>
 
     <!-- Share Modal -->
-    <NModal v-model:show="showShare" title="共享管理"
-      style="width:70vw; max-width:1000px; height:70vh; max-height:800px"
-      :title-style="{ fontSize: '1.25rem', fontWeight: 'bold' }"
+    <NModal v-model:show="showShare" preset="card" title="共享管理"
+      style="width: 90vw; max-width: 640px"
     >
       <div class="share-form">
         <NSpin :show="shareLoading">
           <div class="share-add-row">
             <NSelect v-model:value="shareAddUser" :options="allUserOptions"
-              placeholder="搜索用户…" filterable clearable size="large" style="flex:1"
+              placeholder="搜索用户…" filterable clearable style="flex:1"
             />
-            <NButton type="primary" size="large" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
+            <NButton type="primary" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
               <template #icon><NIcon><Add /></NIcon></template>
               添加
             </NButton>
@@ -1133,7 +1138,7 @@ function isProcessing(status: string) {
 }
 
 /* KB Form */
-.kb-form { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: min(350px, 80vw); }
+.kb-form { display: flex; flex-direction: column; gap: 12px; }
 
 /* Select Docs Modal */
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
@@ -1149,10 +1154,10 @@ function isProcessing(status: string) {
 .select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
 
 /* Share Form */
-.share-form { padding: 20px 24px; background: var(--color-surface); border-radius: 12px; height: 100%; box-sizing: border-box; color: var(--color-text); }
-.share-add-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.share-form { display: flex; flex-direction: column; max-height: 60vh; }
+.share-add-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .share-empty { padding: 20px 0; }
-.share-list { max-height: calc(100% - 80px); overflow-y: auto; }
+.share-list { flex: 1; overflow-y: auto; min-height: 0; }
 .share-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--color-border); transition: background .15s; }
 .share-row:hover { background: rgba(88, 166, 255, 0.04); }
 .share-user-info { display: flex; align-items: center; gap: 10px; }

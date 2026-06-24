@@ -351,9 +351,13 @@ function goToKb(kbId: string) {
               </NTag>
             </div>
             <div class="doc-actions">
-              <NButton text size="tiny" @click="openChunks(doc.id)">查看分块</NButton>
               <NPopconfirm @positive-click="handleDelete(doc.id)">
-                <template #trigger><NButton text size="tiny" type="error">删除</NButton></template>
+                <template #trigger>
+                  <NButton size="small" text type="error">
+                    <template #icon><NIcon><Trash /></NIcon></template>
+                    删除
+                  </NButton>
+                </template>
                 确定删除文档「{{ doc.filename }}」？将从所有知识库中移除。
               </NPopconfirm>
             </div>
@@ -377,7 +381,16 @@ function goToKb(kbId: string) {
             <span>{{ formatSize(doc.file_size) }}</span>
             <template v-if="doc.chunk_count > 0">
               <span class="doc-meta-sep">·</span>
-              <span>{{ doc.chunk_count }} 分块</span>
+              <span
+                class="doc-kb-link"
+                @click="openChunks(doc.id)"
+                role="button"
+                tabindex="0"
+                @keydown.enter.prevent="openChunks(doc.id)"
+                @keydown.space.prevent="openChunks(doc.id)"
+              >
+                {{ doc.chunk_count }} 分块
+              </span>
             </template>
             <span class="doc-meta-sep">·</span>
             <span
@@ -402,7 +415,9 @@ function goToKb(kbId: string) {
     </div>
 
     <!-- Chunks Modal -->
-    <NModal v-model:show="showChunks" title="分块预览" style="max-width: 95vw; width: 800px">
+    <NModal v-model:show="showChunks" preset="card" title="分块预览"
+      style="width: 90vw; max-width: 720px"
+    >
       <div class="chunks-modal">
         <NInput
           v-if="chunks.length > 0"
