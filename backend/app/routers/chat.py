@@ -14,7 +14,6 @@ from app.database import get_db, async_session
 from app.models.user import User
 from app.models.conversation import Conversation, Message
 from app.models.document import Document, Chunk
-from app.services.rag_chain import rag_chain
 from app.services.auth import get_current_user
 from app.schemas.chat import (
     ChatRequest,
@@ -93,31 +92,68 @@ async def chat_stream(
         collected_content = ""
         collected_citations = []
         cache_hit = False
-        final_ttft = 0
         final_retr = 0
-        final_llm = 0
 
         try:
-            async for event in rag_chain.query_stream(
-                request.query,
-                request.kb_id,
-                user_id=current_user.id,
-                conversation_history=history,
-            ):
-                if event["type"] == "done":
-                    cache_hit = event.get("cache_hit", False)
-                    final_ttft = event.get("ttft_ms", 0)
-                    final_retr = event.get("retrieval_ms", 0)
-                    final_llm = event.get("llm_ms", 0)
-                    break
-                elif event["type"] == "citation":
-                    collected_citations.append(event["citation"])
-                elif event["type"] == "error":
-                    collected_content = event["message"]
-                else:
-                    collected_content += event.get("content", "")
+            from app.services.agent_graph import erag_agent_graph
+            from app.services.llm_client import llm_client
+            import asyncio as _asyncio
 
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            # Build initial agent state
+            initial_state = {
+                "query": request.query,
+                "kb_id": request.kb_id,
+                "skill_id": request.skill_id,
+                "user_id": current_user.id,
+                "tenant_id": current_user.tenant_id,
+                "conversation_history": history,
+                "active_skill": None,
+                "available_tools": [],
+                "rag_context": "",
+                "citations": [],
+                "memory_context": "",
+                "tool_calls": None,
+                "tool_round": 0,
+                "tool_results": [],
+                "tool_messages": [],
+                "cache_hit": False,
+                "final_answer": "",
+                "retrieval_ms": 0,
+            }
+
+            # Run agent graph (routing → retrieval → tool decision/execution)
+            state = await erag_agent_graph.run(initial_state)
+
+            if state.get("cache_hit"):
+                # Cache hit: stream cached answer
+                cache_hit = True
+                collected_content = state["final_answer"]
+                collected_citations = state.get("citations", [])
+                yield f"data: {json.dumps({'type': 'token', 'content': collected_content}, ensure_ascii=False)}\n\n"
+                for c in collected_citations:
+                    yield f"data: {json.dumps({'type': 'citation', 'citation': c}, ensure_ascii=False)}\n\n"
+            else:
+                # Build messages from state and stream LLM generation
+                final_retr = state.get("retrieval_ms", 0)
+                messages = erag_agent_graph.build_generation_messages(state)
+
+                async for token in llm_client.chat_stream(messages):
+                    collected_content += token
+                    yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+
+                collected_citations = state.get("citations", [])
+                for c in collected_citations:
+                    yield f"data: {json.dumps({'type': 'citation', 'citation': c}, ensure_ascii=False)}\n\n"
+
+                # Background: cache + memory
+                _asyncio.create_task(_store_memory_and_cache(
+                    query=request.query,
+                    answer=collected_content,
+                    kb_id=request.kb_id,
+                    user_id=current_user.id,
+                    citations=collected_citations,
+                    skill_id=request.skill_id or state.get("active_skill", {}).get("id", ""),
+                ))
 
             # Save assistant message
             assistant_msg = Message(
@@ -127,21 +163,20 @@ async def chat_stream(
                 content=collected_content,
                 citations=collected_citations,
                 cache_hit=cache_hit,
-                ttft_ms=final_ttft,
+                ttft_ms=0,
                 retrieval_ms=final_retr,
-                llm_ms=final_llm,
+                llm_ms=0,
                 created_at=datetime.utcnow(),
             )
 
             async with async_session() as session:
                 session.add(assistant_msg)
-                # Update conversation timestamp
                 conv = await session.get(Conversation, conv_id)
                 if conv:
                     conv.updated_at = datetime.utcnow()
                 await session.commit()
 
-            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'cache_hit': cache_hit, 'ttft_ms': final_ttft, 'retrieval_ms': final_retr, 'llm_ms': final_llm}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id, 'message_id': assistant_msg.id, 'cache_hit': cache_hit, 'ttft_ms': 0, 'retrieval_ms': final_retr, 'llm_ms': 0}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
@@ -226,3 +261,28 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
     await db.delete(conv)
     await db.commit()
     return {"status": "deleted"}
+
+
+# ── Background helpers ──
+
+async def _store_memory_and_cache(
+    query: str, answer: str, kb_id: str, user_id: str,
+    citations: list[dict], skill_id: str,
+):
+    """Background task: store answer cache + Mem0 memory."""
+    try:
+        from app.services.cache import answer_cache
+        answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id)
+    except Exception:
+        pass
+
+    if user_id and answer:
+        try:
+            from app.services.memory import add_memory
+            await add_memory(
+                f"Q: {query}\nA: {answer[:500]}",
+                user_id=user_id,
+                metadata={"kb_id": kb_id, "skill_id": skill_id},
+            )
+        except Exception:
+            pass

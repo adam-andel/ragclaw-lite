@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    kb_id: str = Field(...)
+    kb_id: str = Field(...)              # 保持必填，一次对话一个 KB
+    skill_id: str | None = None          # 可选：指定 SKILL，None 则自动路由
     conversation_id: str | None = None
 
 

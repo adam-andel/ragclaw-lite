@@ -131,7 +131,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "EnterpriseRAG-Lite",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "llm_configured": config_manager.is_configured,
     }
 
