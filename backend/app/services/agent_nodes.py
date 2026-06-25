@@ -156,12 +156,16 @@ async def _route_to_best_skill(
             temperature=0,
             max_tokens=50,
         )
-        chosen_name = response.strip()
+        chosen_name = response.strip().strip('"').strip('"').strip('。'.'!')
+        logger.info("Route LLM returned: '%s' (skills: %s)",
+                     chosen_name,
+                     [s.name for s in skills])
 
-        # Find matching skill
+        # Fuzzy match: try exact first, then case-insensitive, then substring
         for s in skills:
-            if s.name == chosen_name:
+            if s.name == chosen_name or s.name.lower() == chosen_name.lower() or s.name.lower().replace(" ", "") == chosen_name.lower().replace(" ", ""):
                 tools = await tool_registry.get_tools_for_skill_async(s.id)
+                logger.info("Route matched: %s (tools=%d)", s.name, len(tools))
                 return {
                     "id": s.id,
                     "name": s.name,
