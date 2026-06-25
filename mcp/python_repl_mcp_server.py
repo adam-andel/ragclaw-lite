@@ -12,15 +12,21 @@ import subprocess
 import tempfile
 import shutil
 import os
+import uuid
+import time
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from argparse import ArgumentParser
 
 MAX_OUTPUT = 20000
 DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_MEMORY_MB = 512
+DEFAULT_KEEP_MINUTES = 60
 _allow_dir: str | None = None
 _no_network: bool = False
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
+_keep_minutes: int = DEFAULT_KEEP_MINUTES
+_CLEANUP_EVERY = 300  # check every 5 minutes
 
 # Modules that can bypass Python-level guards — blocked at import level
 _BLOCKED_MODULES = {
@@ -41,11 +47,10 @@ _BLOCKED_MODULES = {
 }
 
 
-def _build_guard(workdir: str) -> str:
-    """Build the security preamble injected before user code."""
+def _build_guard(per_call_dir: str) -> str:
+    """Build security preamble. per_call_dir is THIS invocation's exclusive directory."""
     guards = []
-
-    # 0. Block dangerous modules that can bypass all other guards
+    target = per_call_dir.replace("\\", "\\\\")
     blocked = ", ".join(sorted(_BLOCKED_MODULES))
     guards.append(f"""
 # --- import guard: block bypass vectors ---
@@ -235,18 +240,18 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     if err:
         return f"代码审查未通过: {err}"
 
-    guard = _build_guard("")
+    # Layer 1-3: per-call guard — only THIS invocation's UUID subdirectory is accessible
+    call_uuid = str(uuid.uuid4())[:8]
+    workdir = os.path.join(_allow_dir, call_uuid) if _allow_dir else tempfile.mkdtemp(prefix="repl_")
+    os.makedirs(workdir, exist_ok=True)
+    guard = _build_guard(workdir)
     full_code = guard + "\n" + code if guard else code
 
-    # Write to temp file (safer than -c, avoids shell-escaping edge cases)
-    import tempfile as _tempfile
-    fd, temp_script = _tempfile.mkstemp(suffix=".py", text=True)
-    workdir = None
+    # Write to temp file
+    fd, temp_script = tempfile.mkstemp(suffix=".py", text=True)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             f.write(full_code)
-
-        workdir = _tempfile.mkdtemp(dir=_allow_dir, prefix="repl_") if _allow_dir else _tempfile.mkdtemp(prefix="repl_")
 
         env = os.environ.copy()
         for k in list(env.keys()):
@@ -265,7 +270,10 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
             parts.append(f"[stderr]\n{proc.stderr.strip()}")
         if proc.returncode != 0 and not proc.stdout.strip():
             parts.insert(0, f"(进程退出码: {proc.returncode})")
-        return ("\n".join(parts) or "(无输出)")[:MAX_OUTPUT]
+        result = "\n".join(parts) or "(无输出)"
+        if _allow_dir:
+            result = f"[workspace: {call_uuid}/]\n{result}"
+        return result[:MAX_OUTPUT]
 
     except subprocess.TimeoutExpired:
         return f"执行超时（>{timeout}秒），已终止进程"
@@ -278,17 +286,15 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
             os.unlink(temp_script)
         except Exception:
             pass
-        if workdir:
-            try:
-                shutil.rmtree(workdir, ignore_errors=True)
-            except Exception:
-                pass
+        # Dir NOT cleaned — kept for --keep-minutes for user download
 
 
 TOOLS = [{
     "name": "run_python",
     "description": (
-        "在独立子进程中执行 Python 代码。"
+        "在独立子进程中执行 Python 代码并返回输出。"
+        "生成的文件通过输出开头的 [workspace: xxx/] 标识。"
+        "下载链接格式: http://127.0.0.1:8000/data/workspace/{uuid}/{文件名}"
         + ("仅允许访问指定工作目录。" if _allow_dir else "")
         + ("网络访问已被禁止。" if _no_network else "")
     ),
@@ -333,18 +339,38 @@ if __name__ == "__main__":
                    help="仅允许子进程访问此目录")
     p.add_argument("--no-network", action="store_true",
                    help="禁止子进程网络访问（阻止 socket + subprocess）")
+    p.add_argument("--keep-minutes", type=int, default=DEFAULT_KEEP_MINUTES,
+                   help=f"生成文件保留时长（分钟），默认 {DEFAULT_KEEP_MINUTES}")
     args = p.parse_args()
     _allow_dir = os.path.abspath(args.allow_dir) if args.allow_dir else None
     _no_network = args.no_network
+    _keep_minutes = args.keep_minutes
+
+    # Background cleanup thread
+    def _cleanup_loop():
+        while True:
+            time.sleep(_CLEANUP_EVERY)
+            if not _allow_dir:
+                continue
+            cutoff = time.time() - (_keep_minutes * 60)
+            try:
+                for entry in os.scandir(_allow_dir):
+                    if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                        shutil.rmtree(entry.path, ignore_errors=True)
+                        print(f"[cleanup] removed {entry.name}")
+            except Exception:
+                pass
+    threading.Thread(target=_cleanup_loop, daemon=True).start()
 
     server = HTTPServer(("0.0.0.0", args.port), MCPHandler)
     print(f"🐍 Python REPL MCP Server on :{args.port}  timeout={DEFAULT_TIMEOUT}s")
     if _allow_dir:
-        print(f"   🛡️  Allow-only: {_allow_dir}")
+        print(f"   🛡️  Allow-only: {_allow_dir}  (keep={_keep_minutes}min)")
     if _no_network:
         print(f"   🔒 Network blocked (socket + subprocess)")
     if not _allow_dir and not _no_network:
         print(f"   ⚠️  No restrictions set")
+    print(f"   🧹 Cleanup: every {_CLEANUP_EVERY}s, keeps files for {_keep_minutes}min")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
