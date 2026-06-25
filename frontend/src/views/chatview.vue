@@ -166,7 +166,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
   let streamedText = ''
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, abortCtl.signal)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, undefined, abortCtl.signal)) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
