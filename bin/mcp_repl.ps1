@@ -57,7 +57,7 @@ switch ($Action) {
 
         Write-Host "Starting REPL server (allow-dir: $WorkDir) ..." -ForegroundColor Gray
         $proc = Start-Process -FilePath "$VenvDir\Scripts\python.exe" `
-            -ArgumentList $ServerScript, "--port", $Port, "--allow-dir", $WorkDir `
+            -ArgumentList $ServerScript, "--port", $Port, "--allow-dir", $WorkDir, "--no-network" `
             -WorkingDirectory $McpDir -PassThru -WindowStyle Minimized
 
         Start-Sleep 2
