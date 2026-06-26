@@ -1,0 +1,22 @@
+# Local Python venv — not needed in image
+venv/
+venv/*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore

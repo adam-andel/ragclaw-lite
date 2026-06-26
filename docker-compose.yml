@@ -13,7 +13,35 @@ services:
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
     restart: unless-stopped
+    networks:
+      - erag
+
+  # ── Python REPL MCP Server ──────────────────────────────
+  mcp-repl:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile
+    container_name: erag-mcp-repl
+    ports:
+      - "9200:9200"
+    volumes:
+      - erag_workspace:/app/workspace
+    restart: unless-stopped
+    networks:
+      - erag
+    # Resource limits (prevent one-shot leaks from the LLM)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+
+networks:
+  erag:
+    driver: bridge
 
 volumes:
   erag_data:
+    driver: local
+  erag_workspace:
     driver: local

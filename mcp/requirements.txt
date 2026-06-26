@@ -1,0 +1,8 @@
+# Python REPL MCP Server — data-science runtime
+# Pinned versions for reproducible Docker builds
+pandas>=2.0,<3.0
+python-docx>=0.8,<2.0
+python-pptx>=0.6,<1.0
+PyPDF2>=3.0,<4.0
+
+# Transitive: numpy comes with pandas

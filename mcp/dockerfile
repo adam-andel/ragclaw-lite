@@ -1,0 +1,30 @@
+# Python REPL MCP Server — Docker image
+# Isolated execution environment for LLM-generated Python code
+FROM python:3.12-slim
+
+# Create non-root user (least privilege)
+RUN useradd -m -s /bin/bash mcpuser
+
+WORKDIR /app
+
+# Install Python dependencies into a shared site
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy server code (kept minimal — no venv, no tests)
+COPY python_repl_mcp_server.py .
+
+# Workspace directory for code execution output
+RUN mkdir -p /app/workspace && chown mcpuser:mcpuser /app/workspace
+
+USER mcpuser
+EXPOSE 9200
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
+    CMD python -c "import urllib.request,json; req=urllib.request.Request('http://localhost:9200/mcp',data=json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list','params':{}}).encode(),headers={'Content-Type':'application/json'}); urllib.request.urlopen(req)" || exit 1
+
+CMD ["python", "python_repl_mcp_server.py", \
+     "--port", "9200", \
+     "--allow-dir", "/app/workspace", \
+     "--no-network", \
+     "--keep-minutes", "120"]
