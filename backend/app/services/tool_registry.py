@@ -11,6 +11,7 @@ from collections import defaultdict
 from app.database import async_session
 from app.models.skill import MCPServer, SkillTool
 from app.services.mcp_client import mcp_client, ToolDef
+from app.services.mcp_client import mcp_client, ToolDef
 
 logger = logging.getLogger("erag.tool_registry")
 
@@ -146,7 +147,6 @@ class ToolRegistry:
                 )
             )
             bindings = result.scalars().all()
-
         tools: list[dict] = []
         seen: set[str] = set()
 
@@ -158,6 +158,29 @@ class ToolRegistry:
             if cache_key in seen:
                 continue
             seen.add(cache_key)
+
+            server_tools = self._tools.get(server_id)
+            # Clear stale empty cache from a previous failed refresh
+            if server_tools is not None and len(server_tools) == 0:
+                del self._tools[server_id]
+                server_tools = None
+
+            # Lazy refresh: if server not in cache, try to fetch now
+            if server_id not in self._tools:
+                try:
+                    srv = await db.get(MCPServer, server_id)
+                    if srv and srv.is_active:
+                        cfg = {"id": srv.id, "transport_type": srv.transport_type,
+                               "endpoint": srv.endpoint, "command": srv.command,
+                               "args_json": srv.args_json, "env_json": srv.env_json,
+                               "timeout_seconds": srv.timeout_seconds}
+                        new_tools = await mcp_client.list_tools(cfg)
+                        self._tools[server_id] = new_tools
+                        self._server_healthy[server_id] = True
+                        logger.info("ToolRegistry: lazy-refreshed %s (%d tools)", srv.name, len(new_tools))
+                except Exception:
+                    # Don't cache failure — let the next call retry
+                    self._server_healthy[server_id] = False
 
             if server_id in self._tools:
                 for t in self._tools[server_id]:
