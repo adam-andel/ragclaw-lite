@@ -134,8 +134,14 @@ class ToolRegistry:
 
     async def get_tools_for_skill_async(self, skill_id: str) -> list[dict]:
         """Async version — call from agent nodes with a db session."""
+        # Trigger refresh if not initialized yet (race with background startup task)
         if not self._initialized:
-            return []
+            logger.info("ToolRegistry: not initialized yet, triggering lazy refresh")
+            try:
+                await self.refresh()
+            except Exception as e:
+                logger.warning("ToolRegistry: lazy refresh failed: %s", e)
+                return []
 
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
@@ -147,6 +153,7 @@ class ToolRegistry:
                 )
             )
             bindings = result.scalars().all()
+        logger.info("ToolRegistry: skill_id=%s has %d tool bindings", skill_id, len(bindings))
         tools: list[dict] = []
         seen: set[str] = set()
 
@@ -167,6 +174,7 @@ class ToolRegistry:
 
             # Lazy refresh: if server not in cache, try to fetch now
             if server_id not in self._tools:
+                logger.info("ToolRegistry: server %s not in cache, lazy-refreshing...", server_id)
                 try:
                     srv = await db.get(MCPServer, server_id)
                     if srv and srv.is_active:
@@ -178,8 +186,8 @@ class ToolRegistry:
                         self._tools[server_id] = new_tools
                         self._server_healthy[server_id] = True
                         logger.info("ToolRegistry: lazy-refreshed %s (%d tools)", srv.name, len(new_tools))
-                except Exception:
-                    # Don't cache failure — let the next call retry
+                except Exception as ex:
+                    logger.warning("ToolRegistry: lazy-refresh failed for server %s: %s", server_id, ex)
                     self._server_healthy[server_id] = False
 
             if server_id in self._tools:
@@ -188,6 +196,7 @@ class ToolRegistry:
                         tools.append(_tool_to_openai(t))
                         break
 
+        logger.info("ToolRegistry: skill_id=%s returning %d tools", skill_id, len(tools))
         return tools
 
     def get_all_tools_for_servers(self, server_ids: list[str]) -> list[dict]:

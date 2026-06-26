@@ -136,12 +136,12 @@ async def health_check():
     }
 
 
-# --- Static Frontend (Vue3 dist) ---
-frontend_dist = settings.project_root / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
-
 # --- Workspace static files (user-accessible download) ---
 workspace_dir = settings.project_root / "data" / "workspace"
 workspace_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/data/workspace", StaticFiles(directory=str(workspace_dir)), name="workspace")
+
+# --- Static Frontend (Vue3 dist) ---
+frontend_dist = settings.project_root / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")

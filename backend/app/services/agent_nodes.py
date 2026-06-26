@@ -21,12 +21,18 @@ DEFAULT_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的�
 4. 回答要简洁、准确，使用中文
 5. 如果文档内容包含代码或表格，保留原始格式"""
 
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = 3
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
     import re
+    # Strip code blocks
     cleaned = re.sub(r'```(?:json)?\s*|```', '', content).strip()
+    # Strip leading conversational text — models often add greetings before JSON
+    # Look for the first '{' and try parsing from there
+    obj_match = re.search(r'\{[\s\S]*\}', cleaned)
+    if obj_match:
+        cleaned = obj_match.group(0)
     if not cleaned.startswith('{'):
         return None
     try:
@@ -38,9 +44,49 @@ def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict
         if any(t.get("function", {}).get("name") == tool_name for t in available_tools):
             return [{"id": f"call_{tool_name}", "type": "function",
                      "function": {"name": tool_name, "arguments": json.dumps(data.get("params", {}), ensure_ascii=False)}}]
+    if data.get("tool") and any(t.get("function", {}).get("name") == data["tool"] for t in available_tools):
+        return [{"id": f"call_{data['tool']}", "type": "function",
+                 "function": {"name": data["tool"], "arguments": json.dumps(data.get("arguments", {}), ensure_ascii=False)}}]
+
     if data.get("name") and any(t.get("function", {}).get("name") == data["name"] for t in available_tools):
         return [{"id": f"call_{data['name']}", "type": "function",
                  "function": {"name": data["name"], "arguments": json.dumps(data.get("arguments", {}), ensure_ascii=False)}}]
+    return None
+
+
+def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list[dict] | None:
+    """LLM output code blocks instead of JSON? Extract Python code and build run_python call."""
+    import re
+    # Try ```python ... ``` code blocks
+    m = re.search(r'```python\s*\n([\s\S]*?)```', content)
+    if not m:
+        # Try ``` ... ``` without language marker
+        m = re.search(r'```\s*\n([\s\S]*?)```', content)
+    if not m:
+        # Try indented code blocks (no fences)
+        lines = content.strip().split('\n')
+        code_lines = []
+        in_code = False
+        for line in lines:
+            if line.strip().startswith(('import ', 'from ', 'with ', 'def ', 'print(', 'for ', 'if ', '#', 'try:', 'except')):
+                in_code = True
+                code_lines.append(line)
+            elif in_code and (line.startswith(' ') or line.startswith('\t') or line.strip() == ''):
+                code_lines.append(line)
+            elif in_code:
+                break
+        if code_lines:
+            code = '\n'.join(code_lines).strip()
+            # Only use if it looks like actual Python code (has open/write/print)
+            if any(kw in code for kw in ('open(', 'write(', 'print(', 'with ')):
+                if any(t.get('function', {}).get('name') == 'run_python' for t in available_tools):
+                    return [{"id": "call_run_python_from_code", "type": "function",
+                             "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
+        return None
+    code = m.group(1).strip()
+    if code and any(t.get('function', {}).get('name') == 'run_python' for t in available_tools):
+        return [{"id": "call_run_python_from_code", "type": "function",
+                 "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
     return None
 
 
@@ -56,8 +102,10 @@ async def skill_router_node(state: dict) -> dict:
     active_skill, available_tools = None, []
     if skill_id:
         active_skill, available_tools = await _load_skill(skill_id)
+        logger.info("Router: loaded skill_id=%s name=%s tools=%d", skill_id, active_skill.get('name') if active_skill else 'NONE', len(available_tools))
     if not active_skill and not skill_id:
         active_skill, available_tools = await _route_to_best_skill(query, tenant_id, user_id)
+        logger.info("Router: auto-routed to skill=%s tools=%d", active_skill.get('name') if active_skill else 'NONE', len(available_tools))
 
     return {"active_skill": active_skill, "available_tools": available_tools,
             "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": []}
@@ -152,13 +200,45 @@ async def tool_decision_node(state: dict) -> dict:
         return {}
     available_tools = state.get("available_tools", [])
     if not available_tools:
+        logger.warning("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
     tool_round = state.get("tool_round", 0)
     if tool_round >= MAX_TOOL_ROUNDS:
         logger.warning("Tool decision: max rounds reached")
         return {"tool_calls": None}
+
+    # Force-stop if all previous tool results were errors
+    prev_results = state.get("tool_results", [])
+    if prev_results and all("error" in r.lower() or "异常" in r for r in prev_results):
+        logger.warning("Tool decision: all tools errored, stopping loop")
+        return {"tool_calls": None}
     active = state.get("active_skill") or {}
-    messages = [{"role": "system", "content": active.get("system_prompt", DEFAULT_SYSTEM_PROMPT)}]
+    skill_prompt = active.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+    if available_tools:
+        tool_desc = "\n".join(
+            f"- {t['function']['name']}: {t['function']['description']}"
+            for t in available_tools
+        )
+        # Phase instruction — MUST come first to override the skill prompt's narrative flow.
+        # The skill prompt contains examples with "then reply..." which can make the LLM
+        # skip the tool call and jump to the reply. This short message dominates.
+        tool_system = (
+            "[工具调用阶段] 不要回复用户，不要输出解释、代码块或 Markdown。"
+            "你必须立即输出一个纯 JSON 对象来调用工具。格式如下：\n"
+            + '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
+            + "## 可用工具\n" + tool_desc + "\n\n"
+            + "## 规则\n"
+            + "- 只输出上述 JSON 对象，不要附加任何文字\n"
+            + "- 不要用 ``` 包裹 JSON\n"
+            + "- 不要输出最终回复——那是下一阶段的事"
+        )
+        # Skill prompt as context only — tool_system dominates in priority
+        messages = [
+            {"role": "system", "content": tool_system},
+            {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt},
+        ]
+    else:
+        messages = [{"role": "system", "content": skill_prompt}]
     history = state.get("conversation_history", [])
     if history:
         messages.extend(history)
@@ -173,20 +253,45 @@ async def tool_decision_node(state: dict) -> dict:
     if tool_messages:
         messages.extend(tool_messages)
     try:
-        response = await llm_client.chat_with_tools(messages=messages, tools=available_tools, temperature=0.1, max_tokens=512)
+        logger.info("Tool decision: calling LLM with %d tools, max_tokens=2048, tool_choice=auto", len(available_tools))
+        response = await llm_client.chat_with_tools(messages=messages, tools=available_tools, temperature=0.1, max_tokens=2048)
+        
+        if not response:
+            logger.warning("Tool decision: LLM returned empty content and no native tool_calls")
+
         tool_calls = response.get("tool_calls")
-        if not tool_calls and response.get("content"):
-            parsed = _try_parse_tool_call(response["content"], available_tools)
+        content_preview = (response.get("content") or "")[:200]
+        logger.info("Tool decision: native_tool_calls=%s content_preview=%s", bool(tool_calls), content_preview)
+        if not tool_calls:
+            if response.get("content"):
+                parsed = _try_parse_tool_call(response["content"], available_tools)
             if parsed:
+                logger.info("Tool decision: parsed tool_calls from JSON in content")
                 tool_calls = parsed
                 response["content"] = ""
+            else:
+                logger.warning("Tool decision: no tool_calls in response, content does not contain parseable JSON")
+                # Fallback: LLM might have output Python code instead of JSON.
+                # Extract code blocks and build a run_python tool call automatically.
+                logger.info("Tool decision: trying code extraction, full content=%s", (response["content"] or "")[:500])
+                code_tool = _try_extract_code_as_tool(response["content"], available_tools)
+                if code_tool:
+                    logger.info("Tool decision: extracted code from LLM response, built run_python call")
+                    tool_calls = code_tool
+                    response["content"] = ""
         if tool_calls:
             tool_msg = {"role": "assistant", "content": response.get("content") or "", "tool_calls": tool_calls}
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
+        logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
         return {"tool_calls": None}
     except Exception as e:
         logger.warning("Tool decision error: %s", e)
         return {"tool_calls": None}
+
+def _dump_state_for_debug(state: dict) -> str:
+    """Quick state dump for debugging."""
+    skill = state.get("active_skill") or {}
+    return f"skill={skill.get('name','?')} tools={len(state.get('available_tools',[]))} content_len={len(state.get('final_answer',''))}"
 
 
 # ── Tool Executor ──
@@ -229,6 +334,8 @@ async def tool_executor_node(state: dict) -> dict:
     tasks = [execute_one(tc) for tc in tool_calls]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     tr = [str(r) if isinstance(r, Exception) else r for r in results]
+    for i, r in enumerate(tr):
+        logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
     result_msgs = []
     for i, tc in enumerate(tool_calls):
         func = tc.get("function", {})

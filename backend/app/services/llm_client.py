@@ -116,6 +116,7 @@ class LLMClient:
         tools: list[dict],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        tool_choice: str = "auto",
     ) -> dict:
         """Non-streaming chat with tool calling support.
 
@@ -124,6 +125,7 @@ class LLMClient:
             tools: List of tool definitions in OpenAI function-calling format
             temperature: Override default temperature
             max_tokens: Override default max tokens
+            tool_choice: "auto" | "required" | "none" (default "auto")
 
         Returns:
             dict with:
@@ -147,7 +149,7 @@ class LLMClient:
             "max_tokens": max_tok,
             "stream": False,
             "tools": tools,
-            "tool_choice": "auto",
+            "tool_choice": tool_choice,
         }
 
         url = f"{self.base_url}/chat/completions"

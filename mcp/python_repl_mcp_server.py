@@ -49,13 +49,16 @@ _BLOCKED_MODULES = {
 
 def _build_guard(per_call_dir: str) -> str:
     """Build security preamble. per_call_dir is THIS invocation's exclusive directory."""
+    preamble = """# --- guard preamble: all imports before restrictions ---
+import os as _g_os, builtins as _g_bi, builtins as _g_bi2
+import functools as _g_ft, shutil as _g_shutil, pathlib as _g_pl, io as _g_io
+import socket as _g_socket, subprocess as _g_subprocess
+"""
     guards = []
-    target = per_call_dir.replace("\\", "\\\\")
-    blocked = ", ".join(sorted(_BLOCKED_MODULES))
+    blocked = repr(set(_BLOCKED_MODULES))  # e.g. "{'ctypes', '_ctypes', ...}"
     guards.append(f"""
 # --- import guard: block bypass vectors ---
-import builtins as _g_bi2
-_blocked = {{{blocked!r}}}
+_blocked = {blocked}
 _orig_import = _g_bi2.__import__
 def _safe_import(name, *a, **kw):
     root = name.split('.')[0]
@@ -70,16 +73,16 @@ _g_bi2.__import__ = _safe_import
         target = _allow_dir.replace("\\", "\\\\")
         guards.append(f"""
 # --- filesystem guard: default-deny, allow only --allow-dir ---
-import os as _g_os, builtins as _g_bi, functools as _g_ft, shutil as _g_shutil, pathlib as _g_pl
 _ALLOW = r'{target}'
 
 def _check_path(path, op='操作'):
     if not isinstance(path, str):
         return True
-    p = _g_os.path.abspath(path)
-    if p.startswith(_ALLOW + _g_os.sep) or p == _ALLOW:
+    p = _g_os.path.normpath(_g_os.path.abspath(path))
+    allow = _g_os.path.normpath(_ALLOW)
+    if p.startswith(allow + _g_os.sep) or p == allow:
         return True
-    raise PermissionError(f"{{op}} {{path}} 被拒绝——仅允许操作 {_ALLOW} 目录")
+    raise PermissionError(f"{{op}} {{path}} 被拒绝——仅允许操作 {{_ALLOW}} 目录")
 
 # open()
 _orig_open = _g_bi.open
@@ -90,7 +93,6 @@ def _safe_open(file, mode='r', *a, **kw):
 _g_bi.open = _safe_open
 
 # io.FileIO / io.open — separate from builtins.open
-import io as _g_io
 if hasattr(_g_io, 'FileIO'):
     _orig_fileio = _g_io.FileIO
     @_g_ft.wraps(_orig_fileio)
@@ -115,9 +117,10 @@ for _name in dir(_g_os):
         continue
     @_g_ft.wraps(_orig)
     def _mk_wrapper(original=_orig, fn_name=_name):
+        _BS = chr(92)
         def _wrapped(*a, **kw):
             for arg in a:
-                if isinstance(arg, str) and (arg.startswith('/') or arg.startswith('\\\\') or ('\\' in arg) or (':' in arg and len(arg) > 2)):
+                if isinstance(arg, str) and (arg.startswith('/') or _BS in arg or (':' in arg and len(arg) > 2)):
                     _check_path(arg, fn_name)
             return original(*a, **kw)
         return _wrapped
@@ -152,24 +155,22 @@ _g_pl.Path.__init__ = _safe_path_init
     if _no_network:
         guards.append("""
 # --- network guard (all socket operations blocked) ---
-import socket as _g_socket
 _orig_socket = _g_socket.socket
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
 
-def _blocked(*a, **kw):
+def _net_blocked(*a, **kw):
     raise PermissionError("网络访问已被禁止。如需外部数据，请通过 MCP 工具获取。")
 
-_g_socket.socket = _blocked
+_g_socket.socket = _net_blocked
 if _orig_create_conn:
-    _g_socket.create_connection = _blocked
-_g_socket.getaddrinfo = _blocked
+    _g_socket.create_connection = _net_blocked
+_g_socket.getaddrinfo = _net_blocked
 """)
 
         # Also block subprocess to prevent shell-level network (curl, wget, etc.)
         guards.append("""
 # --- subprocess guard ---
-import subprocess as _g_subprocess
 _orig_popen = _g_subprocess.Popen
 _orig_run = _g_subprocess.run
 _orig_call = _g_subprocess.call
@@ -184,7 +185,7 @@ _g_subprocess.check_call = _blocked_proc
 _g_subprocess.check_output = _blocked_proc
 """)
 
-    return "\n".join(guards) if guards else ""
+    return "\n".join([preamble] + guards) if guards else preamble
 
 
 def _ast_prescreen(code: str) -> str | None:
@@ -198,7 +199,9 @@ def _ast_prescreen(code: str) -> str | None:
         return f"语法错误 (行 {e.lineno}): {e.msg}"
 
     blocked_imports = _BLOCKED_MODULES
-    blocked_calls = {"eval", "exec", "compile", "__import__", "open",
+    # open() is NOT blocked — the filesystem guard (injected as preamble)
+    # replaces builtins.open with a safe wrapper before user code runs.
+    blocked_calls = {"eval", "exec", "compile", "__import__",
                      "input", "breakpoint", "help"}
     blocked_attrs = {"__import__", "__builtins__", "__globals__", "__dict__",
                      "__class__", "__bases__", "__subclasses__", "__mro__"}
