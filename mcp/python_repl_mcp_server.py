@@ -48,6 +48,7 @@ _keep_minutes: int = DEFAULT_KEEP_MINUTES
 _CLEANUP_EVERY = 300  # check every 5 minutes
 _shutdown_event = threading.Event()
 _exec_semaphore = threading.BoundedSemaphore(DEFAULT_MAX_CONCURRENT)
+_public_url: str = ""  # e.g. "http://192.168.1.100:9200"
 
 # Modules that can bypass Python-level guards — blocked at import level
 _BLOCKED_MODULES = {
@@ -325,6 +326,11 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
                 result = f"[workspace: {call_uuid}/]\n{result}"
             result = result[:MAX_OUTPUT]
 
+            # Append download links (MCP server constructs the full URL from --public-url)
+            if _public_url and _allow_dir:
+                download_base = f"{_public_url}/files"
+                result += f"\n\n[下载链接] {download_base}/{call_uuid}/"
+
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info("exec_ok uuid=%s elapsed_ms=%d output_len=%d exit_code=%d",
                         call_uuid, elapsed_ms, len(result), proc.returncode)
@@ -376,12 +382,37 @@ class MCPHandler(BaseHTTPRequestHandler):
         # File download: GET /files/{uuid}/{filename}
         if self.path.startswith("/files/") and _allow_dir:
             rel = self.path[len("/files/"):].lstrip("/")
-            parts = rel.split("/", 1)
+            # Directory listing: GET /files/{uuid} or /files/{uuid}/
+            if rel.endswith("/"):
+                rel = rel.rstrip("/")
+            parts = rel.split("/")
+            if len(parts) == 1:
+                # Directory listing
+                uuid_dir = parts[0]
+                dirpath = os.path.join(_allow_dir, uuid_dir)
+                if os.path.isdir(dirpath) and os.path.commonpath(
+                    [os.path.realpath(dirpath), os.path.realpath(_allow_dir)]
+                ) == os.path.realpath(_allow_dir):
+                    try:
+                        files = [f for f in os.listdir(dirpath)
+                                if os.path.isfile(os.path.join(dirpath, f))]
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "uuid": uuid_dir,
+                            "files": [{"name": f, "url": f"/files/{uuid_dir}/{f}"}
+                                     for f in sorted(files)]
+                        }, ensure_ascii=False).encode())
+                        return
+                    except Exception:
+                        pass
+                self.send_error(404)
+                return
             if len(parts) == 2:
                 uuid_dir, filename = parts
                 filepath = os.path.join(_allow_dir, uuid_dir, filename)
                 real = os.path.realpath(filepath)
-                # Security: path must be within allow_dir and must be a regular file
                 if (os.path.commonpath([real, os.path.realpath(_allow_dir)])
                         == os.path.realpath(_allow_dir)
                         and os.path.isfile(real)):
@@ -435,6 +466,8 @@ if __name__ == "__main__":
                    help=f"子进程最大进程数（防 fork bomb），默认 {DEFAULT_MAX_NPROC}")
     p.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT,
                    help=f"最大并发执行数，默认 {DEFAULT_MAX_CONCURRENT}")
+    p.add_argument("--public-url", type=str, default="",
+                   help="对外可访问的完整地址，用于生成下载链接。如 http://192.168.1.100:9200")
     args = p.parse_args()
     # Env var overrides: CLI args take precedence, env vars provide defaults
     _allow_dir = args.allow_dir or os.environ.get("REPL_ALLOW_DIR")
@@ -445,6 +478,9 @@ if __name__ == "__main__":
     _max_memory_mb = int(os.environ.get("REPL_MAX_MEMORY_MB", args.max_memory_mb))
     _max_nproc = int(os.environ.get("REPL_MAX_NPROC", args.max_nproc))
     _max_concurrent = int(os.environ.get("REPL_MAX_CONCURRENT", args.max_concurrent))
+    _public_url = args.public_url or os.environ.get("REPL_PUBLIC_URL", "")
+    if _public_url:
+        _public_url = _public_url.rstrip("/")
     if _max_concurrent != DEFAULT_MAX_CONCURRENT:
         _exec_semaphore = threading.BoundedSemaphore(_max_concurrent)
 

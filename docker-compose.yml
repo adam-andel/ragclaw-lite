@@ -34,6 +34,8 @@ services:
       - seccomp:./mcp/seccomp.json
     cap_drop:
       - ALL
+    environment:
+      - REPL_PUBLIC_URL=http://localhost:9200
     # ── Resource limits ──
     deploy:
       resources:

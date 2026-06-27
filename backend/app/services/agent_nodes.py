@@ -332,29 +332,27 @@ def _dump_state_for_debug(state: dict) -> str:
 
 import re as _re
 
-def _enrich_with_download_links(result: str) -> str:
-    """If tool result contains [workspace: XXXXXXXX/], append download links.
+def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
+    """Ensure download links are present in tool result.
 
-    This keeps URL construction in code, preventing the LLM from hallucinating links.
+    If the MCP server already included a [下载链接] (via --public-url), pass through.
+    Otherwise, construct one from the MCP endpoint as fallback.
     """
-    # Match [workspace: XXXXXXXX/] pattern (8-char UUID)
+    if "[下载链接]" in result:
+        return result  # MCP server already provided links
+
     m = _re.search(r'\[workspace:\s*([a-f0-9]{8})/\]', result)
     if not m:
         return result
     uuid_dir = m.group(1)
-    # Build download base URL from MCP server endpoint (same host, port 9200)
-    base = "http://localhost:9200/files"
-    # If result mentions specific files, add inline links
-    enriched = result
-    # Find filename patterns in the output: common extensions
-    file_pattern = _re.findall(r'(?<![\w/])([\w\-]+(?:\.(?:txt|csv|json|xlsx?|docx|pptx|pdf|png|jpg|html|md|py)))(?![\w/])', result)
-    if file_pattern:
-        links = "\n".join(f"  → {base}/{uuid_dir}/{f}" for f in set(file_pattern))
-        enriched = result + f"\n\n[下载链接]\n{links}"
-    else:
-        # No specific file found, provide workspace link
-        enriched = result + f"\n\n[下载链接] 工作目录: {base}/{uuid_dir}/"
-    return enriched
+    base = ""
+    if mcp_endpoint:
+        ep_match = _re.match(r'(https?://[^/]+)', mcp_endpoint)
+        if ep_match:
+            base = ep_match.group(1)
+    if not base:
+        return result  # can't construct without base URL
+    return result + f"\n\n[下载链接] {base}/files/{uuid_dir}/"
 
 
 def _extract_download_links_from_state(state: dict) -> str:
@@ -380,40 +378,47 @@ async def tool_executor_node(state: dict) -> dict:
     from app.services.mcp_client import mcp_client as _mc
     from app.models.skill import MCPServer
 
-    async def execute_one(tc: dict) -> str:
+    async def execute_one(tc: dict):
         func = tc.get("function", {})
         tname = func.get("name", "unknown")
+        endpoint = None
         try:
             args = json.loads(func.get("arguments", "{}"))
         except json.JSONDecodeError:
             args = {}
         skill_id = state.get("active_skill", {}).get("id") if state.get("active_skill") else None
         if not skill_id:
-            return f"Tool '{tname}' error: no active skill"
+            return {"result": f"Tool '{tname}' error: no active skill", "endpoint": None}
         async with async_session() as db:
             b = (await db.execute(select(SkillTool).where((SkillTool.skill_id == skill_id) & (SkillTool.tool_name == tname)))).scalar_one_or_none()
             if not b:
-                return f"Tool '{tname}' error: not found in skill bindings"
+                return {"result": f"Tool '{tname}' error: not found in skill bindings", "endpoint": None}
             srv = await db.get(MCPServer, b.mcp_server_id)
             if not srv:
-                return f"Tool '{tname}' error: MCP server not found"
+                return {"result": f"Tool '{tname}' error: MCP server not found", "endpoint": None}
+            endpoint = srv.endpoint
             cfg = {"id": srv.id, "transport_type": srv.transport_type, "endpoint": srv.endpoint,
                    "command": srv.command, "args_json": srv.args_json, "env_json": srv.env_json,
                    "timeout_seconds": srv.timeout_seconds}
         try:
             res = await _mc.call_tool(cfg, tname, args)
             if res.ok:
-                return f"[{tname}] {res.result}"
-            return f"[{tname}] 错误: {res.error}"
+                return {"result": f"[{tname}] {res.result}", "endpoint": endpoint}
+            return {"result": f"[{tname}] 错误: {res.error}", "endpoint": endpoint}
         except Exception as e:
-            return f"[{tname}] 执行异常: {str(e)}"
+            return {"result": f"[{tname}] 执行异常: {str(e)}", "endpoint": endpoint}
 
     tasks = [execute_one(tc) for tc in tool_calls]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    tr = [str(r) if isinstance(r, Exception) else r for r in results]
-
-    # Enrich tool results with download links (system-generated, not LLM-hallucinated)
-    tr = [_enrich_with_download_links(r) for r in tr]
+    raw = await asyncio.gather(*tasks, return_exceptions=True)
+    # Unwrap: each item is a dict {"result": str, "endpoint": str|None} or Exception
+    tr = []
+    for item in raw:
+        if isinstance(item, Exception):
+            tr.append(str(item))
+        elif isinstance(item, dict):
+            tr.append(_enrich_with_download_links(item.get("result", ""), item.get("endpoint")))
+        else:
+            tr.append(str(item))
 
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
