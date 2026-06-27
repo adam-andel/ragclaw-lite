@@ -56,37 +56,53 @@ def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict
 
 def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list[dict] | None:
     """LLM output code blocks instead of JSON? Extract Python code and build run_python call."""
-    import re
+    import re, logging
+    _clog = logging.getLogger("erag.agent")
+    _has_tool = any(t.get('function', {}).get('name') == 'run_python' for t in available_tools)
+    if not _has_tool:
+        _clog.info("code_extract: run_python tool not available, skip")
+        return None
+
     # Try ```python ... ``` code blocks
     m = re.search(r'```python\s*\n([\s\S]*?)```', content)
     if not m:
         # Try ``` ... ``` without language marker
         m = re.search(r'```\s*\n([\s\S]*?)```', content)
-    if not m:
-        # Try indented code blocks (no fences)
-        lines = content.strip().split('\n')
-        code_lines = []
-        in_code = False
-        for line in lines:
-            if line.strip().startswith(('import ', 'from ', 'with ', 'def ', 'print(', 'for ', 'if ', '#', 'try:', 'except')):
+    if m:
+        code = m.group(1).strip()
+        if code:
+            _clog.info("code_extract: found fenced code block, len=%d", len(code))
+            return [{"id": "call_run_python_from_fenced", "type": "function",
+                     "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
+        return None
+
+    # Try indented code blocks (no fences)
+    _CODE_STARTS = ('import ', 'from ', 'with ', 'def ', 'class ', 'print(', 'for ', 'if ',
+                    '#', 'try:', 'except', 'while ', 'return ', 'open(', 'f.write(',
+                    'df.', 'pd.', 'plt.', 'data', 'text', 'result', 'content')
+    lines = content.strip().split('\n')
+    code_lines = []
+    in_code = False
+    for line in lines:
+        s = line.strip()
+        if not in_code:
+            if s.startswith(_CODE_STARTS):
                 in_code = True
                 code_lines.append(line)
-            elif in_code and (line.startswith(' ') or line.startswith('\t') or line.strip() == ''):
+        else:
+            if line.startswith(' ') or line.startswith('\t') or s == '':
                 code_lines.append(line)
-            elif in_code:
+            else:
                 break
-        if code_lines:
-            code = '\n'.join(code_lines).strip()
-            # Only use if it looks like actual Python code (has open/write/print)
-            if any(kw in code for kw in ('open(', 'write(', 'print(', 'with ')):
-                if any(t.get('function', {}).get('name') == 'run_python' for t in available_tools):
-                    return [{"id": "call_run_python_from_code", "type": "function",
-                             "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
-        return None
-    code = m.group(1).strip()
-    if code and any(t.get('function', {}).get('name') == 'run_python' for t in available_tools):
-        return [{"id": "call_run_python_from_code", "type": "function",
-                 "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
+    if code_lines:
+        code = '\n'.join(code_lines).strip()
+        # Confirm it looks like real Python
+        if any(kw in code for kw in ('open(', 'write(', 'print(', 'with ', 'import ', 'def ')):
+            _clog.info("code_extract: found indented code block, len=%d", len(code))
+            return [{"id": "call_run_python_from_indent", "type": "function",
+                     "function": {"name": "run_python", "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
+
+    _clog.info("code_extract: no code found in content=%.200s", content[:200])
     return None
 
 
@@ -219,20 +235,27 @@ async def tool_decision_node(state: dict) -> dict:
             f"- {t['function']['name']}: {t['function']['description']}"
             for t in available_tools
         )
-        # Phase instruction — MUST come first to override the skill prompt's narrative flow.
-        # The skill prompt contains examples with "then reply..." which can make the LLM
-        # skip the tool call and jump to the reply. This short message dominates.
+        # Tencent tokenhub does not support tool_choice="required" (400/502).
+        # Use tool_choice="auto" and steer via prompt. Even when the LLM ignores
+        # the JSON instruction, its alternate output (Python code blocks) is caught
+        # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
         tool_system = (
-            "[工具调用阶段] 不要回复用户，不要输出解释、代码块或 Markdown。"
-            "你必须立即输出一个纯 JSON 对象来调用工具。格式如下：\n"
-            + '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
+            "# ⚠️ 关键指令：输出工具调用 JSON\n\n"
+            "**绝对禁止**直接回复用户、编造文件链接或下载地址。"
+            "你必须立即输出一个纯 JSON 对象来调用工具。\n\n"
+            + "## 何时必须使用工具\n"
+            + "- 用户要求「生成」「创建」「写入」「保存」文件 → **必须**调用 run_python\n"
+            + "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
+            + "- 任何读写文件的操作 → **必须**调用 run_python\n\n"
             + "## 可用工具\n" + tool_desc + "\n\n"
+            + "## 输出格式\n"
+            + '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
             + "## 规则\n"
             + "- 只输出上述 JSON 对象，不要附加任何文字\n"
             + "- 不要用 ``` 包裹 JSON\n"
-            + "- 不要输出最终回复——那是下一阶段的事"
+            + "- 不要输出最终回复——那是下一阶段的事\n"
+            + "- **绝对不要**编造下载链接、文件路径或 uuid"
         )
-        # Skill prompt as context only — tool_system dominates in priority
         messages = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt},
@@ -253,8 +276,13 @@ async def tool_decision_node(state: dict) -> dict:
     if tool_messages:
         messages.extend(tool_messages)
     try:
-        logger.info("Tool decision: calling LLM with %d tools, max_tokens=2048, tool_choice=auto", len(available_tools))
-        response = await llm_client.chat_with_tools(messages=messages, tools=available_tools, temperature=0.1, max_tokens=2048)
+        # Use "auto" — Tencent tokenhub proxy does not support "required" (returns 502).
+        # Rely on a strong system prompt to steer the LLM toward tool usage.
+        tc = "auto"
+        logger.info("Tool decision: calling LLM with %d tools, max_tokens=2048, tool_choice=%s, round=%d",
+                   len(available_tools), tc, tool_round)
+        response = await llm_client.chat_with_tools(messages=messages, tools=available_tools,
+                                                     temperature=0.1, max_tokens=2048, tool_choice=tc)
         
         if not response:
             logger.warning("Tool decision: LLM returned empty content and no native tool_calls")
@@ -263,22 +291,27 @@ async def tool_decision_node(state: dict) -> dict:
         content_preview = (response.get("content") or "")[:200]
         logger.info("Tool decision: native_tool_calls=%s content_preview=%s", bool(tool_calls), content_preview)
         if not tool_calls:
+            parsed = None
             if response.get("content"):
                 parsed = _try_parse_tool_call(response["content"], available_tools)
-            if parsed:
-                logger.info("Tool decision: parsed tool_calls from JSON in content")
-                tool_calls = parsed
-                response["content"] = ""
-            else:
+                if parsed:
+                    logger.info("Tool decision: parsed tool_calls from JSON in content")
+                    tool_calls = parsed
+                    response["content"] = ""
+            if not tool_calls and response.get("content"):
                 logger.warning("Tool decision: no tool_calls in response, content does not contain parseable JSON")
                 # Fallback: LLM might have output Python code instead of JSON.
                 # Extract code blocks and build a run_python tool call automatically.
-                logger.info("Tool decision: trying code extraction, full content=%s", (response["content"] or "")[:500])
+                logger.info("Tool decision: trying code extraction, content_len=%d preview=%.200s",
+                           len(response["content"]), response["content"][:200])
                 code_tool = _try_extract_code_as_tool(response["content"], available_tools)
                 if code_tool:
                     logger.info("Tool decision: extracted code from LLM response, built run_python call")
                     tool_calls = code_tool
                     response["content"] = ""
+                else:
+                    logger.warning("Tool decision: code extraction also failed, content=%.300s",
+                                 (response["content"] or "")[:300])
         if tool_calls:
             tool_msg = {"role": "assistant", "content": response.get("content") or "", "tool_calls": tool_calls}
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
@@ -295,6 +328,33 @@ def _dump_state_for_debug(state: dict) -> str:
 
 
 # ── Tool Executor ──
+
+import re as _re
+
+def _enrich_with_download_links(result: str) -> str:
+    """If tool result contains [workspace: XXXXXXXX/], append download links.
+
+    This keeps URL construction in code, preventing the LLM from hallucinating links.
+    """
+    # Match [workspace: XXXXXXXX/] pattern (8-char UUID)
+    m = _re.search(r'\[workspace:\s*([a-f0-9]{8})/\]', result)
+    if not m:
+        return result
+    uuid_dir = m.group(1)
+    # Build download base URL from MCP server endpoint (same host, port 9200)
+    base = "http://localhost:9200/files"
+    # If result mentions specific files, add inline links
+    enriched = result
+    # Find filename patterns in the output: common extensions
+    file_pattern = _re.findall(r'(?<![\w/])([\w\-]+(?:\.(?:txt|csv|json|xlsx?|docx|pptx|pdf|png|jpg|html|md|py)))(?![\w/])', result)
+    if file_pattern:
+        links = "\n".join(f"  → {base}/{uuid_dir}/{f}" for f in set(file_pattern))
+        enriched = result + f"\n\n[下载链接]\n{links}"
+    else:
+        # No specific file found, provide workspace link
+        enriched = result + f"\n\n[下载链接] 工作目录: {base}/{uuid_dir}/"
+    return enriched
+
 
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
@@ -334,6 +394,10 @@ async def tool_executor_node(state: dict) -> dict:
     tasks = [execute_one(tc) for tc in tool_calls]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     tr = [str(r) if isinstance(r, Exception) else r for r in results]
+
+    # Enrich tool results with download links (system-generated, not LLM-hallucinated)
+    tr = [_enrich_with_download_links(r) for r in tr]
+
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
     result_msgs = []

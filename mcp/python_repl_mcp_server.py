@@ -352,11 +352,9 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
 TOOLS = [{
     "name": "run_python",
     "description": (
-        "在独立子进程中执行 Python 代码并返回输出。"
-        "生成的文件通过输出开头的 [workspace: xxx/] 标识。"
-        "下载链接格式: http://<host>:9200/files/{uuid}/{文件名}"
-        + ("仅允许访问指定工作目录。" if _allow_dir else "")
-        + ("网络访问已被禁止。" if _no_network else "")
+        "在隔离子进程中执行 Python 代码并返回输出。适用场景：文件生成、数据处理、计算。"
+        + ("工作目录已隔离。" if _allow_dir else "")
+        + ("无网络访问。" if _no_network else "")
     ),
     "inputSchema": {
         "type": "object",

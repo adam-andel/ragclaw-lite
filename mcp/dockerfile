@@ -18,6 +18,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy server code (kept minimal — no venv, no tests)
 COPY python_repl_mcp_server.py .
 
+# Entrypoint ensures workspace dir exists after tmpfs mount
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
 # Workspace directory for code execution output
 RUN mkdir -p /app/workspace && chown mcpuser:mcpuser /app/workspace
 
@@ -30,8 +34,8 @@ EXPOSE 9200
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9200/health')" || exit 1
 
-CMD ["python", "python_repl_mcp_server.py", \
-     "--port", "9200", \
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["--port", "9200", \
      "--allow-dir", "/app/workspace", \
      "--no-network", \
      "--keep-minutes", "120", \
