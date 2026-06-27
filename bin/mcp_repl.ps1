@@ -357,9 +357,9 @@ function Start-DockerRepl {
     if (Test-LocalRepl) {
         Write-Host "REPL server started (Docker)" -ForegroundColor Green
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-        Write-Host "  Workspace: Docker volume 'erag_workspace'" -ForegroundColor Gray
+        Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
         Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
-        Write-Host "  Resources: memory=1G, cpus=2" -ForegroundColor Gray
+        Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
     }
     else {
         Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow

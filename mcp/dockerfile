@@ -28,7 +28,7 @@ USER mcpuser
 EXPOSE 9200
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
-    CMD python -c "import urllib.request,json; req=urllib.request.Request('http://localhost:9200/mcp',data=json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list','params':{}}).encode(),headers={'Content-Type':'application/json'}); urllib.request.urlopen(req)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9200/health')" || exit 1
 
 CMD ["python", "python_repl_mcp_server.py", \
      "--port", "9200", \

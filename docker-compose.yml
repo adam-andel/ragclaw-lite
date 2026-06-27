@@ -24,12 +24,11 @@ services:
     container_name: erag-mcp-repl
     ports:
       - "9200:9200"
-    volumes:
-      - erag_workspace:/app/workspace
     # ── Container security hardening ──
     read_only: true
     tmpfs:
       - /tmp:size=256M,exec
+      - /app/workspace:size=512M
     security_opt:
       - no-new-privileges:true
       - seccomp:./mcp/seccomp.json
@@ -51,6 +50,4 @@ networks:
 
 volumes:
   erag_data:
-    driver: local
-  erag_workspace:
     driver: local

@@ -354,7 +354,7 @@ TOOLS = [{
     "description": (
         "在独立子进程中执行 Python 代码并返回输出。"
         "生成的文件通过输出开头的 [workspace: xxx/] 标识。"
-        "下载链接格式: http://127.0.0.1:8000/data/workspace/{uuid}/{文件名}"
+        "下载链接格式: http://<host>:9200/files/{uuid}/{文件名}"
         + ("仅允许访问指定工作目录。" if _allow_dir else "")
         + ("网络访问已被禁止。" if _no_network else "")
     ),
@@ -367,6 +367,36 @@ TOOLS = [{
 
 
 class MCPHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Health check
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+            return
+        # File download: GET /files/{uuid}/{filename}
+        if self.path.startswith("/files/") and _allow_dir:
+            rel = self.path[len("/files/"):].lstrip("/")
+            parts = rel.split("/", 1)
+            if len(parts) == 2:
+                uuid_dir, filename = parts
+                filepath = os.path.join(_allow_dir, uuid_dir, filename)
+                real = os.path.realpath(filepath)
+                # Security: path must be within allow_dir and must be a regular file
+                if (os.path.commonpath([real, os.path.realpath(_allow_dir)])
+                        == os.path.realpath(_allow_dir)
+                        and os.path.isfile(real)):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Disposition",
+                                    f'attachment; filename="{filename}"')
+                    self.end_headers()
+                    with open(real, "rb") as f:
+                        self.wfile.write(f.read())
+                    return
+        self.send_error(404)
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
