@@ -295,23 +295,24 @@ async def tool_decision_node(state: dict) -> dict:
             if response.get("content"):
                 parsed = _try_parse_tool_call(response["content"], available_tools)
                 if parsed:
-                    logger.info("Tool decision: parsed tool_calls from JSON in content")
+                    logger.info("Tool decision: parsed tool_calls from JSON in content (round %d)", tool_round)
                     tool_calls = parsed
                     response["content"] = ""
             if not tool_calls and response.get("content"):
-                logger.warning("Tool decision: no tool_calls in response, content does not contain parseable JSON")
-                # Fallback: LLM might have output Python code instead of JSON.
-                # Extract code blocks and build a run_python tool call automatically.
-                logger.info("Tool decision: trying code extraction, content_len=%d preview=%.200s",
-                           len(response["content"]), response["content"][:200])
+                # No native tool_calls and no JSON — try code extraction as last resort.
+                # If this is round 1+, this is expected (LLM received tool results and needs
+                # no more tools). Using info-level to avoid false-alarm warnings.
+                logger.info("Tool decision: no native/JSON tool call (round %d), trying code extraction", tool_round)
+                logger.info("Tool decision: code_extract input preview=%.200s", response["content"][:200])
                 code_tool = _try_extract_code_as_tool(response["content"], available_tools)
                 if code_tool:
                     logger.info("Tool decision: extracted code from LLM response, built run_python call")
                     tool_calls = code_tool
                     response["content"] = ""
                 else:
-                    logger.warning("Tool decision: code extraction also failed, content=%.300s",
-                                 (response["content"] or "")[:300])
+                    # Not an error — LLM may be done using tools (round 1+) or responded with plain text
+                    logger.info("Tool decision: code extraction yielded nothing (round %d, this is normal after tools)",
+                               tool_round)
         if tool_calls:
             tool_msg = {"role": "assistant", "content": response.get("content") or "", "tool_calls": tool_calls}
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
@@ -354,6 +355,22 @@ def _enrich_with_download_links(result: str) -> str:
         # No specific file found, provide workspace link
         enriched = result + f"\n\n[下载链接] 工作目录: {base}/{uuid_dir}/"
     return enriched
+
+
+def _extract_download_links_from_state(state: dict) -> str:
+    """Scan tool results for download links and format them for final display.
+
+    This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
+    """
+    tool_results = state.get("tool_results", [])
+    links = []
+    for r in tool_results:
+        if "[下载链接]" in r:
+            idx = r.index("[下载链接]")
+            links.append(r[idx:])
+    if links:
+        return "\n\n---\n\n" + "\n\n".join(links)
+    return ""
 
 
 async def tool_executor_node(state: dict) -> dict:

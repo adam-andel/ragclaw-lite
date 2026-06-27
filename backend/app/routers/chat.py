@@ -141,6 +141,13 @@ async def chat_stream(
                     collected_content += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
+                # Inject download links from tool results (system-generated, not LLM-hallucinated)
+                from app.services.agent_nodes import _extract_download_links_from_state
+                dl_links = _extract_download_links_from_state(state)
+                if dl_links:
+                    collected_content += dl_links
+                    yield f"data: {json.dumps({'type': 'token', 'content': dl_links}, ensure_ascii=False)}\n\n"
+
                 collected_citations = state.get("citations", [])
                 for c in collected_citations:
                     yield f"data: {json.dumps({'type': 'citation', 'citation': c}, ensure_ascii=False)}\n\n"
