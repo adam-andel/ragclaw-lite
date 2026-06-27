@@ -14,19 +14,40 @@ import shutil
 import os
 import uuid
 import time
+import signal
+import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from argparse import ArgumentParser
+
+# ── Logging ───────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger("repl")
+
+# ── Threaded HTTP server ──────────────────────────────────
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 
 MAX_OUTPUT = 20000
 DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_MEMORY_MB = 512
+DEFAULT_MAX_NPROC = 64
+DEFAULT_MAX_CONCURRENT = 4
 DEFAULT_KEEP_MINUTES = 60
 _allow_dir: str | None = None
 _no_network: bool = False
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
+_max_nproc: int = DEFAULT_MAX_NPROC
+_max_concurrent: int = DEFAULT_MAX_CONCURRENT
 _keep_minutes: int = DEFAULT_KEEP_MINUTES
 _CLEANUP_EVERY = 300  # check every 5 minutes
+_shutdown_event = threading.Event()
+_exec_semaphore = threading.BoundedSemaphore(DEFAULT_MAX_CONCURRENT)
 
 # Modules that can bypass Python-level guards — blocked at import level
 _BLOCKED_MODULES = {
@@ -45,6 +66,23 @@ _BLOCKED_MODULES = {
     # Environment manipulation
     "resource", "signal",
 }
+
+
+def _set_limits():
+    """preexec_fn (Linux only): enforce OS-level resource limits on child process.
+
+    RLIMIT_AS  → hard memory cap (prevents OOM of host/container)
+    RLIMIT_CPU → CPU time ceiling (backstop for timeout)
+    RLIMIT_NPROC → max child processes (prevents fork bombs)
+    """
+    if os.name == 'nt':
+        return  # Windows: no resource module, container limits handled by Docker
+    import resource as _rlim
+    mem_bytes = _max_memory_mb * 1024 * 1024
+    _rlim.setrlimit(_rlim.RLIMIT_AS, (mem_bytes, mem_bytes))
+    cpu_secs = DEFAULT_TIMEOUT + 10
+    _rlim.setrlimit(_rlim.RLIMIT_CPU, (cpu_secs, cpu_secs))
+    _rlim.setrlimit(_rlim.RLIMIT_NPROC, (_max_nproc, _max_nproc))
 
 
 def _build_guard(per_call_dir: str) -> str:
@@ -239,57 +277,76 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     Layer 4: subprocess isolation + timeout + temp file (not -c flag)
     """
     # Layer 0: AST pre-screen
+    t0 = time.time()
     err = _ast_prescreen(code)
     if err:
+        logger.warning("ast_reject reason=%s code_preview=%.60s", err, code[:60].replace("\n", " "))
         return f"代码审查未通过: {err}"
 
-    # Layer 1-3: per-call guard — only THIS invocation's UUID subdirectory is accessible
-    call_uuid = str(uuid.uuid4())[:8]
-    workdir = os.path.join(_allow_dir, call_uuid) if _allow_dir else tempfile.mkdtemp(prefix="repl_")
-    os.makedirs(workdir, exist_ok=True)
-    guard = _build_guard(workdir)
-    full_code = guard + "\n" + code if guard else code
+    # Concurrency gate — prevent LLM from spawning too many simultaneous executions
+    if not _exec_semaphore.acquire(timeout=5):
+        logger.warning("exec_busy max_concurrent=%d", _max_concurrent)
+        return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试"
 
-    # Write to temp file
-    fd, temp_script = tempfile.mkstemp(suffix=".py", text=True)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write(full_code)
+        # Layer 1-3: per-call guard — only THIS invocation's UUID subdirectory is accessible
+        call_uuid = str(uuid.uuid4())[:8]
+        workdir = os.path.join(_allow_dir, call_uuid) if _allow_dir else tempfile.mkdtemp(prefix="repl_")
+        os.makedirs(workdir, exist_ok=True)
+        guard = _build_guard(workdir)
+        full_code = guard + "\n" + code if guard else code
 
-        env = os.environ.copy()
-        for k in list(env.keys()):
-            if any(pat in k.upper() for pat in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")):
-                env.pop(k, None)
-
-        proc = subprocess.run(
-            [os.sys.executable, temp_script],
-            capture_output=True, text=True, timeout=timeout,
-            cwd=workdir, env=env,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
-        )
-
-        parts = [proc.stdout.strip()] if proc.stdout.strip() else []
-        if proc.stderr.strip():
-            parts.append(f"[stderr]\n{proc.stderr.strip()}")
-        if proc.returncode != 0 and not proc.stdout.strip():
-            parts.insert(0, f"(进程退出码: {proc.returncode})")
-        result = "\n".join(parts) or "(无输出)"
-        if _allow_dir:
-            result = f"[workspace: {call_uuid}/]\n{result}"
-        return result[:MAX_OUTPUT]
-
-    except subprocess.TimeoutExpired:
-        return f"执行超时（>{timeout}秒），已终止进程"
-    except MemoryError:
-        return f"内存不足（>{_max_memory_mb}MB）"
-    except Exception as e:
-        return f"执行异常: {str(e)}"
-    finally:
+        # Write to temp file
+        fd, temp_script = tempfile.mkstemp(suffix=".py", text=True)
         try:
-            os.unlink(temp_script)
-        except Exception:
-            pass
-        # Dir NOT cleaned — kept for --keep-minutes for user download
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(full_code)
+
+            env = os.environ.copy()
+            for k in list(env.keys()):
+                if any(pat in k.upper() for pat in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")):
+                    env.pop(k, None)
+
+            proc = subprocess.run(
+                [os.sys.executable, temp_script],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=workdir, env=env,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0,
+                preexec_fn=_set_limits if os.name != 'nt' else None,
+            )
+
+            parts = [proc.stdout.strip()] if proc.stdout.strip() else []
+            if proc.stderr.strip():
+                parts.append(f"[stderr]\n{proc.stderr.strip()}")
+            if proc.returncode != 0 and not proc.stdout.strip():
+                parts.insert(0, f"(进程退出码: {proc.returncode})")
+            result = "\n".join(parts) or "(无输出)"
+            if _allow_dir:
+                result = f"[workspace: {call_uuid}/]\n{result}"
+            result = result[:MAX_OUTPUT]
+
+            elapsed_ms = int((time.time() - t0) * 1000)
+            logger.info("exec_ok uuid=%s elapsed_ms=%d output_len=%d exit_code=%d",
+                        call_uuid, elapsed_ms, len(result), proc.returncode)
+            return result
+
+        except subprocess.TimeoutExpired:
+            elapsed_ms = int((time.time() - t0) * 1000)
+            logger.warning("exec_timeout uuid=%s timeout=%d elapsed_ms=%d code_preview=%.60s",
+                          call_uuid, timeout, elapsed_ms, code[:60].replace("\n", " "))
+            return f"执行超时（>{timeout}秒），已终止进程"
+        except Exception as e:
+            elapsed_ms = int((time.time() - t0) * 1000)
+            logger.error("exec_error uuid=%s error=%s elapsed_ms=%d",
+                        call_uuid, type(e).__name__, elapsed_ms)
+            return f"执行异常: {str(e)}"
+        finally:
+            try:
+                os.unlink(temp_script)
+            except Exception:
+                pass
+    finally:
+        _exec_semaphore.release()
 
 
 TOOLS = [{
@@ -332,7 +389,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(resp, ensure_ascii=False).encode())
 
     def log_message(self, _fmt, *args):
-        print(f"[REPL] {args[0]}")
+        logger.info("http %s", args[0])
 
 
 if __name__ == "__main__":
@@ -344,15 +401,29 @@ if __name__ == "__main__":
                    help="禁止子进程网络访问（阻止 socket + subprocess）")
     p.add_argument("--keep-minutes", type=int, default=DEFAULT_KEEP_MINUTES,
                    help=f"生成文件保留时长（分钟），默认 {DEFAULT_KEEP_MINUTES}")
+    p.add_argument("--max-memory-mb", type=int, default=DEFAULT_MAX_MEMORY_MB,
+                   help=f"子进程最大内存（MB，Linux 下通过 setrlimit 硬限制），默认 {DEFAULT_MAX_MEMORY_MB}")
+    p.add_argument("--max-nproc", type=int, default=DEFAULT_MAX_NPROC,
+                   help=f"子进程最大进程数（防 fork bomb），默认 {DEFAULT_MAX_NPROC}")
+    p.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT,
+                   help=f"最大并发执行数，默认 {DEFAULT_MAX_CONCURRENT}")
     args = p.parse_args()
-    _allow_dir = os.path.abspath(args.allow_dir) if args.allow_dir else None
-    _no_network = args.no_network
-    _keep_minutes = args.keep_minutes
+    # Env var overrides: CLI args take precedence, env vars provide defaults
+    _allow_dir = args.allow_dir or os.environ.get("REPL_ALLOW_DIR")
+    _allow_dir = os.path.abspath(_allow_dir) if _allow_dir else None
+    _no_network = (args.no_network
+                   or os.environ.get("REPL_NO_NETWORK", "").lower() in ("1", "true", "yes"))
+    _keep_minutes = int(os.environ.get("REPL_KEEP_MINUTES", args.keep_minutes))
+    _max_memory_mb = int(os.environ.get("REPL_MAX_MEMORY_MB", args.max_memory_mb))
+    _max_nproc = int(os.environ.get("REPL_MAX_NPROC", args.max_nproc))
+    _max_concurrent = int(os.environ.get("REPL_MAX_CONCURRENT", args.max_concurrent))
+    if _max_concurrent != DEFAULT_MAX_CONCURRENT:
+        _exec_semaphore = threading.BoundedSemaphore(_max_concurrent)
 
     # Background cleanup thread
     def _cleanup_loop():
-        while True:
-            time.sleep(_CLEANUP_EVERY)
+        while not _shutdown_event.is_set():
+            _shutdown_event.wait(_CLEANUP_EVERY)
             if not _allow_dir:
                 continue
             cutoff = time.time() - (_keep_minutes * 60)
@@ -360,21 +431,34 @@ if __name__ == "__main__":
                 for entry in os.scandir(_allow_dir):
                     if entry.is_dir() and entry.stat().st_mtime < cutoff:
                         shutil.rmtree(entry.path, ignore_errors=True)
-                        print(f"[cleanup] removed {entry.name}")
+                        logger.info("cleanup removed=%s", entry.name)
             except Exception:
                 pass
     threading.Thread(target=_cleanup_loop, daemon=True).start()
 
-    server = HTTPServer(("0.0.0.0", args.port), MCPHandler)
-    print(f"🐍 Python REPL MCP Server on :{args.port}  timeout={DEFAULT_TIMEOUT}s")
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), MCPHandler)
+    logger.info("start port=%d timeout=%d max_mem=%d max_nproc=%d max_concurrent=%d keep=%d",
+                args.port, DEFAULT_TIMEOUT, _max_memory_mb, _max_nproc, _max_concurrent, _keep_minutes)
     if _allow_dir:
-        print(f"   🛡️  Allow-only: {_allow_dir}  (keep={_keep_minutes}min)")
+        logger.info("allow_dir=%s", _allow_dir)
     if _no_network:
-        print(f"   🔒 Network blocked (socket + subprocess)")
-    if not _allow_dir and not _no_network:
-        print(f"   ⚠️  No restrictions set")
-    print(f"   🧹 Cleanup: every {_CLEANUP_EVERY}s, keeps files for {_keep_minutes}min")
+        logger.info("network=blocked")
+    if os.name != 'nt':
+        logger.info("os_limits rlimit_as=%dMB rlimit_cpu=%ds rlimit_nproc=%d",
+                    _max_memory_mb, DEFAULT_TIMEOUT + 10, _max_nproc)
+
+    # Graceful shutdown on SIGTERM (Docker stop) + SIGINT (Ctrl+C)
+    def _on_shutdown(signum, frame):
+        logger.info("signal=%d shutting_down", signum)
+        _shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, _on_shutdown)
+    signal.signal(signal.SIGINT, _on_shutdown)
+
+    server.timeout = 0.5  # poll shutdown_event every 0.5s
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.shutdown()
+        while not _shutdown_event.is_set():
+            server.handle_request()
+    finally:
+        server.server_close()
+        logger.info("shutdown_complete")

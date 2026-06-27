@@ -1,6 +1,10 @@
 # Python REPL MCP Server — Docker image
 # Isolated execution environment for LLM-generated Python code
-FROM python:3.12-slim
+# REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
+#   docker build --build-arg REGISTRY=docker.xuanyuan.me ...
+#   Or via compose: docker compose build --build-arg REGISTRY=docker.xuanyuan.me mcp-repl
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/library/python:3.12-slim
 
 # Create non-root user (least privilege)
 RUN useradd -m -s /bin/bash mcpuser
@@ -17,6 +21,9 @@ COPY python_repl_mcp_server.py .
 # Workspace directory for code execution output
 RUN mkdir -p /app/workspace && chown mcpuser:mcpuser /app/workspace
 
+# Disable .pyc bytecode cache (read-only filesystem)
+ENV PYTHONDONTWRITEBYTECODE=1
+
 USER mcpuser
 EXPOSE 9200
 
@@ -27,4 +34,7 @@ CMD ["python", "python_repl_mcp_server.py", \
      "--port", "9200", \
      "--allow-dir", "/app/workspace", \
      "--no-network", \
-     "--keep-minutes", "120"]
+     "--keep-minutes", "120", \
+     "--max-memory-mb", "512", \
+     "--max-nproc", "64", \
+     "--max-concurrent", "4"]

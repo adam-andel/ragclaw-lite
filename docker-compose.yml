@@ -26,15 +26,24 @@ services:
       - "9200:9200"
     volumes:
       - erag_workspace:/app/workspace
-    restart: unless-stopped
-    networks:
-      - erag
-    # Resource limits (prevent one-shot leaks from the LLM)
+    # ── Container security hardening ──
+    read_only: true
+    tmpfs:
+      - /tmp:size=256M,exec
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./mcp/seccomp.json
+    cap_drop:
+      - ALL
+    # ── Resource limits ──
     deploy:
       resources:
         limits:
           cpus: '2'
-          memory: 1G
+          memory: 768M
+    restart: unless-stopped
+    networks:
+      - erag
 
 networks:
   erag:
