@@ -328,8 +328,11 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
 
             # Append download links (MCP server constructs the full URL from --public-url)
             if _public_url and _allow_dir:
-                download_base = f"{_public_url}/files"
-                result += f"\n\n[下载链接] {download_base}/{call_uuid}/"
+                dirpath = os.path.join(_allow_dir, call_uuid)
+                download_base = f"{_public_url}/files/{call_uuid}"
+                for f in os.listdir(dirpath):
+                    if os.path.isfile(os.path.join(dirpath, f)):
+                        result += f"\n\n[下载链接] {download_base}/{f}"
 
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info("exec_ok uuid=%s elapsed_ms=%d output_len=%d exit_code=%d",
