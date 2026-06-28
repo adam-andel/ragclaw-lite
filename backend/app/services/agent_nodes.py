@@ -254,7 +254,7 @@ async def tool_decision_node(state: dict) -> dict:
             + "- 只输出上述 JSON 对象，不要附加任何文字\n"
             + "- 不要用 ``` 包裹 JSON\n"
             + "- 不要输出最终回复——那是下一阶段的事\n"
-            + "- **绝对不要**编造下载链接、文件路径或 uuid"
+            + "- **绝对不要**编造File、文件路径或 uuid"
         )
         messages = [
             {"role": "system", "content": tool_system},
@@ -335,10 +335,10 @@ import re as _re
 def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
     """Ensure download links are present in tool result.
 
-    If the MCP server already included a [下载链接] (via --public-url), pass through.
+    If the MCP server already included a [File] (via --public-url), pass through.
     Otherwise, construct one from the MCP endpoint as fallback.
     """
-    if "[下载链接]" in result:
+    if "[File]" in result:
         return result  # MCP server already provided links
 
     m = _re.search(r'\[workspace:\s*([a-f0-9]{8})/\]', result)
@@ -352,7 +352,7 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
             base = ep_match.group(1)
     if not base:
         return result  # can't construct without base URL
-    return result + f"\n\n[下载链接] {base}/files/{uuid_dir}/"
+    return result + f"\n\n[File] {base}/files/{uuid_dir}/"
 
 
 def _extract_download_links_from_state(state: dict) -> str:
@@ -363,8 +363,8 @@ def _extract_download_links_from_state(state: dict) -> str:
     tool_results = state.get("tool_results", [])
     links = []
     for r in tool_results:
-        if "[下载链接]" in r:
-            idx = r.index("[下载链接]")
+        if "[File]" in r:
+            idx = r.index("[File]")
             links.append(r[idx:])
     if links:
         return "\n\n---\n\n" + "\n\n".join(links)

@@ -2,9 +2,8 @@
 import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { NTag, NButton, NIcon, NTooltip, NModal } from 'naive-ui'
-import type { Citation } from '@/types'
 import { Copy, Refresh } from '@vicons/ionicons5'
-import type { ChatMessage } from '@/types'
+import type { Citation, ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
 
 import { useAuthStore } from '@/stores/auth'

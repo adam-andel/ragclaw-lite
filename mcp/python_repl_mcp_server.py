@@ -332,7 +332,7 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
                 download_base = f"{_public_url}/files/{call_uuid}"
                 for f in os.listdir(dirpath):
                     if os.path.isfile(os.path.join(dirpath, f)):
-                        result += f"\n\n[下载链接] {download_base}/{f}"
+                        result += f"\n\n[File] {download_base}/{f}"
 
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info("exec_ok uuid=%s elapsed_ms=%d output_len=%d exit_code=%d",
@@ -470,7 +470,7 @@ if __name__ == "__main__":
     p.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT,
                    help=f"最大并发执行数，默认 {DEFAULT_MAX_CONCURRENT}")
     p.add_argument("--public-url", type=str, default="",
-                   help="对外可访问的完整地址，用于生成下载链接。如 http://192.168.1.100:9200")
+                   help="对外可访问的完整地址，用于生成File。如 http://192.168.1.100:9200")
     args = p.parse_args()
     # Env var overrides: CLI args take precedence, env vars provide defaults
     _allow_dir = args.allow_dir or os.environ.get("REPL_ALLOW_DIR")
