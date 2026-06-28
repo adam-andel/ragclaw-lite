@@ -26,7 +26,7 @@ function formatTime(iso: string) {
 }
 
 const renderedContent = computed(() => {
-  const raw = props.message.content || ''
+  const raw = (props.message.content || '').replace(/\[File\]/g, '📄')
   let html = ''
   let remaining = raw
 
