@@ -6,7 +6,6 @@ WORKDIR /app/frontend
 # Copy package files
 COPY frontend/package.json ./
 
-# Install (no lockfile, generate one)
 RUN corepack enable && pnpm install --no-frozen-lockfile
 
 # Copy source and build
@@ -18,13 +17,18 @@ FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
-# System deps for PyMuPDF
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx libglib2.0-0 \
+# System deps for PyMuPDF (deb.debian.org → TUNA mirror fallback)
+# Note: libgl1-mesa-glx was removed in Debian 12 (Bookworm), use libgl1 instead
+RUN (apt-get update || \
+     (sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
+      apt-get update)) \
+    && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps via mirror (faster in China)
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+# Install Python deps (CPU-only torch first to avoid nvidia CUDA bloat)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip install --no-cache-dir \
     fastapi uvicorn[standard] sqlalchemy aiosqlite chromadb \
     sentence-transformers pymupdf python-docx markdown \
