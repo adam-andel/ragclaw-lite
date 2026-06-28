@@ -50,6 +50,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('skill_system', ?)",
                      (datetime.utcnow().isoformat(),))
 
+    if "seed_defaults" not in applied:
+        _seed_defaults(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('seed_defaults', ?)",
+                     (datetime.utcnow().isoformat(),))
+
     raw.commit()
 
 
@@ -186,6 +191,108 @@ def _migrate_skill_system(raw):
     raw.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_tools_unique ON skill_tools(skill_id, tool_name, mcp_server_id)")
 
     print("[migrate] skill_system done")
+
+
+def _seed_defaults(raw):
+    """Seed default MCP Server and document generation SKILL (v0.5.0).
+
+    Uses deterministic UUIDs for idempotent inserts.
+    """
+    print("[seed] Checking default MCP Server and SKILL...")
+    import hashlib
+
+    # Deterministic UUIDs
+    mcp_id = str(uuid.UUID(hashlib.md5(b"erag-default-python-repl").hexdigest()))
+    skill_id = str(uuid.UUID(hashlib.md5(b"erag-default-doc-gen").hexdigest()))
+    tool_id = str(uuid.UUID(hashlib.md5(b"erag-default-run-python-tool").hexdigest()))
+    now = datetime.utcnow().isoformat()
+
+    # Default MCP Server: Python执行器
+    existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
+    if not existing:
+        raw.execute(
+            "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, created_at) VALUES(?,?,?,?,?,?,?)",
+            (mcp_id, "Python执行器", "http", "http://127.0.0.1:9200/mcp", 30, 1, now),
+        )
+        print("[seed] MCP Server 'Python执行器' created")
+    else:
+        print("[seed] MCP Server 'Python执行器' already exists")
+
+    # Default SKILL: 文档生成助手
+    sys_prompt = (
+        "## 核心规则（必须严格遵守）\n\n"
+        "你的任务不是写代码给用户看，而是**真正生成文档文件**。收到文档生成请求后，你必须通过 `run_python` 工具执行 Python 代码来生成文件。\n\n"
+        "**禁止以下行为：**\n"
+        "- 只输出代码说明而不调用工具\n"
+        "- 先展示代码再等用户确认（除非用户明确要求\"先让我看一下代码\"）\n"
+        "- 告诉用户\"可以用以下代码生成\"——用户要的是文件，不是代码\n"
+        "- 以任何自然语言描述代替工具调用\n\n"
+        "## 工作流程\n\n"
+        "1. 收到文档生成请求 → 立即编写完整的 Python 代码\n"
+        "2. 调用 `run_python` 工具，将代码作为 `code` 参数传入\n\n"
+        "## 示例\n\n"
+        "**用户说：** 生成一个txt，内容是：1\n"
+        "**你该做的：** 调用 run_python，code 参数为：\n"
+        "```python\n"
+        "with open(\"output.txt\", \"w\", encoding=\"utf-8\") as f:\n"
+        "    f.write(\"1\")\n"
+        "print(\"文件已生成\")\n"
+        "```\n\n"
+        "**用户说：** 生成一个包含姓名、年龄两列的 CSV\n"
+        "**你该做的：** 调用 run_python，code 参数为：\n"
+        "```python\n"
+        "import csv\n"
+        "with open(\"data.csv\", \"w\", newline=\"\", encoding=\"utf-8-sig\") as f:\n"
+        "    writer = csv.writer(f)\n"
+        "    writer.writerow([\"姓名\", \"年龄\"])\n"
+        "print(\"CSV 已生成\")\n"
+        "```\n\n"
+        "**用户说：** 生成一个 Markdown 文件，内容是 # 标题\n"
+        "**你该做的：** 调用 run_python，code 参数为：\n"
+        "```python\n"
+        "with open(\"readme.md\", \"w\", encoding=\"utf-8\") as f:\n"
+        "    f.write(\"# 标题\\n\")\n"
+        "print(\"Markdown 已生成\")\n"
+        "```\n\n"
+        "## 文件命名规则\n\n"
+        "- 使用英文文件名（如 output.txt、report.docx、chart.png）\n"
+        "- 保存到当前目录即可，工具会自动分配 workspace 子目录\n"
+        "- 同名文件用数字序号区分（如 output2.txt）\n\n"
+        "## 环境说明\n\n"
+        "- 支持 Python 标准库\n"
+        "- 已安装三方库：pandas、python-docx、python-pptx、PyPDF2\n"
+        "- 网络访问被禁止、外部进程调用被禁止\n"
+        "- 生成文件 60 分钟内有效，超时自动删除\n\n"
+        "## 生成后输出格式\n\n"
+        "```\n"
+        "```\n\n"
+        "**注意事项：**\n"
+        "- 避免生成超大文件或耗时操作，防止超时\n"
+        "- 代码中 `print()` 的内容会返回给你作为工具输出"
+    )
+    existing = raw.execute("SELECT id FROM skills WHERE id = ?", (skill_id,)).fetchone()
+    if not existing:
+        raw.execute(
+            "INSERT INTO skills(id, name, description, system_prompt, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (skill_id, "文档生成助手", "生成文档、报表、图表、PPT、网页等文件，支持txt/csv/xlsx/pptx/png/pdf/html/markdown/txt/csv等格式",
+             sys_prompt, 1, now, now),
+        )
+        print("[seed] SKILL '文档生成助手' created")
+    else:
+        print("[seed] SKILL '文档生成助手' already exists")
+
+    # Default tool binding: run_python
+    existing = raw.execute("SELECT id FROM skill_tools WHERE id = ?", (tool_id,)).fetchone()
+    if not existing:
+        raw.execute(
+            "INSERT INTO skill_tools(id, skill_id, tool_name, mcp_server_id) VALUES(?,?,?,?)",
+            (tool_id, skill_id, "run_python", mcp_id),
+        )
+        print("[seed] Tool binding 'run_python' created")
+    else:
+        print("[seed] Tool binding 'run_python' already exists")
+
+    print("[seed] defaults done")
 
 
 # ─── Public API ───
