@@ -18,9 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy server code (kept minimal — no venv, no tests)
 COPY python_repl_mcp_server.py .
 
-# Entrypoint ensures workspace dir exists after tmpfs mount
 COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
 # Workspace directory for code execution output
 RUN mkdir -p /app/workspace && chown mcpuser:mcpuser /app/workspace
