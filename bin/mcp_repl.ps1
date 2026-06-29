@@ -24,7 +24,6 @@ $ComposeFile = Join-Path $Root "docker-compose.yml"
 # Mirror sources (China-friendly, tested in order)
 $MirrorList = @(
     "https://docker.m.daocloud.io"
-    "https://docker.xuanyuan.me"
     "https://docker.1ms.run"
 )
 
