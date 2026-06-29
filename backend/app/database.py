@@ -237,7 +237,7 @@ def _seed_defaults(raw):
     if not existing:
         raw.execute(
             "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, created_at) VALUES(?,?,?,?,?,?,?)",
-            (mcp_id, "Python执行器", "http", "http://127.0.0.1:9200/mcp", 30, 1, now),
+            (mcp_id, "Python执行器", "http", "http://mcp-repl:9200/mcp", 30, 1, now),
         )
         print("[seed] MCP Server 'Python执行器' created")
     else:
