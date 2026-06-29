@@ -24,7 +24,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(200))
     display_name: Mapped[str] = mapped_column(String(200), default="")
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    role: Mapped[UserRole] = mapped_column(SAEnum(UserRole), default=UserRole.USER)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(UserRole, values_callable=lambda e: [m.value for m in e]),
+        default=UserRole.USER
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Multi-tenant: each user belongs to a tenant; admin can see all
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
