@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
-from app.models.user import UserRole
 
 settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,11 +206,12 @@ def _seed_admin_user(raw):
     now = datetime.now(timezone.utc).isoformat()
 
     from app.services.auth import hash_password
+    from app.models.user import UserRole
     existing = raw.execute("SELECT id FROM users WHERE username = ?", ("admin",)).fetchone()
     if not existing:
         raw.execute(
             "INSERT INTO users(id, username, hashed_password, display_name, role, is_active, created_at) VALUES(?,?,?,?,?,?,?)",
-            (admin_user_id, "admin", hash_password("admin123"), "超级管理员", UserRole.ADMIN, 1, now),
+            (admin_user_id, "admin", hash_password("admin123"), "超级管理员", UserRole.ADMIN.value, 1, now),
         )
         print("[seed] Admin user 'admin' created")
     else:
