@@ -142,6 +142,25 @@ workspace_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/data/workspace", StaticFiles(directory=str(workspace_dir)), name="workspace")
 
 # --- Static Frontend (Vue3 dist) ---
+# Vue Router uses HTML5 history mode, so non-root paths like /chat must fall
+# back to index.html for client-side routing to take over.
 frontend_dist = settings.project_root / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(frontend_dist / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        from fastapi.responses import FileResponse
+
+        candidate = (frontend_dist / full_path).resolve()
+        if (
+            full_path
+            and candidate.is_file()
+            and frontend_dist in candidate.parents
+        ):
+            return FileResponse(candidate)
+        return FileResponse(frontend_dist / "index.html")
