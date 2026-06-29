@@ -38,22 +38,27 @@ def _apply_migrations(raw):
     if "m2m_refactor" not in applied:
         _migrate_m2m(raw)
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('m2m_refactor', ?)",
-                     (datetime.utcnow().isoformat(),))
+                     (datetime.now(datetime.timezone.utc).isoformat(),))
 
     if "kb_id_nullable" not in applied:
         _migrate_nullable_kb_id(raw)
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('kb_id_nullable', ?)",
-                     (datetime.utcnow().isoformat(),))
+                     (datetime.now(datetime.timezone.utc).isoformat(),))
 
     if "skill_system" not in applied:
         _migrate_skill_system(raw)
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('skill_system', ?)",
-                     (datetime.utcnow().isoformat(),))
+                     (datetime.now(datetime.timezone.utc).isoformat(),))
 
     if "seed_defaults" not in applied:
         _seed_defaults(raw)
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('seed_defaults', ?)",
-                     (datetime.utcnow().isoformat(),))
+                     (datetime.now(datetime.timezone.utc).isoformat(),))
+
+    if "seed_admin_user" not in applied:
+        _seed_admin_user(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('seed_admin_user', ?)",
+                     (datetime.now(datetime.timezone.utc).isoformat(),))
 
     raw.commit()
 
@@ -94,7 +99,7 @@ def _migrate_m2m(raw):
             skipped += 1
             continue
         raw.execute("INSERT INTO kb_documents(id, kb_id, doc_id, added_at) VALUES(?,?,?,?)",
-                     (_gen_uuid(), kb_id, doc_id, datetime.utcnow().isoformat()))
+                     (_gen_uuid(), kb_id, doc_id, datetime.now(datetime.timezone.utc).isoformat()))
         migrated += 1
 
     for doc_id, owner_id, tenant_id in raw.execute("""
@@ -105,7 +110,7 @@ def _migrate_m2m(raw):
         raw.execute("UPDATE documents SET owner_id=?, tenant_id=? WHERE id=?", (owner_id, tenant_id, doc_id))
 
     raw.execute("UPDATE documents SET progress=100 WHERE status IN ('completed','failed')")
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(datetime.timezone.utc).isoformat()
     raw.execute("UPDATE documents SET updated_at=? WHERE updated_at IS NULL", (now,))
     raw.execute("UPDATE knowledge_bases SET updated_at=? WHERE updated_at IS NULL", (now,))
     print(f"[migrate] m2m_refactor done: {migrated} links, {skipped} skipped")
@@ -193,6 +198,26 @@ def _migrate_skill_system(raw):
     print("[migrate] skill_system done")
 
 
+def _seed_admin_user(raw):
+    """Seed default admin user (v0.6.0)."""
+    print("[seed] Checking default admin user...")
+    import hashlib
+
+    admin_user_id = str(uuid.UUID(hashlib.md5(b"erag-default-admin-user").hexdigest()))
+    now = datetime.now(datetime.timezone.utc).isoformat()
+
+    from app.services.auth import hash_password
+    existing = raw.execute("SELECT id FROM users WHERE username = ?", ("admin",)).fetchone()
+    if not existing:
+        raw.execute(
+            "INSERT INTO users(id, username, hashed_password, display_name, role, is_active, created_at) VALUES(?,?,?,?,?,?,?)",
+            (admin_user_id, "admin", hash_password("admin123"), "超级管理员", "admin", 1, now),
+        )
+        print("[seed] Admin user 'admin' created")
+    else:
+        print("[seed] Admin user 'admin' already exists")
+
+
 def _seed_defaults(raw):
     """Seed default MCP Server and document generation SKILL (v0.5.0).
 
@@ -205,7 +230,7 @@ def _seed_defaults(raw):
     mcp_id = str(uuid.UUID(hashlib.md5(b"erag-default-python-repl").hexdigest()))
     skill_id = str(uuid.UUID(hashlib.md5(b"erag-default-doc-gen").hexdigest()))
     tool_id = str(uuid.UUID(hashlib.md5(b"erag-default-run-python-tool").hexdigest()))
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(datetime.timezone.utc).isoformat()
 
     # Default MCP Server: Python执行器
     existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
