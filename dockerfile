@@ -35,19 +35,23 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
     jieba rank-bm25 tiktoken httpx sse-starlette \
     pydantic-settings python-multipart
 
+# Pre-download BGE model (before COPY backend, cache survives code changes)
+ENV HF_HOME=/app/.cache/huggingface \
+    HF_ENDPOINT=https://hf-mirror.com
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
+
 # Copy backend code
 COPY backend/ backend/
 
 # Copy frontend dist
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Pre-download BGE model (use HF mirror)
-ENV HF_ENDPOINT=https://hf-mirror.com
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-zh-v1.5')"
+# Data dirs and non-root user
+RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads && \
+    useradd -m -s /bin/bash erag && \
+    chown -R erag:erag /app
 
-# Data dirs
-RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads
-
+USER erag
 ENV PYTHONPATH=/app/backend
 EXPOSE 8000
 
