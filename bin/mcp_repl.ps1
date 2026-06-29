@@ -75,22 +75,29 @@ function Test-LocalRepl {
 function Get-WorkingMirrorDomain {
     <#
     .SYNOPSIS
-    Returns the first working registry domain for use as --build-arg REGISTRY.
-    Tests both /v2/ reachability AND image manifest availability (detects 429 rate-limit).
-    Falls back to "docker.io" if hub.docker.com is reachable.
+    Returns the first working registry domain from daemon.json mirrors only.
+    Respects user's daemon.json edits (add/remove/comment-out via JSON).
+    Hardcoded MirrorList is NOT used here — it is only for auto-configuration.
     #>
     if (Test-Registry "https://hub.docker.com") { return "docker.io" }
-    $candidates = @(Get-ExistingMirrors) + $MirrorList | Select-Object -Unique
+    $candidates = @(Get-ExistingMirrors)
+    if ($candidates.Count -eq 0) {
+        Write-Host "  No mirrors in daemon.json, falling back to docker.io" -ForegroundColor DarkGray
+        return "docker.io"
+    }
     foreach ($m in $candidates) {
         $domain = $m -replace '^https?://', ''
-        # First check registry endpoint
-        if (-not (Test-Registry $m)) { continue }
-        # Then check the actual image we need (catches 429 rate-limit)
+        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
+        if (-not (Test-Registry $m)) {
+            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
+            continue
+        }
         $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
         if ($imageOk) { return $domain }
-        Write-Host "  $m OK for /v2/ but image blocked (429), trying next..." -ForegroundColor DarkYellow
+        Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
     }
-    Write-Host "  WARNING: no mirror can serve python:3.12-slim, falling back to docker.io" -ForegroundColor Yellow
+    Write-Host "  WARNING: no daemon.json mirror can serve python:3.12-slim" -ForegroundColor Yellow
+    Write-Host "           falling back to docker.io" -ForegroundColor Yellow
     return "docker.io"
 }
 
