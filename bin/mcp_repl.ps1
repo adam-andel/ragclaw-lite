@@ -1,12 +1,8 @@
 # ERAG Python REPL MCP Server Control Script
-# Usage: .\bin\mcp_repl.ps1 [start|stop|status|build|fix-mirror|logs]
+# Usage: .\bin\mcp_repl.ps1 [start|stop|status|build|logs]
 #
 # Smart mode: auto-detects Docker. If Docker is installed, runs containerized.
 # If Docker is not installed, falls back to local Python venv.
-#
-# Mirror detection: before Docker build, automatically checks if image registries
-# are reachable from China. If not, configures domestic mirrors in daemon.json.
-# Adapted from Fix-DockerMirrors.ps1.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down
 # Local  mode uses:  .\mcp\venv + python_repl_mcp_server.py
@@ -172,15 +168,6 @@ function Test-Registry {
     catch { return $false }
 }
 
-function Test-DockerCanPull {
-    if (Test-Registry "https://hub.docker.com") { return $true }
-    $mirrors = Get-ExistingMirrors
-    foreach ($m in $mirrors) {
-        if (Test-Registry $m) { return $true }
-    }
-    return $false
-}
-
 function Get-ExistingMirrors {
     $cfgPath = "$env:USERPROFILE\.docker\daemon.json"
     if (-not (Test-Path $cfgPath)) { return @() }
@@ -191,101 +178,6 @@ function Get-ExistingMirrors {
     }
     catch { }
     return @()
-}
-
-function Read-DaemonConfig {
-    $cfgPath = "$env:USERPROFILE\.docker\daemon.json"
-    $result = @{ Path = $cfgPath; Raw = ""; Keys = @{} }
-    if (Test-Path $cfgPath) {
-        try {
-            $result.Raw = Get-Content $cfgPath -Raw -ErrorAction Stop
-            $obj = $result.Raw | ConvertFrom-Json -ErrorAction Stop
-            $ht = @{}
-            foreach ($prop in $obj.PSObject.Properties) {
-                $ht[$prop.Name] = $prop.Value
-            }
-            $result.Keys = $ht
-        }
-        catch { }
-    }
-    return $result
-}
-
-function Write-DaemonConfig {
-    param([hashtable]$Keys)
-    $cfgPath = "$env:USERPROFILE\.docker\daemon.json"
-    $tmpPath = [System.IO.Path]::GetTempFileName()
-    try {
-        $Keys | ConvertTo-Json -Depth 10 | Set-Content $tmpPath -Encoding UTF8
-        if (Test-Path $cfgPath) {
-            Copy-Item $cfgPath "$cfgPath.erag-bak" -Force
-            Write-Host "  已备份: $cfgPath.erag-bak" -ForegroundColor DarkGray
-        }
-        Move-Item $tmpPath $cfgPath -Force
-    }
-    catch {
-        Write-Host "  写入 daemon.json 失败: $_" -ForegroundColor Red
-    }
-}
-
-function Ensure-DockerMirror {
-    Write-Host "[mirror] Checking Docker registry access ..." -ForegroundColor DarkGray
-
-    # 1. Official hub reachable, nothing to do
-    if (Test-Registry "https://hub.docker.com") {
-        Write-Host "  OK: hub.docker.com reachable" -ForegroundColor DarkGray
-        return $true
-    }
-    Write-Host "  hub.docker.com NOT reachable" -ForegroundColor DarkYellow
-
-    # 2. Check existing mirrors
-    $existing = Get-ExistingMirrors
-    $working = @()
-    foreach ($m in $existing) {
-        $ok = Test-Registry $m
-        $mark = if ($ok) { "OK" } else { "FAIL" }
-        $color = if ($ok) { "Green" } else { "Red" }
-        Write-Host "  $m ... $mark" -ForegroundColor $color
-        if ($ok) { $working += $m }
-    }
-
-    if ($working.Count -gt 0) {
-        Write-Host "  OK: $($working.Count) existing mirror(s) working" -ForegroundColor DarkGray
-        return $true
-    }
-
-    # 3. No working mirrors, configure preferred ones
-    Write-Host "  No working mirrors, configuring ..." -ForegroundColor Yellow
-    $newList = @()
-    foreach ($m in $existing) { $newList += $m }
-    $added = $false
-    foreach ($m in $MirrorList) {
-        if ($m -in $newList) { continue }
-        $ok = Test-Registry $m
-        $mark = if ($ok) { "OK" } else { "FAIL" }
-        $color = if ($ok) { "Green" } else { "Red" }
-        Write-Host "  $m ... $mark" -ForegroundColor $color
-        if ($ok) {
-            $newList += $m
-            $added = $true
-        }
-    }
-
-    if (-not $added) {
-        Write-Host "  FAIL: no mirror reachable, check network" -ForegroundColor Red
-        return $false
-    }
-
-    # Write config preserving existing keys
-    $cfg = Read-DaemonConfig
-    $cfg.Keys['registry-mirrors'] = $newList
-    Write-DaemonConfig -Keys $cfg.Keys
-
-    Write-Host "  OK: $($newList.Count) mirrors written" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  NOTE: restart Docker Desktop for mirror config to take effect" -ForegroundColor Yellow
-    Write-Host "  Right-click Docker tray icon -> Quit Docker Desktop -> reopen" -ForegroundColor Yellow
-    return $false
 }
 
 # =====================================================================
@@ -345,13 +237,6 @@ function Start-DockerRepl {
     if (-not (Test-ComposeAvailable $ComposeFile)) {
         Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
         Write-Host "       Fall back: .\bin\mcp_repl.ps1 start (auto-detects Docker absence)" -ForegroundColor Yellow
-        return
-    }
-
-    # Mirror check before build
-    if (-not (Ensure-DockerMirror)) {
-        Write-Host "Docker mirrors not ready, aborting start." -ForegroundColor Red
-        Write-Host "Fix manually: .\bin\mcp_repl.ps1 fix-mirror" -ForegroundColor Yellow
         return
     }
 
@@ -447,52 +332,6 @@ function Show-Status {
     Write-Host "  Status: NOT running" -ForegroundColor Red
 }
 
-function Fix-DockerMirror {
-    Write-Host "=== Docker Mirror Diagnostics ===" -ForegroundColor Cyan
-
-    if (-not (Test-Docker)) {
-        Write-Host "Docker not available" -ForegroundColor Red
-        return
-    }
-
-    $cfg = Read-DaemonConfig
-    Write-Host "Config file: $($cfg.Path)" -ForegroundColor Gray
-    $existing = Get-ExistingMirrors
-    Write-Host "Current mirrors ($($existing.Count)):" -ForegroundColor Gray
-    foreach ($m in $existing) { Write-Host "  $m" -ForegroundColor DarkGray }
-
-    if (Test-DockerCanPull) {
-        Write-Host "OK: Docker registry reachable" -ForegroundColor Green
-        return
-    }
-
-    Write-Host "Mirrors not reachable, auto-fixing ..." -ForegroundColor Yellow
-
-    $newList = @()
-    foreach ($m in $existing) { $newList += $m }
-    $added = $false
-    foreach ($m in $MirrorList) {
-        if ($m -in $newList) { continue }
-        $ok = Test-Registry $m
-        $mark = if ($ok) { "OK" } else { "FAIL" }
-        $color = if ($ok) { "Green" } else { "Red" }
-        Write-Host "  $m ... $mark" -ForegroundColor $color
-        if ($ok) {
-            $newList += $m
-            $added = $true
-        }
-    }
-
-    if (-not $added -and $newList.Count -eq 0) {
-        Write-Host "FAIL: no mirror reachable, check network" -ForegroundColor Red
-        return
-    }
-
-    $cfg.Keys['registry-mirrors'] = $newList
-    Write-DaemonConfig -Keys $cfg.Keys
-    Write-Host "OK: $($newList.Count) mirrors written. Restart Docker Desktop to apply." -ForegroundColor Green
-}
-
 # =====================================================================
 # Dispatch
 # =====================================================================
@@ -521,10 +360,6 @@ switch ($Action) {
             Write-Host "ERROR: Docker not available" -ForegroundColor Red
             return
         }
-        if (-not (Ensure-DockerMirror)) {
-            Write-Host "Mirrors not ready, run fix-mirror first" -ForegroundColor Red
-            return
-        }
         $buildMirror = Get-WorkingMirrorDomain
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -533,8 +368,6 @@ switch ($Action) {
         Write-Host "Rebuilding mcp-repl image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
         docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache mcp-repl
     }
-
-    "fix-mirror" { Fix-DockerMirror }
 
     "restart" {
         # Fast restart without rebuild (container only)
@@ -557,10 +390,6 @@ switch ($Action) {
     "reload" {
         # Full redeploy: build (with visible output) then recreate container
         if (Test-Docker) {
-            if (-not (Ensure-DockerMirror)) {
-                Write-Host "Mirrors not ready, run fix-mirror first" -ForegroundColor Red
-                return
-            }
             $buildMirror = Get-WorkingMirrorDomain
             if (-not $buildMirror) {
                 Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -592,7 +421,7 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|reload|status|build|fix-mirror|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|reload|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start REPL server (build + up, auto: Docker or local fallback)"
         Write-Host "  stop        Stop REPL server"
@@ -600,7 +429,6 @@ switch ($Action) {
         Write-Host "  reload      Rebuild image + restart (for code changes)"
         Write-Host "  status      Show running status"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
-        Write-Host "  fix-mirror  Diagnose and fix Docker registry mirrors"
         Write-Host "  logs        Tail Docker container logs"
     }
 }
