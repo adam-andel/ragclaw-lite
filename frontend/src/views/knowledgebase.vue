@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -519,7 +519,7 @@ function isProcessing(status: string) {
 
         <!-- Card list (scrollable) -->
         <div class="kb-cards">
-          <NSpin :show="loadingKbs" v-if="loadingKbs || kbs.length === 0" />
+          <NSpin :show="loadingKbs" v-if="loadingKbs" />
           <NEmpty v-if="!loadingKbs && kbs.length === 0" description="暂无知识库" />
           <NEmpty v-if="!loadingKbs && kbs.length > 0 && filteredKbs.length === 0" description="无匹配的知识库" />
           <NCard

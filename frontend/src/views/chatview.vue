@@ -2,7 +2,7 @@
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
-import { Send, StopCircle, Chatbubbles, List, Add } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -35,6 +35,29 @@ const inputText = ref('')
 const isStreaming = ref(false)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
+const messagesContainer = ref<HTMLElement>()
+const isPinnedToBottom = ref(true)
+
+async function scrollToBottom() {
+  await nextTick()
+  const el = messagesContainer.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+function onScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+  const threshold = 60
+  isPinnedToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+}
+
+function scrollToBottomAndPin() {
+  isPinnedToBottom.value = true
+  const el = messagesContainer.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+const showScrollBottomBtn = computed(() => !isPinnedToBottom.value && messages.value.length > 0)
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
 const conversations = ref<any[]>([])
@@ -143,6 +166,8 @@ async function loadConversation(id: string) {
     } else {
       router.replace(`/chat/${id}`)
     }
+    isPinnedToBottom.value = true
+    await scrollToBottom()
   } catch {
     messages.value = []
     conversationId.value = undefined
@@ -170,7 +195,24 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
-        if (el) el.innerHTML = renderStreamingHtml(streamedText) + '<span class="cursor-blink">▌</span>'
+        if (el) {
+          let html = renderStreamingHtml(streamedText)
+          const cursor = '<span class="cursor-blink">▌</span>'
+          // Inject the cursor inside the last paragraph so it stays inline
+          // with the streaming text instead of dropping to a new line.
+          if (html.endsWith('</p>\n')) {
+            html = html.slice(0, -5) + cursor + '</p>\n'
+          } else if (html.endsWith('</p>')) {
+            html = html.slice(0, -4) + cursor + '</p>'
+          } else {
+            html += cursor
+          }
+          el.innerHTML = html
+          if (isPinnedToBottom.value) {
+            const container = messagesContainer.value
+            if (container) container.scrollTop = container.scrollHeight
+          }
+        }
       } else if (event.type === 'citation') {
         proxyMsg.citations.push(event.citation)
       } else if (event.type === 'error') {
@@ -203,6 +245,12 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
     isStreaming.value = false
     abortCtl = null
     await nextTick()
+    // After switching from streaming to final render (citations, badges, etc.),
+    // re-pin to bottom if the user hasn't scrolled away.
+    if (isPinnedToBottom.value) {
+      const el = messagesContainer.value
+      if (el) el.scrollTop = el.scrollHeight
+    }
   }
 }
 
@@ -217,7 +265,8 @@ async function sendMessage() {
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
   messages.value.push(assistantMsg)
   const proxyMsg = messages.value[messages.value.length - 1]
-  await nextTick()
+  isPinnedToBottom.value = true
+  await scrollToBottom()
   isStreaming.value = true
   await nextTick()
   doStream(text, proxyMsg, userMsg.id)
@@ -234,7 +283,8 @@ async function regenerateAnswer(assistantMsgId: string) {
   const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
   messages.value.splice(idx, 1, newAssistant)
   const proxyMsg = messages.value[idx]
-  await nextTick()
+  isPinnedToBottom.value = true
+  await scrollToBottom()
   isStreaming.value = true
   await nextTick()
   doStream(userMsg.content, proxyMsg, userMsg.id)
@@ -288,7 +338,7 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
     </div>
 
-    <div class="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
+    <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" aria-label="对话消息">
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
@@ -396,6 +446,19 @@ function handleKeydown(e: KeyboardEvent) {
       />
     </div>
 
+    <Transition name="scroll-btn">
+      <button
+        v-if="showScrollBottomBtn"
+        class="scroll-bottom-btn"
+        :class="{ streaming: isStreaming }"
+        @click="scrollToBottomAndPin"
+        title="回到底部"
+        aria-label="回到底部"
+      >
+        <NIcon size="20"><ChevronDown /></NIcon>
+      </button>
+    </Transition>
+
     <!-- Modal: full conversation list -->
     <NModal v-model:show="showMoreConv" preset="card" title="所有对话"
       style="width: 90vw; max-width: 520px"
@@ -468,6 +531,7 @@ function handleKeydown(e: KeyboardEvent) {
   flex-direction: column;
   height: 100%;
   min-width: 0;
+  position: relative;
 }
 
 .chat-header {
@@ -593,6 +657,56 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
 }
 
+/* ── Scroll-to-bottom button ── */
+.scroll-bottom-btn {
+  position: absolute;
+  bottom: 84px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  z-index: 10;
+  transition: color 0.15s, border-color 0.15s;
+}
+.scroll-bottom-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+/* Spinning ring around the button edge while the answer is still streaming */
+.scroll-bottom-btn.streaming::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--color-primary);
+  border-right-color: var(--color-primary);
+  animation: scroll-btn-spin 0.8s linear infinite;
+}
+@keyframes scroll-btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Button enter/leave transition */
+.scroll-btn-enter-active,
+.scroll-btn-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.scroll-btn-enter-from,
+.scroll-btn-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
 /* ── KB trigger button ── */
 .kb-trigger-btn {
   max-width: 160px;
@@ -620,6 +734,10 @@ function handleKeydown(e: KeyboardEvent) {
   }
   .kb-trigger-btn {
     max-width: 120px;
+  }
+  .scroll-bottom-btn {
+    right: 14px;
+    bottom: 78px;
   }
 }
 </style>
