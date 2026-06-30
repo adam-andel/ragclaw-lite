@@ -398,7 +398,8 @@ switch ($Action) {
         }
     }
 
-    "reload" {
+    "rebuild" {
+        # Rebuild image only (uses cache, for code changes). Use 'start' to deploy.
         if (Test-Docker) {
             $buildMirror = Get-WorkingMirrorDomain
             if (-not $buildMirror) {
@@ -411,16 +412,7 @@ switch ($Action) {
                 Write-Host "ERROR: build failed" -ForegroundColor Red
                 return
             }
-            Write-Host ""
-            Write-Host "=== Recreating container ===" -ForegroundColor Cyan
-            docker compose -f $ComposeFile up -d erag
-            Start-Sleep 2
-            if (Test-Backend) {
-                Write-Host "Backend reloaded" -ForegroundColor Green
-            }
-            else {
-                Write-Host "WARNING: Check logs: docker logs erag-lite" -ForegroundColor Yellow
-            }
+            Write-Host "Image rebuilt. Run 'start' to deploy." -ForegroundColor Green
         }
         else {
             Write-Host "Docker not available, use 'start' for local mode" -ForegroundColor Yellow
@@ -438,7 +430,7 @@ switch ($Action) {
         Write-Host "  start       Start backend (build + up, auto: Docker or local fallback)"
         Write-Host "  stop        Stop backend"
         Write-Host "  restart     Restart container only (no rebuild, fast)"
-        Write-Host "  reload      Rebuild image + restart (for code changes)"
+        Write-Host "  reload      Rebuild Docker image only (uses cache, for code changes)"
         Write-Host "  status      Show running status (Docker / local / not running)"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"
