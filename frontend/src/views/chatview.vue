@@ -35,6 +35,13 @@ const inputText = ref('')
 const isStreaming = ref(false)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
+const messagesContainer = ref<HTMLElement>()
+
+async function scrollToBottom() {
+  await nextTick()
+  const el = messagesContainer.value
+  if (el) el.scrollTop = el.scrollHeight
+}
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
 const conversations = ref<any[]>([])
@@ -143,6 +150,7 @@ async function loadConversation(id: string) {
     } else {
       router.replace(`/chat/${id}`)
     }
+    await scrollToBottom()
   } catch {
     messages.value = []
     conversationId.value = undefined
@@ -288,7 +296,7 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
     </div>
 
-    <div class="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
+    <div class="chat-messages" ref="messagesContainer" role="log" aria-live="polite" aria-label="对话消息">
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
