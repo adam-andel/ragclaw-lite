@@ -75,30 +75,50 @@ function Test-LocalRepl {
 function Get-WorkingMirrorDomain {
     <#
     .SYNOPSIS
-    Returns the first working registry domain from daemon.json mirrors only.
+    Returns the first working registry domain, trying daemon.json mirrors first,
+    then docker.io, then the hardcoded $MirrorList as a last resort.
     Respects user's daemon.json edits (add/remove/comment-out via JSON).
-    Hardcoded MirrorList is NOT used here — it is only for auto-configuration.
+    Unlike Get-WorkingMirrorDomain (deprecated), this version prefers user-configured
+    mirrors over docker.io and falls back to $MirrorList when hub.docker.com is unreachable.
+    Returns $null if no mirror is reachable.
     #>
-    if (Test-Registry "https://hub.docker.com") { return "docker.io" }
     $candidates = @(Get-ExistingMirrors)
-    if ($candidates.Count -eq 0) {
-        Write-Host "  No mirrors in daemon.json, falling back to docker.io" -ForegroundColor DarkGray
-        return "docker.io"
+    if ($candidates.Count -gt 0) {
+        foreach ($m in $candidates) {
+            $domain = $m -replace '^https?://', ''
+            Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
+            if (-not (Test-Registry $m)) {
+                Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
+                continue
+            }
+            $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
+            if ($imageOk) { return $domain }
+            Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
+        }
     }
-    foreach ($m in $candidates) {
+    Write-Host "  WARNING: No mirrors in daemon.json or no daemon.json mirror can serve python:3.12-slim, falling back to docker.io" -ForegroundColor DarkYellow
+    if (Test-Registry "https://hub.docker.com") { return "docker.io" }
+    Write-Host "  hub.docker.com NOT reachable, using backup mirrors" -ForegroundColor DarkYellow
+
+    foreach ($m in $MirrorList) {
         $domain = $m -replace '^https?://', ''
         Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
         if (-not (Test-Registry $m)) {
             Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
             continue
-        }
+        }        
         $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        if ($imageOk) { return $domain }
-        Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
+        if (-not $imageOk) { 
+            Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
+            continue 
+        }
+        return $domain
     }
-    Write-Host "  WARNING: no daemon.json mirror can serve python:3.12-slim" -ForegroundColor Yellow
-    Write-Host "           falling back to docker.io" -ForegroundColor Yellow
-    return "docker.io"
+    Write-Host "FAIL: no mirror reachable, check network" -ForegroundColor Red
+    return
+
+
+
 }
 
 function Test-MirrorImage {
