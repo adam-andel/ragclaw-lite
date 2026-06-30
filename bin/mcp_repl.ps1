@@ -78,23 +78,19 @@ function Get-WorkingMirrorDomain {
     Returns the first working registry domain, trying daemon.json mirrors first,
     then docker.io, then the hardcoded $MirrorList as a last resort.
     Respects user's daemon.json edits (add/remove/comment-out via JSON).
-    Unlike Get-WorkingMirrorDomain (deprecated), this version prefers user-configured
-    mirrors over docker.io and falls back to $MirrorList when hub.docker.com is unreachable.
     Returns $null if no mirror is reachable.
     #>
     $candidates = @(Get-ExistingMirrors)
-    if ($candidates.Count -gt 0) {
-        foreach ($m in $candidates) {
-            $domain = $m -replace '^https?://', ''
-            Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
-            if (-not (Test-Registry $m)) {
-                Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
-                continue
-            }
-            $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-            if ($imageOk) { return $domain }
-            Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
+    foreach ($m in $candidates) {
+        $domain = $m -replace '^https?://', ''
+        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
+        if (-not (Test-Registry $m)) {
+            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
+            continue
         }
+        $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
+        if ($imageOk) { return $domain }
+        Write-Host "    python:3.12-slim unavailable, trying next..." -ForegroundColor DarkYellow
     }
     Write-Host "  WARNING: No mirrors in daemon.json or no daemon.json mirror can serve python:3.12-slim, falling back to docker.io" -ForegroundColor DarkYellow
     if (Test-Registry "https://hub.docker.com") { return "docker.io" }
@@ -106,19 +102,16 @@ function Get-WorkingMirrorDomain {
         if (-not (Test-Registry $m)) {
             Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
             continue
-        }        
+        }
         $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        if (-not $imageOk) { 
-            Write-Host "    python:3.12-slim blocked (429), trying next..." -ForegroundColor DarkYellow
-            continue 
+        if (-not $imageOk) {
+            Write-Host "    python:3.12-slim unavailable, trying next..." -ForegroundColor DarkYellow
+            continue
         }
         return $domain
     }
     Write-Host "FAIL: no mirror reachable, check network" -ForegroundColor Red
-    return
-
-
-
+    return $null
 }
 
 function Test-MirrorImage {
@@ -364,6 +357,10 @@ function Start-DockerRepl {
 
     # Find working mirror for build-time image pull (FROM line uses this)
     $buildMirror = Get-WorkingMirrorDomain
+    if (-not $buildMirror) {
+        Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
+        return
+    }
     Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
     docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
     if ($LASTEXITCODE -ne 0) {
@@ -529,6 +526,10 @@ switch ($Action) {
             return
         }
         $buildMirror = Get-WorkingMirrorDomain
+        if (-not $buildMirror) {
+            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
+            return
+        }
         Write-Host "Rebuilding mcp-repl image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
         docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache mcp-repl
     }
@@ -561,6 +562,10 @@ switch ($Action) {
                 return
             }
             $buildMirror = Get-WorkingMirrorDomain
+            if (-not $buildMirror) {
+                Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
+                return
+            }
             Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
             docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
             if ($LASTEXITCODE -ne 0) {
