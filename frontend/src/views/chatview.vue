@@ -178,7 +178,20 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
       if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
-        if (el) el.innerHTML = renderStreamingHtml(streamedText) + '<span class="cursor-blink">▌</span>'
+        if (el) {
+          let html = renderStreamingHtml(streamedText)
+          const cursor = '<span class="cursor-blink">▌</span>'
+          // Inject the cursor inside the last paragraph so it stays inline
+          // with the streaming text instead of dropping to a new line.
+          if (html.endsWith('</p>\n')) {
+            html = html.slice(0, -5) + cursor + '</p>\n'
+          } else if (html.endsWith('</p>')) {
+            html = html.slice(0, -4) + cursor + '</p>'
+          } else {
+            html += cursor
+          }
+          el.innerHTML = html
+        }
       } else if (event.type === 'citation') {
         proxyMsg.citations.push(event.citation)
       } else if (event.type === 'error') {
