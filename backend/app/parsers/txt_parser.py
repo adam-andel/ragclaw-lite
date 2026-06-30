@@ -2,14 +2,24 @@
 
 from pathlib import Path
 
-from app.parsers.base import BaseParser, ParsedDocument, ParsedSection
+from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
 
 class TxtParser(BaseParser):
     """Parse plain text files by splitting on empty lines as paragraph boundaries."""
 
-    def can_handle(self, file_type: str) -> bool:
-        return file_type.lower() == "txt"
+    def extensions(self) -> list[str]:
+        return ["txt"]
+
+    @classmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        return ParserPluginMeta(
+            name="txt",
+            display_name="纯文本",
+            description="解析 .txt 文件，自动识别 UTF-8/GBK/GB2312/Latin-1 编码",
+            category="text",
+            extensions=["txt"],
+        )
 
     def parse(self, file_path: Path) -> ParsedDocument:
         # Try multiple encodings

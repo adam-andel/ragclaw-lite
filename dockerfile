@@ -36,14 +36,17 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && 
     python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-zh-v1.5')"
 
 # ── Layer 3: Python deps (changes more often than model, less than code) ──
+# Single source of truth: backend/pyproject.toml. Avoids drift between
+# pyproject.toml and a separate flat list here.
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --no-cache-dir \
-    fastapi uvicorn[standard] sqlalchemy aiosqlite chromadb \
-    sentence-transformers pymupdf python-docx markdown \
-    jieba rank-bm25 tiktoken httpx sse-starlette \
-    pydantic-settings python-multipart python-jose[cryptography] \
-    passlib[bcrypt] langgraph mem0ai
+    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Copy only pyproject.toml first to maximize layer caching of pip install.
+COPY backend/pyproject.toml ./backend/
+# A minimal placeholder so pip install . works without full source; we will
+# overwrite with the real source in Layer 4.
+RUN mkdir -p backend/app && touch backend/app/__init__.py && \
+    pip install --no-cache-dir ./backend
 
 # ── Layer 4: Backend code (most frequent changes) ──
 COPY backend/ backend/

@@ -60,6 +60,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('seed_admin_user', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "parser_plugin_state" not in applied:
+        _migrate_parser_plugin_state(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('parser_plugin_state', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -318,6 +323,22 @@ def _seed_defaults(raw):
         print("[seed] Tool binding 'run_python' already exists")
 
     print("[seed] defaults done")
+
+
+def _migrate_parser_plugin_state(raw):
+    """Create parser_plugin_state table for plugin enable/disable management."""
+    print("[migrate] Running parser_plugin_state...")
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS parser_plugin_state (
+            name TEXT PRIMARY KEY,
+            disabled INTEGER NOT NULL DEFAULT 1,
+            disabled_by TEXT,
+            disabled_at TEXT,
+            reason TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    print("[migrate] parser_plugin_state done")
 
 
 # ─── Public API ───

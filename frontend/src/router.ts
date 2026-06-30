@@ -69,6 +69,12 @@ const router = createRouter({
       meta: { title: '系统设置', requiresAuth: true, admin: true },
     },
     {
+      path: '/plugins',
+      name: 'plugins',
+      component: () => import('@/views/PluginsView.vue'),
+      meta: { title: '插件管理', requiresAuth: true, admin: true },
+    },
+    {
       path: '/skills',
       name: 'skills',
       component: () => import('@/views/SkillsView.vue'),

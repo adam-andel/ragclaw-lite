@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from app.parsers.base import BaseParser, ParsedDocument, ParsedSection
+from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
 
 class MarkdownParser(BaseParser):
@@ -11,8 +11,18 @@ class MarkdownParser(BaseParser):
 
     HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
-    def can_handle(self, file_type: str) -> bool:
-        return file_type.lower() in ("md", "markdown")
+    def extensions(self) -> list[str]:
+        return ["md", "markdown"]
+
+    @classmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        return ParserPluginMeta(
+            name="markdown",
+            display_name="Markdown",
+            description="解析 Markdown 文件，按 # 标题层级分块，清理格式标记",
+            category="text",
+            extensions=["md", "markdown"],
+        )
 
     def parse(self, file_path: Path) -> ParsedDocument:
         text = file_path.read_text(encoding="utf-8")

@@ -239,3 +239,26 @@ export interface MCPServerTestResult {
   error?: string
   tools?: { name: string; description: string }[]
 }
+
+// ---- Parser Plugin ----
+export interface PluginInfo {
+  name: string
+  display_name: string
+  description: string
+  category: string
+  extensions: string[]
+  version: string
+  enabled: boolean
+  disabled_by: string | null
+  disabled_at: string | null
+  reason: string | null
+}
+
+export interface PluginListResponse {
+  items: PluginInfo[]
+  total: number
+}
+
+export interface PluginDisablePayload {
+  reason?: string
+}

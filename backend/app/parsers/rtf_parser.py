@@ -1,0 +1,50 @@
+"""RTF document parser using striprtf."""
+
+from pathlib import Path
+
+from striprtf.striprtf import rtf_to_text
+
+from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
+
+
+class RtfParser(BaseParser):
+    """Parse .rtf files by stripping RTF control words and extracting plain text."""
+
+    def extensions(self) -> list[str]:
+        return ["rtf"]
+
+    @classmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        return ParserPluginMeta(
+            name="rtf",
+            display_name="RTF 富文本",
+            description="解析 .rtf 文件，剥离控制字，按空行分段",
+            category="office",
+            extensions=["rtf"],
+        )
+
+    def parse(self, file_path: Path) -> ParsedDocument:
+        raw = file_path.read_text(encoding="utf-8", errors="replace")
+        text = rtf_to_text(raw)
+
+        title = file_path.stem
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+        sections: list[ParsedSection] = []
+        for i, para in enumerate(paragraphs):
+            first_line = para.split("\n", 1)[0]
+            # Heuristic: short first line suggests a heading
+            if len(first_line) < 80 and "\n" in para:
+                sections.append(ParsedSection(level=1, heading=first_line, content=para))
+            else:
+                sections.append(ParsedSection(level=0, heading=title, content=para))
+
+        if not sections:
+            sections.append(ParsedSection(
+                level=0, heading=title, content=text.strip(),
+            ))
+
+        return ParsedDocument(
+            title=title, file_type="rtf", sections=sections,
+            metadata={"chars": len(text)},
+        )

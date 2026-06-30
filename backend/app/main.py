@@ -90,6 +90,13 @@ async def lifespan(app: FastAPI):
         print("Tool registry refresh scheduled")
     except Exception as e:
         print(f"Tool registry init warning: {e}")
+    # Refresh parser plugin state cache on startup
+    try:
+        from app.services.parser import parser_service
+        await parser_service._refresh_disabled_cache()
+        print("Parser plugin state loaded")
+    except Exception as e:
+        print(f"Parser plugin state init warning: {e}")
     yield
     # Shutdown
 
@@ -110,7 +117,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -122,6 +129,7 @@ app.include_router(memory.router)
 app.include_router(config.router)
 app.include_router(skills.router)
 app.include_router(mcp_servers.router)
+app.include_router(plugins.router)
 
 
 @app.get("/api/health")

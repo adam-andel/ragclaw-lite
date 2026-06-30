@@ -1,4 +1,4 @@
-﻿"""Document upload & management API routes — many-to-many refactor."""
+"""Document upload & management API routes — many-to-many refactor."""
 
 import asyncio
 import uuid
@@ -21,6 +21,17 @@ from app.services.auth import get_current_user, get_current_staff
 from app.services.parser import parser_service
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
+
+
+@router.get("/supported-types")
+async def get_supported_types():
+    """Return the list of file extensions this server can currently parse.
+
+    Driven by the parser registry, so it auto-adapts when new parsers are
+    added or when an admin disables a plugin. Frontend uses this to populate
+    the upload <input accept> attribute dynamically.
+    """
+    return {"extensions": parser_service.supported_types()}
 
 
 def _gen_id() -> str:

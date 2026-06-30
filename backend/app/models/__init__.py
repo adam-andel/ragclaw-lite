@@ -4,9 +4,11 @@ from app.models.kb_access import KBUserAccess
 from app.models.conversation import Conversation, Message
 from app.models.user import User
 from app.models.skill import Skill, SkillTool, MCPServer
+from app.models.parser_plugin import ParserPluginState
 
 __all__ = [
     "Document", "Chunk", "KBDocument", "KnowledgeBase", "KBUserAccess",
     "Conversation", "Message", "User",
     "Skill", "SkillTool", "MCPServer",
+    "ParserPluginState",
 ]

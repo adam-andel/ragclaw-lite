@@ -31,15 +31,51 @@ class ParsedDocument:
         return len(self.sections)
 
 
+@dataclass
+class ParserPluginMeta:
+    """Static metadata describing a parser plugin, surfaced to the admin UI."""
+    name: str                          # unique key, e.g. "excel"
+    display_name: str                  # UI label, e.g. "Excel 表格"
+    description: str                   # one-line description
+    category: str                      # office|data|web|email|ebook|text|notebook
+    extensions: list[str]              # MUST match extensions() return value
+    enabled_by_default: bool = True
+    version: str = "1.0.0"
+
+
 class BaseParser(ABC):
-    """All parsers must implement this interface."""
+    """All parsers must implement this interface.
+
+    Subclasses must implement extensions(), parse(), and plugin_meta().
+    The default can_handle() delegates to extensions() so subclasses no
+    longer need to override it.
+    """
 
     @abstractmethod
-    def can_handle(self, file_type: str) -> bool:
-        """Check if this parser can handle the given file type."""
+    def extensions(self) -> list[str]:
+        """Return supported extensions without dot, e.g. ['xlsx', 'xls']."""
         ...
 
     @abstractmethod
     def parse(self, file_path: Path) -> ParsedDocument:
         """Parse a document file and return structured output."""
         ...
+
+    @classmethod
+    @abstractmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        """Return static metadata for plugin management UI."""
+        ...
+
+    def can_handle(self, file_type: str) -> bool:
+        """Default implementation: subclasses no longer override this."""
+        return file_type.lower().lstrip(".") in self.extensions()
+
+    def safe_parse(self, file_path: Path) -> ParsedDocument:
+        """Wrap parse() so library exceptions become ValueError for the pipeline."""
+        try:
+            return self.parse(file_path)
+        except Exception as e:
+            raise ValueError(
+                f"{self.__class__.__name__} 解析失败: {e}"
+            ) from e

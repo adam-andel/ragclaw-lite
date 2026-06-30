@@ -64,6 +64,11 @@ export const getDocumentKBs = (id: string) => client.get<string[]>(`/documents/$
 
 export const deleteDocument = (id: string) => client.delete(`/documents/${id}`)
 
+// ─── Supported types (drives upload accept attribute dynamically) ───
+
+export const getSupportedTypes = () =>
+  client.get<{ extensions: string[] }>('/documents/supported-types').then(r => r.data)
+
 // Legacy: list documents by KB (backward compat for old KB page)
 export const listDocuments = (kbId: string) =>
   client.get<DocumentItem[]>(`/documents/by-kb/${kbId}`)

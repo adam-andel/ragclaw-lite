@@ -4,14 +4,28 @@ from pathlib import Path
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 
-from app.parsers.base import BaseParser, ParsedDocument, ParsedSection
+from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
 
 class WordParser(BaseParser):
-    """Parse .docx files, extracting structure via heading styles."""
+    """Parse .docx files, extracting structure via heading styles.
 
-    def can_handle(self, file_type: str) -> bool:
-        return file_type.lower() in ("docx", "doc")
+    Note: legacy .doc (binary OLE format) is NOT supported by python-docx.
+    Only .docx (OOXML) is accepted.
+    """
+
+    def extensions(self) -> list[str]:
+        return ["docx"]
+
+    @classmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        return ParserPluginMeta(
+            name="word",
+            display_name="Word 文档",
+            description="解析 .docx 文件，按标题样式分块，提取表格内容",
+            category="office",
+            extensions=["docx"],
+        )
 
     def parse(self, file_path: Path) -> ParsedDocument:
         doc = DocxDocument(file_path)

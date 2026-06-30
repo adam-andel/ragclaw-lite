@@ -4,14 +4,24 @@ import re
 from pathlib import Path
 import fitz  # PyMuPDF
 
-from app.parsers.base import BaseParser, ParsedDocument, ParsedSection
+from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
 
 class PDFParser(BaseParser):
     """Parse PDF files, extracting text + structure (headings, pages)."""
 
-    def can_handle(self, file_type: str) -> bool:
-        return file_type.lower() == "pdf"
+    def extensions(self) -> list[str]:
+        return ["pdf"]
+
+    @classmethod
+    def plugin_meta(cls) -> ParserPluginMeta:
+        return ParserPluginMeta(
+            name="pdf",
+            display_name="PDF 文档",
+            description="解析 PDF 文件，按页提取文本，依据字体大小检测标题层级",
+            category="office",
+            extensions=["pdf"],
+        )
 
     def parse(self, file_path: Path) -> ParsedDocument:
         doc = fitz.open(file_path)

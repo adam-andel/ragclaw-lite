@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -10,7 +10,7 @@ import { CloudUpload, Search, Trash, DocumentText } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
-  listKnowledgeBases,
+  listKnowledgeBases, getSupportedTypes,
 } from '@/api/documents'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem } from '@/types'
@@ -28,6 +28,9 @@ const loading = ref(false)
 const search = ref('')
 const filterStatus = ref<string | null>(null)
 const filterType = ref<string | null>(null)
+
+// Supported extensions — loaded from /documents/supported-types at mount time
+const supportedExts = ref<string[]>([])
 
 // Upload state
 const uploading = ref(false)
@@ -82,7 +85,7 @@ function toggleChunkExpand(id: string) {
 // Progress polling
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => { loadDocs(); startPolling(); loadKBs() })
+onMounted(() => { loadDocs(); startPolling(); loadKBs(); loadSupportedTypes() })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -140,7 +143,7 @@ function onDrop(e: DragEvent) {
 function triggerFileSelect() {
   const input = document.createElement('input')
   input.type = 'file'; input.multiple = true
-  input.accept = '.pdf,.docx,.md,.txt'
+  input.accept = supportedExts.value.map(e => `.${e}`).join(',')
   input.onchange = (e: Event) => {
     const files = (e.target as HTMLInputElement).files
     if (files) addFiles(files)
@@ -225,11 +228,52 @@ const statusLabels: Record<string, string> = {
   embedding: '向量化中', completed: '已完成', failed: '失败',
 }
 
-const typeOptions = [
-  { label: '全部类型', value: null },
-  { label: 'PDF', value: 'pdf' }, { label: 'Word', value: 'docx' },
-  { label: 'Markdown', value: 'md' }, { label: '文本', value: 'txt' },
-]
+// File type → icon + color (covers all 14 supported formats)
+const fileTypeConfig: Record<string, { icon: string; color: string; label: string }> = {
+  pdf: { icon: '📕', color: '#ef4444', label: 'PDF' },
+  docx: { icon: '📘', color: '#3b82f6', label: 'Word' },
+  md: { icon: '📗', color: '#22c55e', label: 'MD' },
+  markdown: { icon: '📗', color: '#22c55e', label: 'MD' },
+  txt: { icon: '📄', color: '#64748b', label: 'TXT' },
+  csv: { icon: '📊', color: '#f59e0b', label: 'CSV' },
+  json: { icon: '🗂️', color: '#8b5cf6', label: 'JSON' },
+  xlsx: { icon: '📈', color: '#22c55e', label: 'Excel' },
+  xls: { icon: '📈', color: '#22c55e', label: 'Excel' },
+  pptx: { icon: '📙', color: '#f97316', label: 'PPT' },
+  html: { icon: '🌐', color: '#0ea5e9', label: 'HTML' },
+  htm: { icon: '🌐', color: '#0ea5e9', label: 'HTML' },
+  eml: { icon: '✉️', color: '#0891b2', label: 'EML' },
+  msg: { icon: '📧', color: '#0891b2', label: 'MSG' },
+  rtf: { icon: '📄', color: '#7c3aed', label: 'RTF' },
+  epub: { icon: '📖', color: '#16a34a', label: 'EPUB' },
+  ipynb: { icon: '📓', color: '#f97316', label: 'Notebook' },
+}
+
+function getFileTypeConfig(ext: string) {
+  return fileTypeConfig[ext.toLowerCase()] || { icon: '📄', color: '#64748b', label: ext.toUpperCase() }
+}
+
+const typeOptions = computed(() => {
+  const opts: { label: string; value: string | null }[] = [{ label: '全部类型', value: null }]
+  for (const ext of supportedExts.value) {
+    // Avoid duplicate entries for multi-ext parsers (e.g. md + markdown)
+    if (!opts.some(o => o.value === ext)) {
+      opts.push({ label: getFileTypeConfig(ext).label, value: ext })
+    }
+  }
+  return opts
+})
+
+// Build the upload-zone hint text from the live supported-extensions list,
+// so disabling a plugin via /admin/plugins immediately reflects here.
+const supportedFormatsHint = computed(() => {
+  if (supportedExts.value.length === 0) return '加载支持格式中…，单文件最大 50MB'
+  const labels = Array.from(new Set(
+    supportedExts.value.map(ext => getFileTypeConfig(ext).label)
+  ))
+  return `支持 ${labels.join('、')}，单文件最大 50MB`
+})
+
 const statusOptions = [
   { label: '全部状态', value: null },
   { label: '已完成', value: 'completed' }, { label: '处理中', value: 'pending' },
@@ -240,22 +284,6 @@ function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
-}
-
-// File type → icon + color
-const fileTypeConfig: Record<string, { icon: string; color: string; label: string }> = {
-  pdf: { icon: '📕', color: '#ef4444', label: 'PDF' },
-  docx: { icon: '📘', color: '#3b82f6', label: 'Word' },
-  doc: { icon: '📘', color: '#3b82f6', label: 'Word' },
-  md: { icon: '📗', color: '#22c55e', label: 'MD' },
-  txt: { icon: '📄', color: '#64748b', label: 'TXT' },
-  csv: { icon: '📊', color: '#f59e0b', label: 'CSV' },
-  pptx: { icon: '📙', color: '#f97316', label: 'PPT' },
-  xlsx: { icon: '📈', color: '#22c55e', label: 'Excel' },
-}
-
-function getFileTypeConfig(ext: string) {
-  return fileTypeConfig[ext.toLowerCase()] || { icon: '📄', color: '#64748b', label: ext.toUpperCase() }
 }
 
 const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
@@ -282,6 +310,16 @@ function goToKb(kbId: string) {
   showDocKbs.value = false
   router.push({ path: '/knowledge', query: { kb: kbId } })
 }
+
+async function loadSupportedTypes() {
+  try {
+    const data = await getSupportedTypes()
+    supportedExts.value = data.extensions
+  } catch {
+    // Fallback to a minimal safe set so uploads still work if the endpoint is unreachable
+    supportedExts.value = ['pdf', 'docx', 'md', 'txt']
+  }
+}
 </script>
 <template>
   <div class="dm-view">
@@ -301,7 +339,7 @@ function goToKb(kbId: string) {
       <div class="upload-zone-content">
         <NIcon size="32" color="var(--color-primary)"><CloudUpload /></NIcon>
         <p>点击或拖拽文件到此处上传</p>
-        <span class="upload-hint">支持 PDF、Word、Markdown、TXT，单文件最大 50MB</span>
+        <span class="upload-hint">{{ supportedFormatsHint }}</span>
       </div>
     </div>
 
