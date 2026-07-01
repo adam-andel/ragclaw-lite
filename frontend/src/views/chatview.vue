@@ -33,6 +33,7 @@ function checkReadonly(convUserId?: string | null) {
 const messages = ref<ChatMsg[]>([])
 const inputText = ref('')
 const isStreaming = ref(false)
+const queuePosition = ref<number | null>(null)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -189,10 +190,13 @@ onMounted(() => {
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
   const aid = proxyMsg.id
   let streamedText = ''
+  queuePosition.value = null
   abortCtl = new AbortController()
   try {
     for await (const event of streamChat(query, selectedKbId.value, conversationId.value, undefined, abortCtl.signal)) {
-      if (event.type === 'token') {
+      if (event.type === 'queue') {
+        queuePosition.value = event.position
+      } else if (event.type === 'token') {
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
         if (el) {
@@ -243,6 +247,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
     }
   } finally {
     isStreaming.value = false
+    queuePosition.value = null
     abortCtl = null
     await nextTick()
     // After switching from streaming to final render (citations, badges, etc.),
@@ -293,6 +298,14 @@ async function regenerateAnswer(assistantMsgId: string) {
 function stopStream() {
   abortCtl?.abort()
   isStreaming.value = false
+  queuePosition.value = null
+  abortCtl = null
+}
+
+function cancelQueue() {
+  abortCtl?.abort()
+  isStreaming.value = false
+  queuePosition.value = null
   abortCtl = null
 }
 
@@ -442,6 +455,7 @@ function handleKeydown(e: KeyboardEvent) {
         :key="msg.id"
         :message="msg"
         :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
+        :queue-position="queuePosition"
         @regenerate="regenerateAnswer"
       />
     </div>
@@ -514,7 +528,11 @@ function handleKeydown(e: KeyboardEvent) {
         @compositionstart="isComposing = true"
         @compositionend="isComposing = false"
       />
-      <NButton v-if="isStreaming" type="warning" @click="stopStream">
+      <NButton v-if="queuePosition != null && queuePosition > 0" type="warning" @click="cancelQueue">
+        <template #icon><NIcon><StopCircle /></NIcon></template>
+        取消排队
+      </NButton>
+      <NButton v-else-if="isStreaming" type="warning" @click="stopStream">
         <template #icon><NIcon><StopCircle /></NIcon></template>
         停止
       </NButton>

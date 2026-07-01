@@ -6,6 +6,7 @@ import httpx
 
 from app.services.auth import get_current_admin
 from app.services.config_manager import config_manager
+from app.services.llm_semaphore import llm_limiter
 
 router = APIRouter(prefix="/api/config", tags=["Config"])
 
@@ -17,6 +18,7 @@ class LLMConfigUpdate(BaseModel):
     llm_base_url: str | None = None
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
+    llm_concurrency: int | None = None
     embedding_model: str | None = None
     server_host: str | None = None
     server_port: int | None = None
@@ -34,10 +36,19 @@ class LLMConfigUpdate(BaseModel):
         if v is not None and not (1 <= v <= 65535):
             raise ValueError("port 必须在 1-65535 之间")
         return v
+
+    @field_validator("llm_max_tokens")
     @classmethod
     def tokens_range(cls, v):
         if v is not None and not (128 <= v <= 131072):
             raise ValueError("max_tokens 必须在 128-131072 之间")
+        return v
+
+    @field_validator("llm_concurrency")
+    @classmethod
+    def concurrency_range(cls, v):
+        if v is not None and not (1 <= v <= 50):
+            raise ValueError("并发数必须在 1-50 之间")
         return v
 
 
@@ -53,6 +64,8 @@ async def update_llm_config(data: LLMConfigUpdate, current_user=Depends(get_curr
     if data.llm_api_key is not None and not data.llm_api_key.strip():
         raise HTTPException(status_code=400, detail="API Key 不能为空")
     result = config_manager.update(data.model_dump(exclude_none=True))
+    if data.llm_concurrency is not None:
+        await llm_limiter.update_max(data.llm_concurrency)
     return {"message": "配置已更新，立即生效", "config": result}
 
 

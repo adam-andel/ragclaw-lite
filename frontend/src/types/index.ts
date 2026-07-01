@@ -129,10 +129,19 @@ export interface SystemStats {
 
 // ---- SSE Events ----
 export type SSEEvent =
+  | { type: 'queue'; position: number }
   | { type: 'token'; content: string }
   | { type: 'citation'; citation: Citation }
   | { type: 'error'; message: string }
-  | { type: 'done'; conversation_id: string; message_id: string }
+  | {
+      type: 'done'
+      conversation_id: string
+      message_id: string
+      cache_hit: boolean
+      ttft_ms: number
+      retrieval_ms: number
+      llm_ms: number
+    }
 
 // ---- SKILL ----
 export interface Skill {
