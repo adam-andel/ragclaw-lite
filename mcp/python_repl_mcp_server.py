@@ -331,7 +331,8 @@ def run_python(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
                 dirpath = os.path.join(_allow_dir, call_uuid)
                 download_base = f"{_public_url}/files/{call_uuid}"
                 for f in os.listdir(dirpath):
-                    if os.path.isfile(os.path.join(dirpath, f)):
+                    fpath = os.path.join(dirpath, f)
+                    if os.path.isfile(fpath) and os.path.getsize(fpath) > 0:
                         result += f"\n\n[File] {download_base}/{f}"
 
             elapsed_ms = int((time.time() - t0) * 1000)
