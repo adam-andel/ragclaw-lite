@@ -57,6 +57,10 @@ const renderedContent = computed(() => {
     remaining = remaining.slice(endIdx + '</think>'.length)
   }
 
+  // Filter out empty <pre><code></code></pre> and <hr> elements
+  html = html.replace(/<pre><code><\/code><\/pre>\s*/g, '')
+  html = html.replace(/<hr\s*\/?>\s*/g, '')
+
   return html
 })
 
