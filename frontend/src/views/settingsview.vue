@@ -26,6 +26,7 @@ const urlDefaults: Record<string, string> = {
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
   llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 2048,
+  llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
   server_host: '0.0.0.0', server_port: 8000,
   is_configured: false,
@@ -63,6 +64,7 @@ async function handleSave() {
       llm_base_url: config.value.llm_base_url,
       llm_temperature: config.value.llm_temperature,
       llm_max_tokens: config.value.llm_max_tokens,
+      llm_concurrency: config.value.llm_concurrency,
       embedding_model: config.value.embedding_model,
       server_host: config.value.server_host,
       server_port: config.value.server_port,
@@ -194,6 +196,24 @@ async function handleTest() {
             </span>
           </template>
           <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
+        </NFormItem>
+
+        <!-- LLM Concurrency -->
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              最大并发数
+              <NTooltip trigger="hover" :width="300">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                同时向 LLM API 发送请求的会话数上限，超过后进入排队。<br/>
+                建议按服务商账户等级设置，OpenAI Tier 1 通常设为 3~5。<br/>
+                <b>修改后立即生效</b>，不会强行中断已在处理的请求。
+              </NTooltip>
+            </span>
+          </template>
+          <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" />
         </NFormItem>
 
         <NDivider />

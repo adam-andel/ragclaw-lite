@@ -18,6 +18,9 @@ async def lifespan(app: FastAPI):
     # Init runtime config manager (LLM key from encrypted file, not .env)
     from app.services.config_manager import config_manager
     config_manager.init()
+    # Init LLM concurrency limiter from saved config
+    from app.services.llm_semaphore import llm_limiter
+    await llm_limiter.update_max(config_manager.concurrency)
     # Seed default admin user on first launch (empty users table)
     try:
         from app.models.user import User

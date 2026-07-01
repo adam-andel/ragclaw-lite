@@ -82,6 +82,7 @@ class ConfigManager:
                 "llm_base_url": settings.llm_base_url,
                 "llm_temperature": settings.llm_temperature,
                 "llm_max_tokens": settings.llm_max_tokens,
+                "llm_concurrency": 3,
                 # Embedding
                 "embedding_model": settings.embedding_model,
                 # Server (startup-time only)
@@ -136,6 +137,11 @@ class ConfigManager:
             return self._config.get("llm_max_tokens", 2048)
 
     @property
+    def concurrency(self) -> int:
+        with self._lock:
+            return self._config.get("llm_concurrency", 3)
+
+    @property
     def embedding_model(self) -> str:
         with self._lock:
             return self._config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
@@ -165,7 +171,7 @@ class ConfigManager:
         allowed = {
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
-            "embedding_model", "server_host", "server_port",
+            "llm_concurrency", "embedding_model", "server_host", "server_port",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
         with self._lock:

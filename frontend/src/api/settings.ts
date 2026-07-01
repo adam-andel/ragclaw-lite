@@ -7,6 +7,7 @@ export interface LLMConfig {
   llm_base_url: string
   llm_temperature: number
   llm_max_tokens: number
+  llm_concurrency: number
   embedding_model: string
   server_host: string
   server_port: number
@@ -20,6 +21,7 @@ export interface LLMConfigUpdate {
   llm_base_url?: string
   llm_temperature?: number
   llm_max_tokens?: number
+  llm_concurrency?: number
   embedding_model?: string
   server_host?: string
   server_port?: number

@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
+  queuePosition?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -144,7 +145,12 @@ onBeforeUnmount(() => {
       <template v-if="isStreaming">
         <div class="message-content streaming">
           <span ref="streamEl" :id="'stream-' + message.id"></span>
-          <span v-show="!hasStreamedContent" class="thinking-placeholder">思考中……</span>
+          <span v-show="!hasStreamedContent" class="thinking-placeholder">
+            <template v-if="queuePosition != null && queuePosition > 0">
+              排队中，前面还有 {{ queuePosition }} 人
+            </template>
+            <template v-else>思考中……</template>
+          </span>
         </div>
       </template>
 
