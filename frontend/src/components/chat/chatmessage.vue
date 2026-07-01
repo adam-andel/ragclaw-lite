@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { NTag, NButton, NIcon, NTooltip, NModal } from 'naive-ui'
 import { Copy, Refresh } from '@vicons/ionicons5'
@@ -93,6 +93,40 @@ function openCitation(c: Citation) {
   activeCitation.value = c
   showCitationModal.value = true
 }
+
+// --- Streaming placeholder ---
+const streamEl = ref<HTMLSpanElement>()
+const hasStreamedContent = ref(false)
+let observer: MutationObserver | null = null
+
+function setupObserver() {
+  hasStreamedContent.value = false
+  observer?.disconnect()
+  observer = null
+  if (props.isStreaming && streamEl.value) {
+    observer = new MutationObserver(() => {
+      if (streamEl.value && streamEl.value.innerHTML.length > 0) {
+        hasStreamedContent.value = true
+        observer?.disconnect()
+        observer = null
+      }
+    })
+    observer.observe(streamEl.value, { childList: true, subtree: true, characterData: true })
+  }
+}
+
+watch(() => props.isStreaming, (val) => {
+  if (val) {
+    nextTick(() => setupObserver())
+  } else {
+    observer?.disconnect()
+    observer = null
+  }
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+})
 </script>
 
 <template>
@@ -109,7 +143,8 @@ function openCitation(c: Citation) {
       <!-- 阶段 1：流式中 — innerHTML 由 chatview 写入（含 think-block + cursor） -->
       <template v-if="isStreaming">
         <div class="message-content streaming">
-          <span v-once :id="'stream-' + message.id"></span>
+          <span ref="streamEl" :id="'stream-' + message.id"></span>
+          <span v-show="!hasStreamedContent" class="thinking-placeholder">思考中……</span>
         </div>
       </template>
 
@@ -259,6 +294,7 @@ function openCitation(c: Citation) {
 .user .time { color: rgba(255,255,255,0.7); }
 .message-content { line-height: 1.65; word-break: break-word; }
 .message-content.streaming { display: flex; align-items: baseline; gap: 2px; }
+.thinking-placeholder { color: var(--color-text-muted); font-style: italic; }
 .cursor-blink { animation: blink 1s infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
