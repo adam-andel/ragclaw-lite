@@ -344,7 +344,6 @@ name: 文档生成助手
 description: "生成文档、报表、图表、PPT、网页等文件，支持txt/csv/xlsx/pptx/png/pdf/html/markdown等格式"
 mcp_servers:
   - Python执行器
-is_active: true
 ---
 
 # 文档生成助手

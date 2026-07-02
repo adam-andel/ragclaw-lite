@@ -1,18 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
 import {
-  NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSwitch,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
+  NDataTable, NButton, NButtonGroup, NModal, NForm, NFormItem, NInput, NSwitch,
+  NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
   NUpload, NDivider, NScrollbar,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, FolderOpen, DocumentText } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, ChevronDown } from '@vicons/ionicons5'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
-  uploadFolder, uploadZip, syncSkills,
-  listResources, uploadResource, deleteResource,
+  uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
 } from '@/api/skills'
 import { listServers } from '@/api/mcp'
-import type { Skill, SkillCreatePayload, MCPServer, ResourceListResponse } from '@/types'
+import type { Skill, SkillCreatePayload, MCPServer } from '@/types'
 
 const message = useMessage()
 
@@ -33,17 +32,15 @@ const showEditModal = ref(false)
 const editingSkill = ref<Skill | null>(null)
 const skillMdContent = ref('')
 
-// Resource modal
-const showResourceModal = ref(false)
-const resourceSkillId = ref('')
-const resourceSkillName = ref('')
-const resources = ref<ResourceListResponse>({ scripts: [], data: [], references: [], _root: [] })
+// Re-upload state
+const reuploadFolderInput = ref<HTMLInputElement>()
+const reuploadSkillId = ref<string>('')
 
 // MCP servers for options
 const servers = ref<MCPServer[]>([])
 const serverOptions = ref<{ label: string; value: string }[]>([])
 
-// Folder upload input ref
+// Folder upload input ref (global upload)
 const folderInput = ref<HTMLInputElement>()
 
 // ── Load ──
@@ -169,7 +166,7 @@ async function doFolderUpload(files: File[], paths: string[]) {
 
 // ── ZIP Upload ──
 
-async function handleZipUpload(options: { file: { file: File } }) {
+async function handleZipUpload(options: any) {
   const file = options.file.file
   if (!file.name.toLowerCase().endsWith('.zip')) {
     message.error('请上传 .zip 文件')
@@ -187,6 +184,75 @@ async function handleZipUpload(options: { file: { file: File } }) {
   }
 }
 
+// ── Re-upload ──
+
+function triggerReuploadFolder(skillId: string) {
+  reuploadSkillId.value = skillId
+  reuploadFolderInput.value?.click()
+}
+
+function handleReuploadFolderChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (!input.files || input.files.length === 0) return
+
+  const files = Array.from(input.files)
+  const paths = files.map(f => (f as any).webkitRelativePath || f.name)
+
+  const hasSkillMd = paths.some(p => p.toUpperCase().endsWith('SKILL.MD'))
+  if (!hasSkillMd) {
+    message.error('上传的文件夹必须包含 SKILL.md')
+    input.value = ''
+    return
+  }
+
+  doReuploadFolder(files, paths)
+  input.value = ''
+}
+
+async function doReuploadFolder(files: File[], paths: string[]) {
+  if (!reuploadSkillId.value) return
+  loading.value = true
+  try {
+    await reuploadFolder(reuploadSkillId.value, files, paths)
+    message.success('技能文件夹已重新上传并替换')
+    await load()
+  } catch (e: any) {
+    message.error(e.message || '重新上传失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleReuploadZip(skillId: string, options: any) {
+  const file = options.file.file
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error('请上传 .zip 文件')
+    return
+  }
+  loading.value = true
+  try {
+    await reuploadZip(skillId, file)
+    message.success('技能 ZIP 已重新上传并替换')
+    await load()
+  } catch (e: any) {
+    message.error(e.message || '重新上传失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// ── Enable / Disable ──
+
+async function handleToggle(skill: Skill) {
+  try {
+    await toggleSkill(skill.id)
+    message.success(skill.is_active ? '技能已禁用' : '技能已启用')
+    await load()
+  } catch (e: any) {
+    message.error(e.message || '操作失败')
+  }
+}
+
 // ── Sync ──
 
 async function handleSync() {
@@ -199,44 +265,6 @@ async function handleSync() {
     message.error(e.message || '同步失败')
   } finally {
     loading.value = false
-  }
-}
-
-// ── Resource Management ──
-
-async function openResources(skill: Skill) {
-  resourceSkillId.value = skill.id
-  resourceSkillName.value = skill.name
-  showResourceModal.value = true
-  await loadResources()
-}
-
-async function loadResources() {
-  try {
-    resources.value = await listResources(resourceSkillId.value)
-  } catch (e: any) {
-    message.error(e.message || '加载资源失败')
-  }
-}
-
-async function handleResourceUpload(options: { file: { file: File } }, subdir: string) {
-  const file = options.file.file
-  try {
-    await uploadResource(resourceSkillId.value, subdir, file)
-    message.success(`${file.name} 已上传到 ${subdir}/`)
-    await loadResources()
-  } catch (e: any) {
-    message.error(e.message || '上传失败')
-  }
-}
-
-async function handleResourceDelete(subdir: string, filename: string) {
-  try {
-    await deleteResource(resourceSkillId.value, subdir, filename)
-    message.success('文件已删除')
-    await loadResources()
-  } catch (e: any) {
-    message.error(e.message || '删除失败')
   }
 }
 
@@ -258,21 +286,56 @@ const columns = [
   },
   { title: '更新时间', key: 'updated_at', width: 150, render: (row: Skill) => row.updated_at?.slice(0, 16)?.replace('T', ' ') || '-' },
   {
-    title: '操作', key: 'actions', width: 240,
-    render: (row: Skill) =>
-      h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'tiny', quaternary: true, onClick: () => openEdit(row) },
-            { icon: () => h(NIcon, null, { default: () => h(Create) }), default: () => '编辑' }),
-          h(NButton, { size: 'tiny', quaternary: true, onClick: () => openResources(row) },
-            { icon: () => h(NIcon, null, { default: () => h(FolderOpen) }), default: () => '资源' }),
-          h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
-            trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' },
-              { icon: () => h(NIcon, null, { default: () => h(Trash) }), default: () => '删除' }),
-            default: () => '确认删除此技能？文件夹和DB记录都会被删除。',
-          }),
-        ],
-      }),
+    title: '操作', key: 'actions', width: 420,
+    render: (row: Skill) => h(NSpace, { size: 'small', align: 'center' }, {
+      default: () => [
+        h(NButton, { size: 'tiny', quaternary: true, onClick: () => openEdit(row) },
+          { icon: () => h(NIcon, null, { default: () => h(Create) }), default: () => '编辑' }),
+        h(NButtonGroup, null, {
+          default: () => [
+            h(NButton, {
+              size: 'tiny',
+              quaternary: true,
+              onClick: () => triggerReuploadFolder(row.id)
+            }, {
+              icon: () => h(NIcon, null, { default: () => h(CloudUpload) }),
+              default: () => '重新上传'
+            }),
+            h(NPopover, { trigger: 'click', placement: 'bottom-start', showArrow: false }, {
+              trigger: () => h(NButton, {
+                size: 'tiny',
+                quaternary: true,
+                style: 'padding: 0 4px; min-width: 20px;'
+              }, {
+                default: () => h(NIcon, { size: 12 }, { default: () => h(ChevronDown) })
+              }),
+              default: () => h(NUpload, {
+                'show-file-list': false,
+                customRequest: (o: any) => handleReuploadZip(row.id, o)
+              }, {
+                default: () => h(NButton, { size: 'tiny' }, {
+                  icon: () => h(NIcon, null, { default: () => h(CloudUpload) }),
+                  default: () => '重新上传ZIP'
+                })
+              })
+            }),
+          ]
+        }),
+        h(NSwitch, {
+          size: 'small',
+          value: row.is_active,
+          'on-update:value': () => handleToggle(row),
+        }, {
+          checked: () => '启用',
+          unchecked: () => '禁用',
+        }),
+        h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
+          trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' },
+            { icon: () => h(NIcon, null, { default: () => h(Trash) }), default: () => '删除' }),
+          default: () => '确认删除此技能？文件夹和DB记录都会被删除。',
+        }),
+      ],
+    }),
   },
 ]
 
@@ -280,9 +343,12 @@ const columns = [
 
 onMounted(() => {
   load()
-  // Set webkitdirectory attribute on folder input
+  // Set webkitdirectory attribute on folder inputs
   if (folderInput.value) {
     folderInput.value.setAttribute('webkitdirectory', '')
+  }
+  if (reuploadFolderInput.value) {
+    reuploadFolderInput.value.setAttribute('webkitdirectory', '')
   }
 })
 </script>
@@ -313,8 +379,9 @@ onMounted(() => {
         </NSpace>
       </template>
 
-      <!-- Hidden folder input with webkitdirectory -->
+      <!-- Hidden folder inputs -->
       <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
+      <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
 
       <NDataTable
         :columns="columns"
@@ -359,13 +426,13 @@ onMounted(() => {
     <NModal v-model:show="showEditModal" title="编辑 SKILL.md" preset="card" style="width:80vw;max-width:800px">
       <div style="margin-bottom:8px">
         <NText depth="3" style="font-size:12px">
-          直接编辑 SKILL.md 全文。YAML front matter 中的 name/description/is_active 会同步到数据库索引。
+          直接编辑 SKILL.md 全文。YAML front matter 中的 name/description/mcp_servers 会同步到数据库索引，is_active 通过上方开关管理。
         </NText>
       </div>
       <NInput v-model:value="skillMdContent" type="textarea"
         :autosize="{ minRows: 20, maxRows: 30 }"
         style="font-family: monospace; font-size: 13px"
-        placeholder="---\nname: ...\ndescription: ...\nmcp_servers:\n  - ...\nis_active: true\n---\n\n# 正文" />
+        placeholder="---\nname: ...\ndescription: ...\nmcp_servers:\n  - ...\n---\n\n# 正文" />
       <template #footer>
         <NSpace justify="end">
           <NButton @click="showEditModal = false">取消</NButton>
@@ -374,90 +441,6 @@ onMounted(() => {
       </template>
     </NModal>
 
-    <!-- Resource Management Modal -->
-    <NModal v-model:show="showResourceModal" :title="`资源管理 — ${resourceSkillName}`" preset="card"
-      style="width:80vw;max-width:700px">
-      <NScrollbar style="max-height: 60vh">
-        <!-- Scripts -->
-        <div class="resource-section">
-          <div class="resource-section-header">
-            <NText strong>📁 scripts/</NText>
-            <NUpload :show-file-list="false" :custom-request="(o: any) => handleResourceUpload(o, 'scripts')">
-              <NButton size="tiny" quaternary>
-                <template #icon><NIcon><Add /></NIcon></template>
-                添加
-              </NButton>
-            </NUpload>
-          </div>
-          <div v-if="resources.scripts.length === 0" class="resource-empty">暂无脚本文件</div>
-          <div v-for="f in resources.scripts" :key="f.path" class="resource-item">
-            <NIcon size="14"><DocumentText /></NIcon>
-            <span class="resource-name">{{ f.path }}</span>
-            <span class="resource-size">{{ (f.size / 1024).toFixed(1) }}KB</span>
-            <NPopconfirm @positive-click="handleResourceDelete('scripts', f.name)">
-              <template #trigger>
-                <NButton size="tiny" quaternary type="error"><NIcon size="12"><Trash /></NIcon></NButton>
-              </template>
-              确认删除 {{ f.name }}？
-            </NPopconfirm>
-          </div>
-        </div>
-
-        <NDivider />
-
-        <!-- Data -->
-        <div class="resource-section">
-          <div class="resource-section-header">
-            <NText strong>📊 data/</NText>
-            <NUpload :show-file-list="false" :custom-request="(o: any) => handleResourceUpload(o, 'data')">
-              <NButton size="tiny" quaternary>
-                <template #icon><NIcon><Add /></NIcon></template>
-                添加
-              </NButton>
-            </NUpload>
-          </div>
-          <div v-if="resources.data.length === 0" class="resource-empty">暂无数据文件</div>
-          <div v-for="f in resources.data" :key="f.path" class="resource-item">
-            <NIcon size="14"><DocumentText /></NIcon>
-            <span class="resource-name">{{ f.path }}</span>
-            <span class="resource-size">{{ (f.size / 1024).toFixed(1) }}KB</span>
-            <NPopconfirm @positive-click="handleResourceDelete('data', f.name)">
-              <template #trigger>
-                <NButton size="tiny" quaternary type="error"><NIcon size="12"><Trash /></NIcon></NButton>
-              </template>
-              确认删除 {{ f.name }}？
-            </NPopconfirm>
-          </div>
-        </div>
-
-        <NDivider />
-
-        <!-- References -->
-        <div class="resource-section">
-          <div class="resource-section-header">
-            <NText strong>📚 references/</NText>
-            <NUpload :show-file-list="false" :custom-request="(o: any) => handleResourceUpload(o, 'references')">
-              <NButton size="tiny" quaternary>
-                <template #icon><NIcon><Add /></NIcon></template>
-                添加
-              </NButton>
-            </NUpload>
-          </div>
-          <div v-if="resources.references.length === 0" class="resource-empty">暂无参考文件</div>
-          <div v-for="f in resources.references" :key="f.path" class="resource-item">
-            <NIcon size="14"><DocumentText /></NIcon>
-            <span class="resource-name">{{ f.path }}</span>
-            <span class="resource-size">{{ (f.size / 1024).toFixed(1) }}KB</span>
-            <NPopconfirm @positive-click="handleResourceDelete('references', f.name)">
-              <template #trigger>
-                <NButton size="tiny" quaternary type="error"><NIcon size="12"><Trash /></NIcon></NButton>
-              </template>
-              确认删除 {{ f.name }}？
-            </NPopconfirm>
-          </div>
-        </div>
-      </NScrollbar>
-    </NModal>
   </div>
 </template>
 
@@ -466,39 +449,5 @@ onMounted(() => {
   padding: var(--space-4);
   max-width: 1100px;
   margin: 0 auto;
-}
-.resource-section {
-  margin-bottom: 8px;
-}
-.resource-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.resource-empty {
-  color: var(--color-text-muted);
-  font-size: 12px;
-  padding: 4px 0;
-}
-.resource-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-.resource-item:hover {
-  background: var(--color-bg-hover, rgba(0,0,0,0.03));
-}
-.resource-name {
-  flex: 1;
-  font-family: monospace;
-}
-.resource-size {
-  color: var(--color-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
 }
 </style>

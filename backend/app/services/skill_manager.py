@@ -1,7 +1,8 @@
 """Skill filesystem manager — scan/create/delete/sync folder-based skills.
 
-The filesystem (data/skills/{folder_name}/SKILL.md) is the source of truth.
-The DB skills table is a cache for fast routing.
+The filesystem (data/skills/{folder_name}/SKILL.md) is the source of truth for
+content (name, description, mcp_servers, body). The DB skills table is a cache
+for fast routing, including the UI-managed `is_active` flag.
 
 SKILL.md format:
     ---
@@ -9,7 +10,6 @@ SKILL.md format:
     description: "≤250字符的描述"
     mcp_servers:
       - MCP服务器名1
-    is_active: true
     ---
 
     # Markdown body (Gotchas / Examples / Constraints etc.)
@@ -69,7 +69,8 @@ def parse_skill_md(content: str) -> dict:
     """Parse SKILL.md content into front_matter dict + body string.
 
     Returns {"name": ..., "description": ..., "mcp_servers": [...],
-             "is_active": bool, "body": "markdown body"}.
+             "body": "markdown body"}. The is_active flag is managed in DB/UI,
+    not in SKILL.md front matter.
     """
     front_matter = {}
     body = content
@@ -88,7 +89,6 @@ def parse_skill_md(content: str) -> dict:
         "name": front_matter.get("name", ""),
         "description": front_matter.get("description", ""),
         "mcp_servers": front_matter.get("mcp_servers", []) or [],
-        "is_active": front_matter.get("is_active", True),
         "body": body,
     }
 
@@ -97,7 +97,6 @@ def build_skill_md(
     name: str,
     description: str,
     mcp_servers: list[str] | None = None,
-    is_active: bool = True,
     body: str = "",
 ) -> str:
     """Build SKILL.md content from components."""
@@ -119,7 +118,6 @@ def build_skill_md(
     else:
         fm_lines.append("mcp_servers: []")
 
-    fm_lines.append(f"is_active: {'true' if is_active else 'false'}")
     fm_lines.append("---")
 
     header = "\n".join(fm_lines)
@@ -128,12 +126,13 @@ def build_skill_md(
     return f"{header}\n\n# {name}\n"
 
 
+
 # ─── Filesystem operations ───
 
 def scan_skills_dir() -> list[dict]:
     """Scan data/skills/ and return list of skill info dicts.
 
-    Each dict: {folder_name, name, description, mcp_servers, is_active, body}
+    Each dict: {folder_name, name, description, mcp_servers, body}
     Only folders containing SKILL.md are included.
     """
     skills = []
@@ -154,7 +153,6 @@ def scan_skills_dir() -> list[dict]:
                 "name": parsed["name"],
                 "description": parsed["description"],
                 "mcp_servers": parsed["mcp_servers"],
-                "is_active": parsed["is_active"],
                 "body": parsed["body"],
             })
         except Exception as e:
@@ -175,7 +173,6 @@ def create_skill_folder(
     name: str,
     description: str,
     mcp_servers: list[str] | None = None,
-    is_active: bool = True,
     body: str = "",
 ) -> str:
     """Create a new skill folder with SKILL.md.
@@ -187,21 +184,30 @@ def create_skill_folder(
         raise ValueError(f"Skill 文件夹 '{folder_name}' 已存在")
 
     skill_dir.mkdir(parents=True)
-    content = build_skill_md(name, description, mcp_servers, is_active, body)
+    content = build_skill_md(name, description, mcp_servers, body)
     get_skill_md_path(folder_name).write_text(content, encoding="utf-8")
     return folder_name
 
 
-def write_skill_folder(folder_name: str, files: dict[str, str]) -> None:
-    """Write multiple files into a skill folder (for upload).
 
-    files: {relative_path: content}. Creates folder if not exists.
-    Overwrites existing files.
+def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> None:
+    """Replace an existing skill folder with new files.
+
+    Preserves the DB-managed `is_active` flag by not touching the DB row.
+    Raises ValueError if folder does not exist (use create_skill_folder for new).
     """
     skill_dir = get_skill_dir(folder_name)
-    skill_dir.mkdir(parents=True, exist_ok=True)
+    if not skill_dir.exists():
+        raise ValueError(f"Skill 文件夹 '{folder_name}' 不存在")
 
-    for rel_path, content in files.items():
+    # Clear existing folder contents but keep the folder
+    for entry in skill_dir.iterdir():
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+    for rel_path, content in file_map.items():
         # Security: prevent path traversal
         target = (skill_dir / rel_path).resolve()
         if not str(target).startswith(str(skill_dir.resolve())):
@@ -211,6 +217,7 @@ def write_skill_folder(folder_name: str, files: dict[str, str]) -> None:
             target.write_bytes(content)
         else:
             target.write_text(content, encoding="utf-8")
+
 
 
 def update_skill_md(folder_name: str, content: str) -> None:
@@ -305,7 +312,7 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
     """Sync filesystem skills to DB index.
 
     - Adds DB rows for folders not in DB
-    - Updates name/description/is_active from SKILL.md
+    - Updates name/description from SKILL.md (is_active is UI-managed)
     - Marks DB rows as inactive if folder is missing
     - Does NOT delete DB rows (user may have temporarily moved folders)
 
@@ -324,12 +331,12 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
     for fs_skill in fs_skills:
         folder = fs_skill["folder_name"]
         if folder not in db_skills:
-            # Add new
+            # Add new (default active, user can toggle later)
             new_skill = Skill(
                 folder_name=folder,
                 name=fs_skill["name"],
                 description=(fs_skill["description"] or "")[:500],
-                is_active=fs_skill["is_active"],
+                is_active=True,
             )
             session.add(new_skill)
             added += 1
@@ -343,9 +350,6 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
             new_desc = (fs_skill["description"] or "")[:500]
             if db_skill.description != new_desc:
                 db_skill.description = new_desc
-                changed = True
-            if not db_skill.is_active and fs_skill["is_active"]:
-                db_skill.is_active = True
                 changed = True
             if changed:
                 updated += 1

@@ -20,6 +20,9 @@ export const updateSkill = (id: string, data: SkillUpdatePayload) =>
 export const deleteSkill = (id: string) =>
   client.delete(`/skills/${id}`).then(r => r.data)
 
+export const toggleSkill = (id: string) =>
+  client.patch<Skill>(`/skills/${id}/toggle`).then(r => r.data)
+
 // ── Folder upload (webkitdirectory) ──
 export const uploadFolder = (files: File[], paths: string[]) => {
   const formData = new FormData()
@@ -35,6 +38,24 @@ export const uploadZip = (file: File) => {
   const formData = new FormData()
   formData.append('file', file)
   return client.post<Skill>('/skills/upload-zip', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+
+// ── Re-upload (replace existing skill folder) ──
+export const reuploadFolder = (id: string, files: File[], paths: string[]) => {
+  const formData = new FormData()
+  files.forEach(f => formData.append('files', f))
+  paths.forEach(p => formData.append('paths', p))
+  return client.post<Skill>(`/skills/${id}/reupload`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+
+export const reuploadZip = (id: string, file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return client.post<Skill>(`/skills/${id}/reupload-zip`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }).then(r => r.data)
 }
