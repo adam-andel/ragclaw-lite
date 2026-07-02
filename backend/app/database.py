@@ -66,6 +66,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('parser_plugin_state', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "skill_folder_refactor" not in applied:
+        _migrate_skill_folder_refactor(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('skill_folder_refactor', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -210,6 +215,54 @@ def _table_exists(raw, table_name: str) -> bool:
     return raw.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
     ).fetchone() is not None
+
+
+def _migrate_skill_folder_refactor(raw):
+    """Migrate skills table from DB-row schema to folder-based schema (v0.7.0).
+
+    This migration runs ONCE for existing databases that already ran the old
+    `skill_system` migration (which created the old schema with system_prompt).
+
+    Steps:
+    1. Drop skill_tools table (M2M no longer used)
+    2. Drop old skills table (with system_prompt/created_by columns)
+    3. Create new skills table (with folder_name, no system_prompt/created_by)
+    4. Run seed_defaults to create doc-gen folder + DB index
+    """
+    print("[migrate] Running skill_folder_refactor...")
+
+    # Drop legacy skill_tools table
+    raw.execute("DROP TABLE IF EXISTS skill_tools")
+
+    # Check if skills table has old schema (system_prompt column = old, folder_name = new)
+    if _table_exists(raw, "skills"):
+        cols = {row[1] for row in raw.execute("PRAGMA table_info(skills)").fetchall()}
+        if "folder_name" in cols:
+            print("[migrate] skills table already has folder_name, skipping")
+            return
+        if "system_prompt" in cols or "created_by" in cols:
+            print("[migrate] Old skills table detected (has system_prompt/created_by), dropping for refactor...")
+            raw.execute("DROP TABLE skills")
+
+    # Create new folder-based skills table
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS skills (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            folder_name TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_skills_tenant ON skills(tenant_id)")
+    print("[migrate] Created folder-based skills table")
+
+    # Seed the default doc-gen skill
+    _seed_defaults(raw)
+    print("[migrate] skill_folder_refactor done")
 
 def _seed_admin_user(raw):
     """Seed default admin user (v0.6.0)."""

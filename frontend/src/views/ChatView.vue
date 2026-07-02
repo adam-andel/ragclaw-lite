@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NSelect, useMessage } from 'naive-ui'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown } from '@vicons/ionicons5'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -65,7 +65,8 @@ const selectedKbId = ref('')
 const conversations = ref<any[]>([])
 const skills = ref<Skill[]>([])
 const selectedSkillId = ref<string | null>(null)
-const skillOptions = ref<{ label: string; value: string }[]>([])
+const showSkillModal = ref(false)
+const skillSearchText = ref('')
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
@@ -76,6 +77,17 @@ const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
 const kbPreview = computed(() => kbs.value.slice(0, 3))
 const kbHasMore = computed(() => kbs.value.length > 3)
+
+const filteredSkills = computed(() =>
+  skills.value.filter((s: Skill) =>
+    s.is_active && (!skillSearchText.value || s.name.toLowerCase().includes(skillSearchText.value.toLowerCase()))
+  )
+)
+const selectedSkillName = computed(() => {
+  if (!selectedSkillId.value) return '自动选择'
+  return skills.value.find(s => s.id === selectedSkillId.value)?.name || '自动选择'
+})
+
 
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
@@ -123,10 +135,6 @@ onMounted(async () => {
   try {
     const skillRes = await listSkills(1, 100)
     skills.value = skillRes.items
-    skillOptions.value = [
-      { label: '自动路由', value: '' },
-      ...skillRes.items.filter(s => s.is_active).map(s => ({ label: s.name, value: s.id })),
-    ]
   } catch { /* noop */ }
 
   await loadConversations()
@@ -349,9 +357,6 @@ function handleKeydown(e: KeyboardEvent) {
       <div class="chat-header-right">
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
         <template v-if="!isReadonly">
-          <span class="kb-select-label">技能</span>
-          <NSelect v-model:value="selectedSkillId" :options="skillOptions" size="small"
-            style="width: 140px" placeholder="自动路由" clearable />
           <span class="kb-select-label">知识库</span>
           <NButton size="small" @click="showMoreKb = true" class="kb-trigger-btn">
             {{ currentKbName }}
@@ -534,31 +539,70 @@ function handleKeydown(e: KeyboardEvent) {
       <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
     </NModal>
 
-    <div v-if="!isReadonly" class="chat-input-area">
-      <NInput
-        v-model:value="inputText"
-        type="textarea"
-        :placeholder="auth.llmConfigured ? '输入问题... (Enter 发送)' : '请先前往系统设置页面配置API KEY'"
-        :autosize="{ minRows: 1, maxRows: 4 }"
-        :disabled="isStreaming || !auth.llmConfigured"
-        @keydown="handleKeydown"
-        @compositionstart="isComposing = true"
-        @compositionend="isComposing = false"
-      />
-      <NButton v-if="queuePosition != null && queuePosition > 0" type="warning" @click="cancelQueue">
-        <template #icon><NIcon><StopCircle /></NIcon></template>
-        取消排队
-      </NButton>
-      <NButton v-else-if="isStreaming" type="warning" @click="stopStream">
-        <template #icon><NIcon><StopCircle /></NIcon></template>
-        停止
-      </NButton>
-      <NButton v-else type="primary" :disabled="!inputText.trim()" @click="sendMessage">
-        <template #icon><NIcon><Send /></NIcon></template>
-      </NButton>
+    <NModal v-model:show="showSkillModal" preset="card" title="选择技能"
+      style="width: 90vw; max-width: 520px"
+      @after-leave="skillSearchText = ''"
+    >
+      <NInput v-model:value="skillSearchText" placeholder="搜索技能名称..." clearable style="margin-bottom:12px" />
+      <div class="picker-scroll">
+        <NCard size="small" class="skill-pick-card"
+          :class="{ active: !selectedSkillId }"
+          role="button" tabindex="0"
+          @click="selectedSkillId = null; showSkillModal = false"
+          @keydown.enter.prevent="selectedSkillId = null; showSkillModal = false"
+          @keydown.space.prevent="selectedSkillId = null; showSkillModal = false"
+        >
+          <strong>自动选择</strong>
+          <span class="skill-pick-desc">根据问题自动路由最合适的技能</span>
+        </NCard>
+        <NCard v-for="s in filteredSkills" :key="s.id" size="small" class="skill-pick-card"
+          :class="{ active: s.id === selectedSkillId }"
+          role="button" tabindex="0"
+          @click="selectedSkillId = s.id; showSkillModal = false"
+          @keydown.enter.prevent="selectedSkillId = s.id; showSkillModal = false"
+          @keydown.space.prevent="selectedSkillId = s.id; showSkillModal = false"
+        >
+          <strong>{{ s.name }}</strong>
+          <span v-if="s.description" class="skill-pick-desc">{{ s.description }}</span>
+        </NCard>
+      </div>
+      <NEmpty v-if="filteredSkills.length === 0" description="没有匹配的技能" style="padding:16px 0" />
+    </NModal>
+
+    <div v-if="!isReadonly" class="chat-input-wrapper">
+      <div class="skill-selector-bar">
+        <NButton size="tiny" ghost class="skill-selector-btn" @click="showSkillModal = true">
+          <template #icon><NIcon size="14"><Sparkles /></NIcon></template>
+          {{ selectedSkillName }}
+        </NButton>
+      </div>
+      <div class="chat-input-area">
+        <NInput
+          v-model:value="inputText"
+          type="textarea"
+          :placeholder="auth.llmConfigured ? '输入问题... (Enter 发送)' : '请先前往系统设置页面配置API KEY'"
+          :autosize="{ minRows: 1, maxRows: 4 }"
+          :disabled="isStreaming || !auth.llmConfigured"
+          @keydown="handleKeydown"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
+        />
+        <NButton v-if="queuePosition != null && queuePosition > 0" type="warning" @click="cancelQueue">
+          <template #icon><NIcon><StopCircle /></NIcon></template>
+          取消排队
+        </NButton>
+        <NButton v-else-if="isStreaming" type="warning" @click="stopStream">
+          <template #icon><NIcon><StopCircle /></NIcon></template>
+          停止
+        </NButton>
+        <NButton v-else type="primary" :disabled="!inputText.trim()" @click="sendMessage">
+          <template #icon><NIcon><Send /></NIcon></template>
+        </NButton>
+      </div>
     </div>
   </div>
 </template>
+
 
 <style scoped>
 .chat-view {
@@ -681,13 +725,57 @@ function handleKeydown(e: KeyboardEvent) {
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
 .fallback-hint { margin-top: 8px; font-size: var(--text-base); color: var(--color-text-muted); }
-.chat-input-area {
+/* ── Skill picker modal ── */
+.skill-pick-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s;
+  border-left: 3px solid transparent;
+}
+.skill-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.skill-pick-card.active {
+  border-color: var(--color-primary);
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.skill-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
+.skill-pick-desc {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Chat input wrapper with skill selector above ── */
+.chat-input-wrapper {
   display: flex;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3) 0 0;
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
 }
+.skill-selector-bar {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  padding: 0 0 6px;
+}
+.skill-selector-btn {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-input-area {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3);
+  flex-shrink: 0;
+}
+
+
 .chat-input-area :deep(.n-input) {
   flex: 1;
 }
