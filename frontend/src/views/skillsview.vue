@@ -278,7 +278,6 @@ const columns = [
     ]),
   },
   { title: '文件夹', key: 'folder_name', width: 140 },
-  { title: '描述', key: 'description', ellipsis: { tooltip: true }, width: 200 },
   { title: 'MCP服务', key: 'mcp_servers', width: 120,
     render: (row: Skill) => row.mcp_servers?.length
       ? h(NSpace, { size: 'small' }, { default: () => row.mcp_servers.map((s: string) => h(NTag, { size: 'tiny', type: 'info' }, { default: () => s })) })
@@ -286,7 +285,7 @@ const columns = [
   },
   { title: '更新时间', key: 'updated_at', width: 150, render: (row: Skill) => row.updated_at?.slice(0, 16)?.replace('T', ' ') || '-' },
   {
-    title: '操作', key: 'actions', width: 420,
+    title: '操作', key: 'actions', width: 320,
     render: (row: Skill) => h(NSpace, { size: 'small', align: 'center' }, {
       default: () => [
         h(NButton, { size: 'tiny', quaternary: true, onClick: () => openEdit(row) },
