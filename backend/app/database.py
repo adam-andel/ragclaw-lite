@@ -11,6 +11,7 @@ from app.config import settings
 
 settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+settings.skills_dir.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = f"sqlite+aiosqlite:///{settings.sqlite_path}"
 
@@ -150,24 +151,41 @@ def _migrate_nullable_kb_id(raw):
 
 
 def _migrate_skill_system(raw):
-    """Create skill_tools, skills, and mcp_servers tables (v0.3.0)."""
-    print("[migrate] Running skill_system...")
+    """Create folder-based skills table and mcp_servers table (v0.7.0 refactor).
 
-    raw.execute("""
-        CREATE TABLE IF NOT EXISTS skills (
-            id TEXT PRIMARY KEY,
-            tenant_id TEXT,
-            name TEXT NOT NULL,
-            description TEXT,
-            system_prompt TEXT NOT NULL DEFAULT '',
-            is_active INTEGER NOT NULL DEFAULT 1,
-            created_by TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
-    raw.execute("CREATE INDEX IF NOT EXISTS idx_skills_tenant ON skills(tenant_id)")
+    Drops legacy skill_tools table and old skills table, creates new skills
+    table with folder_name column for folder-based skill architecture.
+    """
+    print("[migrate] Running skill_system (folder-based refactor)...")
 
+    # Drop legacy skill_tools table (no longer needed — MCP binding via SKILL.md front matter)
+    raw.execute("DROP TABLE IF EXISTS skill_tools")
+
+    # Recreate skills table with folder-based schema
+    # If old skills table exists with different schema, drop and recreate
+    cols = {row[1] for row in raw.execute("PRAGMA table_info(skills)").fetchall()} if _table_exists(raw, "skills") else set()
+    if cols and "folder_name" not in cols:
+        print("[migrate] Old skills table detected, dropping for folder-based refactor...")
+        raw.execute("DROP TABLE IF EXISTS skills")
+        cols = set()
+
+    if not cols:
+        raw.execute("""
+            CREATE TABLE IF NOT EXISTS skills (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                folder_name TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        raw.execute("CREATE INDEX IF NOT EXISTS idx_skills_tenant ON skills(tenant_id)")
+        print("[migrate] Created folder-based skills table")
+
+    # mcp_servers table (unchanged from before, create if not exists)
     raw.execute("""
         CREATE TABLE IF NOT EXISTS mcp_servers (
             id TEXT PRIMARY KEY,
@@ -185,22 +203,13 @@ def _migrate_skill_system(raw):
     """)
     raw.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_tenant ON mcp_servers(tenant_id)")
 
-    raw.execute("""
-        CREATE TABLE IF NOT EXISTS skill_tools (
-            id TEXT PRIMARY KEY,
-            skill_id TEXT NOT NULL,
-            tool_name TEXT NOT NULL,
-            mcp_server_id TEXT NOT NULL,
-            config_json TEXT,
-            FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
-            FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
-        )
-    """)
-    raw.execute("CREATE INDEX IF NOT EXISTS idx_skill_tools_skill ON skill_tools(skill_id)")
-    raw.execute("CREATE INDEX IF NOT EXISTS idx_skill_tools_mcp ON skill_tools(mcp_server_id)")
-    raw.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_tools_unique ON skill_tools(skill_id, tool_name, mcp_server_id)")
-
     print("[migrate] skill_system done")
+
+
+def _table_exists(raw, table_name: str) -> bool:
+    return raw.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+    ).fetchone() is not None
 
 def _seed_admin_user(raw):
     """Seed default admin user (v0.6.0)."""
@@ -224,17 +233,18 @@ def _seed_admin_user(raw):
 
 
 def _seed_defaults(raw):
-    """Seed default MCP Server and document generation SKILL (v0.5.0).
+    """Seed default MCP Server and doc-gen Skill folder (v0.7.0 folder-based).
 
-    Uses deterministic UUIDs for idempotent inserts.
+    Creates:
+    1. Default MCP Server 'Python执行器' (if not exists)
+    2. doc-gen Skill folder with SKILL.md on disk + DB index row
     """
-    print("[seed] Checking default MCP Server and SKILL...")
+    print("[seed] Checking default MCP Server and Skill folder...")
     import hashlib
 
     # Deterministic UUIDs
     mcp_id = str(uuid.UUID(hashlib.md5(b"erag-default-python-repl").hexdigest()))
     skill_id = str(uuid.UUID(hashlib.md5(b"erag-default-doc-gen").hexdigest()))
-    tool_id = str(uuid.UUID(hashlib.md5(b"erag-default-run-python-tool").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
     # Default MCP Server: Python执行器
@@ -248,81 +258,86 @@ def _seed_defaults(raw):
     else:
         print("[seed] MCP Server 'Python执行器' already exists")
 
-    # Default SKILL: 文档生成助手
-    sys_prompt = (
-        "## 核心规则（必须严格遵守）\n\n"
-        "你的任务不是写代码给用户看，而是**真正生成文档文件**。收到文档生成请求后，你必须通过 `run_python` 工具执行 Python 代码来生成文件。\n\n"
-        "**禁止以下行为：**\n"
-        "- 只输出代码说明而不调用工具\n"
-        "- 先展示代码再等用户确认（除非用户明确要求\"先让我看一下代码\"）\n"
-        "- 告诉用户\"可以用以下代码生成\"——用户要的是文件，不是代码\n"
-        "- 以任何自然语言描述代替工具调用\n\n"
-        "## 工作流程\n\n"
-        "1. 收到文档生成请求 → 立即编写完整的 Python 代码\n"
-        "2. 调用 `run_python` 工具，将代码作为 `code` 参数传入\n\n"
-        "## 示例\n\n"
-        "**用户说：** 生成一个txt，内容是：1\n"
-        "**你该做的：** 调用 run_python，code 参数为：\n"
-        "```python\n"
-        "with open(\"output.txt\", \"w\", encoding=\"utf-8\") as f:\n"
-        "    f.write(\"1\")\n"
-        "print(\"文件已生成\")\n"
-        "```\n\n"
-        "**用户说：** 生成一个包含姓名、年龄两列的 CSV\n"
-        "**你该做的：** 调用 run_python，code 参数为：\n"
-        "```python\n"
-        "import csv\n"
-        "with open(\"data.csv\", \"w\", newline=\"\", encoding=\"utf-8-sig\") as f:\n"
-        "    writer = csv.writer(f)\n"
-        "    writer.writerow([\"姓名\", \"年龄\"])\n"
-        "print(\"CSV 已生成\")\n"
-        "```\n\n"
-        "**用户说：** 生成一个 Markdown 文件，内容是 # 标题\n"
-        "**你该做的：** 调用 run_python，code 参数为：\n"
-        "```python\n"
-        "with open(\"readme.md\", \"w\", encoding=\"utf-8\") as f:\n"
-        "    f.write(\"# 标题\\n\")\n"
-        "print(\"Markdown 已生成\")\n"
-        "```\n\n"
-        "## 文件命名规则\n\n"
-        "- 使用英文文件名（如 output.txt、report.docx、chart.png）\n"
-        "- 保存到当前目录即可，工具会自动分配 workspace 子目录\n"
-        "- 同名文件用数字序号区分（如 output2.txt）\n\n"
-        "## 环境说明\n\n"
-        "- 支持 Python 标准库\n"
-        "- 已安装三方库：pandas、python-docx、python-pptx、PyPDF2\n"
-        "- 网络访问被禁止、外部进程调用被禁止\n"
-        "- 生成文件 60 分钟内有效，超时自动删除\n\n"
-        "## 生成后输出格式\n\n"
-        "```\n"
-        "```\n\n"
-        "**注意事项：**\n"
-        "- 避免生成超大文件或耗时操作，防止超时\n"
-        "- 代码中 `print()` 的内容会返回给你作为工具输出"
-    )
-    existing = raw.execute("SELECT id FROM skills WHERE id = ?", (skill_id,)).fetchone()
-    if not existing:
-        raw.execute(
-            "INSERT INTO skills(id, name, description, system_prompt, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
-            (skill_id, "文档生成助手", "生成文档、报表、图表、PPT、网页等文件，支持txt/csv/xlsx/pptx/png/pdf/html/markdown/txt/csv等格式",
-             sys_prompt, 1, now, now),
-        )
-        print("[seed] SKILL '文档生成助手' created")
-    else:
-        print("[seed] SKILL '文档生成助手' already exists")
+    # Default Skill: doc-gen (folder-based)
+    skill_dir = settings.skills_dir / "doc-gen"
+    skill_md_path = skill_dir / "SKILL.md"
 
-    # Default tool binding: run_python
-    existing = raw.execute("SELECT id FROM skill_tools WHERE id = ?", (tool_id,)).fetchone()
-    if not existing:
+    if not skill_dir.exists():
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_md_content = _build_doc_gen_skill_md()
+        skill_md_path.write_text(skill_md_content, encoding="utf-8")
+        print("[seed] Created doc-gen SKILL.md on disk")
+
+    # DB index row for doc-gen
+    existing_skill = raw.execute("SELECT id FROM skills WHERE folder_name = ?", ("doc-gen",)).fetchone()
+    if not existing_skill:
         raw.execute(
-            "INSERT INTO skill_tools(id, skill_id, tool_name, mcp_server_id) VALUES(?,?,?,?)",
-            (tool_id, skill_id, "run_python", mcp_id),
+            "INSERT INTO skills(id, folder_name, name, description, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (skill_id, "doc-gen", "文档生成助手",
+             "生成文档、报表、图表、PPT、网页等文件，支持txt/csv/xlsx/pptx/png/pdf/html/markdown等格式",
+             1, now, now),
         )
-        print("[seed] Tool binding 'run_python' created")
+        print("[seed] Skill 'doc-gen' DB index created")
     else:
-        print("[seed] Tool binding 'run_python' already exists")
+        print("[seed] Skill 'doc-gen' DB index already exists")
 
     print("[seed] defaults done")
+
+
+def _build_doc_gen_skill_md() -> str:
+    """Build the SKILL.md content for the doc-gen seed skill."""
+    return """---
+name: 文档生成助手
+description: "生成文档、报表、图表、PPT、网页等文件，支持txt/csv/xlsx/pptx/png/pdf/html/markdown等格式"
+mcp_servers:
+  - Python执行器
+is_active: true
+---
+
+# 文档生成助手
+
+## 核心规则（必须严格遵守）
+
+你的任务不是写代码给用户看，而是**真正生成文档文件**。收到文档生成请求后，你必须通过 `run_python` 工具执行 Python 代码来生成文件。
+
+**禁止以下行为：**
+- 只输出代码说明而不调用工具
+- 先展示代码再等用户确认（除非用户明确要求"先让我看一下代码"）
+- 告诉用户"可以用以下代码生成"——用户要的是文件，不是代码
+- 以任何自然语言描述代替工具调用
+
+## Examples
+
+**用户说：** 生成一个txt，内容是：1
+**你该做的：** 调用 run_python，code 参数为：
+```python
+with open("output.txt", "w", encoding="utf-8") as f:
+    f.write("1")
+print("文件已生成")
+```
+
+**用户说：** 生成一个包含姓名、年龄两列的 CSV
+**你该做的：** 调用 run_python，code 参数为：
+```python
+import csv
+with open("data.csv", "w", newline="", encoding="utf-8-sig") as f:
+    writer = csv.writer(f)
+    writer.writerow(["姓名", "年龄"])
+print("CSV 已生成")
+```
+
+## Gotchas
+- 使用英文文件名（如 output.txt、report.docx、chart.png）
+- 同名文件用数字序号区分（如 output2.txt）
+- 已安装三方库：pandas、python-docx、python-pptx、PyPDF2
+- 网络访问被禁止、外部进程调用被禁止
+- 生成文件 60 分钟内有效，超时自动删除
+- 代码中 `print()` 的内容会返回给你作为工具输出
+
+## Constraints
+- 避免生成超大文件或耗时操作，防止超时
+- 保存到当前目录即可，工具会自动分配 workspace 子目录
+"""
 
 
 def _migrate_parser_plugin_state(raw):

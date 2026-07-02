@@ -4,10 +4,14 @@ from datetime import datetime
 from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
-from app.models.skill import Skill, SkillTool
+from app.models.skill import Skill, MCPServer
 from app.services.hybrid_search import hybrid_search
 from app.services.llm_client import llm_client
 from app.services.cache import answer_cache
+from app.services.skill_manager import (
+    get_skill_by_id, get_skill_by_folder, read_skill_md, parse_skill_md,
+)
+from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 
 logger = logging.getLogger("erag.agent")
@@ -106,52 +110,109 @@ def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list
     return None
 
 
-# ── Router ──
+# ── Router (Layer 1: name + description only) ──
 
 async def skill_router_node(state: dict) -> dict:
+    """Layer 1 routing — only queries DB index (name + description).
+
+    Does NOT load SKILL.md full text or tools. That happens in skill_loader_node.
+    """
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
     cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
     if cached:
         return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
 
-    active_skill, available_tools = None, []
+    active_skill = None
     if skill_id:
-        active_skill, available_tools = await _load_skill(skill_id)
-        logger.info("Router: loaded skill_id=%s name=%s tools=%d", skill_id, active_skill.get('name') if active_skill else 'NONE', len(available_tools))
+        # User explicitly selected a skill — just fetch the DB index
+        active_skill = await _get_skill_index(skill_id)
+        logger.info("Router: explicit skill_id=%s name=%s", skill_id, active_skill.get('name') if active_skill else 'NONE')
     if not active_skill and not skill_id:
-        active_skill, available_tools = await _route_to_best_skill(query, tenant_id, user_id)
-        logger.info("Router: auto-routed to skill=%s tools=%d", active_skill.get('name') if active_skill else 'NONE', len(available_tools))
+        # Auto-route using name + description only
+        active_skill = await _route_to_best_skill(query, tenant_id, user_id)
+        logger.info("Router: auto-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
 
-    return {"active_skill": active_skill, "available_tools": available_tools,
+    # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
+    return {"active_skill": active_skill, "available_tools": [],
             "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": []}
 
 
-async def _load_skill(skill_id: str):
+async def _get_skill_index(skill_id: str) -> dict | None:
+    """Fetch skill DB index row by ID. Returns {id, name, description, folder_name}."""
     async with async_session() as db:
-        s = (await db.execute(select(Skill).where(Skill.id == skill_id))).scalar_one_or_none()
-        if not s:
-            return None, []
-        tools = await tool_registry.get_tools_for_skill_async(s.id)
-        return {"id": s.id, "name": s.name, "description": s.description, "system_prompt": s.system_prompt or DEFAULT_SYSTEM_PROMPT}, tools
+        skill = await get_skill_by_id(db, skill_id)
+        if not skill or not skill.is_active:
+            return None
+        return {"id": skill.id, "name": skill.name, "description": skill.description, "folder_name": skill.folder_name}
 
 
-async def _route_to_best_skill(query, tenant_id, user_id):
+async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
+    """Auto-route using LLM to match query against skill name + description (Layer 1).
+
+    Returns {id, name, description, folder_name} or None.
+    """
     async with async_session() as db:
-        skills = (await db.execute(select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True)))).scalars().all()
+        skills = (await db.execute(
+            select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+        )).scalars().all()
     if not skills:
-        return None, []
+        return None
     skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills)
     prompt = f"你是一个意图路由器。根据用户的问题，从以下技能中选择最合适的一个。\n\n可用技能：\n{skill_list}\n\n规则：\n- 如果用户的问题与某个技能高度匹配，选择该技能\n- 如果用户的问题与所有技能都不匹配，返回 \"default\"\n- 只返回技能名称，不要有任何其他输出\n\n用户问题：{query}\n\n技能名称："
     try:
         chosen = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip().strip('"').strip("'").strip('。!').strip()
         for s in skills:
             if s.name == chosen or s.name.lower() == chosen.lower() or s.name.lower().replace(" ", "") == chosen.lower().replace(" ", ""):
-                tools = await tool_registry.get_tools_for_skill_async(s.id)
-                return {"id": s.id, "name": s.name, "description": s.description, "system_prompt": s.system_prompt or DEFAULT_SYSTEM_PROMPT}, tools
+                return {"id": s.id, "name": s.name, "description": s.description, "folder_name": s.folder_name}
     except Exception as e:
         logger.warning("Skill routing failed: %s", e)
-    return None, []
+    return None
+
+
+# ── Skill Loader (Layer 2: SKILL.md full text + tools) ──
+
+async def skill_loader_node(state: dict) -> dict:
+    """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
+
+    Runs after router (if a skill was selected) and before retrieval.
+    If no active skill, passes through with default system prompt.
+    """
+    if state.get("cache_hit"):
+        return {}
+
+    active_skill = state.get("active_skill")
+    if not active_skill:
+        return {}
+
+    folder_name = active_skill.get("folder_name")
+    if not folder_name:
+        return {}
+
+    # Read and parse SKILL.md
+    skill_md_content = read_skill_md(folder_name)
+    if not skill_md_content:
+        logger.warning("Skill loader: SKILL.md not found for folder=%s", folder_name)
+        return {}
+
+    parsed = parse_skill_md(skill_md_content)
+    system_prompt = parsed["body"] or DEFAULT_SYSTEM_PROMPT
+    mcp_server_names = parsed.get("mcp_servers", [])
+
+    # Update active_skill with system_prompt
+    updated_skill = {**active_skill, "system_prompt": system_prompt}
+
+    # Discover script tools (from scripts/*.py)
+    script_tools = discover_tools(folder_name)
+    logger.info("Skill loader: folder=%s script_tools=%d", folder_name, len(script_tools))
+
+    # Load MCP tools (from front matter mcp_servers declaration)
+    mcp_tools = await tool_registry.get_mcp_tools(mcp_server_names)
+    logger.info("Skill loader: folder=%s mcp_tools=%d (servers=%s)", folder_name, len(mcp_tools), mcp_server_names)
+
+    all_tools = script_tools + mcp_tools
+
+    return {"active_skill": updated_skill, "available_tools": all_tools}
 
 
 # ── Retrieval ──
@@ -376,30 +437,66 @@ async def tool_executor_node(state: dict) -> dict:
     if not tool_calls:
         return {"tool_results": [], "tool_round": state.get("tool_round", 0) + 1}
     from app.services.mcp_client import mcp_client as _mc
-    from app.models.skill import MCPServer
+
+    # Build a lookup: tool_name → tool_definition (for _source routing)
+    available_tools = state.get("available_tools", [])
+    tool_lookup = {}
+    for t in available_tools:
+        fname = t.get("function", {}).get("name")
+        if fname:
+            tool_lookup[fname] = t
+
+    active_skill = state.get("active_skill") or {}
+    folder_name = active_skill.get("folder_name")
 
     async def execute_one(tc: dict):
         func = tc.get("function", {})
         tname = func.get("name", "unknown")
-        endpoint = None
         try:
             args = json.loads(func.get("arguments", "{}"))
         except json.JSONDecodeError:
             args = {}
-        skill_id = state.get("active_skill", {}).get("id") if state.get("active_skill") else None
-        if not skill_id:
-            return {"result": f"Tool '{tname}' error: no active skill", "endpoint": None}
-        async with async_session() as db:
-            b = (await db.execute(select(SkillTool).where((SkillTool.skill_id == skill_id) & (SkillTool.tool_name == tname)))).scalar_one_or_none()
-            if not b:
-                return {"result": f"Tool '{tname}' error: not found in skill bindings", "endpoint": None}
-            srv = await db.get(MCPServer, b.mcp_server_id)
-            if not srv:
-                return {"result": f"Tool '{tname}' error: MCP server not found", "endpoint": None}
-            endpoint = srv.endpoint
-            cfg = {"id": srv.id, "transport_type": srv.transport_type, "endpoint": srv.endpoint,
-                   "command": srv.command, "args_json": srv.args_json, "env_json": srv.env_json,
-                   "timeout_seconds": srv.timeout_seconds}
+
+        tool_def = tool_lookup.get(tname, {})
+        tool_source = tool_def.get("_source", "mcp")
+
+        # ── Script tool path ──
+        if tool_source == "script" and folder_name:
+            script_path = tool_def.get("_script_path", "")
+            func_name = tool_def.get("_func_name", tname)
+            # Find the python_repl MCP server config
+            repl_config = await _get_repl_server_config()
+            if not repl_config:
+                return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+            result = await execute_script_tool(folder_name, script_path, func_name, args, repl_config)
+            if result.ok:
+                return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
+            return {"result": f"[{tname}] 错误: {result.error}", "endpoint": repl_config.get("endpoint")}
+
+        # ── MCP tool path ──
+        # Get MCP server config from tool definition metadata
+        mcp_server_id = tool_def.get("_mcp_server_id")
+        endpoint = None
+        if mcp_server_id:
+            async with async_session() as db:
+                srv = await db.get(MCPServer, mcp_server_id)
+                if srv:
+                    endpoint = srv.endpoint
+                    cfg = {"id": srv.id, "transport_type": srv.transport_type, "endpoint": srv.endpoint,
+                           "command": srv.command, "args_json": srv.args_json, "env_json": srv.env_json,
+                           "timeout_seconds": srv.timeout_seconds}
+                else:
+                    return {"result": f"[{tname}] 错误: MCP server not found", "endpoint": None}
+        else:
+            # Fallback: try to find run_python on the default python_repl server
+            if tname == "run_python":
+                repl_config = await _get_repl_server_config()
+                if not repl_config:
+                    return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+                endpoint = repl_config.get("endpoint")
+                cfg = repl_config
+            else:
+                return {"result": f"[{tname}] 错误: no MCP server binding for tool", "endpoint": None}
         try:
             res = await _mc.call_tool(cfg, tname, args)
             if res.ok:
@@ -429,6 +526,19 @@ async def tool_executor_node(state: dict) -> dict:
                             "name": func.get("name", "unknown"),
                             "content": tr[i] if i < len(tr) else ""})
     return {"tool_results": tr, "tool_messages": result_msgs, "tool_round": state.get("tool_round", 0) + 1}
+
+
+async def _get_repl_server_config() -> dict | None:
+    """Get the python_repl MCP server config by name 'Python执行器'."""
+    async with async_session() as db:
+        srv = (await db.execute(
+            select(MCPServer).where(MCPServer.name == "Python执行器").limit(1)
+        )).scalar_one_or_none()
+        if not srv:
+            return None
+        return {"id": srv.id, "transport_type": srv.transport_type, "endpoint": srv.endpoint,
+                "command": srv.command, "args_json": srv.args_json, "env_json": srv.env_json,
+                "timeout_seconds": srv.timeout_seconds}
 
 
 # ── Build Context ──

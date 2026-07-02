@@ -93,6 +93,14 @@ async def lifespan(app: FastAPI):
         print("Tool registry refresh scheduled")
     except Exception as e:
         print(f"Tool registry init warning: {e}")
+    # Sync skill filesystem to DB index
+    try:
+        from app.services.skill_manager import sync_skills_to_db
+        async with async_session() as db:
+            result = await sync_skills_to_db(db)
+            print(f"Skill sync: +{result['added']} ~{result['updated']} -{result['deactivated']}")
+    except Exception as e:
+        print(f"Skill sync warning: {e}")
     # Refresh parser plugin state cache on startup
     try:
         from app.services.parser import parser_service

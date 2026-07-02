@@ -1,63 +1,40 @@
-"""Pydantic schemas for SKILL CRUD API."""
+"""Pydantic schemas for folder-based Skill API."""
 
 from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-# ── Skill ──
+# ── Skill (folder-based) ──
 
 class SkillCreate(BaseModel):
+    """Online skill creation — generates SKILL.md + folder."""
     name: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
-    system_prompt: str = Field("", max_length=10000)
+    description: str = Field("", max_length=250)
+    mcp_servers: list[str] = Field(default_factory=list)
     is_active: bool = True
+    body: str = Field("", description="SKILL.md markdown body (after front matter)")
 
 
 class SkillUpdate(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=200)
-    description: str | None = None
-    system_prompt: str | None = Field(None, max_length=10000)
-    is_active: bool | None = None
-
-
-class SkillToolInfo(BaseModel):
-    """Lightweight tool info embedded in Skill response."""
-    id: str
-    tool_name: str
-    mcp_server_id: str
-    mcp_server_name: str = ""
-
-    model_config = {"from_attributes": True}
+    """Update SKILL.md content directly."""
+    content: str = Field(..., description="Full SKILL.md content (front matter + body)")
 
 
 class SkillResponse(BaseModel):
+    """Skill info from DB index + SKILL.md content."""
     id: str
     tenant_id: str | None = None
+    folder_name: str
     name: str
     description: str | None = None
-    system_prompt: str
     is_active: bool
-    created_by: str | None = None
     created_at: datetime
     updated_at: datetime
-    tools: list[SkillToolInfo] = []
+    # Parsed from SKILL.md
+    mcp_servers: list[str] = []
+    skill_md_content: str | None = None  # Full SKILL.md text
 
     model_config = {"from_attributes": True}
-
-
-# ── Skill-Tool binding ──
-
-class SkillToolBindRequest(BaseModel):
-    tool_name: str = Field(..., min_length=1)
-    mcp_server_id: str = Field(...)
-    config_json: str | None = None
-
-
-class SkillToolBindResponse(BaseModel):
-    id: str
-    skill_id: str
-    tool_name: str
-    mcp_server_id: str
 
 
 class SkillListResponse(BaseModel):
@@ -65,3 +42,31 @@ class SkillListResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+# ── Resource management ──
+
+class ResourceFileInfo(BaseModel):
+    name: str
+    path: str
+    size: int
+
+
+class ResourceListResponse(BaseModel):
+    scripts: list[ResourceFileInfo] = []
+    data: list[ResourceFileInfo] = []
+    references: list[ResourceFileInfo] = []
+    _root: list[ResourceFileInfo] = []
+
+
+class ResourceUploadResponse(BaseModel):
+    path: str
+    size: int
+
+
+# ── Sync ──
+
+class SyncResponse(BaseModel):
+    added: int
+    updated: int
+    deactivated: int

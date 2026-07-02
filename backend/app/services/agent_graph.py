@@ -5,7 +5,8 @@ state from the graph, then handles streaming LLM generation + SSE output + post-
 
 Graph topology:
     router ──(cache hit)──→ END
-    router ──(no hit)───→ retrieval
+    router ──(no hit, no skill)──→ retrieval
+    router ──(no hit, skill)───→ skill_loader → retrieval
     retrieval ──────────→ tool_decision
     tool_decision ─(no tools)─→ build_context → END
     tool_decision ─(tools)───→ tool_executor → tool_decision (loop)
@@ -16,6 +17,7 @@ from langgraph.graph import StateGraph, END
 from app.services.agent_state import EragAgentState
 from app.services.agent_nodes import (
     skill_router_node,
+    skill_loader_node,
     parallel_retrieval_node,
     tool_decision_node,
     tool_executor_node,
@@ -29,6 +31,7 @@ def _build_graph() -> StateGraph:
 
     # Register nodes
     workflow.add_node("router", skill_router_node)
+    workflow.add_node("skill_loader", skill_loader_node)
     workflow.add_node("retrieval", parallel_retrieval_node)
     workflow.add_node("tool_decision", tool_decision_node)
     workflow.add_node("tool_executor", tool_executor_node)
@@ -37,17 +40,22 @@ def _build_graph() -> StateGraph:
     # Entry point
     workflow.set_entry_point("router")
 
-    # Router → END (cache hit) or retrieval
+    # Router → END (cache hit) or skill_loader (has skill) or retrieval (no skill)
     def route_after_router(state: dict) -> str:
         if state.get("cache_hit"):
             return "end"
+        if state.get("active_skill"):
+            return "skill_loader"
         return "retrieval"
 
     workflow.add_conditional_edges(
         "router",
         route_after_router,
-        {"end": END, "retrieval": "retrieval"},
+        {"end": END, "skill_loader": "skill_loader", "retrieval": "retrieval"},
     )
+
+    # Skill loader → retrieval
+    workflow.add_edge("skill_loader", "retrieval")
 
     # Retrieval → tool_decision
     workflow.add_edge("retrieval", "tool_decision")

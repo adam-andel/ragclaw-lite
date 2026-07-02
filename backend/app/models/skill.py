@@ -1,15 +1,15 @@
-"""Skill, SkillTool, and MCPServer ORM models.
+"""Skill and MCPServer ORM models.
 
-- Skill: prompt strategy profiles, NOT bound to KBs (KB selected per-conversation)
-- SkillTool: many-to-many link between skills and MCP tools
-- MCPServer: registered MCP server definitions
+- Skill: folder-based skill index. Filesystem is source of truth, DB is cache.
+  Stores folder_name + name + description(≤250 chars) for fast routing.
+- MCPServer: registered MCP server definitions (unchanged).
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Integer
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, Text, DateTime, Boolean, Integer
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
@@ -19,40 +19,21 @@ def gen_uuid() -> str:
 
 
 class Skill(Base):
-    """A named prompt/tool profile. Does NOT bind to knowledge bases.
+    """Folder-based skill index.
 
-    KB is chosen by the user in conversation; the Skill provides
-    system_prompt + tool bindings only.
+    The filesystem (data/skills/{folder_name}/SKILL.md) is the source of truth.
+    This DB row is a cache for fast routing (Layer 1: name + description only).
     """
     __tablename__ = "skills"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     tenant_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    folder_name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)  # ≤250 chars for routing
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    tools: Mapped[list["SkillTool"]] = relationship(
-        "SkillTool", back_populates="skill", cascade="all, delete-orphan"
-    )
-
-
-class SkillTool(Base):
-    """Many-to-many link: skill ↔ (tool_name on a specific MCP server)."""
-    __tablename__ = "skill_tools"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
-    skill_id: Mapped[str] = mapped_column(String(36), ForeignKey("skills.id", ondelete="CASCADE"), index=True)
-    tool_name: Mapped[str] = mapped_column(String(200), nullable=False)
-    mcp_server_id: Mapped[str] = mapped_column(String(36), ForeignKey("mcp_servers.id", ondelete="CASCADE"), index=True)
-    config_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # tool-level overrides
-
-    skill: Mapped["Skill"] = relationship("Skill", back_populates="tools")
-    mcp_server: Mapped["MCPServer"] = relationship("MCPServer", back_populates="tool_links")
 
 
 class MCPServer(Base):
@@ -73,7 +54,3 @@ class MCPServer(Base):
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=30)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    tool_links: Mapped[list["SkillTool"]] = relationship(
-        "SkillTool", back_populates="mcp_server", cascade="all, delete-orphan"
-    )

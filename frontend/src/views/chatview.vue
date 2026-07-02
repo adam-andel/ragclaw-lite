@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NSelect, useMessage } from 'naive-ui'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
+import { listSkills } from '@/api/skills'
 import { renderStreamingHtml } from '@/utils/think'
-import type { ChatMessage as ChatMsg } from '@/types'
+import type { ChatMessage as ChatMsg, Skill } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,6 +63,9 @@ const showScrollBottomBtn = computed(() => !isPinnedToBottom.value && messages.v
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
 const conversations = ref<any[]>([])
+const skills = ref<Skill[]>([])
+const selectedSkillId = ref<string | null>(null)
+const skillOptions = ref<{ label: string; value: string }[]>([])
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
@@ -113,6 +117,16 @@ onMounted(async () => {
     } else if (kbs.value.length > 0 && !selectedKbId.value) {
       selectedKbId.value = kbs.value[0].id
     }
+  } catch { /* noop */ }
+
+  // Load skills for the skill selector
+  try {
+    const skillRes = await listSkills(1, 100)
+    skills.value = skillRes.items
+    skillOptions.value = [
+      { label: '自动路由', value: '' },
+      ...skillRes.items.filter(s => s.is_active).map(s => ({ label: s.name, value: s.id })),
+    ]
   } catch { /* noop */ }
 
   await loadConversations()
@@ -193,7 +207,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
   queuePosition.value = null
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, undefined, abortCtl.signal)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
@@ -335,7 +349,10 @@ function handleKeydown(e: KeyboardEvent) {
       <div class="chat-header-right">
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
         <template v-if="!isReadonly">
-          <span class="kb-select-label">当前知识库</span>
+          <span class="kb-select-label">技能</span>
+          <NSelect v-model:value="selectedSkillId" :options="skillOptions" size="small"
+            style="width: 140px" placeholder="自动路由" clearable />
+          <span class="kb-select-label">知识库</span>
           <NButton size="small" @click="showMoreKb = true" class="kb-trigger-btn">
             {{ currentKbName }}
           </NButton>

@@ -24,9 +24,12 @@ class EragAgentState(TypedDict):
     kb_id: str                    # Single KB per conversation (design rule)
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
 
-    # ── Router output ──
-    active_skill: dict | None     # Selected skill info or None for default
-    available_tools: list[dict]   # Tools in OpenAI function-calling format
+    # ── Router output (Layer 1: name + description only) ──
+    active_skill: dict | None     # {id, name, description, folder_name} — no system_prompt yet
+    available_tools: list[dict]   # Tools in OpenAI function-calling format (empty until skill_loader)
+
+    # ── Skill loader output (Layer 2: SKILL.md full text + tools) ──
+    # system_prompt is stored inside active_skill after skill_loader runs
 
     # ── Retrieval output ──
     rag_context: str              # Formatted text of retrieved chunks

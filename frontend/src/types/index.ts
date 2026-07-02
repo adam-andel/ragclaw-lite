@@ -143,52 +143,30 @@ export type SSEEvent =
       llm_ms: number
     }
 
-// ---- SKILL ----
+// ---- SKILL (folder-based) ----
 export interface Skill {
   id: string
   tenant_id?: string | null
+  folder_name: string
   name: string
   description?: string | null
-  system_prompt: string
   is_active: boolean
-  created_by?: string | null
   created_at: string
   updated_at: string
-  tools: SkillToolInfo[]
-}
-
-export interface SkillToolInfo {
-  id: string
-  tool_name: string
-  mcp_server_id: string
-  mcp_server_name: string
+  mcp_servers: string[]
+  skill_md_content?: string | null
 }
 
 export interface SkillCreatePayload {
   name: string
   description?: string
-  system_prompt?: string
+  mcp_servers?: string[]
   is_active?: boolean
+  body?: string
 }
 
 export interface SkillUpdatePayload {
-  name?: string
-  description?: string
-  system_prompt?: string
-  is_active?: boolean
-}
-
-export interface SkillToolBindPayload {
-  tool_name: string
-  mcp_server_id: string
-  config_json?: string
-}
-
-export interface SkillToolBindResult {
-  id: string
-  skill_id: string
-  tool_name: string
-  mcp_server_id: string
+  content: string
 }
 
 export interface SkillListResponse {
@@ -196,6 +174,30 @@ export interface SkillListResponse {
   total: number
   page: number
   size: number
+}
+
+export interface ResourceFileInfo {
+  name: string
+  path: string
+  size: number
+}
+
+export interface ResourceListResponse {
+  scripts: ResourceFileInfo[]
+  data: ResourceFileInfo[]
+  references: ResourceFileInfo[]
+  _root: ResourceFileInfo[]
+}
+
+export interface ResourceUploadResponse {
+  path: string
+  size: number
+}
+
+export interface SyncResponse {
+  added: number
+  updated: number
+  deactivated: number
 }
 
 // ---- MCP Server ----

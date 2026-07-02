@@ -1,49 +1,62 @@
-"""Skill CRUD & tool-binding API routes."""
+"""Folder-based Skill CRUD, upload, resource management, and sync API routes."""
 
-import uuid
-from datetime import datetime
+import io
+import json
+import zipfile
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.user import User
-from app.models.skill import Skill, SkillTool, MCPServer
+from app.models.skill import Skill
 from app.schemas.skill import (
-    SkillCreate, SkillUpdate, SkillResponse, SkillToolInfo,
-    SkillToolBindRequest, SkillToolBindResponse, SkillListResponse,
+    SkillCreate, SkillUpdate, SkillResponse,
+    SkillListResponse,
+    ResourceListResponse, ResourceFileInfo, ResourceUploadResponse,
+    SyncResponse,
 )
 from app.services.auth import get_current_staff, get_current_user
+from app.services.skill_manager import (
+    get_skill_dir, get_skill_md_path, read_skill_md, parse_skill_md,
+    create_skill_folder, update_skill_md, delete_skill_folder,
+    list_resource_files, save_resource_file, delete_resource_file,
+    scan_skills_dir, sanitize_folder_name, build_skill_md, sync_skills_to_db,
+    get_skill_by_id,
+)
+from app.services.skill_script_loader import clear_cache as clear_script_cache
 
 router = APIRouter(prefix="/api/skills", tags=["Skills"])
 
 
-def _gen_id() -> str:
-    return str(uuid.uuid4())
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _skill_to_response(skill: Skill) -> SkillResponse:
-    tool_infos = []
-    for st in skill.tools or []:
-        tool_infos.append(SkillToolInfo(
-            id=st.id,
-            tool_name=st.tool_name,
-            mcp_server_id=st.mcp_server_id,
-            mcp_server_name=getattr(st.mcp_server, "name", "") if st.mcp_server else "",
-        ))
+def _skill_to_response(skill: Skill, include_content: bool = False) -> SkillResponse:
+    """Build SkillResponse from DB row, optionally reading SKILL.md content."""
+    mcp_servers = []
+    skill_md_content = None
+
+    content = read_skill_md(skill.folder_name)
+    if content:
+        skill_md_content = content if include_content else None
+        parsed = parse_skill_md(content)
+        mcp_servers = parsed.get("mcp_servers", [])
+
     return SkillResponse(
         id=skill.id,
         tenant_id=skill.tenant_id,
+        folder_name=skill.folder_name,
         name=skill.name,
         description=skill.description,
-        system_prompt=skill.system_prompt,
         is_active=skill.is_active,
-        created_by=skill.created_by,
         created_at=skill.created_at,
         updated_at=skill.updated_at,
-        tools=tool_infos,
+        mcp_servers=mcp_servers,
+        skill_md_content=skill_md_content,
     )
 
 
@@ -55,26 +68,37 @@ async def create_skill(
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new skill."""
-    skill = Skill(
-        id=_gen_id(),
-        tenant_id=current_user.tenant_id,
+    """Create a new skill online — generates SKILL.md + folder + DB index."""
+    folder_name = sanitize_folder_name(data.name)
+
+    # Check folder doesn't exist
+    skill_dir = get_skill_dir(folder_name)
+    if skill_dir.exists():
+        raise HTTPException(400, f"Skill 文件夹 '{folder_name}' 已存在")
+
+    # Create folder + SKILL.md
+    create_skill_folder(
+        folder_name=folder_name,
         name=data.name,
         description=data.description,
-        system_prompt=data.system_prompt,
+        mcp_servers=data.mcp_servers,
         is_active=data.is_active,
-        created_by=current_user.id,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        body=data.body,
+    )
+
+    # Create DB index
+    skill = Skill(
+        tenant_id=current_user.tenant_id,
+        folder_name=folder_name,
+        name=data.name,
+        description=(data.description or "")[:500],
+        is_active=data.is_active,
     )
     db.add(skill)
     await db.commit()
-    # Re-query with eager loading to avoid async lazy-load greenlet error
-    result = await db.execute(
-        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill.id)
-    )
-    skill = result.scalar_one()
-    return _skill_to_response(skill)
+    await db.refresh(skill)
+
+    return _skill_to_response(skill, include_content=True)
 
 
 @router.get("", response_model=SkillListResponse)
@@ -99,7 +123,7 @@ async def list_skills(
         count_q = count_q.where(*conditions)
     total = (await db.execute(count_q)).scalar() or 0
 
-    items_q = select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).order_by(Skill.updated_at.desc())
+    items_q = select(Skill).order_by(Skill.updated_at.desc())
     if conditions:
         items_q = items_q.where(*conditions)
     items_q = items_q.offset((page - 1) * size).limit(size)
@@ -117,14 +141,11 @@ async def get_skill(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single skill by ID."""
-    result = await db.execute(
-        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill_id)
-    )
-    skill = result.scalar_one_or_none()
+    """Get a single skill by ID, including full SKILL.md content."""
+    skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "技能不存在")
-    return _skill_to_response(skill)
+    return _skill_to_response(skill, include_content=True)
 
 
 @router.patch("/{skill_id}", response_model=SkillResponse)
@@ -134,30 +155,27 @@ async def update_skill(
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a skill."""
-    result = await db.execute(
-        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill_id)
-    )
-    skill = result.scalar_one_or_none()
+    """Update SKILL.md content. Re-syncs DB index from parsed front matter."""
+    skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "技能不存在")
 
-    if data.name is not None:
-        skill.name = data.name
-    if data.description is not None:
-        skill.description = data.description
-    if data.system_prompt is not None:
-        skill.system_prompt = data.system_prompt
-    if data.is_active is not None:
-        skill.is_active = data.is_active
+    # Write SKILL.md
+    update_skill_md(skill.folder_name, data.content)
+
+    # Re-parse and update DB index
+    parsed = parse_skill_md(data.content)
+    skill.name = parsed["name"] or skill.name
+    skill.description = (parsed["description"] or "")[:500]
+    skill.is_active = parsed["is_active"]
     skill.updated_at = datetime.utcnow()
     await db.commit()
-    # Re-query with eager loading to avoid async lazy-load greenlet error
-    result = await db.execute(
-        select(Skill).options(selectinload(Skill.tools).selectinload(SkillTool.mcp_server)).where(Skill.id == skill_id)
-    )
-    skill = result.scalar_one()
-    return _skill_to_response(skill)
+    await db.refresh(skill)
+
+    # Clear script tool cache for this skill
+    clear_script_cache(skill.folder_name)
+
+    return _skill_to_response(skill, include_content=True)
 
 
 @router.delete("/{skill_id}")
@@ -166,82 +184,270 @@ async def delete_skill(
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a skill."""
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    """Delete a skill — removes folder + DB index."""
+    skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "技能不存在")
+
+    # Delete folder
+    delete_skill_folder(skill.folder_name)
+    clear_script_cache(skill.folder_name)
+
+    # Delete DB index
     await db.delete(skill)
     await db.commit()
     return {"status": "deleted"}
 
 
-# ── Tool Bindings ──
+# ── Folder Upload ──
 
-@router.post("/{skill_id}/tools", response_model=SkillToolBindResponse, status_code=201)
-async def bind_tool(
-    skill_id: str,
-    data: SkillToolBindRequest,
+@router.post("/upload", response_model=SkillResponse, status_code=201)
+async def upload_folder(
+    files: list[UploadFile] = File(...),
+    paths: list[str] = Form(...),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bind an MCP tool to a skill."""
-    # Verify skill exists
-    skill = await db.get(Skill, skill_id)
+    """Upload a skill folder (multipart with webkitRelativePath).
+
+    Each file is accompanied by a 'paths' entry containing its relative path
+    (e.g. 'my-skill/SKILL.md', 'my-skill/scripts/utils.py').
+    """
+    if not files or not paths or len(files) != len(paths):
+        raise HTTPException(400, "文件和路径不匹配")
+
+    # Extract top-level folder name from first path
+    first_path = paths[0]
+    parts = first_path.replace("\\", "/").split("/", 1)
+    if len(parts) < 2:
+        raise HTTPException(400, "路径格式错误，应包含顶层文件夹名")
+
+    raw_folder_name = parts[0]
+    folder_name = sanitize_folder_name(raw_folder_name)
+
+    # Check folder doesn't exist
+    skill_dir = get_skill_dir(folder_name)
+    if skill_dir.exists():
+        raise HTTPException(400, f"Skill 文件夹 '{folder_name}' 已存在")
+
+    # Collect files: {relative_path: content}
+    file_map = {}
+    has_skill_md = False
+    for upload_file, rel_path in zip(files, paths):
+        # Strip top-level folder name from path
+        path_parts = rel_path.replace("\\", "/").split("/", 1)
+        if len(path_parts) < 2:
+            continue  # Skip the top-level folder itself
+        rel = path_parts[1]
+
+        if rel.upper() == "SKILL.MD":
+            has_skill_md = True
+
+        content = await upload_file.read()
+        file_map[rel] = content
+
+    if not has_skill_md:
+        raise HTTPException(400, "上传的文件夹必须包含 SKILL.md")
+
+    # Write files to disk
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    for rel_path, content in file_map.items():
+        target = (skill_dir / rel_path).resolve()
+        # Security: prevent path traversal
+        if not str(target).startswith(str(skill_dir.resolve())):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        else:
+            target.write_text(content, encoding="utf-8")
+
+    # Parse SKILL.md and create DB index
+    skill_md_content = read_skill_md(folder_name)
+    parsed = parse_skill_md(skill_md_content)
+
+    skill = Skill(
+        tenant_id=current_user.tenant_id,
+        folder_name=folder_name,
+        name=parsed["name"] or folder_name,
+        description=(parsed["description"] or "")[:500],
+        is_active=parsed["is_active"],
+    )
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+
+    return _skill_to_response(skill, include_content=True)
+
+
+@router.post("/upload-zip", response_model=SkillResponse, status_code=201)
+async def upload_zip(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a skill as a ZIP file. Extracts and creates folder + DB index."""
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "请上传 .zip 文件")
+
+    zip_bytes = await file.read()
+    if len(zip_bytes) > 50 * 1024 * 1024:  # 50MB limit
+        raise HTTPException(400, "ZIP 文件过大（超过 50MB）")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "无效的 ZIP 文件")
+
+    # Security: check for path traversal
+    for name in zf.namelist():
+        if ".." in name or name.startswith("/"):
+            raise HTTPException(400, f"ZIP 包含非法路径: {name}")
+
+    # Determine top-level folder name
+    names = zf.namelist()
+    top_dirs = set()
+    for name in names:
+        parts = name.split("/", 1)
+        if parts[0]:
+            top_dirs.add(parts[0])
+
+    if len(top_dirs) != 1:
+        raise HTTPException(400, "ZIP 应包含单个顶层文件夹")
+
+    raw_folder_name = top_dirs.pop()
+    folder_name = sanitize_folder_name(raw_folder_name)
+
+    # Check folder doesn't exist
+    skill_dir = get_skill_dir(folder_name)
+    if skill_dir.exists():
+        raise HTTPException(400, f"Skill 文件夹 '{folder_name}' 已存在")
+
+    # Extract
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    has_skill_md = False
+    for name in names:
+        if name.endswith("/"):
+            continue
+        parts = name.split("/", 1)
+        if len(parts) < 2:
+            continue
+        rel = parts[1]
+        if rel.upper() == "SKILL.MD":
+            has_skill_md = True
+
+        target = (skill_dir / rel).resolve()
+        if not str(target).startswith(str(skill_dir.resolve())):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(zf.read(name))
+
+    if not has_skill_md:
+        delete_skill_folder(folder_name)
+        raise HTTPException(400, "ZIP 包必须包含 SKILL.md")
+
+    # Parse SKILL.md and create DB index
+    skill_md_content = read_skill_md(folder_name)
+    parsed = parse_skill_md(skill_md_content)
+
+    skill = Skill(
+        tenant_id=current_user.tenant_id,
+        folder_name=folder_name,
+        name=parsed["name"] or folder_name,
+        description=(parsed["description"] or "")[:500],
+        is_active=parsed["is_active"],
+    )
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+
+    return _skill_to_response(skill, include_content=True)
+
+
+# ── Resource Management ──
+
+@router.get("/{skill_id}/resources", response_model=ResourceListResponse)
+async def list_resources(
+    skill_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all resource files in a skill folder."""
+    skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "技能不存在")
 
-    # Verify MCP server exists
-    server = await db.get(MCPServer, data.mcp_server_id)
-    if not server:
-        raise HTTPException(404, "MCP 服务不存在")
-
-    # Check duplicate
-    existing = await db.execute(
-        select(SkillTool).where(
-            (SkillTool.skill_id == skill_id)
-            & (SkillTool.tool_name == data.tool_name)
-            & (SkillTool.mcp_server_id == data.mcp_server_id)
-        )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(400, "该工具已绑定到此技能")
-
-    st = SkillTool(
-        id=_gen_id(),
-        skill_id=skill_id,
-        tool_name=data.tool_name,
-        mcp_server_id=data.mcp_server_id,
-        config_json=data.config_json,
-    )
-    db.add(st)
-    await db.commit()
-    await db.refresh(st)
-
-    return SkillToolBindResponse(
-        id=st.id,
-        skill_id=st.skill_id,
-        tool_name=st.tool_name,
-        mcp_server_id=st.mcp_server_id,
+    files = list_resource_files(skill.folder_name)
+    return ResourceListResponse(
+        scripts=[ResourceFileInfo(**f) for f in files.get("scripts", [])],
+        data=[ResourceFileInfo(**f) for f in files.get("data", [])],
+        references=[ResourceFileInfo(**f) for f in files.get("references", [])],
+        _root=[ResourceFileInfo(**f) for f in files.get("_root", [])],
     )
 
 
-@router.delete("/{skill_id}/tools/{tool_id}")
-async def unbind_tool(
+@router.post("/{skill_id}/resources", response_model=ResourceUploadResponse, status_code=201)
+async def upload_resource(
     skill_id: str,
-    tool_id: str,
+    subdir: str = Form(...),
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove a tool binding from a skill."""
-    result = await db.execute(
-        select(SkillTool).where(
-            (SkillTool.id == tool_id) & (SkillTool.skill_id == skill_id)
-        )
-    )
-    st = result.scalar_one_or_none()
-    if not st:
-        raise HTTPException(404, "工具绑定不存在")
-    await db.delete(st)
-    await db.commit()
-    return {"status": "unbound"}
+    """Upload a resource file to a skill's subdirectory (scripts/data/references)."""
+    skill = await get_skill_by_id(db, skill_id)
+    if not skill:
+        raise HTTPException(404, "技能不存在")
+
+    content = await file.read()
+    try:
+        path = save_resource_file(skill.folder_name, subdir, file.filename or "unnamed", content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Clear script cache if uploading to scripts/
+    if subdir == "scripts":
+        clear_script_cache(skill.folder_name)
+
+    return ResourceUploadResponse(path=path, size=len(content))
+
+
+@router.delete("/{skill_id}/resources/{subdir}/{filename:path}")
+async def delete_resource(
+    skill_id: str,
+    subdir: str,
+    filename: str,
+    current_user: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a resource file from a skill's subdirectory."""
+    skill = await get_skill_by_id(db, skill_id)
+    if not skill:
+        raise HTTPException(404, "技能不存在")
+
+    try:
+        delete_resource_file(skill.folder_name, subdir, filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if subdir == "scripts":
+        clear_script_cache(skill.folder_name)
+
+    return {"status": "deleted"}
+
+
+# ── Sync ──
+
+@router.post("/sync", response_model=SyncResponse)
+async def sync_skills(
+    current_user: User = Depends(get_current_staff),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync filesystem skills to DB index.
+
+    - Adds DB rows for folders not in DB
+    - Updates name/description/is_active from SKILL.md
+    - Deactivates DB rows if folder is missing
+    """
+    result = await sync_skills_to_db(db)
+    return SyncResponse(**result)

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     upload_dir: Path = data_dir / "uploads"
     sqlite_path: Path = data_dir / "sqlite" / "erag.db"
     chroma_path: Path = data_dir / "chroma"
+    skills_dir: Path = data_dir / "skills"
 
     # --- Embedding ---
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
