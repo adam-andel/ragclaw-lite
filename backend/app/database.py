@@ -71,6 +71,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('skill_folder_refactor', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "cron_jobs" not in applied:
+        _migrate_cron_jobs(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('cron_jobs', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -390,6 +395,54 @@ print("CSV 已生成")
 - 避免生成超大文件或耗时操作，防止超时
 - 保存到当前目录即可，工具会自动分配 workspace 子目录
 """
+
+
+def _migrate_cron_jobs(raw):
+    """Create cron job tables for scheduled agent tasks."""
+    print("[migrate] Running cron_jobs...")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS cron_jobs (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            user_id TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            cron_expr TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'UTC',
+            max_runs INTEGER,
+            run_count INTEGER NOT NULL DEFAULT 0,
+            task_content TEXT NOT NULL,
+            kb_id TEXT,
+            skill_id TEXT,
+            status TEXT NOT NULL DEFAULT 'scheduled',
+            next_run_at TEXT,
+            last_run_at TEXT,
+            last_result TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_cron_jobs_tenant ON cron_jobs(tenant_id)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_cron_jobs_user ON cron_jobs(user_id)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run_at)")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS cron_job_runs (
+            id TEXT PRIMARY KEY,
+            cron_job_id TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            output TEXT,
+            result_json TEXT,
+            error TEXT
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_cron_job_runs_job ON cron_job_runs(cron_job_id)")
+
+    print("[migrate] cron_jobs done")
 
 
 def _migrate_parser_plugin_state(raw):

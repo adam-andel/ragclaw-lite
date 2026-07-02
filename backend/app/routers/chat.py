@@ -16,9 +16,11 @@ from app.database import get_db, async_session
 from app.models.user import User
 from app.models.conversation import Conversation, Message
 from app.models.document import Document, Chunk
+from app.models.cron_job import CronJob, CronJobStatus
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.llm_semaphore import llm_limiter
+from app.services.cron_parser import try_parse_cron_payload, compute_next_run
 from app.schemas.chat import (
     ChatRequest,
     ConversationResponse,
@@ -241,6 +243,25 @@ async def chat_stream(
                     for c in collected_citations:
                         enqueue("citation", {"citation": c})
 
+                    # Detect and persist cron jobs created via natural language.
+                    cron_payload = try_parse_cron_payload(collected_content)
+                    if cron_payload:
+                        cron_job = await _create_cron_job_from_payload(
+                            db=db,
+                            payload=cron_payload,
+                            user=current_user,
+                            kb_id=request.kb_id,
+                            skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", ""),
+                        )
+                        collected_content = (
+                            f"已创建定时任务「{cron_job.name}」。\n"
+                            f"执行计划：{cron_job.cron_expr}\n"
+                            f"下次执行时间：{cron_job.next_run_at or '已完成'}\n"
+                            f"任务内容：{cron_job.task_content}"
+                        )
+                        # Re-emit the confirmation as a single token event.
+                        enqueue("token", {"content": "\n\n" + collected_content})
+
                     # Background: cache + memory
                     asyncio.create_task(_store_memory_and_cache(
                         query=request.query,
@@ -405,3 +426,32 @@ async def _store_memory_and_cache(
             )
         except Exception:
             pass
+
+
+async def _create_cron_job_from_payload(
+    db: AsyncSession,
+    payload: dict,
+    user: User,
+    kb_id: str,
+    skill_id: str,
+) -> CronJob:
+    """Persist a cron job parsed from an LLM response."""
+    cron_job = CronJob(
+        id=str(uuid.uuid4()),
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        name=payload["name"],
+        description=payload.get("description"),
+        cron_expr=payload["cron_expr"],
+        timezone="UTC",
+        max_runs=payload.get("max_runs"),
+        task_content=payload["task_content"],
+        kb_id=kb_id or None,
+        skill_id=skill_id or None,
+        status=CronJobStatus.SCHEDULED,
+        next_run_at=compute_next_run(payload["cron_expr"], "UTC"),
+    )
+    db.add(cron_job)
+    await db.commit()
+    await db.refresh(cron_job)
+    return cron_job

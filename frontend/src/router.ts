@@ -86,6 +86,12 @@ const router = createRouter({
       component: () => import('@/views/McpServersView.vue'),
       meta: { title: 'MCP 服务', requiresAuth: true },
     },
+    {
+      path: '/cron-jobs',
+      name: 'cron-jobs',
+      component: () => import('@/views/CronJobsView.vue'),
+      meta: { title: '定时任务', requiresAuth: true },
+    },
   ],
 })
 

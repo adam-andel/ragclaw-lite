@@ -123,7 +123,27 @@ class EragAgentGraph:
             "你是一个企业知识库助手。根据提供的文档内容回答问题。",
         )
 
-        messages = [{"role": "system", "content": system_prompt}]
+        cron_rule = (
+            "\n\n## Scheduled Task Rule\n\n"
+            "If the user wants to create a recurring or one-time scheduled task "
+            "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer directly. "
+            "Instead output ONLY a single JSON object with this exact shape:\n"
+            '{\n'
+            '  "type": "cron",\n'
+            '  "name": "<short task name>",\n'
+            '  "cron_expr": "<Linux crontab 5-field expression>",\n'
+            '  "max_runs": <integer or null for infinite>,\n'
+            '  "task_content": "<the exact task to execute>",\n'
+            '  "description": "<optional description>"\n'
+            '}\n'
+            "Examples:\n"
+            '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
+            '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
+            '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
+            "Do not wrap the JSON in markdown code fences."
+        )
+
+        messages = [{"role": "system", "content": system_prompt + cron_rule}]
 
         # Conversation history
         history = state.get("conversation_history", [])

@@ -273,3 +273,73 @@ export interface PluginListResponse {
 export interface PluginDisablePayload {
   reason?: string
 }
+
+// ---- Cron Jobs ----
+export interface CronJob {
+  id: string
+  tenant_id?: string | null
+  user_id?: string | null
+  name: string
+  description?: string | null
+  cron_expr: string
+  timezone: string
+  max_runs?: number | null
+  run_count: number
+  task_content: string
+  kb_id?: string | null
+  skill_id?: string | null
+  status: 'scheduled' | 'running' | 'paused' | 'completed' | 'failed'
+  next_run_at?: string | null
+  last_run_at?: string | null
+  last_result?: string | null
+  last_error?: string | null
+  created_at: string
+  updated_at?: string | null
+}
+
+export interface CronJobCreatePayload {
+  name: string
+  description?: string
+  cron_expr: string
+  timezone?: string
+  max_runs?: number | null
+  task_content: string
+  kb_id?: string | null
+  skill_id?: string | null
+}
+
+export interface CronJobUpdatePayload {
+  name?: string
+  description?: string
+  cron_expr?: string
+  timezone?: string
+  max_runs?: number | null
+  task_content?: string
+  kb_id?: string | null
+  skill_id?: string | null
+}
+
+export interface CronJobListResponse {
+  items: CronJob[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface CronJobRun {
+  id: string
+  cron_job_id: string
+  started_at?: string | null
+  finished_at?: string | null
+  status: string
+  output?: string | null
+  result_json?: string | null
+  error?: string | null
+}
+
+export interface CronJobRunListResponse {
+  items: CronJobRun[]
+  total: number
+  page: number
+  size: number
+}
