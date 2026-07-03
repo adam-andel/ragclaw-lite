@@ -1,78 +1,22 @@
-"""Run an isolated agent session for a scheduled cron job."""
+"""Run cron jobs through the LangGraph ToolNode-based cron subgraph."""
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from app.database import async_session
 from app.models.cron_job import CronJob, CronJobRun, CronJobStatus
-from app.models.user import User
-from app.services.agent_graph import erag_agent_graph
-from app.services.agent_nodes import _extract_download_links_from_state
-from app.services.cron_parser import (
-    build_cron_query, extract_cron_result, remove_cron_result_marker, compute_next_run,
-)
-from app.services.llm_client import llm_client
+from app.services.cron_graph import run_cron_execution_subgraph
+from app.services.cron_parser import compute_next_run
 
 logger = logging.getLogger("erag.cron")
 
 
-async def run_cron_agent(job: CronJob) -> str:
-    """Execute a cron job in an isolated agent session.
-
-    Reuses the same LangGraph flow and LLM client as chat.py but uses a
-    non-streaming completion. The job payload is wrapped with a result marker
-    so the scheduler can extract the execution summary afterwards.
-    """
-    tenant_id = None
-    if job.user_id:
-        async with async_session() as db:
-            user = await db.get(User, job.user_id)
-            if user:
-                tenant_id = user.tenant_id
-
-    initial_state = {
-        "query": build_cron_query(job.task_content, job.id),
-        "kb_id": job.kb_id or "",
-        "skill_id": job.skill_id or "",
-        "user_id": job.user_id or "",
-        "tenant_id": tenant_id or "",
-        "conversation_history": [],
-        "active_skill": None,
-        "available_tools": [],
-        "rag_context": "",
-        "citations": [],
-        "memory_context": "",
-        "tool_calls": None,
-        "tool_round": 0,
-        "tool_results": [],
-        "tool_messages": [],
-        "cache_hit": False,
-        "final_answer": "",
-        "retrieval_ms": 0,
-    }
-
-    state = await erag_agent_graph.run(initial_state)
-
-    messages = erag_agent_graph.build_generation_messages(state)
-
-    response = await llm_client.chat(messages=messages, temperature=0.3, max_tokens=4096)
-
-    # Append system-generated download links from tool results, matching chat.py behavior.
-    download_links = _extract_download_links_from_state(state)
-    if download_links:
-        response = response + download_links
-
-    return response
-
-
 async def execute_and_record_cron_job(cron_job_id: str) -> dict:
-    """Run a cron job, persist a run log, and update the job state.
+    """Run a cron job through the ToolNode subgraph and persist the result.
 
-    This is the shared execution path used by both the scheduler and the
-    manual "run now" endpoint.
-
-    Returns a summary dict with status, result, and parsed marker.
+    The subgraph itself calls record_cron_result_tool to update CronJob.last_result.
+    This function additionally creates a CronJobRun audit log and manages
+    next_run_at / status transitions.
     """
     async with async_session() as db:
         job = await db.get(CronJob, cron_job_id)
@@ -89,20 +33,15 @@ async def execute_and_record_cron_job(cron_job_id: str) -> dict:
 
         output = None
         try:
-            output = await run_cron_agent(job)
-            marker = extract_cron_result(output)
-
+            output = await run_cron_execution_subgraph(job)
             run.status = "success"
             run.output = output
-            run.result_json = json.dumps(marker, ensure_ascii=False) if marker else None
             run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
+            # Refresh job because the subgraph updated last_result via tool.
+            await db.refresh(job)
             job.run_count += 1
             job.last_run_at = run.finished_at
-            if marker:
-                job.last_result = marker.get("cron_result", "")[:2000]
-            else:
-                job.last_result = remove_cron_result_marker(output)[:2000]
             job.last_error = None
 
             if job.max_runs and job.run_count >= job.max_runs:
@@ -112,7 +51,7 @@ async def execute_and_record_cron_job(cron_job_id: str) -> dict:
                 job.next_run_at = compute_next_run(job.cron_expr, job.timezone)
                 job.status = CronJobStatus.SCHEDULED
             else:
-                # Manual run from paused/failed state: keep paused unless scheduler enables it.
+                # Manual run from paused/failed state: keep previous status.
                 job.status = previous_status if previous_status != CronJobStatus.RUNNING else CronJobStatus.SCHEDULED
 
         except Exception as e:
