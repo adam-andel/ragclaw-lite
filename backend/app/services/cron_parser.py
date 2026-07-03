@@ -1,4 +1,4 @@
-"""Parse LLM cron payloads, execution result markers, and compute next runs."""
+"""Parse LLM cron payloads and compute next run times."""
 
 import json
 import logging
@@ -9,10 +9,6 @@ import pytz
 from croniter import croniter
 
 logger = logging.getLogger("erag.cron")
-
-_CRON_RESULT_RE = re.compile(
-    r'\{\s*"cron_id"\s*:\s*"([^"]+)"\s*,\s*"cron_result"\s*:\s*"([^"]*)"\s*\}'
-)
 
 
 def _strip_code_fences(text: str) -> str:
@@ -77,36 +73,6 @@ def try_parse_cron_payload(text: str) -> dict | None:
             payload["max_runs"] = None
 
     return payload
-
-
-def extract_cron_result(text: str) -> dict | None:
-    """Extract the execution result marker from an LLM output.
-
-    Marker format:
-        {"cron_id": "<uuid>", "cron_result": "<summary>"}
-    """
-    match = _CRON_RESULT_RE.search(text)
-    if not match:
-        return None
-    return {
-        "cron_id": match.group(1),
-        "cron_result": match.group(2),
-    }
-
-
-def remove_cron_result_marker(text: str) -> str:
-    """Return the text with the cron result marker line removed."""
-    return _CRON_RESULT_RE.sub("", text).strip()
-
-
-def build_cron_query(task_content: str, cron_job_id: str) -> str:
-    """Append the result-capture marker to a task prompt."""
-    return (
-        f"{task_content}\n\n"
-        "When you finish the task, append a final line exactly as this JSON object "
-        "(no markdown fences, no extra text in the same line):\n"
-        f'{{"cron_id": "{cron_job_id}", "cron_result": "<concise summary of the result>"}}'
-    )
 
 
 def compute_next_run(cron_expr: str, tz_name: str = "UTC") -> datetime | None:
