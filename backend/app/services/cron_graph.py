@@ -100,7 +100,7 @@ class _CreateCronJobTool(BaseTool):
                 "name": job.name,
                 "cron_expr": job.cron_expr,
                 "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
-                "message": f"已创建定时任务「{job.name}」，计划：{job.cron_expr}",
+                "message": f"已创建定时任务「{job.name}」，可在定时任务管理页查看。",
             }
             return json.dumps(result, ensure_ascii=False)
 
@@ -415,8 +415,8 @@ async def _create_cron_job_text_fallback(
         next_run = result_data.get("next_run_at", "unknown")
         return (
             f"已创建定时任务「{result_data.get('name', '')}」，"
-            f"计划：{result_data.get('cron_expr', '')}，"
-            f"下次执行时间：{next_run}。"
+            f"下次执行时间：{next_run}，"
+            f"可在定时任务管理页查看。"
         )
     except json.JSONDecodeError:
         return "定时任务已创建。"
