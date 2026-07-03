@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag, NButton, NIcon, NTooltip, NModal } from 'naive-ui'
+import { NTag, NButton, NIcon, NModal } from 'naive-ui'
 import { Copy, Refresh } from '@vicons/ionicons5'
-import type { Citation, ChatMessage } from '@/types'
+import type { ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
 
 import { useAuthStore } from '@/stores/auth'
@@ -88,10 +88,8 @@ function regenerate(msg: ChatMessage) {
 
 // --- Citation modal state ---
 const showCitationModal = ref(false)
-const activeCitation = ref<Citation | null>(null)
 
-function openCitation(c: Citation) {
-  activeCitation.value = c
+function openAllCitations() {
   showCitationModal.value = true
 }
 
@@ -135,6 +133,7 @@ onBeforeUnmount(() => {
     <div class="message-avatar">
       {{ message.role === 'user' ? '👤' : '🤖' }}
     </div>
+    <div class="message-col">
     <div class="message-body">
       <div class="message-meta">
         <span class="role-label">{{ message.role === 'user' ? '你' : 'ERAG' }}</span>
@@ -164,49 +163,54 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="message.citations.length > 0 && !isStreaming" class="citations">
-        <div class="citations-title">📎 引用来源</div>
-        <div v-for="(c, i) in message.citations" :key="i" class="citation-row">
-          <NTooltip trigger="hover" placement="top" :width="340">
-            <template #trigger>
-              <button class="citation-chip" @click="openCitation(c)">
-                <NTag size="small" type="info">#{{ i + 1 }}</NTag>
-                <span class="citation-doc">{{ c.doc_name }}</span>
-                <span class="citation-score">{{ (c.score * 100).toFixed(0) }}%</span>
-              </button>
-            </template>
-            <div class="citation-tooltip">
-              <div class="citation-source">{{ c.doc_name }}{{ c.heading ? ' · ' + c.heading : '' }}</div>
-              <div class="citation-snippet">{{ (c.content_snippet || '').slice(0, 200) }}</div>
-            </div>
-          </NTooltip>
+        <div class="citations-title">
+          引用来源 · {{ message.citations.length }}
+          <NButton text size="tiny" @click="openAllCitations" class="citations-expand">查看全部</NButton>
         </div>
+        <NButton
+          v-for="(c, i) in message.citations"
+          :key="i"
+          size="tiny"
+          secondary
+          class="citation-chip-btn"
+          @click="openAllCitations"
+        >
+          <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
+          <span class="citation-doc">{{ c.doc_name }}</span>
+          <span class="citation-score">{{ (c.score * 100).toFixed(0) }}%</span>
+        </NButton>
       </div>
 
-      <!-- Citation 全屏查看 Modal -->
-      <NModal v-model:show="showCitationModal" preset="card" title="引用详情" style="max-width: 680px;">
-        <template v-if="activeCitation">
-          <div class="citation-modal-body">
-            <div class="cm-row"><span class="cm-label">文档</span><span>{{ activeCitation.doc_name }}</span></div>
-            <div v-if="activeCitation.heading" class="cm-row"><span class="cm-label">章节</span><span>{{ activeCitation.heading }}</span></div>
-            <div class="cm-row"><span class="cm-label">Chunk #</span><span>{{ activeCitation.chunk_index }}</span></div>
-            <div v-if="activeCitation.page != null" class="cm-row"><span class="cm-label">页码</span><span>{{ activeCitation.page }}</span></div>
-            <div class="cm-row"><span class="cm-label">相似度</span><span>{{ (activeCitation.score * 100).toFixed(1) }}%</span></div>
-            <div class="cm-snippet-label">Chunk 全文</div>
-            <pre class="cm-snippet">{{ activeCitation.content_snippet }}</pre>
+      <!-- 全部引用摘要 Modal -->
+      <NModal v-model:show="showCitationModal" preset="card" title="引用来源详情" style="max-width: 720px; max-height: 85vh;">
+        <div class="citation-modal-body">
+          <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
+            <div class="citation-item-header">
+              <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
+              <span class="citation-item-name">{{ c.doc_name }}</span>
+              <span class="citation-item-score">{{ (c.score * 100).toFixed(0) }}%</span>
+            </div>
+            <div class="citation-item-meta">
+              <span v-if="c.heading">📂 {{ c.heading }}</span>
+              <span>Chunk #{{ c.chunk_index }}</span>
+              <span v-if="c.page != null">第{{ c.page }}页</span>
+            </div>
+            <pre class="citation-item-snippet">{{ c.content_snippet }}</pre>
           </div>
-        </template>
+        </div>
       </NModal>
 
-      <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
-        <NButton text size="tiny" @click="copyText(message.content)">
-          <template #icon><NIcon><Copy /></NIcon></template>
-          复制
-        </NButton>
-        <NButton text size="tiny" @click="regenerate(message)">
-          <template #icon><NIcon><Refresh /></NIcon></template>
-          重新生成
-        </NButton>
-      </div>
+    </div>
+    <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
+      <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
+        <template #icon><NIcon><Copy /></NIcon></template>
+        复制
+      </NButton>
+      <NButton text size="tiny" @click="regenerate(message)" class="msg-action-btn">
+        <template #icon><NIcon><Refresh /></NIcon></template>
+        重新生成
+      </NButton>
+    </div>
     </div>
   </div>
 </template>
@@ -269,7 +273,13 @@ onBeforeUnmount(() => {
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
+.message-col {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+}
 .message-wrapper.user { flex-direction: row-reverse; }
+.message-wrapper.user .message-col { align-items: flex-end; }
 .message-avatar {
   width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
@@ -356,62 +366,62 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--color-border);
   font-size: var(--text-sm);
 }
-.citations-title { font-weight: 600; margin-bottom: 6px; }
-.citation-row { padding: 2px 0; }
-.citation-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 6px 2px 2px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  background: none;
-  cursor: pointer;
-  font-size: inherit;
-  color: var(--color-text-muted);
-  transition: background 0.12s, border-color 0.12s;
+.citations-title {
+  font-weight: 600; margin-bottom: 6px;
+  display: flex; align-items: center; gap: var(--space-2);
 }
-.citation-chip:hover {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary);
+.citations-expand { font-size: var(--text-xs); }
+.citation-chip-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 2px 4px 2px 0;
+  font-size: var(--text-sm);
 }
 .citation-doc { font-weight: 500; color: var(--color-text); }
 .citation-score { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
 
-.citation-tooltip { font-size: var(--text-sm); line-height: 1.5; }
-.citation-source { font-weight: 600; margin-bottom: 4px; }
-.citation-snippet {
-  color: var(--color-text-muted);
-  max-height: 160px; overflow-y: auto;
-  white-space: pre-wrap; word-break: break-word;
-  border-left: 2px solid var(--color-primary);
-  padding-left: 8px;
+/* —— Citation Modal —— */
+.citation-modal-body {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  max-height: calc(85vh - 120px); overflow-y: auto;
+  padding-right: 4px;
 }
-
-.citation-modal-body { font-size: var(--text-sm); }
-.cm-row {
-  display: flex; gap: var(--space-2);
-  padding: 4px 0;
-}
-.cm-label { font-weight: 600; color: var(--color-text-muted); min-width: 60px; }
-.cm-snippet-label { font-weight: 600; margin: var(--space-3) 0 6px; }
-.cm-snippet {
-  background: var(--color-primary-soft);
+.citation-item {
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+.citation-item-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 6px;
+}
+.citation-item-name { font-weight: 600; }
+.citation-item-score { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
+.citation-item-meta {
+  font-size: var(--text-xs); color: var(--color-text-muted);
+  display: flex; gap: var(--space-3);
+  margin-bottom: 8px;
+}
+.citation-item-snippet {
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
   padding: var(--space-3);
   font-size: var(--text-sm); line-height: 1.7;
   white-space: pre-wrap; word-break: break-word;
-  max-height: 360px; overflow-y: auto;
+  margin: 0;
 }
 
 .message-actions {
   display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
-  opacity: 0;
-  transition: opacity 0.15s ease;
+  gap: var(--space-1);
+  margin-top: 4px;
+  padding: 0 4px;
 }
-.message-body:hover .message-actions {
-  opacity: 1;
+.msg-action-btn {
+  font-size: var(--text-xs) !important;
+  color: var(--color-text-muted) !important;
+}
+.msg-action-btn:hover {
+  color: var(--color-text) !important;
 }
 </style>
