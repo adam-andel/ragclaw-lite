@@ -6,7 +6,7 @@ import {
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
   NIcon, NModal, NCard,
 } from 'naive-ui'
-import { CloudUpload, Search, Trash, DocumentText } from '@vicons/ionicons5'
+import { CloudUpload, Search, Trash, DocumentText, Add } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -31,6 +31,9 @@ const filterType = ref<string | null>(null)
 
 // Supported extensions — loaded from /documents/supported-types at mount time
 const supportedExts = ref<string[]>([])
+
+// Upload modal
+const showUploadModal = ref(false)
 
 // Upload state
 const uploading = ref(false)
@@ -165,6 +168,10 @@ function addFiles(fileList: FileList) {
 
 function removeFile(index: number) {
   uploadFiles.value.splice(index, 1)
+}
+
+function openUploadModal() {
+  showUploadModal.value = true
 }
 
 async function handleUpload() {
@@ -329,35 +336,52 @@ async function loadSupportedTypes() {
         <h2>文档管理</h2>
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
+      <NButton type="primary" @click="openUploadModal">
+        <template #icon><NIcon><Add /></NIcon></template>
+        上传文件
+      </NButton>
     </div>
 
-    <!-- Upload Zone -->
-    <div :class="['upload-zone', { dragover: dragOver }]"
-      @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
-      @click="triggerFileSelect"
+    <!-- Upload Modal -->
+    <NModal v-model:show="showUploadModal" preset="card" title="上传文件"
+      style="width: 90vw; max-width: 520px"
     >
-      <div class="upload-zone-content">
-        <NIcon size="32" color="var(--color-primary)"><CloudUpload /></NIcon>
-        <p>点击或拖拽文件到此处上传</p>
-        <span class="upload-hint">{{ supportedFormatsHint }}</span>
-      </div>
-    </div>
+      <div class="upload-modal-body">
+        <!-- Drop zone -->
+        <div :class="['upload-zone', { dragover: dragOver }]"
+          @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
+          @click="triggerFileSelect"
+        >
+          <div class="upload-zone-content">
+            <NIcon size="36" color="var(--color-primary)"><CloudUpload /></NIcon>
+            <p>点击或拖拽文件到此处上传</p>
+            <span class="upload-hint">{{ supportedFormatsHint }}</span>
+          </div>
+        </div>
 
-    <!-- File queue -->
-    <div v-if="uploadFiles.length > 0" class="upload-queue">
-      <div class="upload-queue-header">
-        <span>待上传：{{ uploadFiles.length }} 个文件</span>
-        <NSpace>
-          <NButton size="small" @click="uploadFiles = []">清空</NButton>
-          <NButton type="primary" size="small" :loading="uploading" @click="handleUpload">开始上传</NButton>
+        <!-- File queue -->
+        <div v-if="uploadFiles.length > 0" class="upload-queue">
+          <div class="upload-queue-header">
+            <span>待上传：{{ uploadFiles.length }} 个文件</span>
+            <NButton size="small" @click="uploadFiles = []">清空</NButton>
+          </div>
+          <div v-for="(f, i) in uploadFiles" :key="i" class="upload-queue-item">
+            <span>📄 {{ f.name }} ({{ formatSize(f.size) }})</span>
+            <NButton text size="tiny" type="error" @click="removeFile(i)">移除</NButton>
+          </div>
+          <NProgress v-if="uploading" type="line" :percentage="uploadProgress" :height="16" :border-radius="3" style="margin-top:8px" />
+        </div>
+      </div>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showUploadModal = false" :disabled="uploading">取消</NButton>
+          <NButton type="primary" :loading="uploading" :disabled="uploadFiles.length === 0" @click="handleUpload">
+            {{ uploading ? '上传中…' : '开始上传' }}
+          </NButton>
         </NSpace>
-      </div>
-      <div v-for="(f, i) in uploadFiles" :key="i" class="upload-queue-item">
-        <span>📄 {{ f.name }} ({{ formatSize(f.size) }})</span>
-        <NButton text size="tiny" type="error" @click="removeFile(i)">移除</NButton>
-      </div>
-      <NProgress v-if="uploading" type="line" :percentage="uploadProgress" :height="16" :border-radius="3" />
-    </div>
+      </template>
+    </NModal>
 
     <!-- Filters -->
     <div class="dm-filters">
@@ -571,13 +595,14 @@ async function loadSupportedTypes() {
   border: 1px solid var(--color-primary);
 }
 
-/* Upload Zone */
-.upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all .2s; margin-bottom: 16px; }
+/* Upload Modal */
+.upload-modal-body { display: flex; flex-direction: column; gap: 12px; }
+.upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
 .upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(88,166,255,0.04); }
-.upload-zone-content p { margin: 8px 0 4px; font-weight: 500; }
+.upload-zone-content p { margin: 10px 0 4px; font-weight: 500; }
 .upload-hint { font-size: 0.8rem; color: var(--color-text-muted); }
 
-.upload-queue { margin-bottom: 16px; padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }
+.upload-queue { padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }
 .upload-queue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 500; }
 .upload-queue-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.85rem; }
 
