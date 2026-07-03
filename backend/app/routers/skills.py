@@ -21,7 +21,7 @@ from app.schemas.skill import (
 from app.services.auth import get_current_staff, get_current_user
 from app.services.skill_manager import (
     get_skill_dir, get_skill_md_path, read_skill_md, parse_skill_md,
-    create_skill_folder, update_skill_md, delete_skill_folder,
+    create_skill_folder, update_skill_md, delete_skill_folder, replace_skill_folder,
     list_resource_files, save_resource_file, delete_resource_file,
     scan_skills_dir, sanitize_folder_name, build_skill_md, sync_skills_to_db,
     get_skill_by_id,
