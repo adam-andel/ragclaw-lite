@@ -163,22 +163,16 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="message.citations.length > 0 && !isStreaming" class="citations">
-        <div class="citations-title">
-          引用来源 · {{ message.citations.length }}
-          <NButton text size="tiny" @click="openAllCitations" class="citations-expand">查看全部</NButton>
-        </div>
-        <NButton
-          v-for="(c, i) in message.citations"
-          :key="i"
-          size="tiny"
-          secondary
-          class="citation-chip-btn"
+        <div
+          class="citations-title"
           @click="openAllCitations"
+          role="button"
+          tabindex="0"
+          @keydown.enter.prevent="openAllCitations"
+          @keydown.space.prevent="openAllCitations"
         >
-          <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
-          <span class="citation-doc">{{ c.doc_name }}</span>
-          <span class="citation-score">{{ (c.score * 100).toFixed(0) }}%</span>
-        </NButton>
+          引用来源 · {{ message.citations.length }}
+        </div>
       </div>
 
       <!-- 全部引用摘要 Modal -->
@@ -195,7 +189,7 @@ onBeforeUnmount(() => {
               <span>Chunk #{{ c.chunk_index }}</span>
               <span v-if="c.page != null">第{{ c.page }}页</span>
             </div>
-            <pre class="citation-item-snippet">{{ c.content_snippet }}</pre>
+            <pre class="citation-item-snippet">{{ c.content || c.content_snippet }}</pre>
           </div>
         </div>
       </NModal>
@@ -369,8 +363,18 @@ onBeforeUnmount(() => {
 .citations-title {
   font-weight: 600; margin-bottom: 6px;
   display: flex; align-items: center; gap: var(--space-2);
+  cursor: pointer;
+  color: var(--color-text);
 }
-.citations-expand { font-size: var(--text-xs); }
+.citations-title:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+.citations-title:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 .citation-chip-btn {
   display: inline-flex; align-items: center; gap: 6px;
   margin: 2px 4px 2px 0;

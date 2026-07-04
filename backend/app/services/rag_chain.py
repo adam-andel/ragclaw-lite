@@ -27,6 +27,7 @@ def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
         citations.append({
             "doc_id": r.get("doc_id", ""), "doc_name": doc_name,
             "heading": heading, "page": r.get("page"),
+            "content": r["content"],
             "content_snippet": r["content"][:200], "score": round(r["fusion_score"], 4),
         })
     return "\n\n---\n\n".join(parts), citations

@@ -90,6 +90,7 @@ export interface Citation {
   chunk_index: number
   heading?: string
   page?: number
+  content?: string
   content_snippet: string
   score: number
 }

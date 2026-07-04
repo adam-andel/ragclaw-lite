@@ -16,6 +16,7 @@ class CitationSchema(BaseModel):
     doc_name: str
     heading: str | None = None
     page: int | None = None
+    content: str | None = None
     content_snippet: str = ""
     score: float
 
