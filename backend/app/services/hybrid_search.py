@@ -60,6 +60,7 @@ class HybridSearchService:
                 "doc_id": r["metadata"].get("doc_id", ""),
                 "doc_name": r["metadata"].get("filename", r["metadata"].get("doc_id", "")[:8]),
                 "heading": r["metadata"].get("heading", ""),
+                "chunk_index": r["metadata"].get("chunk_index", 0),
                 "page": r["metadata"].get("page"),
             }
 
@@ -77,6 +78,7 @@ class HybridSearchService:
                     "doc_id": r.get("doc_id", ""),
                     "doc_name": r.get("filename", r.get("doc_id", "")[:8]),
                     "heading": r.get("heading", ""),
+                    "chunk_index": r.get("chunk_index", 0),
                     "page": r.get("page"),
                 }
 

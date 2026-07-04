@@ -60,6 +60,9 @@ export const getDocumentStatus = (id: string) =>
 
 export const getDocumentChunks = (id: string) => client.get<ChunkItem[]>(`/documents/${id}/chunks`)
 
+export const getDocumentChunk = (id: string, chunkIndex: number) =>
+  client.get<ChunkItem>(`/documents/${id}/chunks/${chunkIndex}`)
+
 export const getDocumentKBs = (id: string) => client.get<string[]>(`/documents/${id}/kbs`)
 
 export const downloadDocument = (id: string) =>

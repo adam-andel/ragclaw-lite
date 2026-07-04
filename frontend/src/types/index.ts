@@ -87,11 +87,9 @@ export interface ChatMessage {
 export interface Citation {
   doc_id: string
   doc_name: string
-  chunk_index: number
+  chunk_index?: number
   heading?: string
   page?: number
-  content?: string
-  content_snippet: string
   score: number
 }
 

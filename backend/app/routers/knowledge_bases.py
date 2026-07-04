@@ -1,4 +1,4 @@
-﻿"""Knowledge Base CRUD API — with sharing support and m2m documents."""
+"""Knowledge Base CRUD API — with sharing support and m2m documents."""
 
 import asyncio
 import uuid
@@ -270,7 +270,7 @@ async def add_documents_to_kb(
             try:
                 bm25_data = [{
                     "id": c.id, "content": c.content, "doc_id": c.doc_id,
-                    "heading": c.heading or "", "page": c.page,
+                    "heading": c.heading or "", "chunk_index": c.chunk_index, "page": c.page,
                 } for c in chunks]
                 await loop.run_in_executor(None, bm25_index.build, kb_id, bm25_data)
             except Exception:

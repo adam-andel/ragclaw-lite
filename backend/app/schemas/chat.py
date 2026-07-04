@@ -14,10 +14,9 @@ class ChatRequest(BaseModel):
 class CitationSchema(BaseModel):
     doc_id: str
     doc_name: str
+    chunk_index: int | None = None
     heading: str | None = None
     page: int | None = None
-    content: str | None = None
-    content_snippet: str = ""
     score: float
 
 

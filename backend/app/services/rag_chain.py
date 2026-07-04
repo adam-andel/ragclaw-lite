@@ -23,12 +23,15 @@ def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
     for i, r in enumerate(retrieved):
         doc_name = r.get("doc_name", r.get("doc_id", "?")[:8])
         heading = r.get("heading", "") or ""
+        page = r.get("page")
+        if page == 0:
+            page = None
         parts.append(f"[{i+1}] {doc_name} {heading}\n{r['content']}")
         citations.append({
             "doc_id": r.get("doc_id", ""), "doc_name": doc_name,
-            "heading": heading, "page": r.get("page"),
-            "content": r["content"],
-            "content_snippet": r["content"][:200], "score": round(r["fusion_score"], 4),
+            "chunk_index": r.get("chunk_index", 0),
+            "heading": heading, "page": page,
+            "score": round(r["fusion_score"], 4),
         })
     return "\n\n---\n\n".join(parts), citations
 

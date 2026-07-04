@@ -49,6 +49,7 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
                     "content": c.content,
                     "doc_id": c.doc_id,
                     "heading": c.heading or "",
+                    "chunk_index": c.chunk_index,
                     "page": c.page,
                 }
                 for c in chunks

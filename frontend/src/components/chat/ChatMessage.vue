@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag, NButton, NIcon, NModal } from 'naive-ui'
+import { NTag, NButton, NIcon, NModal, NSpin } from 'naive-ui'
 import { Copy, Refresh } from '@vicons/ionicons5'
 import type { ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
+import { getDocumentChunk, downloadDocument } from '@/api/documents'
 
 import { useAuthStore } from '@/stores/auth'
 
@@ -88,9 +89,59 @@ function regenerate(msg: ChatMessage) {
 
 // --- Citation modal state ---
 const showCitationModal = ref(false)
+const citationFullContent = ref<Record<string, string>>({})
+const loadingCitationContent = ref(false)
 
-function openAllCitations() {
+async function openAllCitations() {
   showCitationModal.value = true
+  citationFullContent.value = {}
+  loadingCitationContent.value = true
+  try {
+    await Promise.all(
+      props.message.citations.map(async (c) => {
+        const key = `${c.doc_id}-${c.chunk_index}`
+        if (c.chunk_index == null) {
+          citationFullContent.value[key] = '该历史引用缺少分块索引，无法加载完整内容'
+          return
+        }
+        try {
+          const res = await getDocumentChunk(c.doc_id, c.chunk_index)
+          if (res.data?.content) {
+            citationFullContent.value[key] = res.data.content
+          }
+        } catch {
+          // noop: leave empty to show fallback below
+        }
+      })
+    )
+  } finally {
+    loadingCitationContent.value = false
+  }
+}
+
+function getCitationContent(c: ChatMessage['citations'][number]) {
+  const key = `${c.doc_id}-${c.chunk_index}`
+  if (citationFullContent.value[key] != null) {
+    return citationFullContent.value[key]
+  }
+  return '加载失败，无法获取完整内容'
+}
+
+async function handleDownload(docId: string, filename: string) {
+  try {
+    const res = await downloadDocument(docId)
+    const blob = new Blob([res.data])
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e: any) {
+    // noop: axios interceptor already shows error
+  }
 }
 
 // --- Streaming placeholder ---
@@ -177,21 +228,31 @@ onBeforeUnmount(() => {
 
       <!-- 全部引用摘要 Modal -->
       <NModal v-model:show="showCitationModal" preset="card" title="引用来源详情" style="max-width: 720px; max-height: 85vh;">
-        <div class="citation-modal-body">
-          <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
-            <div class="citation-item-header">
-              <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
-              <span class="citation-item-name">{{ c.doc_name }}</span>
-              <span class="citation-item-score">{{ (c.score * 100).toFixed(0) }}%</span>
+        <NSpin :show="loadingCitationContent">
+          <div class="citation-modal-body">
+            <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
+              <div class="citation-item-header">
+                <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
+                <span
+                  class="citation-item-name citation-item-download"
+                  :title="`下载 ${c.doc_name}`"
+                  @click.stop="handleDownload(c.doc_id, c.doc_name)"
+                  role="button"
+                  tabindex="0"
+                  @keydown.enter.prevent="handleDownload(c.doc_id, c.doc_name)"
+                  @keydown.space.prevent="handleDownload(c.doc_id, c.doc_name)"
+                >{{ c.doc_name }}</span>
+                <span class="citation-item-score">{{ (c.score * 100).toFixed(0) }}%</span>
+              </div>
+              <div class="citation-item-meta">
+                <span v-if="c.heading">📂 {{ c.heading }}</span>
+                <span v-if="c.chunk_index != null">Chunk #{{ c.chunk_index }}</span>
+                <span v-if="c.page != null && c.page > 0">第{{ c.page }}页</span>
+              </div>
+              <pre class="citation-item-snippet">{{ getCitationContent(c) }}</pre>
             </div>
-            <div class="citation-item-meta">
-              <span v-if="c.heading">📂 {{ c.heading }}</span>
-              <span>Chunk #{{ c.chunk_index }}</span>
-              <span v-if="c.page != null">第{{ c.page }}页</span>
-            </div>
-            <pre class="citation-item-snippet">{{ c.content || c.content_snippet }}</pre>
           </div>
-        </div>
+        </NSpin>
       </NModal>
 
     </div>
@@ -400,6 +461,9 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
 }
 .citation-item-name { font-weight: 600; }
+.citation-item-download { cursor: pointer; color: var(--color-text); }
+.citation-item-download:hover { color: var(--color-primary); text-decoration: underline; }
+.citation-item-download:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 .citation-item-score { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
 .citation-item-meta {
   font-size: var(--text-xs); color: var(--color-text-muted);

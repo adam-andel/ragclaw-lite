@@ -256,6 +256,21 @@ async def get_document_chunks(
     return result.scalars().all()
 
 
+@router.get("/{doc_id}/chunks/{chunk_index}", response_model=ChunkResponse)
+async def get_document_chunk(
+    doc_id: str, chunk_index: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Chunk).where(Chunk.doc_id == doc_id, Chunk.chunk_index == chunk_index)
+    )
+    chunk = result.scalar_one_or_none()
+    if not chunk:
+        raise HTTPException(404, "分块不存在")
+    return chunk
+
+
 # ---- Document KBs ----
 
 @router.get("/{doc_id}/kbs", response_model=list[str])

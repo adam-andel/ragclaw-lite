@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
                 if chunks:
                     bm25_index.build(kb_id, [
                         {"id": c.id, "content": c.content, "doc_id": c.doc_id,
-                         "heading": c.heading or "", "page": c.page}
+                         "heading": c.heading or "", "chunk_index": c.chunk_index, "page": c.page}
                         for c in chunks
                     ])
             print(f"BM25 rebuilt for {len(kb_ids)} knowledge bases")
