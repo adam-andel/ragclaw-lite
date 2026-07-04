@@ -24,7 +24,14 @@ const auth = useAuthStore()
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  // Backend stores UTC naive datetimes; treat as UTC and convert to local time.
+  const normalized = /[A-Z]|\+[0-9]{2}:[0-9]{2}$|-[0-9]{2}:[0-9]{2}$/.test(iso) ? iso : iso + 'Z'
+  const d = new Date(normalized)
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hour = String(d.getHours()).padStart(2, '0')
+  const minute = String(d.getMinutes()).padStart(2, '0')
+  return `${month}月${day}日 ${hour}:${minute}`
 }
 
 const renderedContent = computed(() => {
