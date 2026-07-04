@@ -338,6 +338,7 @@ onBeforeUnmount(() => {
 .message-col {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   max-width: 75%;
 }
 .message-wrapper.user { flex-direction: row-reverse; }
@@ -351,7 +352,8 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .message-body {
-  max-width: 75%;
+  width: fit-content;
+  max-width: 100%;
   background: var(--color-surface);
   border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
