@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
           <div class="citation-modal-body">
             <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
               <div class="citation-item-header">
-                <NTag size="small" type="info" :bordered="false">#{{ i + 1 }}</NTag>
+                <NTag size="small" type="info" :bordered="false">{{ i + 1 }}</NTag>
                 <span
                   class="citation-item-name citation-item-download"
                   :title="`下载 ${c.doc_name}`"

@@ -72,9 +72,15 @@ async def lifespan(app: FastAPI):
                 )
                 chunks = chunks_result.scalars().all()
                 if chunks:
+                    doc_ids = {c.doc_id for c in chunks}
+                    doc_result = await db.execute(
+                        select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+                    )
+                    doc_map = {row[0]: row[1] for row in doc_result.fetchall()}
                     bm25_index.build(kb_id, [
                         {"id": c.id, "content": c.content, "doc_id": c.doc_id,
-                         "heading": c.heading or "", "chunk_index": c.chunk_index, "page": c.page}
+                         "heading": c.heading or "", "chunk_index": c.chunk_index,
+                         "page": c.page, "filename": doc_map.get(c.doc_id, "")}
                         for c in chunks
                     ])
             print(f"BM25 rebuilt for {len(kb_ids)} knowledge bases")

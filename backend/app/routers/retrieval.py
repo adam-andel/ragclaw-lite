@@ -37,12 +37,21 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
 
     # Ensure BM25 index is built for this KB
     if not bm25_index.has_index(kb_id):
-        # Rebuild from DB
-        from sqlalchemy import select
-        from app.models.document import Chunk
-        result = await db.execute(select(Chunk).where(Chunk.content != ""))
-        chunks = result.scalars().all()
+        # Rebuild from DB, scoped to this KB and include filenames
+        from sqlalchemy import select, and_
+        from app.models.document import Chunk, Document, DocStatus, KBDocument
+        chunks_result = await db.execute(
+            select(Chunk).join(Document, Chunk.doc_id == Document.id).join(
+                KBDocument, and_(KBDocument.doc_id == Document.id, KBDocument.kb_id == kb_id)
+            ).where(Document.status == DocStatus.COMPLETED, Chunk.content != "")
+        )
+        chunks = chunks_result.scalars().all()
         if chunks:
+            doc_ids = {c.doc_id for c in chunks}
+            doc_result = await db.execute(
+                select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+            )
+            doc_map = {row[0]: row[1] for row in doc_result.fetchall()}
             bm25_index.build(kb_id, [
                 {
                     "id": c.id,
@@ -51,6 +60,7 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
                     "heading": c.heading or "",
                     "chunk_index": c.chunk_index,
                     "page": c.page,
+                    "filename": doc_map.get(c.doc_id, ""),
                 }
                 for c in chunks
             ])
