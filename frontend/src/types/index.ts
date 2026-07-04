@@ -342,3 +342,25 @@ export interface CronJobRunListResponse {
   page: number
   size: number
 }
+
+// ---- Notifications ----
+export interface NotificationItem {
+  id: string
+  user_id: string
+  tenant_id?: string | null
+  title: string
+  content?: string | null
+  type: 'cron_job' | 'system'
+  link?: string | null
+  read: boolean
+  read_at?: string | null
+  created_at: string
+}
+
+export interface NotificationListResponse {
+  items: NotificationItem[]
+  total: number
+  page: number
+  size: number
+  unread_count: number
+}

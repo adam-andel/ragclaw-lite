@@ -92,6 +92,12 @@ const router = createRouter({
       component: () => import('@/views/CronJobsView.vue'),
       meta: { title: '定时任务', requiresAuth: true },
     },
+    {
+      path: '/notifications',
+      name: 'notifications',
+      component: () => import('@/views/NotificationsView.vue'),
+      meta: { title: '通知中心', requiresAuth: true },
+    },
   ],
 })
 
@@ -104,7 +110,7 @@ router.beforeEach(async (to, _from, next) => {
     next('/login')
   } else if (to.meta.admin && !auth.isAdmin) {
     next('/chat')
-  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile') {
+  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications') {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')

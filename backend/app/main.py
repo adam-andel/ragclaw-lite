@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     from app.models import kb_access  # noqa: F401
     from app.models import skill as _skill_models  # noqa: F401
     from app.models import cron_job as _cron_job_models  # noqa: F401
+    from app.models import notification as _notification_models  # noqa: F401
     # Rebuild BM25 indexes from DB (using new kb_documents junction table)
     try:
         from app.models.document import Chunk, Document, DocStatus, KBDocument
@@ -146,7 +147,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs, notifications
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -160,6 +161,7 @@ app.include_router(skills.router)
 app.include_router(mcp_servers.router)
 app.include_router(plugins.router)
 app.include_router(cron_jobs.router)
+app.include_router(notifications.router)
 
 
 @app.get("/api/health")

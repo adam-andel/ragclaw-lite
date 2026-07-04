@@ -76,6 +76,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('cron_jobs', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "notifications" not in applied:
+        _migrate_notifications(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('notifications', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     if "system_settings" not in applied:
         _migrate_system_settings(raw)
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('system_settings', ?)",
@@ -448,6 +453,32 @@ def _migrate_cron_jobs(raw):
     raw.execute("CREATE INDEX IF NOT EXISTS idx_cron_job_runs_job ON cron_job_runs(cron_job_id)")
 
     print("[migrate] cron_jobs done")
+
+
+def _migrate_notifications(raw):
+    """Create notifications table for in-app user alerts."""
+    print("[migrate] Running notifications...")
+
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            tenant_id TEXT,
+            title TEXT NOT NULL,
+            content TEXT,
+            type TEXT NOT NULL DEFAULT 'system',
+            link TEXT,
+            read INTEGER NOT NULL DEFAULT 0,
+            read_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(tenant_id)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, read)")
+    raw.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at)")
+
+    print("[migrate] notifications done")
 
 
 def _migrate_parser_plugin_state(raw):

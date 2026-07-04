@@ -4,8 +4,10 @@ import { useRoute } from 'vue-router'
 import { NButton, NIcon, NDrawer } from 'naive-ui'
 import { Menu } from '@vicons/ionicons5'
 import Sidebar from './Sidebar.vue'
+import { useNotificationStore } from '@/stores/notifications'
 
 const route = useRoute()
+const notificationStore = useNotificationStore()
 const isMobile = ref(false)
 const drawerOpen = ref(false)
 
@@ -16,9 +18,11 @@ function checkMobile() {
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  notificationStore.startPolling(5000)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', checkMobile)
+  notificationStore.stopPolling()
 })
 
 // Close drawer on navigation

@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.skill import Skill, MCPServer
 from app.models.parser_plugin import ParserPluginState
 from app.models.system_setting import SystemSetting
+from app.models.notification import Notification
 
 __all__ = [
     "Document", "Chunk", "KBDocument", "KnowledgeBase", "KBUserAccess",
@@ -13,4 +14,5 @@ __all__ = [
     "Skill", "MCPServer",
     "ParserPluginState",
     "SystemSetting",
+    "Notification",
 ]

@@ -7,6 +7,7 @@ from app.database import async_session
 from app.models.cron_job import CronJob, CronJobRun, CronJobStatus
 from app.services.cron_graph import run_cron_execution_subgraph
 from app.services.cron_parser import compute_next_run
+from app.services.notification import create_cron_job_notification
 
 logger = logging.getLogger("erag.cron")
 
@@ -63,6 +64,14 @@ async def execute_and_record_cron_job(cron_job_id: str) -> dict:
             job.last_error = str(e)[:2000]
 
         await db.commit()
+
+        await create_cron_job_notification(
+            db,
+            job=job,
+            status=run.status,
+            result=job.last_result,
+            error=run.error,
+        )
 
         return {
             "output": output if run.status == "success" else None,
