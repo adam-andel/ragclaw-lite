@@ -76,6 +76,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('cron_jobs', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "system_settings" not in applied:
+        _migrate_system_settings(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('system_settings', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -459,6 +464,19 @@ def _migrate_parser_plugin_state(raw):
         )
     """)
     print("[migrate] parser_plugin_state done")
+
+
+def _migrate_system_settings(raw):
+    """Create system_settings table for non-sensitive runtime configuration."""
+    print("[migrate] Running system_settings...")
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    print("[migrate] system_settings done")
 
 
 # ─── Public API ───

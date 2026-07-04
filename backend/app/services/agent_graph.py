@@ -14,6 +14,7 @@ Graph topology:
 
 from langgraph.graph import StateGraph, END
 
+from app.services.config_manager import config_manager
 from app.services.agent_state import EragAgentState
 from app.services.agent_nodes import (
     skill_router_node,
@@ -120,7 +121,7 @@ class EragAgentGraph:
         active_skill = state.get("active_skill") or {}
         system_prompt = active_skill.get(
             "system_prompt",
-            "你是一个企业知识库助手。根据提供的文档内容回答问题。",
+            config_manager.system_prompt,
         )
 
         cron_rule = (

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db, async_session
+from app.models.system_setting import SystemSetting  # noqa: F401
 
 
 @asynccontextmanager
@@ -15,9 +16,9 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
-    # Init runtime config manager (LLM key from encrypted file, not .env)
+    # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
-    config_manager.init()
+    await config_manager.init()
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)

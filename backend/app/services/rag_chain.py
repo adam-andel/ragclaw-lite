@@ -11,19 +11,11 @@ from typing import AsyncGenerator
 
 from app.services.hybrid_search import hybrid_search
 from app.services.llm_client import llm_client
+from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.memory import add_memory
 
 logger = logging.getLogger("erag")
-
-RAG_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的文档内容回答问题。
-
-## 规则
-1. 只根据提供的文档内容回答，不要编造信息
-2. 如果文档中没有相关信息，诚实地说"文档中未找到相关信息"
-3. 在回答中标注引用来源，格式：[来源: 文档名 章节名]
-4. 回答要简洁、准确，使用中文
-5. 如果文档内容包含代码或表格，保留原始格式"""
 
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
@@ -64,7 +56,7 @@ class RAGChain:
         context_text, citations = _build_context(retrieved)
 
         # Build prompt
-        messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": config_manager.system_prompt}]
         if conversation_history:
             messages.extend(conversation_history)
         messages.append({"role": "user", "content": f"## 参考文档\n{context_text}\n\n## 问题\n{question}"})

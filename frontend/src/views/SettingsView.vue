@@ -28,11 +28,14 @@ const config = ref<LLMConfig>({
   llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 2048,
   llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
+  embedding_api_key: '',
+  llm_system_prompt: '',
   server_host: '0.0.0.0', server_port: 8000,
   is_configured: false,
 })
 
 const apiKeyInput = ref('')
+const embeddingApiKeyInput = ref('')
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
@@ -66,15 +69,20 @@ async function handleSave() {
       llm_max_tokens: config.value.llm_max_tokens,
       llm_concurrency: config.value.llm_concurrency,
       embedding_model: config.value.embedding_model,
+      llm_system_prompt: config.value.llm_system_prompt,
       server_host: config.value.server_host,
       server_port: config.value.server_port,
     }
     if (apiKeyInput.value.trim()) {
       payload.llm_api_key = apiKeyInput.value.trim()
     }
+    if (embeddingApiKeyInput.value.trim()) {
+      payload.embedding_api_key = embeddingApiKeyInput.value.trim()
+    }
     const res = await updateLLMConfig(payload)
     config.value = res.config
     apiKeyInput.value = ''
+    embeddingApiKeyInput.value = ''
     testResult.value = null
     message.success('配置已保存，立即生效')
   } catch (e: any) {
@@ -223,6 +231,43 @@ async function handleTest() {
           <NInput v-model:value="config.embedding_model" placeholder="BAAI/bge-small-zh-v1.5" @input="clearTest">
             <template #prefix><NIcon :component="HardwareChip" /></template>
           </NInput>
+        </NFormItem>
+
+        <!-- Embedding API Key -->
+        <NFormItem label="Embedding API Key">
+          <NInput
+            v-model:value="embeddingApiKeyInput"
+            type="password"
+            show-password-on="click"
+            :placeholder="config.embedding_api_key ? `当前: ${config.embedding_api_key}（留空不修改）` : '请输入 Embedding API Key（可选）'"
+            maxlength="512"
+            @input="clearTest"
+          >
+            <template #prefix><NIcon :component="Key" /></template>
+          </NInput>
+        </NFormItem>
+
+        <!-- LLM System Prompt -->
+        <NFormItem>
+          <template #label>
+            <span class="label-with-help">
+              LLM 系统提示词
+              <NTooltip trigger="hover" :width="300">
+                <template #trigger>
+                  <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                </template>
+                用于 RAG 和 Agent 默认回复的系统提示词。<br/>
+                修改后立即生效，无需重启。
+              </NTooltip>
+            </span>
+          </template>
+          <NInput
+            v-model:value="config.llm_system_prompt"
+            type="textarea"
+            :rows="10"
+            placeholder="请输入系统提示词..."
+            @input="clearTest"
+          />
         </NFormItem>
 
         <NDivider />

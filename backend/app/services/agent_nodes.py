@@ -7,6 +7,7 @@ from app.database import async_session
 from app.models.skill import Skill, MCPServer
 from app.services.hybrid_search import hybrid_search
 from app.services.llm_client import llm_client
+from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, read_skill_md, parse_skill_md,
@@ -15,15 +16,6 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 
 logger = logging.getLogger("erag.agent")
-
-DEFAULT_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的文档内容回答问题。
-
-## 规则
-1. 只根据提供的文档内容回答，不要编造信息
-2. 如果文档中没有相关信息，诚实地说"文档中未找到相关信息"
-3. 在回答中标注引用来源，格式：[来源: 文档名 章节名]
-4. 回答要简洁、准确，使用中文
-5. 如果文档内容包含代码或表格，保留原始格式"""
 
 MAX_TOOL_ROUNDS = 3
 
@@ -196,7 +188,7 @@ async def skill_loader_node(state: dict) -> dict:
         return {}
 
     parsed = parse_skill_md(skill_md_content)
-    system_prompt = parsed["body"] or DEFAULT_SYSTEM_PROMPT
+    system_prompt = parsed["body"] or config_manager.system_prompt
     mcp_server_names = parsed.get("mcp_servers", [])
 
     # Update active_skill with system_prompt
@@ -290,7 +282,7 @@ async def tool_decision_node(state: dict) -> dict:
         logger.warning("Tool decision: all tools errored, stopping loop")
         return {"tool_calls": None}
     active = state.get("active_skill") or {}
-    skill_prompt = active.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
+    skill_prompt = active.get("system_prompt", config_manager.system_prompt)
     if available_tools:
         tool_desc = "\n".join(
             f"- {t['function']['name']}: {t['function']['description']}"

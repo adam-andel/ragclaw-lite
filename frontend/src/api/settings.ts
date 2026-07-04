@@ -9,9 +9,11 @@ export interface LLMConfig {
   llm_max_tokens: number
   llm_concurrency: number
   embedding_model: string
+  embedding_api_key: string   // masked, or empty if not configured
+  llm_system_prompt: string
   server_host: string
   server_port: number
-  is_configured: boolean       // whether API key has been set
+  is_configured: boolean       // whether LLM API key has been set
 }
 
 export interface LLMConfigUpdate {
@@ -23,6 +25,8 @@ export interface LLMConfigUpdate {
   llm_max_tokens?: number
   llm_concurrency?: number
   embedding_model?: string
+  embedding_api_key?: string
+  llm_system_prompt?: string
   server_host?: string
   server_port?: number
 }

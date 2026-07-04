@@ -20,6 +20,8 @@ class LLMConfigUpdate(BaseModel):
     llm_max_tokens: int | None = None
     llm_concurrency: int | None = None
     embedding_model: str | None = None
+    embedding_api_key: str | None = None
+    llm_system_prompt: str | None = None
     server_host: str | None = None
     server_port: int | None = None
 
@@ -63,7 +65,7 @@ async def update_llm_config(data: LLMConfigUpdate, current_user=Depends(get_curr
     """更新 LLM 配置（含首次录入）。更新后立即生效，无需重启。"""
     if data.llm_api_key is not None and not data.llm_api_key.strip():
         raise HTTPException(status_code=400, detail="API Key 不能为空")
-    result = config_manager.update(data.model_dump(exclude_none=True))
+    result = await config_manager.update(data.model_dump(exclude_none=True))
     if data.llm_concurrency is not None:
         await llm_limiter.update_max(data.llm_concurrency)
     return {"message": "配置已更新，立即生效", "config": result}

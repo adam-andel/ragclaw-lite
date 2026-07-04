@@ -5,10 +5,12 @@ from app.models.conversation import Conversation, Message
 from app.models.user import User
 from app.models.skill import Skill, MCPServer
 from app.models.parser_plugin import ParserPluginState
+from app.models.system_setting import SystemSetting
 
 __all__ = [
     "Document", "Chunk", "KBDocument", "KnowledgeBase", "KBUserAccess",
     "Conversation", "Message", "User",
     "Skill", "MCPServer",
     "ParserPluginState",
+    "SystemSetting",
 ]
