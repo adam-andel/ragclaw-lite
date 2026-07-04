@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -186,6 +187,27 @@ async def list_all_documents(
         kb_ids = await _get_doc_kb_ids(doc.id, db)
         items.append(_model_to_response(doc, kb_ids))
     return DocumentListResponse(items=items, total=total, page=page, size=size)
+
+
+# ---- Document download ----
+
+@router.get("/{doc_id}/download")
+async def download_document(
+    doc_id: str, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+    path = Path(doc.file_path)
+    if not path.exists():
+        raise HTTPException(404, "文件不存在或已被清理")
+    return FileResponse(
+        path=path,
+        filename=doc.filename,
+        media_type="application/octet-stream",
+    )
 
 
 # ---- Document detail ----

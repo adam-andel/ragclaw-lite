@@ -62,6 +62,9 @@ export const getDocumentChunks = (id: string) => client.get<ChunkItem[]>(`/docum
 
 export const getDocumentKBs = (id: string) => client.get<string[]>(`/documents/${id}/kbs`)
 
+export const downloadDocument = (id: string) =>
+  client.get(`/documents/${id}/download`, { responseType: 'blob' })
+
 export const deleteDocument = (id: string) => client.delete(`/documents/${id}`)
 
 // ─── Supported types (drives upload accept attribute dynamically) ───

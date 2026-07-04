@@ -10,7 +10,7 @@ import { CloudUpload, Search, Trash, DocumentText, Add } from '@vicons/ionicons5
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
-  listKnowledgeBases, getSupportedTypes,
+  listKnowledgeBases, getSupportedTypes, downloadDocument,
 } from '@/api/documents'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem } from '@/types'
@@ -202,6 +202,23 @@ async function handleDelete(id: string) {
     message.success('文档已删除')
   } catch (e: any) {
     message.error('删除失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+async function handleDownload(doc: DocumentItem) {
+  try {
+    const res = await downloadDocument(doc.id)
+    const blob = new Blob([res.data])
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = doc.filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e: any) {
+    message.error('下载失败：' + (e?.message || '未知错误'))
   }
 }
 
@@ -404,7 +421,15 @@ async function loadSupportedTypes() {
               <span class="doc-type-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
                 {{ getFileTypeConfig(doc.file_type).icon }}
               </span>
-              <span class="doc-name">{{ doc.filename }}</span>
+              <span
+                class="doc-name doc-name-download"
+                :title="`下载 ${doc.filename}`"
+                @click.stop="handleDownload(doc)"
+                role="button"
+                tabindex="0"
+                @keydown.enter.prevent="handleDownload(doc)"
+                @keydown.space.prevent="handleDownload(doc)"
+              >{{ doc.filename }}</span>
               <NTag :type="statusColors[doc.status] as any" size="small">
                 {{ statusLabels[doc.status] || doc.status }}
               </NTag>
@@ -671,6 +696,9 @@ async function loadSupportedTypes() {
 .doc-kb-link { color: var(--color-primary); cursor: pointer; }
 .doc-kb-link:hover { text-decoration: underline; }
 .doc-kb-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
+.doc-name-download { cursor: pointer; }
+.doc-name-download:hover { text-decoration: underline; color: var(--color-primary); }
+.doc-name-download:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
 .dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
 
