@@ -41,12 +41,7 @@ function getScoreColor(score: number): string {
 </script>
 
 <template>
-  <div class="debug-view">
-    <div class="debug-header">
-      <h2>🔍 检索调试</h2>
-      <p class="subtitle">可视化检索全过程，对比向量检索与 BM25 得分，调整融合参数</p>
-    </div>
-
+  <div class="retrieval-section">
     <!-- Search Bar -->
     <div class="search-bar">
       <NInput
@@ -141,10 +136,7 @@ function getScoreColor(score: number): string {
 </template>
 
 <style scoped>
-.debug-view { max-width: 1000px; margin: 0 auto; }
-.debug-header { margin-bottom: 20px; }
-.debug-header h2 { font-size: 1.25rem; }
-.subtitle { color: var(--color-text-muted); font-size: 0.9rem; margin-top: 4px; }
+.retrieval-section { width: 100%; }
 .search-bar { display: flex; gap: 12px; margin-bottom: 16px; }
 .search-bar :deep(.n-input) { flex: 1; }
 .params-bar { margin-bottom: 24px; padding: 12px 16px; background: var(--color-surface); border-radius: var(--radius); border: 1px solid var(--color-border); flex-wrap: wrap; }

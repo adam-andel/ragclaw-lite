@@ -40,9 +40,7 @@ const router = createRouter({
     },
     {
       path: '/debug',
-      name: 'debug',
-      component: () => import('@/views/DebugView.vue'),
-      meta: { title: '检索调试', requiresAuth: true },
+      redirect: () => ({ path: '/settings', hash: '#retrieval' }),
     },
     {
       path: '/dashboard',
@@ -70,9 +68,7 @@ const router = createRouter({
     },
     {
       path: '/plugins',
-      name: 'plugins',
-      component: () => import('@/views/PluginsView.vue'),
-      meta: { title: '插件管理', requiresAuth: true, admin: true },
+      redirect: () => ({ path: '/settings', hash: '#plugins' }),
     },
     {
       path: '/skills',

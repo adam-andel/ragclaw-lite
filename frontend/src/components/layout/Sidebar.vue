@@ -3,8 +3,8 @@ import { computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NMenu, NIcon, NButton, NTag, NBadge } from 'naive-ui'
 import {
-  Chatbubbles, FolderOpen, Search, StatsChart,
-  LogOut, People, Settings, ExtensionPuzzle, Time,
+  Chatbubbles, FolderOpen, StatsChart,
+  LogOut, People, Settings, Time,
   Notifications,
 } from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
@@ -33,12 +33,10 @@ const menuOptions = computed<MenuOption[]>(() => {
     { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     { label: '定时任务', key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
-    { label: '检索调试', key: '/debug', icon: () => h(NIcon, null, { default: () => h(Search) }) },
     { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
     ...(auth.isAdmin ? [
       { label: '系统设置', key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
-      { label: '插件管理', key: '/plugins', icon: () => h(NIcon, null, { default: () => h(ExtensionPuzzle) }) },
     ] : []),
   ]
 })
