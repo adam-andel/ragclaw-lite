@@ -600,11 +600,11 @@ async function loadSupportedTypes() {
             <span
               v-if="detailDoc.chunk_count > 0"
               class="doc-kb-link"
-              @click="openChunks(detailDoc.id); showDetail = false"
+              @click="openChunks(detailDoc.id)"
               role="button"
               tabindex="0"
-              @keydown.enter.prevent="openChunks(detailDoc.id); showDetail = false"
-              @keydown.space.prevent="openChunks(detailDoc.id); showDetail = false"
+              @keydown.enter.prevent="openChunks(detailDoc.id)"
+              @keydown.space.prevent="openChunks(detailDoc.id)"
             >{{ detailDoc.chunk_count }} 分块</span>
             <span v-else>0</span>
           </NDescriptionsItem>
