@@ -4,9 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
-  NIcon, NModal, NCard,
+  NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
-import { CloudUpload, Search, Trash, DocumentText, Add } from '@vicons/ionicons5'
+import { CloudUpload, Search, DocumentText, Add } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -55,6 +55,26 @@ const allKbs = ref<any[]>([])
 const showDocKbs = ref(false)
 const docKbSearchText = ref('')
 const selectedDocKbIds = ref<string[]>([])
+
+// Detail modal
+const detailDoc = ref<DocumentItem | null>(null)
+const showDetail = ref(false)
+
+function openDetail(doc: DocumentItem) {
+  detailDoc.value = doc
+  showDetail.value = true
+}
+
+function closeDetail() {
+  showDetail.value = false
+  detailDoc.value = null
+}
+
+async function deleteDetailDoc() {
+  if (!detailDoc.value) return
+  await handleDelete(detailDoc.value.id)
+  closeDetail()
+}
 
 const filteredDocKbs = computed(() => {
   if (!docKbSearchText.value.trim()) {
@@ -414,43 +434,33 @@ async function loadSupportedTypes() {
     <NSpin :show="loading">
       <NEmpty v-if="!loading && docs.length === 0" description="暂无文档，请上传" />
       <div class="dm-list" v-if="docs.length > 0">
-        <NCard v-for="doc in docs" :key="doc.id" size="small" class="dm-card">
-          <!-- Row 1: file icon + name + status + actions -->
-          <div class="doc-row-top">
-            <div class="doc-name-group">
-              <span class="doc-type-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
-                {{ getFileTypeConfig(doc.file_type).icon }}
-              </span>
+        <NCard v-for="doc in docs" :key="doc.id" size="small" class="dm-card" hoverable>
+          <div class="doc-card-header">
+            <span class="doc-type-icon doc-card-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
+              {{ getFileTypeConfig(doc.file_type).icon }}
+            </span>
+            <div class="doc-card-title-wrap">
               <span
-                class="doc-name doc-name-download"
-                :title="`下载 ${doc.filename}`"
-                @click.stop="handleDownload(doc)"
+                class="doc-name doc-name-clickable"
+                :title="doc.filename"
+                @click.stop="openDetail(doc)"
                 role="button"
                 tabindex="0"
-                @keydown.enter.prevent="handleDownload(doc)"
-                @keydown.space.prevent="handleDownload(doc)"
+                @keydown.enter.prevent="openDetail(doc)"
+                @keydown.space.prevent="openDetail(doc)"
               >{{ doc.filename }}</span>
-              <NTag :type="statusColors[doc.status] as any" size="small">
-                {{ statusLabels[doc.status] || doc.status }}
-              </NTag>
-              <NTag v-if="doc.status === 'failed' && doc.error_message" size="small" type="error" class="doc-error-tag">
-                {{ doc.error_message }}
-              </NTag>
-            </div>
-            <div class="doc-actions">
-              <NPopconfirm @positive-click="handleDelete(doc.id)">
-                <template #trigger>
-                  <NButton size="small" text type="error">
-                    <template #icon><NIcon><Trash /></NIcon></template>
-                    删除
-                  </NButton>
-                </template>
-                确定删除文档「{{ doc.filename }}」？将从所有知识库中移除。
-              </NPopconfirm>
             </div>
           </div>
-          <!-- Row 2: progress bar or metadata -->
-          <div v-if="isProcessing(doc.status)" class="doc-row-bottom">
+          <div class="doc-card-meta">
+            <NTag :type="statusColors[doc.status] as any" size="small">
+              {{ statusLabels[doc.status] || doc.status }}
+            </NTag>
+            <span class="doc-meta-sep">·</span>
+            <span>{{ formatSize(doc.file_size) }}</span>
+            <span class="doc-meta-sep">·</span>
+            <span class="doc-meta-muted">{{ new Date(doc.created_at).toLocaleDateString('zh-CN') }}</span>
+          </div>
+          <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress
               type="line"
               :percentage="doc.progress"
@@ -461,37 +471,6 @@ async function loadSupportedTypes() {
               style="flex:1; min-width:100px"
             />
             <span class="doc-progress-text">{{ doc.progress }}%</span>
-          </div>
-          <div v-else class="doc-row-bottom doc-meta">
-            <span class="doc-meta-label">{{ getFileTypeConfig(doc.file_type).label }}</span>
-            <span class="doc-meta-sep">·</span>
-            <span>{{ formatSize(doc.file_size) }}</span>
-            <template v-if="doc.chunk_count > 0">
-              <span class="doc-meta-sep">·</span>
-              <span
-                class="doc-kb-link"
-                @click="openChunks(doc.id)"
-                role="button"
-                tabindex="0"
-                @keydown.enter.prevent="openChunks(doc.id)"
-                @keydown.space.prevent="openChunks(doc.id)"
-              >
-                {{ doc.chunk_count }} 分块
-              </span>
-            </template>
-            <span class="doc-meta-sep">·</span>
-            <span
-              :class="doc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'"
-              @click="openDocKbs(doc.kb_ids)"
-              role="button"
-              tabindex="0"
-              @keydown.enter.prevent="openDocKbs(doc.kb_ids)"
-              @keydown.space.prevent="openDocKbs(doc.kb_ids)"
-            >
-              {{ doc.kb_ids.length > 0 ? `${doc.kb_ids.length} 个知识库` : '未关联' }}
-            </span>
-            <span class="doc-meta-sep">·</span>
-            <span class="doc-meta-muted">{{ new Date(doc.created_at).toLocaleDateString('zh-CN') }}</span>
           </div>
         </NCard>
       </div>
@@ -593,6 +572,69 @@ async function loadSupportedTypes() {
       </template>
       <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
     </NModal>
+
+    <!-- Document Detail Modal -->
+    <NModal v-model:show="showDetail" preset="card" :title="detailDoc?.filename || '文档详情'"
+      style="width: 90vw; max-width: 560px"
+      @after-leave="detailDoc = null"
+    >
+      <div v-if="detailDoc">
+        <NDescriptions bordered :column="1" size="small" label-style="width: 120px">
+          <NDescriptionsItem label="文件名">{{ detailDoc.filename }}</NDescriptionsItem>
+          <NDescriptionsItem label="文件类型">
+            {{ getFileTypeConfig(detailDoc.file_type).label }} ({{ detailDoc.file_type }})
+          </NDescriptionsItem>
+          <NDescriptionsItem label="文件大小">{{ formatSize(detailDoc.file_size) }}</NDescriptionsItem>
+          <NDescriptionsItem label="状态">
+            <NTag :type="statusColors[detailDoc.status] as any" size="small">
+              {{ statusLabels[detailDoc.status] || detailDoc.status }}
+            </NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem v-if="detailDoc.status === 'failed' && detailDoc.error_message" label="错误信息">
+            {{ detailDoc.error_message }}
+          </NDescriptionsItem>
+          <NDescriptionsItem label="分块数">
+            <span
+              v-if="detailDoc.chunk_count > 0"
+              class="doc-kb-link"
+              @click="openChunks(detailDoc.id); showDetail = false"
+              role="button"
+              tabindex="0"
+              @keydown.enter.prevent="openChunks(detailDoc.id); showDetail = false"
+              @keydown.space.prevent="openChunks(detailDoc.id); showDetail = false"
+            >{{ detailDoc.chunk_count }} 分块</span>
+            <span v-else>0</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="关联知识库">
+            <span
+              :class="detailDoc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'"
+              @click="openDocKbs(detailDoc.kb_ids)"
+              role="button"
+              tabindex="0"
+              @keydown.enter.prevent="openDocKbs(detailDoc.kb_ids)"
+              @keydown.space.prevent="openDocKbs(detailDoc.kb_ids)"
+            >
+              {{ detailDoc.kb_ids.length > 0 ? `${detailDoc.kb_ids.length} 个知识库` : '未关联' }}
+            </span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="创建时间">{{ new Date(detailDoc.created_at).toLocaleString('zh-CN') }}</NDescriptionsItem>
+          <NDescriptionsItem v-if="detailDoc.updated_at" label="更新时间">{{ new Date(detailDoc.updated_at).toLocaleString('zh-CN') }}</NDescriptionsItem>
+          <NDescriptionsItem label="文档 ID">{{ detailDoc.id }}</NDescriptionsItem>
+        </NDescriptions>
+      </div>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showDetail = false">关闭</NButton>
+          <NButton v-if="detailDoc" @click="handleDownload(detailDoc)">下载原件</NButton>
+          <NPopconfirm v-if="detailDoc" @positive-click="deleteDetailDoc">
+            <template #trigger>
+              <NButton type="error">删除</NButton>
+            </template>
+            确定删除文档「{{ detailDoc.filename }}」？将从所有知识库中移除。
+          </NPopconfirm>
+        </NSpace>
+      </template>
+    </NModal>
   </div>
 </template>
 <style scoped>
@@ -635,10 +677,44 @@ async function loadSupportedTypes() {
 .dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 
 /* Doc list */
-.dm-list { display: flex; flex-direction: column; gap: 8px; }
+.dm-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
 .dm-card { transition: box-shadow .2s, border-color .2s; }
 .dm-card:hover { box-shadow: var(--shadow-sm); }
 .dm-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
+
+.doc-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.doc-card-icon { font-size: 1.6rem; }
+.doc-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.doc-card-title-wrap .doc-name {
+  max-width: 100%;
+  display: block;
+}
+.doc-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+}
+.doc-card-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
 
 .doc-row-top {
   display: flex;
@@ -696,9 +772,9 @@ async function loadSupportedTypes() {
 .doc-kb-link { color: var(--color-primary); cursor: pointer; }
 .doc-kb-link:hover { text-decoration: underline; }
 .doc-kb-link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
-.doc-name-download { cursor: pointer; }
-.doc-name-download:hover { text-decoration: underline; color: var(--color-primary); }
-.doc-name-download:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
+.doc-name-clickable { cursor: pointer; }
+.doc-name-clickable:hover { text-decoration: underline; color: var(--color-primary); }
+.doc-name-clickable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
 .dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
 
