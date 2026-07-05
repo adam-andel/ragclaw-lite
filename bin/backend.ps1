@@ -1,5 +1,5 @@
 # ERAG Backend Control Script
-# Usage: .\bin\backend.ps1 [start|stop|status|build|logs]
+# Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]
 #
 # Smart mode: auto-detects Docker. If Docker is installed, runs containerized
 # (erag-lite). If Docker is not installed, falls back to local Python.
@@ -379,28 +379,16 @@ switch ($Action) {
     }
 
     "restart" {
-        if (Test-DockerBackend) {
-            Write-Host "Restarting erag-lite container (no rebuild) ..." -ForegroundColor Gray
-            docker compose -f $ComposeFile restart erag
-            Start-Sleep 2
-            if (Test-Backend) {
-                Write-Host "Backend restarted" -ForegroundColor Green
-            }
-            else {
-                Write-Host "WARNING: Backend not responding after restart" -ForegroundColor Yellow
-            }
-        }
-        elseif (Test-Docker) {
-            Write-Host "Container not running. Use 'start' instead." -ForegroundColor Yellow
-        }
-        else {
-            Write-Host "Backend not running in Docker mode, use 'start' for local restart" -ForegroundColor Yellow
-        }
-    }
-
-    "rebuild" {
-        # Rebuild image only (uses cache, for code changes). Use 'start' to deploy.
         if (Test-Docker) {
+            if (-not (Test-ComposeAvailable $ComposeFile)) {
+                Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
+                return
+            }
+
+            if (Test-DockerBackend) {
+                Stop-DockerBackend
+            }
+
             $buildMirror = Get-WorkingMirrorDomain
             if (-not $buildMirror) {
                 Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -412,10 +400,32 @@ switch ($Action) {
                 Write-Host "ERROR: build failed" -ForegroundColor Red
                 return
             }
-            Write-Host "Image rebuilt. Run 'start' to deploy." -ForegroundColor Green
+
+            Write-Host ""
+            Write-Host "=== Starting container ===" -ForegroundColor Cyan
+            docker compose -f $ComposeFile up -d erag
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+                return
+            }
+
+            Write-Host "Waiting for startup (loading model, may take ~30s) ..." -NoNewline
+            for ($i = 0; $i -lt 90; $i++) {
+                Start-Sleep 1
+                if (Test-Backend) {
+                    Write-Host " OK" -ForegroundColor Green
+                    Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
+                    Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
+                    return
+                }
+                if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
+            }
+            Write-Host " timeout!" -ForegroundColor Red
+            Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
         }
         else {
-            Write-Host "Docker not available, use 'start' for local mode" -ForegroundColor Yellow
+            if (Test-Backend) { Stop-LocalBackend }
+            Start-LocalBackend
         }
     }
 
@@ -425,12 +435,11 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\backend.ps1 [start|stop|restart|reload|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start backend (build + up, auto: Docker or local fallback)"
         Write-Host "  stop        Stop backend"
-        Write-Host "  restart     Restart container only (no rebuild, fast)"
-        Write-Host "  reload      Rebuild Docker image only (uses cache, for code changes)"
+        Write-Host "  restart     Stop, rebuild image (uses cache), and start backend"
         Write-Host "  status      Show running status (Docker / local / not running)"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"
