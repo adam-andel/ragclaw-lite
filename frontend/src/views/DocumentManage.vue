@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
   NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
+  NCheckbox,
 } from 'naive-ui'
-import { CloudUpload, Search, DocumentText, Add } from '@vicons/ionicons5'
+import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash } from '@vicons/ionicons5'
 import {
   uploadDocument, uploadDocumentsBatch, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
   listKnowledgeBases, getSupportedTypes, downloadDocument,
+  updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB,
 } from '@/api/documents'
+import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import type { DocumentItem, ChunkItem } from '@/types'
+import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
 
 const message = useMessage()
 const auth = useAuthStore()
@@ -35,6 +38,12 @@ const filterKbName = computed(() => {
   const kb = allKbs.value.find(k => k.id === filterKbId.value)
   return kb?.name || ''
 })
+
+const selectedKb = computed<KnowledgeBase | undefined>(() =>
+  allKbs.value.find(k => k.id === filterKbId.value)
+)
+
+const filterKbDesc = computed(() => selectedKb.value?.description || '')
 
 // Supported extensions — loaded from /documents/supported-types at mount time
 const supportedExts = ref<string[]>([])
@@ -62,6 +71,56 @@ const allKbs = ref<any[]>([])
 const showDocKbs = ref(false)
 const docKbSearchText = ref('')
 const selectedDocKbIds = ref<string[]>([])
+const kbFilterSearch = ref('')
+const kbFilterSortBy = ref<'recent' | 'doc_count'>('recent')
+
+const kbSortOptions = [
+  { label: '最近更新', value: 'recent' },
+  { label: '文档数量', value: 'doc_count' },
+]
+
+const filteredKbsForFilter = computed(() => {
+  let list = [...allKbs.value]
+  if (kbFilterSearch.value.trim()) {
+    const q = kbFilterSearch.value.trim().toLowerCase()
+    list = list.filter(kb =>
+      kb.name.toLowerCase().includes(q) ||
+      (kb.description && kb.description.toLowerCase().includes(q))
+    )
+  }
+  list.sort((a, b) => {
+    if (kbFilterSortBy.value === 'doc_count') {
+      return b.doc_count - a.doc_count
+    }
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  })
+  return list
+})
+
+// KB action modals
+const showRenameKb = ref(false)
+const renameKbId = ref('')
+const renameKbName = ref('')
+const renameKbDesc = ref('')
+const renaming = ref(false)
+
+const showShare = ref(false)
+const shareKbId = ref('')
+const shareUsers = ref<any[]>([])
+const shareAddUser = ref('')
+const allUsers = ref<any[]>([])
+const shareLoading = ref(false)
+
+const showSelectDocs = ref(false)
+const availableDocs = ref<DocumentItem[]>([])
+const selectedDocIds = ref<string[]>([])
+const loadingAvailableDocs = ref(false)
+const availableTotal = ref(0)
+const availablePage = ref(1)
+const availableSearch = ref('')
+const availableStatus = ref<string | null>('completed')
+const availableType = ref<string | null>(null)
+const linkingDocs = ref(false)
 
 // Detail modal
 const detailDoc = ref<DocumentItem | null>(null)
@@ -148,6 +207,138 @@ function selectKb(kbId: string | null) {
 
 function clearKbFilter() {
   selectKb(null)
+}
+
+function goToChat(kbId: string) {
+  router.push({ path: '/chat', query: { kb: kbId } })
+}
+
+function openRenameKb(kb: KnowledgeBase) {
+  renameKbId.value = kb.id
+  renameKbName.value = kb.name
+  renameKbDesc.value = kb.description || ''
+  showRenameKb.value = true
+}
+
+async function handleRenameKb() {
+  if (!renameKbName.value.trim()) return
+  renaming.value = true
+  try {
+    await updateKnowledgeBase(renameKbId.value, {
+      name: renameKbName.value,
+      description: renameKbDesc.value || undefined,
+    })
+    await loadKBs()
+    showRenameKb.value = false
+    message.success('知识库已更新')
+  } catch (e: any) {
+    message.error('更新失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    renaming.value = false
+  }
+}
+
+async function handleDeleteKb(id: string) {
+  try {
+    await deleteKnowledgeBase(id)
+    if (filterKbId.value === id) {
+      filterKbId.value = null
+      page.value = 1
+      loadDocs()
+    }
+    await loadKBs()
+    message.success('知识库已删除')
+  } catch (e: any) {
+    message.error('删除失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+const allUserOptions = computed(() =>
+  allUsers.value
+    .filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
+    .map((u: any) => ({ label: `${u.display_name || u.username} (${u.username})`, value: u.id }))
+)
+
+async function openShare(kbId: string) {
+  shareKbId.value = kbId
+  shareLoading.value = true
+  showShare.value = true
+  try {
+    const r = await client.get(`/kb/${kbId}/users`)
+    shareUsers.value = r.data
+  } catch { shareUsers.value = [] }
+  try {
+    const r = await client.get('/users')
+    allUsers.value = r.data
+  } catch { allUsers.value = [] }
+  shareLoading.value = false
+}
+
+async function addKbUser(uid: string) {
+  if (!uid) return
+  try {
+    await client.post(`/kb/${shareKbId.value}/users/${uid}`)
+    const r = await client.get(`/kb/${shareKbId.value}/users`)
+    shareUsers.value = r.data
+    shareAddUser.value = ''
+    message.success('已添加共享用户')
+  } catch (e: any) {
+    message.error('添加失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+async function removeKbUser(uid: string) {
+  try {
+    await client.delete(`/kb/${shareKbId.value}/users/${uid}`)
+    const r = await client.get(`/kb/${shareKbId.value}/users`)
+    shareUsers.value = r.data
+    message.success('已移除共享用户')
+  } catch (e: any) {
+    message.error('移除失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+async function openSelectDocs(kbId: string) {
+  showSelectDocs.value = true
+  selectedDocIds.value = []
+  availablePage.value = 1
+  availableSearch.value = ''
+  availableStatus.value = 'completed'
+  availableType.value = null
+  await loadAvailableDocs(kbId)
+}
+
+async function loadAvailableDocs(kbId?: string) {
+  loadingAvailableDocs.value = true
+  try {
+    const params: any = { page: availablePage.value, size: 20 }
+    if (availableSearch.value) params.search = availableSearch.value
+    if (availableStatus.value) params.status = availableStatus.value
+    if (availableType.value) params.file_type = availableType.value
+    const res = await listAllDocuments(params)
+    availableDocs.value = res.data.items
+    availableTotal.value = res.data.total
+  } catch (e: any) {
+    message.error('加载文档失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    loadingAvailableDocs.value = false
+  }
+}
+
+async function handleSelectDocs() {
+  if (selectedDocIds.value.length === 0 || !filterKbId.value) return
+  linkingDocs.value = true
+  try {
+    const res = await addDocumentsToKB(filterKbId.value, selectedDocIds.value)
+    message.success(`已添加 ${res.data.added} 个文档${res.data.skipped > 0 ? '，跳过 ' + res.data.skipped + ' 个' : ''}`)
+    showSelectDocs.value = false
+    await loadKBs()
+    await loadDocs()
+  } catch (e: any) {
+    message.error('添加失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    linkingDocs.value = false
+  }
 }
 
 function startPolling() {
@@ -343,6 +534,13 @@ const statusOptions = [
   { label: '等待中', value: 'pending' }, { label: '失败', value: 'failed' },
 ]
 
+const availableStatusOptions = [
+  { label: '全部状态', value: null },
+  { label: '已完成', value: 'completed' },
+  { label: '处理中', value: 'pending' },
+  { label: '失败', value: 'failed' },
+]
+
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
@@ -441,11 +639,48 @@ async function loadSupportedTypes() {
 
     <!-- KB Filter -->
     <div class="dm-kb-filter">
-      <NButton secondary @click="showKbFilter = true">
-        <template #icon><NIcon><DocumentText /></NIcon></template>
-        {{ filterKbId ? `知识库：${filterKbName}` : '选择知识库' }}
-      </NButton>
-      <NButton v-if="filterKbId" size="small" text @click="clearKbFilter">清除</NButton>
+      <span class="dm-kb-label">当前知识库</span>
+      <div class="dm-kb-panel">
+        <div class="dm-kb-top">
+          <NButton secondary @click="showKbFilter = true">
+            <template #icon><NIcon><DocumentText /></NIcon></template>
+            {{ filterKbId ? filterKbName : '全部' }}
+          </NButton>
+          <NButton v-if="filterKbId" size="small" text @click="clearKbFilter">清除</NButton>
+          <span v-if="filterKbDesc" class="dm-kb-desc">{{ filterKbDesc }}</span>
+        </div>
+        <div v-if="selectedKb" class="dm-kb-bottom">
+          <span class="dm-kb-count">📄 {{ selectedKb.doc_count }} 文档</span>
+          <span class="dm-kb-count">🧬 {{ selectedKb.vector_count }} 分片</span>
+          <NSpace class="dm-kb-actions" size="small">
+            <NButton size="tiny" @click="openRenameKb(selectedKb)">
+              <template #icon><NIcon size="14"><Create /></NIcon></template>
+              修改描述
+            </NButton>
+            <NButton size="tiny" @click="goToChat(selectedKb.id)">
+              <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
+              发起对话
+            </NButton>
+            <NButton v-if="auth.isStaff" size="tiny" @click="openShare(selectedKb.id)">
+              <template #icon><NIcon size="14"><People /></NIcon></template>
+              共享
+            </NButton>
+            <NButton size="tiny" @click="openSelectDocs(selectedKb.id)">
+              <template #icon><NIcon size="14"><Search /></NIcon></template>
+              添加文档
+            </NButton>
+            <NPopconfirm @positive-click="handleDeleteKb(selectedKb.id)">
+              <template #trigger>
+                <NButton size="tiny" type="error">
+                  <template #icon><NIcon size="14"><Trash /></NIcon></template>
+                  删除
+                </NButton>
+              </template>
+              确定删除「{{ selectedKb.name }}」？文档不会被删除，仅解除关联。
+            </NPopconfirm>
+          </NSpace>
+        </div>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -669,28 +904,36 @@ async function loadSupportedTypes() {
 
     <!-- KB Filter Modal -->
     <NModal v-model:show="showKbFilter" preset="card" title="选择知识库"
-      style="width: 90vw; max-width: 480px"
+      style="width: 90vw; max-width: 720px"
+      @after-leave="kbFilterSearch = ''; kbFilterSortBy = 'recent'"
     >
-      <div class="picker-scroll">
+      <div class="kb-filter-toolbar">
+        <NInput v-model:value="kbFilterSearch" placeholder="搜索知识库名称…" clearable style="flex:1">
+          <template #prefix><NIcon size="15"><Search /></NIcon></template>
+        </NInput>
+        <NSelect v-model:value="kbFilterSortBy" :options="kbSortOptions" style="width: 140px" />
+      </div>
+      <div class="kb-filter-grid">
         <NCard
           size="small"
-          class="kb-pick-card"
-          :class="{ 'kb-pick-active': filterKbId === null }"
+          class="kb-filter-card"
+          :class="{ 'kb-filter-active': filterKbId === null }"
           role="button"
           tabindex="0"
           @click="selectKb(null)"
           @keydown.enter.prevent="selectKb(null)"
           @keydown.space.prevent="selectKb(null)"
         >
-          <strong>全部知识库</strong>
-          <span class="kb-pick-meta">显示所有文档</span>
+          <strong>全部</strong>
+          <span class="kb-filter-count">共 {{ allKbs.length }} 个知识库</span>
+          <span class="kb-filter-meta">显示所有文档</span>
         </NCard>
         <NCard
-          v-for="kb in allKbs"
+          v-for="kb in filteredKbsForFilter"
           :key="kb.id"
           size="small"
-          class="kb-pick-card"
-          :class="{ 'kb-pick-active': filterKbId === kb.id }"
+          class="kb-filter-card"
+          :class="{ 'kb-filter-active': filterKbId === kb.id }"
           role="button"
           tabindex="0"
           @click="selectKb(kb.id)"
@@ -698,9 +941,110 @@ async function loadSupportedTypes() {
           @keydown.space.prevent="selectKb(kb.id)"
         >
           <strong>{{ kb.name }}</strong>
-          <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-          <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+          <span v-if="kb.description" class="kb-filter-desc">{{ kb.description }}</span>
+          <span class="kb-filter-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 分片</span>
         </NCard>
+      </div>
+      <NEmpty v-if="filteredKbsForFilter.length === 0" description="无匹配的知识库" />
+    </NModal>
+
+    <!-- Rename KB Modal -->
+    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
+      style="width: 90vw; max-width: 440px"
+    >
+      <div class="kb-form">
+        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
+        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
+      </div>
+    </NModal>
+
+    <!-- Share Modal -->
+    <NModal v-model:show="showShare" preset="card" title="共享管理"
+      style="width: 90vw; max-width: 640px"
+    >
+      <div class="share-form">
+        <NSpin :show="shareLoading">
+          <div class="share-add-row">
+            <NSelect v-model:value="shareAddUser" :options="allUserOptions"
+              placeholder="搜索用户…" filterable clearable style="flex:1"
+            />
+            <NButton type="primary" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
+              <template #icon><NIcon><Add /></NIcon></template>
+              添加
+            </NButton>
+          </div>
+          <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
+            <NEmpty description="暂无共享用户" />
+          </div>
+          <div class="share-list" v-if="shareUsers.length > 0">
+            <div v-for="u in shareUsers" :key="u.id" class="share-row">
+              <div class="share-user-info">
+                <span class="share-user-avatar">👤</span>
+                <div>
+                  <div class="share-user-name">{{ u.display_name || u.username }}</div>
+                  <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+                </div>
+              </div>
+              <NButton text type="error" @click="removeKbUser(u.id)">移除</NButton>
+            </div>
+          </div>
+        </NSpin>
+      </div>
+    </NModal>
+
+    <!-- Select Documents Modal -->
+    <NModal v-model:show="showSelectDocs" preset="card" title="选择文档加入知识库"
+      style="width: 90vw; max-width: 720px"
+    >
+      <div class="select-docs-modal">
+        <div class="select-docs-filters">
+          <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="loadAvailableDocs" style="flex:1">
+            <template #prefix><NIcon><Search /></NIcon></template>
+          </NInput>
+          <NSelect v-model:value="availableStatus" :options="availableStatusOptions" placeholder="状态" style="width:110px" @update:value="loadAvailableDocs" />
+          <NSelect v-model:value="availableType" :options="typeOptions" placeholder="类型" style="width:110px" @update:value="loadAvailableDocs" />
+          <NButton @click="loadAvailableDocs" secondary>筛选</NButton>
+        </div>
+        <NSpin :show="loadingAvailableDocs">
+          <div v-if="!loadingAvailableDocs && availableDocs.length === 0" class="select-docs-empty">
+            <NEmpty description="还没有可添加的已完成文档" />
+            <NButton type="primary" dashed @click="showSelectDocs = false; router.push('/documents')">
+              <template #icon><NIcon><Add /></NIcon></template>
+              前往文档管理页上传文档
+            </NButton>
+          </div>
+          <div class="select-docs-list" v-if="availableDocs.length > 0">
+            <div v-for="doc in availableDocs" :key="doc.id"
+              :class="['select-doc-row', { selected: selectedDocIds.includes(doc.id) }]"
+              @click="selectedDocIds.includes(doc.id)
+                ? selectedDocIds = selectedDocIds.filter(id => id !== doc.id)
+                : selectedDocIds.push(doc.id)"
+            >
+              <NCheckbox :checked="selectedDocIds.includes(doc.id)" style="flex-shrink:0" />
+              <span class="select-doc-name">{{ getFileTypeConfig(doc.file_type).icon }} {{ doc.filename }}</span>
+              <NSpace size="small">
+                <NTag size="small">{{ doc.file_type.toUpperCase() }}</NTag>
+                <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
+                <NTag size="small" type="success">已完成</NTag>
+              </NSpace>
+            </div>
+          </div>
+        </NSpin>
+        <div class="select-docs-actions">
+          <div class="select-docs-left">
+            <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
+            <NButton text size="tiny" type="primary" @click="showSelectDocs = false; router.push('/documents')">
+              上传更多文档 →
+            </NButton>
+          </div>
+          <NSpace>
+            <NButton @click="showSelectDocs = false">取消</NButton>
+            <NButton type="primary" :disabled="selectedDocIds.length === 0" :loading="linkingDocs" @click="handleSelectDocs">
+              加入知识库
+            </NButton>
+          </NSpace>
+        </div>
       </div>
     </NModal>
   </div>
@@ -741,7 +1085,14 @@ async function loadSupportedTypes() {
 .upload-queue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 500; }
 .upload-queue-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.85rem; }
 
-.dm-kb-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.dm-kb-filter { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.dm-kb-label { font-size: var(--text-sm); font-weight: 500; color: var(--color-text); line-height: 34px; flex-shrink: 0; }
+.dm-kb-panel { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.dm-kb-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dm-kb-desc { font-size: var(--text-sm); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.dm-kb-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dm-kb-count { font-size: var(--text-xs); color: var(--color-text-muted); }
+.dm-kb-actions { flex-wrap: wrap; }
 
 /* Filters */
 .dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -918,4 +1269,59 @@ async function loadSupportedTypes() {
 .kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
 .kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
+
+/* KB filter modal */
+.kb-filter-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.kb-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.kb-filter-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+  border: 1px solid var(--color-border);
+}
+.kb-filter-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.kb-filter-active { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.kb-filter-card strong { display: block; font-size: var(--text-sm); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-filter-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-filter-count { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; }
+.kb-filter-meta { display: block; font-size: 0.65rem; color: var(--color-text-muted); }
+
+/* KB action modals */
+.kb-form { display: flex; flex-direction: column; gap: 12px; }
+.share-form { display: flex; flex-direction: column; max-height: 60vh; }
+.share-add-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.share-empty { padding: 20px 0; }
+.share-list { flex: 1; overflow-y: auto; min-height: 0; }
+.share-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--color-border); transition: background .15s; }
+.share-row:hover { background: rgba(88, 166, 255, 0.04); }
+.share-user-info { display: flex; align-items: center; gap: 10px; }
+.share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
+.share-user-name { font-weight: 500; font-size: 0.9rem; }
+.share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); }
+
+.select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
+.select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.select-docs-list { max-height: 50vh; overflow-y: auto; }
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border-bottom: 1px solid var(--color-border); transition: background .15s; }
+.select-doc-row:hover { background: rgba(88, 166, 255, 0.04); }
+.select-doc-row.selected { background: rgba(88, 166, 255, 0.1); }
+.select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.select-docs-left { display: flex; align-items: center; gap: 12px; }
+.select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
+.select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
+
+@media (max-width: 640px) {
+  .kb-filter-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .kb-filter-grid { grid-template-columns: 1fr; }
+  .kb-filter-toolbar { flex-direction: column; }
+  .kb-filter-toolbar :deep(.n-base-selection) { width: 100% !important; }
+}
 </style>
