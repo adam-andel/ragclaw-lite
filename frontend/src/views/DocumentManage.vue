@@ -56,6 +56,7 @@ const creating = ref(false)
 
 // Upload modal
 const showUploadModal = ref(false)
+const uploadTargetKb = ref<string | null>(null)
 
 const UPLOAD_STORAGE_KEY = 'erag:upload:items'
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000
@@ -67,6 +68,7 @@ interface UploadFileItem {
   progress: number
   status: 'pending' | 'uploading' | 'success' | 'error' | 'cancelled'
   error?: string
+  docId?: string
   file?: File
   controller?: AbortController
   timestamp: number
@@ -458,6 +460,7 @@ function clearUploadItems() {
 }
 
 function openUploadModal() {
+  uploadTargetKb.value = filterKbId.value
   showUploadModal.value = true
 }
 
@@ -475,9 +478,14 @@ async function startUploads() {
     item.controller = controller
 
     try {
-      await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal)
+      const res = await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal)
       item.status = 'success'
       item.progress = 100
+      item.docId = res.data.id
+      const targetKb = uploadTargetKb.value
+      if (targetKb && item.docId) {
+        linkDocToKb(item.docId, targetKb)
+      }
     } catch (e: any) {
       if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
         item.status = 'cancelled'
@@ -497,6 +505,21 @@ async function startUploads() {
     saveUploadItems()
   }, 5000)
   await loadDocs()
+}
+
+async function linkDocToKb(docId: string, kbId: string) {
+  // Poll document status until it's completed, then link to KB
+  for (let i = 0; i < 60; i++) {
+    try {
+      const res = await getDocumentStatus(docId)
+      if (res.data.status === 'completed') {
+        await addDocumentsToKB(kbId, [docId])
+        return
+      }
+      if (res.data.status === 'failed') return
+    } catch { return }
+    await new Promise(r => setTimeout(r, 5000))
+  }
 }
 
 function cancelUpload(itemId: string) {
@@ -726,6 +749,19 @@ async function loadSupportedTypes() {
       style="width: 90vw; max-width: 560px"
     >
       <div class="upload-modal-body">
+        <!-- Knowledge base selector -->
+        <div class="upload-kb-select">
+          <span class="upload-kb-label">关联知识库</span>
+          <NSelect
+            v-model:value="uploadTargetKb"
+            :options="[{ label: '不关联（仅上传）', value: null }, ...allKbs.map((kb: any) => ({ label: kb.name, value: kb.id }))]"
+            placeholder="选择知识库（可选）"
+            size="small"
+            clearable
+            style="flex:1"
+          />
+        </div>
+
         <!-- Drop zone -->
         <div :class="['upload-zone', { dragover: dragOver }]"
           @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
@@ -1226,6 +1262,8 @@ async function loadSupportedTypes() {
 .create-kb-body { display: flex; flex-direction: column; gap: 12px; }
 
 /* Upload Modal */
+.upload-kb-select { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.upload-kb-label { font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
 .upload-modal-body { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
 .upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(88,166,255,0.04); }
