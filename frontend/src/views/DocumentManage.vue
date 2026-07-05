@@ -5,13 +5,13 @@ import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
   NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
-  NCheckbox,
+  NCheckbox, NTooltip,
 } from 'naive-ui'
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash } from '@vicons/ionicons5'
 import {
-  uploadDocument, uploadDocumentsBatch, listAllDocuments,
+  uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
-  listKnowledgeBases, getSupportedTypes, downloadDocument,
+  listKnowledgeBases, createKnowledgeBase, getSupportedTypes, downloadDocument,
   updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB,
 } from '@/api/documents'
 import client from '@/api/client'
@@ -26,7 +26,7 @@ const router = useRouter()
 const docs = ref<DocumentItem[]>([])
 const total = ref(0)
 const page = ref(1)
-const size = ref(20)
+const size = ref(15)
 const loading = ref(false)
 const search = ref('')
 const filterStatus = ref<string | null>(null)
@@ -57,11 +57,48 @@ const creating = ref(false)
 // Upload modal
 const showUploadModal = ref(false)
 
-// Upload state
-const uploading = ref(false)
-const uploadFiles = ref<File[]>([])
-const uploadProgress = ref(0)
+const UPLOAD_STORAGE_KEY = 'erag:upload:items'
+const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000
+
+interface UploadFileItem {
+  id: string
+  name: string
+  size: number
+  progress: number
+  status: 'pending' | 'uploading' | 'success' | 'error' | 'cancelled'
+  error?: string
+  file?: File
+  controller?: AbortController
+  timestamp: number
+}
+
+const uploadItems = ref<UploadFileItem[]>([])
+const uploadRunning = ref(false)
 const dragOver = ref(false)
+
+function loadUploadItems() {
+  try {
+    const raw = localStorage.getItem(UPLOAD_STORAGE_KEY)
+    if (!raw) return
+    const items: UploadFileItem[] = JSON.parse(raw)
+    const now = Date.now()
+    uploadItems.value = items.filter(item => {
+      if (now - item.timestamp > UPLOAD_TTL_MS) return false
+      if (item.status === 'uploading') {
+        item.status = 'cancelled'
+        item.error = '页面关闭导致上传中断'
+      }
+      return item.status !== 'success'
+    })
+  } catch { /* ignore */ }
+}
+
+function saveUploadItems() {
+  const toStore = uploadItems.value.map(({ id, name, size, progress, status, error, timestamp }) => ({
+    id, name, size, progress, status, error: error || undefined, timestamp,
+  }))
+  try { localStorage.setItem(UPLOAD_STORAGE_KEY, JSON.stringify(toStore)) } catch { /* quota */ }
+}
 
 // Chunks modal
 const showChunks = ref(false)
@@ -180,7 +217,7 @@ function toggleChunkExpand(id: string) {
 // Progress polling
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => { loadDocs(); startPolling(); loadKBs(); loadSupportedTypes() })
+onMounted(() => { loadDocs(); startPolling(); loadKBs(); loadSupportedTypes(); loadUploadItems() })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -395,39 +432,90 @@ function addFiles(fileList: FileList) {
   for (let i = 0; i < fileList.length; i++) {
     const f = fileList[i]
     if (f.size > maxSize) {
-      message.warning(`文件过大：${f.name} (${(f.size/1024/1024).toFixed(1)}MB)`)
+      message.warning(`文件过大：${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB)`)
       continue
     }
-    uploadFiles.value.push(f)
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    uploadItems.value.push({
+      id, name: f.name, size: f.size, progress: 0,
+      status: 'pending', file: f, timestamp: Date.now(),
+    })
   }
+  saveUploadItems()
 }
 
-function removeFile(index: number) {
-  uploadFiles.value.splice(index, 1)
+function removeUploadItem(itemId: string) {
+  const item = uploadItems.value.find(i => i.id === itemId)
+  if (item?.controller) item.controller.abort()
+  uploadItems.value = uploadItems.value.filter(i => i.id !== itemId)
+  saveUploadItems()
+}
+
+function clearUploadItems() {
+  uploadItems.value.forEach(i => { if (i.controller) i.controller.abort() })
+  uploadItems.value = []
+  saveUploadItems()
 }
 
 function openUploadModal() {
   showUploadModal.value = true
 }
 
-async function handleUpload() {
-  if (uploadFiles.value.length === 0) return
-  uploading.value = true
-  try {
-    if (uploadFiles.value.length === 1) {
-      await uploadDocument(uploadFiles.value[0], (pct) => uploadProgress.value = pct)
-    } else {
-      await uploadDocumentsBatch(uploadFiles.value, (pct) => uploadProgress.value = pct)
+async function startUploads() {
+  const pending = uploadItems.value.filter(i => i.status === 'pending')
+  if (pending.length === 0) return
+  uploadRunning.value = true
+  for (const item of pending) {
+    if (item.status !== 'pending') continue
+    item.status = 'uploading'
+    item.progress = 0
+    saveUploadItems()
+
+    const controller = new AbortController()
+    item.controller = controller
+
+    try {
+      await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal)
+      item.status = 'success'
+      item.progress = 100
+    } catch (e: any) {
+      if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
+        item.status = 'cancelled'
+      } else {
+        item.status = 'error'
+        item.error = e?.response?.data?.detail || e.message
+      }
+    } finally {
+      item.controller = undefined
+      saveUploadItems()
     }
-    message.success('上传成功，正在后台处理…')
-    uploadFiles.value = []
-    uploadProgress.value = 0
-    await loadDocs()
-  } catch (e: any) {
-    message.error('上传失败：' + (e?.response?.data?.detail || e.message))
-  } finally {
-    uploading.value = false
   }
+  uploadRunning.value = false
+  message.success('上传完成')
+  setTimeout(() => {
+    uploadItems.value = uploadItems.value.filter(i => i.status !== 'success')
+    saveUploadItems()
+  }, 5000)
+  await loadDocs()
+}
+
+function cancelUpload(itemId: string) {
+  const item = uploadItems.value.find(i => i.id === itemId)
+  if (item?.controller) {
+    item.controller.abort()
+  } else if (item?.status === 'pending') {
+    item.status = 'cancelled'
+    saveUploadItems()
+  }
+}
+
+const pendingCount = computed(() => uploadItems.value.filter(i => i.status === 'pending' || i.status === 'uploading').length)
+const hasActiveUploads = computed(() => uploadRunning.value || uploadItems.value.some(i => i.status === 'uploading'))
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
 async function handleDelete(id: string) {
@@ -547,12 +635,6 @@ const availableStatusOptions = [
   { label: '失败', value: 'failed' },
 ]
 
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
-}
-
 const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
 
 function isProcessing(status: string) {
@@ -641,7 +723,7 @@ async function loadSupportedTypes() {
 
     <!-- Upload Modal -->
     <NModal v-model:show="showUploadModal" preset="card" title="上传文件"
-      style="width: 90vw; max-width: 520px"
+      style="width: 90vw; max-width: 560px"
     >
       <div class="upload-modal-body">
         <!-- Drop zone -->
@@ -656,25 +738,43 @@ async function loadSupportedTypes() {
           </div>
         </div>
 
-        <!-- File queue -->
-        <div v-if="uploadFiles.length > 0" class="upload-queue">
+        <!-- Per-file queue -->
+        <div v-if="uploadItems.length > 0" class="upload-queue">
           <div class="upload-queue-header">
-            <span>待上传：{{ uploadFiles.length }} 个文件</span>
-            <NButton size="small" @click="uploadFiles = []">清空</NButton>
+            <span>{{ uploadItems.length }} 个文件</span>
+            <NButton size="small" @click="clearUploadItems" :disabled="hasActiveUploads">清空已完成</NButton>
           </div>
-          <div v-for="(f, i) in uploadFiles" :key="i" class="upload-queue-item">
-            <span>📄 {{ f.name }} ({{ formatSize(f.size) }})</span>
-            <NButton text size="tiny" type="error" @click="removeFile(i)">移除</NButton>
+          <div v-for="item in uploadItems" :key="item.id" class="upload-file-row">
+            <div class="upload-file-info">
+              <span class="upload-file-name">📄 {{ item.name }}</span>
+              <span class="upload-file-size">{{ formatSize(item.size) }}</span>
+              <NTag :type="item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : item.status === 'cancelled' ? 'warning' : item.status === 'uploading' ? 'info' : 'default'" size="tiny" :bordered="false">
+                {{ item.status === 'pending' ? '等待' : item.status === 'uploading' ? '上传中' : item.status === 'success' ? '完成' : item.status === 'error' ? '失败' : '已取消' }}
+              </NTag>
+              <NButton
+                v-if="item.status === 'pending' || item.status === 'uploading'"
+                size="tiny" text type="error"
+                @click="cancelUpload(item.id)"
+              >取消</NButton>
+            </div>
+            <NProgress
+              v-if="item.status === 'uploading'"
+              type="line"
+              :percentage="item.progress"
+              :height="6"
+              :border-radius="3"
+              style="flex:1; min-width:80px"
+            />
+            <span v-if="item.status === 'error' && item.error" class="upload-file-error">{{ item.error }}</span>
           </div>
-          <NProgress v-if="uploading" type="line" :percentage="uploadProgress" :height="16" :border-radius="3" style="margin-top:8px" />
         </div>
       </div>
 
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showUploadModal = false" :disabled="uploading">取消</NButton>
-          <NButton type="primary" :loading="uploading" :disabled="uploadFiles.length === 0" @click="handleUpload">
-            {{ uploading ? '上传中…' : '开始上传' }}
+          <NButton @click="showUploadModal = false">关闭</NButton>
+          <NButton type="primary" :loading="hasActiveUploads" :disabled="pendingCount === 0" @click="startUploads">
+            {{ hasActiveUploads ? '上传中…' : pendingCount > 0 ? `开始上传 (${pendingCount})` : '开始上传' }}
           </NButton>
         </NSpace>
       </template>
@@ -713,10 +813,15 @@ async function loadSupportedTypes() {
             </NButton>
             <NPopconfirm @positive-click="handleDeleteKb(selectedKb.id)">
               <template #trigger>
-                <NButton size="small" type="error" @click="blurActive()">
-                  <template #icon><NIcon size="14"><Trash /></NIcon></template>
-                  删除
-                </NButton>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton size="small" type="error" @click="blurActive()">
+                      <template #icon><NIcon size="14"><Trash /></NIcon></template>
+                      删除
+                    </NButton>
+                  </template>
+                  删除知识库不会删除关联文档
+                </NTooltip>
               </template>
               确定删除「{{ selectedKb.name }}」？文档不会被删除，仅解除关联。
             </NPopconfirm>
@@ -762,7 +867,7 @@ async function loadSupportedTypes() {
           <div class="doc-card-meta">
             <span>{{ doc.chunk_count }} 分块</span>
             <span class="doc-meta-sep">·</span>
-            <span>{{ doc.kb_ids.length }} 个知识库</span>
+            <span>关联{{ doc.kb_ids.length }} 个知识库</span>
             <span class="doc-meta-sep">·</span>
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
@@ -922,7 +1027,7 @@ async function loadSupportedTypes() {
               @keydown.enter.prevent="openDocKbs(detailDoc.kb_ids)"
               @keydown.space.prevent="openDocKbs(detailDoc.kb_ids)"
             >
-              {{ detailDoc.kb_ids.length > 0 ? `${detailDoc.kb_ids.length} 个知识库` : '未关联' }}
+              {{ detailDoc.kb_ids.length > 0 ? `关联${detailDoc.kb_ids.length} 个知识库` : '未关联知识库' }}
             </span>
           </NDescriptionsItem>
           <NDescriptionsItem label="创建时间">{{ new Date(detailDoc.created_at).toLocaleString('zh-CN') }}</NDescriptionsItem>
@@ -1121,15 +1226,19 @@ async function loadSupportedTypes() {
 .create-kb-body { display: flex; flex-direction: column; gap: 12px; }
 
 /* Upload Modal */
-.upload-modal-body { display: flex; flex-direction: column; gap: 12px; }
+.upload-modal-body { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
 .upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(88,166,255,0.04); }
 .upload-zone-content p { margin: 10px 0 4px; font-weight: 500; }
 .upload-hint { font-size: 0.8rem; color: var(--color-text-muted); }
 
-.upload-queue { padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }
-.upload-queue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 500; }
-.upload-queue-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.85rem; }
+.upload-queue { display: flex; flex-direction: column; gap: 8px; }
+.upload-queue-header { display: flex; justify-content: space-between; align-items: center; font-weight: 500; font-size: var(--text-sm); }
+.upload-file-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); }
+.upload-file-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.upload-file-name { font-size: var(--text-sm); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-file-size { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
+.upload-file-error { font-size: var(--text-xs); color: var(--color-error); word-break: break-all; }
 
 .dm-kb-filter { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .dm-kb-label { font-size: var(--text-sm); font-weight: 500; color: var(--color-text); line-height: 34px; flex-shrink: 0; }

@@ -26,11 +26,12 @@ export const removeDocumentFromKB = (kbId: string, docId: string) =>
 
 // ─── Documents ───
 
-export const uploadDocument = (file: File, onProgress?: (pct: number) => void) => {
+export const uploadDocument = (file: File, onProgress?: (pct: number) => void, signal?: AbortSignal) => {
   const form = new FormData()
   form.append('file', file)
   return client.post<DocumentItem>('/documents/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    signal,
     onUploadProgress: (e) => {
       if (e.total && onProgress) onProgress(Math.round((e.loaded * 100) / e.total))
     },
