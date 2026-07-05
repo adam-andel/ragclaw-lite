@@ -1,5 +1,5 @@
 # ERAG Python REPL MCP Server Control Script
-# Usage: .\bin\mcp_repl.ps1 [start|stop|status|build|logs]
+# Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]
 #
 # Smart mode: auto-detects Docker. If Docker is installed, runs containerized.
 # If Docker is not installed, falls back to local Python venv.
@@ -370,26 +370,16 @@ switch ($Action) {
     }
 
     "restart" {
-        # Fast restart without rebuild (container only)
-        if (Test-DockerRepl) {
-            Write-Host "Restarting mcp-repl container (no rebuild) ..." -ForegroundColor Gray
-            docker compose -f $ComposeFile restart mcp-repl
-            Start-Sleep 2
-            if (Test-LocalRepl) {
-                Write-Host "REPL server restarted" -ForegroundColor Green
-            } else {
-                Write-Host "WARNING: Container not responding after restart" -ForegroundColor Yellow
-            }
-        } elseif (Test-Docker) {
-            Write-Host "Container not running. Use 'start' instead." -ForegroundColor Yellow
-        } else {
-            Write-Host "REPL server not running in Docker mode" -ForegroundColor Yellow
-        }
-    }
-
-    "rebuild" {
-        # Rebuild image only (uses cache, for code changes). Use 'start' to deploy.
         if (Test-Docker) {
+            if (-not (Test-ComposeAvailable $ComposeFile)) {
+                Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
+                return
+            }
+
+            if (Test-DockerRepl) {
+                Stop-DockerRepl
+            }
+
             $buildMirror = Get-WorkingMirrorDomain
             if (-not $buildMirror) {
                 Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -401,9 +391,30 @@ switch ($Action) {
                 Write-Host "ERROR: build failed" -ForegroundColor Red
                 return
             }
-            Write-Host "Image rebuilt. Run 'start' to deploy." -ForegroundColor Green
-        } else {
-            Write-Host "Docker not available, use 'start' for local mode" -ForegroundColor Yellow
+
+            Write-Host ""
+            Write-Host "=== Starting container ===" -ForegroundColor Cyan
+            docker compose -f $ComposeFile up -d mcp-repl
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+                return
+            }
+
+            Start-Sleep 3
+            if (Test-LocalRepl) {
+                Write-Host "REPL server restarted (Docker)" -ForegroundColor Green
+                Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
+                Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
+                Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
+                Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
+            }
+            else {
+                Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
+            }
+        }
+        else {
+            if (Test-LocalRepl) { Stop-LocalRepl }
+            Start-LocalRepl
         }
     }
 
@@ -413,12 +424,11 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|reload|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start REPL server (build + up, auto: Docker or local fallback)"
         Write-Host "  stop        Stop REPL server"
-        Write-Host "  restart     Restart container only (no rebuild, fast)"
-        Write-Host "  reload      Rebuild Docker image only (uses cache, for code changes)"
+        Write-Host "  restart     Stop, rebuild image (uses cache), and start REPL server"
         Write-Host "  status      Show running status"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"
