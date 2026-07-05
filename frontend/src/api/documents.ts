@@ -50,7 +50,7 @@ export const uploadDocumentsBatch = (files: File[], onProgress?: (pct: number) =
 
 export const listAllDocuments = (params?: {
   page?: number; size?: number; status?: string
-  file_type?: string; search?: string
+  file_type?: string; search?: string; kb_id?: string
 }) => client.get<DocumentListResponse>('/documents', { params })
 
 export const getDocument = (id: string) => client.get<DocumentItem>(`/documents/${id}`)

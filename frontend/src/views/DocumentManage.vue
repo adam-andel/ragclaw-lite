@@ -28,6 +28,13 @@ const loading = ref(false)
 const search = ref('')
 const filterStatus = ref<string | null>(null)
 const filterType = ref<string | null>(null)
+const filterKbId = ref<string | null>(null)
+const showKbFilter = ref(false)
+
+const filterKbName = computed(() => {
+  const kb = allKbs.value.find(k => k.id === filterKbId.value)
+  return kb?.name || ''
+})
 
 // Supported extensions — loaded from /documents/supported-types at mount time
 const supportedExts = ref<string[]>([])
@@ -121,6 +128,7 @@ async function loadDocs() {
     if (search.value) params.search = search.value
     if (filterStatus.value) params.status = filterStatus.value
     if (filterType.value) params.file_type = filterType.value
+    if (filterKbId.value) params.kb_id = filterKbId.value
     const res = await listAllDocuments(params)
     docs.value = res.data.items
     total.value = res.data.total
@@ -129,6 +137,17 @@ async function loadDocs() {
   } finally {
     loading.value = false
   }
+}
+
+function selectKb(kbId: string | null) {
+  filterKbId.value = kbId
+  page.value = 1
+  showKbFilter.value = false
+  loadDocs()
+}
+
+function clearKbFilter() {
+  selectKb(null)
 }
 
 function startPolling() {
@@ -420,6 +439,15 @@ async function loadSupportedTypes() {
       </template>
     </NModal>
 
+    <!-- KB Filter -->
+    <div class="dm-kb-filter">
+      <NButton secondary @click="showKbFilter = true">
+        <template #icon><NIcon><DocumentText /></NIcon></template>
+        {{ filterKbId ? `知识库：${filterKbName}` : '选择知识库' }}
+      </NButton>
+      <NButton v-if="filterKbId" size="small" text @click="clearKbFilter">清除</NButton>
+    </div>
+
     <!-- Filters -->
     <div class="dm-filters">
       <NInput v-model:value="search" placeholder="搜索文件名…" clearable @keyup.enter="onSearch" style="flex:1">
@@ -638,6 +666,43 @@ async function loadSupportedTypes() {
         </NSpace>
       </template>
     </NModal>
+
+    <!-- KB Filter Modal -->
+    <NModal v-model:show="showKbFilter" preset="card" title="选择知识库"
+      style="width: 90vw; max-width: 480px"
+    >
+      <div class="picker-scroll">
+        <NCard
+          size="small"
+          class="kb-pick-card"
+          :class="{ 'kb-pick-active': filterKbId === null }"
+          role="button"
+          tabindex="0"
+          @click="selectKb(null)"
+          @keydown.enter.prevent="selectKb(null)"
+          @keydown.space.prevent="selectKb(null)"
+        >
+          <strong>全部知识库</strong>
+          <span class="kb-pick-meta">显示所有文档</span>
+        </NCard>
+        <NCard
+          v-for="kb in allKbs"
+          :key="kb.id"
+          size="small"
+          class="kb-pick-card"
+          :class="{ 'kb-pick-active': filterKbId === kb.id }"
+          role="button"
+          tabindex="0"
+          @click="selectKb(kb.id)"
+          @keydown.enter.prevent="selectKb(kb.id)"
+          @keydown.space.prevent="selectKb(kb.id)"
+        >
+          <strong>{{ kb.name }}</strong>
+          <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+          <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+        </NCard>
+      </div>
+    </NModal>
   </div>
 </template>
 <style scoped>
@@ -675,6 +740,8 @@ async function loadSupportedTypes() {
 .upload-queue { padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }
 .upload-queue-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 500; }
 .upload-queue-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.85rem; }
+
+.dm-kb-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 
 /* Filters */
 .dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -847,6 +914,7 @@ async function loadSupportedTypes() {
   border-left: 3px solid transparent;
 }
 .kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.kb-pick-active { border-left-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
 .kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }

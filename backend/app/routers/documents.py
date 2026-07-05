@@ -158,6 +158,7 @@ async def list_all_documents(
     status: str | None = Query(None),
     file_type: str | None = Query(None),
     search: str | None = Query(None),
+    kb_id: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -171,21 +172,35 @@ async def list_all_documents(
     if search:
         conditions.append(Document.filename.ilike(f"%{search}%"))
 
-    count_q = select(func.count()).select_from(Document)
+    if kb_id:
+        count_q = (
+            select(func.count())
+            .select_from(Document)
+            .join(KBDocument, Document.id == KBDocument.doc_id)
+            .where(KBDocument.kb_id == kb_id)
+        )
+        items_q = (
+            select(Document)
+            .join(KBDocument, Document.id == KBDocument.doc_id)
+            .where(KBDocument.kb_id == kb_id)
+            .order_by(Document.created_at.desc())
+        )
+    else:
+        count_q = select(func.count()).select_from(Document)
+        items_q = select(Document).order_by(Document.created_at.desc())
+
     if conditions:
         count_q = count_q.where(*conditions)
-    total = (await db.execute(count_q)).scalar() or 0
-
-    items_q = select(Document).order_by(Document.created_at.desc())
-    if conditions:
         items_q = items_q.where(*conditions)
+
+    total = (await db.execute(count_q)).scalar() or 0
     items_q = items_q.offset((page - 1) * size).limit(size)
     docs = (await db.execute(items_q)).scalars().all()
 
     items = []
     for doc in docs:
-        kb_ids = await _get_doc_kb_ids(doc.id, db)
-        items.append(_model_to_response(doc, kb_ids))
+        doc_kb_ids = await _get_doc_kb_ids(doc.id, db)
+        items.append(_model_to_response(doc, doc_kb_ids))
     return DocumentListResponse(items=items, total=total, page=page, size=size)
 
 
