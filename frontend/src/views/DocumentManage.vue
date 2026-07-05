@@ -48,6 +48,12 @@ const filterKbDesc = computed(() => selectedKb.value?.description || '')
 // Supported extensions — loaded from /documents/supported-types at mount time
 const supportedExts = ref<string[]>([])
 
+// Create KB modal
+const showCreateKb = ref(false)
+const newKbName = ref('')
+const newKbDesc = ref('')
+const creating = ref(false)
+
 // Upload modal
 const showUploadModal = ref(false)
 
@@ -205,12 +211,12 @@ function selectKb(kbId: string | null) {
   loadDocs()
 }
 
-function clearKbFilter() {
-  selectKb(null)
-}
-
 function goToChat(kbId: string) {
   router.push({ path: '/chat', query: { kb: kbId } })
+}
+
+function blurActive() {
+  (document.activeElement as HTMLElement | null)?.blur()
 }
 
 function openRenameKb(kb: KnowledgeBase) {
@@ -572,6 +578,23 @@ function goToKb(kbId: string) {
   router.push({ path: '/knowledge', query: { kb: kbId } })
 }
 
+async function handleCreateKb() {
+  if (!newKbName.value.trim()) return
+  creating.value = true
+  try {
+    await createKnowledgeBase({ name: newKbName.value.trim(), description: newKbDesc.value.trim() || undefined })
+    message.success('知识库创建成功')
+    showCreateKb.value = false
+    newKbName.value = ''
+    newKbDesc.value = ''
+    await loadKBs()
+  } catch (e: any) {
+    message.error('创建失败：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    creating.value = false
+  }
+}
+
 async function loadSupportedTypes() {
   try {
     const data = await getSupportedTypes()
@@ -590,11 +613,31 @@ async function loadSupportedTypes() {
         <h2>文档管理</h2>
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
-      <NButton type="primary" @click="openUploadModal">
-        <template #icon><NIcon><Add /></NIcon></template>
-        上传文件
-      </NButton>
+      <div class="dm-header-actions">
+        <NButton type="primary" @click="showCreateKb = true">
+          <template #icon><NIcon><Create /></NIcon></template>
+          新建知识库
+        </NButton>
+        <NButton type="primary" @click="openUploadModal">
+          <template #icon><NIcon><Add /></NIcon></template>
+          上传文件
+        </NButton>
+      </div>
     </div>
+
+    <!-- Create KB Modal -->
+    <NModal v-model:show="showCreateKb" preset="card" title="新建知识库" style="max-width: 440px;">
+      <div class="create-kb-body">
+        <NInput v-model:value="newKbName" placeholder="知识库名称" />
+        <NInput v-model:value="newKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+      </div>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showCreateKb = false">取消</NButton>
+          <NButton type="primary" :loading="creating" :disabled="!newKbName.trim()" @click="handleCreateKb">创建</NButton>
+        </NSpace>
+      </template>
+    </NModal>
 
     <!-- Upload Modal -->
     <NModal v-model:show="showUploadModal" preset="card" title="上传文件"
@@ -646,32 +689,31 @@ async function loadSupportedTypes() {
             <template #icon><NIcon><DocumentText /></NIcon></template>
             {{ filterKbId ? filterKbName : '全部' }}
           </NButton>
-          <NButton v-if="filterKbId" size="small" text @click="clearKbFilter">清除</NButton>
           <span v-if="filterKbDesc" class="dm-kb-desc">{{ filterKbDesc }}</span>
         </div>
         <div v-if="selectedKb" class="dm-kb-bottom">
           <span class="dm-kb-count">📄 {{ selectedKb.doc_count }} 文档</span>
           <span class="dm-kb-count">🧬 {{ selectedKb.vector_count }} 分片</span>
           <NSpace class="dm-kb-actions" size="small">
-            <NButton size="tiny" @click="openRenameKb(selectedKb)">
+            <NButton size="small" @click="openRenameKb(selectedKb); blurActive()">
               <template #icon><NIcon size="14"><Create /></NIcon></template>
               修改描述
             </NButton>
-            <NButton size="tiny" @click="goToChat(selectedKb.id)">
+            <NButton size="small" @click="goToChat(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
               发起对话
             </NButton>
-            <NButton v-if="auth.isStaff" size="tiny" @click="openShare(selectedKb.id)">
+            <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><People /></NIcon></template>
               共享
             </NButton>
-            <NButton size="tiny" @click="openSelectDocs(selectedKb.id)">
+            <NButton size="small" @click="openSelectDocs(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Search /></NIcon></template>
               添加文档
             </NButton>
             <NPopconfirm @positive-click="handleDeleteKb(selectedKb.id)">
               <template #trigger>
-                <NButton size="tiny" type="error">
+                <NButton size="small" type="error" @click="blurActive()">
                   <template #icon><NIcon size="14"><Trash /></NIcon></template>
                   删除
                 </NButton>
@@ -1073,6 +1115,10 @@ async function loadSupportedTypes() {
   border-radius: var(--radius-full);
   border: 1px solid var(--color-primary);
 }
+.dm-header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* Create KB Modal */
+.create-kb-body { display: flex; flex-direction: column; gap: 12px; }
 
 /* Upload Modal */
 .upload-modal-body { display: flex; flex-direction: column; gap: 12px; }
@@ -1090,8 +1136,15 @@ async function loadSupportedTypes() {
 .dm-kb-panel { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .dm-kb-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dm-kb-desc { font-size: var(--text-sm); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
-.dm-kb-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.dm-kb-count { font-size: var(--text-xs); color: var(--color-text-muted); }
+.dm-kb-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: var(--text-sm); }
+.dm-kb-bottom :deep(.n-button) { font-size: var(--text-sm); }
+.dm-kb-bottom :deep(.n-button):focus:not(:hover):not(:active) { background: var(--color-surface); box-shadow: none; }
+.dm-kb-bottom :deep(.n-button--error-type):focus:not(:hover):not(:active) { background: var(--color-surface); box-shadow: none; }
+.dm-kb-count {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
 .dm-kb-actions { flex-wrap: wrap; }
 
 /* Filters */

@@ -28,9 +28,7 @@ const router = createRouter({
     },
     {
       path: '/knowledge',
-      name: 'knowledge',
-      component: () => import('@/views/KnowledgeBase.vue'),
-      meta: { title: '知识库', requiresAuth: true },
+      redirect: '/documents',
     },
     {
       path: '/documents',

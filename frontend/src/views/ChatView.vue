@@ -426,7 +426,7 @@ function handleKeydown(e: KeyboardEvent) {
           </NButton>
           <div v-if="kbs.length === 0" class="picker-empty">
             <NEmpty description="还没有知识库" style="padding:8px 0" />
-            <NButton type="primary" dashed size="small" @click="router.push('/knowledge')">
+            <NButton type="primary" dashed size="small" @click="router.push('/documents')">
               前往创建知识库
             </NButton>
           </div>
