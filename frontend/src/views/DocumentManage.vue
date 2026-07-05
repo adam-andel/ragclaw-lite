@@ -434,27 +434,30 @@ async function loadSupportedTypes() {
     <NSpin :show="loading">
       <NEmpty v-if="!loading && docs.length === 0" description="暂无文档，请上传" />
       <div class="dm-list" v-if="docs.length > 0">
-        <NCard v-for="doc in docs" :key="doc.id" size="small" class="dm-card" hoverable>
+        <NCard
+          v-for="doc in docs"
+          :key="doc.id"
+          size="small"
+          class="dm-card"
+          hoverable
+          role="button"
+          tabindex="0"
+          @click="openDetail(doc)"
+          @keydown.enter.prevent="openDetail(doc)"
+          @keydown.space.prevent="openDetail(doc)"
+        >
           <div class="doc-card-header">
             <span class="doc-type-icon doc-card-icon" :style="{ color: getFileTypeConfig(doc.file_type).color }">
               {{ getFileTypeConfig(doc.file_type).icon }}
             </span>
             <div class="doc-card-title-wrap">
-              <span
-                class="doc-name doc-name-clickable"
-                :title="doc.filename"
-                @click.stop="openDetail(doc)"
-                role="button"
-                tabindex="0"
-                @keydown.enter.prevent="openDetail(doc)"
-                @keydown.space.prevent="openDetail(doc)"
-              >{{ doc.filename }}</span>
+              <span class="doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
           </div>
           <div class="doc-card-meta">
-            <NTag :type="statusColors[doc.status] as any" size="small">
-              {{ statusLabels[doc.status] || doc.status }}
-            </NTag>
+            <span>{{ doc.chunk_count }} 分块</span>
+            <span class="doc-meta-sep">·</span>
+            <span>{{ doc.kb_ids.length }} 个知识库</span>
             <span class="doc-meta-sep">·</span>
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
@@ -579,7 +582,7 @@ async function loadSupportedTypes() {
       @after-leave="detailDoc = null"
     >
       <div v-if="detailDoc">
-        <NDescriptions bordered :column="1" size="small" label-style="width: 120px">
+        <NDescriptions bordered :column="1" size="small" label-placement="left" label-style="width: 120px">
           <NDescriptionsItem label="文件名">{{ detailDoc.filename }}</NDescriptionsItem>
           <NDescriptionsItem label="文件类型">
             {{ getFileTypeConfig(detailDoc.file_type).label }} ({{ detailDoc.file_type }})
@@ -682,7 +685,7 @@ async function loadSupportedTypes() {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
-.dm-card { transition: box-shadow .2s, border-color .2s; }
+.dm-card { cursor: pointer; transition: box-shadow .2s, border-color .2s; }
 .dm-card:hover { box-shadow: var(--shadow-sm); }
 .dm-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
 
