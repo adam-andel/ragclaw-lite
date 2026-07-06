@@ -186,6 +186,15 @@ app.mount("/data/workspace", StaticFiles(directory=str(workspace_dir)), name="wo
 # back to index.html for client-side routing to take over.
 frontend_dist = settings.project_root / "frontend" / "dist"
 if frontend_dist.exists():
+    # Avatar upload directory
+    avatar_dir = frontend_dist / "avatar"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/avatar",
+        StaticFiles(directory=str(avatar_dir)),
+        name="frontend-avatar",
+    )
+
     app.mount(
         "/assets",
         StaticFiles(directory=str(frontend_dist / "assets")),

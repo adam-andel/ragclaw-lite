@@ -32,7 +32,6 @@ const menuOptions = computed<MenuOption[]>(() => {
     { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     { label: '定时任务', key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
-    { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
     ...(auth.isAdmin ? [
       { label: '系统设置', key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) },

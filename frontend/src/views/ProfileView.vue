@@ -4,7 +4,7 @@ import {
   NForm, NFormItem, NInput, NButton, NAvatar, NIcon,
   NCard, NText, useMessage,
 } from 'naive-ui'
-import { PersonCircle, ShieldCheckmark, Mail, LockClosed, Create } from '@vicons/ionicons5'
+import { PersonCircle, ShieldCheckmark, Mail, LockClosed, Create, ImageOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import client from '@/api/client'
 
@@ -16,11 +16,74 @@ const avatarEmojis = ['👤', '😎', '🦊', '🐱', '🐶', '🐼', '🐨', '�
 const storedAvatar = localStorage.getItem('erag:avatar')
 const selectedAvatar = ref(storedAvatar || '👤')
 const showAvatarPicker = ref(false)
+const uploading = ref(false)
+
+const MAX_AVATAR_SIZE = 1 * 1024 * 1024 // 1MB
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const avatarSrc = computed(() => {
+  if (auth.user?.avatar_url) {
+    // Cache-bust to avoid stale browser cache after re-upload
+    return `${auth.user.avatar_url}?t=${Date.now()}`
+  }
+  return undefined
+})
 
 function selectAvatar(emoji: string) {
   selectedAvatar.value = emoji
   localStorage.setItem('erag:avatar', emoji)
   showAvatarPicker.value = false
+}
+
+function triggerUpload() {
+  fileInputRef.value?.click()
+}
+
+async function handleAvatarUpload(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    message.error('请上传图片文件')
+    target.value = ''
+    return
+  }
+  if (file.size > MAX_AVATAR_SIZE) {
+    message.error(`图片大小不能超过 ${MAX_AVATAR_SIZE / 1024 / 1024}MB`)
+    target.value = ''
+    return
+  }
+
+  uploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await client.post('/auth/me/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    auth.user = res.data
+    message.success('头像已更新')
+    showAvatarPicker.value = false
+  } catch (e: any) {
+    message.error(e.message || '上传失败')
+  } finally {
+    uploading.value = false
+    target.value = ''
+  }
+}
+
+async function removeCustomAvatar() {
+  uploading.value = true
+  try {
+    const res = await client.delete('/auth/me/avatar')
+    auth.user = res.data
+    message.success('已重置为默认头像')
+  } catch (e: any) {
+    message.error(e.message || '重置失败')
+  } finally {
+    uploading.value = false
+  }
 }
 
 // ── Form ──
@@ -86,9 +149,16 @@ const roleColor = computed(() => {
     <NCard class="profile-card" :bordered="false">
       <!-- Avatar -->
       <div class="avatar-section">
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept="image/*"
+          style="display: none"
+          @change="handleAvatarUpload"
+        />
         <div class="avatar-block" @click="showAvatarPicker = !showAvatarPicker">
-          <NAvatar :size="72" round :style="{ fontSize: '36px', background: 'var(--color-border)' }">
-            {{ selectedAvatar }}
+          <NAvatar :size="72" round :src="avatarSrc" :style="{ fontSize: '36px', background: auth.user?.avatar_url ? 'transparent' : 'var(--color-border)' }">
+            {{ auth.user?.avatar_url ? '' : selectedAvatar }}
           </NAvatar>
           <div class="avatar-edit-hint">
             <NIcon size="14"><Create /></NIcon>
@@ -99,9 +169,13 @@ const roleColor = computed(() => {
           <button
             v-for="emoji in avatarEmojis"
             :key="emoji"
-            :class="['avatar-emoji-btn', { active: selectedAvatar === emoji }]"
+            :class="['avatar-emoji-btn', { active: selectedAvatar === emoji && !auth.user?.avatar_url }]"
             @click="selectAvatar(emoji)"
           >{{ emoji }}</button>
+          <button class="avatar-upload-btn" title="上传自定义头像" :disabled="uploading" @click="triggerUpload">
+            <NIcon size="18"><ImageOutline /></NIcon>
+          </button>
+          <button v-if="auth.user?.avatar_url" class="avatar-reset-btn" :disabled="uploading" @click="removeCustomAvatar">重置</button>
         </div>
       </div>
 
@@ -274,6 +348,41 @@ const roleColor = computed(() => {
 .avatar-emoji-btn.active {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
+}
+
+.avatar-upload-btn {
+  width: 40px;
+  height: 40px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  color: var(--color-text-muted);
+}
+.avatar-upload-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.avatar-reset-btn {
+  height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.avatar-reset-btn:hover {
+  border-color: #ef4444;
+  color: #ef4444;
 }
 
 /* ── Role ── */

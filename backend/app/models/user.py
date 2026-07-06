@@ -29,6 +29,7 @@ class User(Base):
         default=UserRole.USER
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Multi-tenant: each user belongs to a tenant; admin can see all
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

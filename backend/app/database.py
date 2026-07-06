@@ -86,6 +86,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('system_settings', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "user_avatar_url" not in applied:
+        _migrate_user_avatar_url(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('user_avatar_url', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -495,6 +500,15 @@ def _migrate_parser_plugin_state(raw):
         )
     """)
     print("[migrate] parser_plugin_state done")
+
+
+def _migrate_user_avatar_url(raw):
+    """Add avatar_url column to users table."""
+    print("[migrate] Running user_avatar_url...")
+    if _add_col_if_missing(raw, "users", "avatar_url", "VARCHAR(500)"):
+        print("[migrate] user_avatar_url: added avatar_url column")
+    else:
+        print("[migrate] user_avatar_url: column already exists, skipping")
 
 
 def _migrate_system_settings(raw):
