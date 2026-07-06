@@ -186,9 +186,10 @@ const selectedDocIds = ref<string[]>([])
 const loadingAvailableDocs = ref(false)
 const availableTotal = ref(0)
 const availablePage = ref(1)
+const availablePageSize = ref(20)
 const availableSearch = ref('')
 const availableStatus = ref<string | null>('completed')
-const availableType = ref<string | null>(null)
+const availableType = ref<string>('all')
 const linkingDocs = ref(false)
 
 // Detail modal
@@ -391,17 +392,17 @@ async function openSelectDocs(kbId: string) {
   availablePage.value = 1
   availableSearch.value = ''
   availableStatus.value = 'completed'
-  availableType.value = null
+  availableType.value = 'all'
   await loadAvailableDocs(kbId)
 }
 
 async function loadAvailableDocs(kbId?: string) {
   loadingAvailableDocs.value = true
   try {
-    const params: any = { page: availablePage.value, size: 20 }
+    const params: any = { page: availablePage.value, size: availablePageSize.value }
     if (availableSearch.value) params.search = availableSearch.value
     if (availableStatus.value) params.status = availableStatus.value
-    if (availableType.value) params.file_type = availableType.value
+    if (availableType.value && availableType.value !== 'all') params.file_type = availableType.value
     const res = await listAllDocuments(params)
     availableDocs.value = res.data.items
     availableTotal.value = res.data.total
@@ -414,7 +415,19 @@ async function loadAvailableDocs(kbId?: string) {
 function resetAvailableFilters() {
   availableSearch.value = ''
   availableStatus.value = null
-  availableType.value = null
+  availableType.value = 'all'
+  availablePage.value = 1
+  loadAvailableDocs()
+}
+function onAvailableSearch() {
+  availablePage.value = 1
+  loadAvailableDocs()
+}
+function onAvailableStatusChange() {
+  availablePage.value = 1
+  loadAvailableDocs()
+}
+function onAvailableTypeChange() {
   availablePage.value = 1
   loadAvailableDocs()
 }
@@ -422,6 +435,10 @@ function openUploadFromSelectDocs() {
   showSelectDocs.value = false
   uploadTargetKb.value = filterKbId.value
   showUploadModal.value = true
+}
+function onAvailablePageChange(p: number) {
+  availablePage.value = p
+  loadAvailableDocs()
 }
 
 async function handleSelectDocs() {
@@ -670,9 +687,10 @@ function getFileTypeConfig(ext: string) {
 const typeOptions = computed(() => {
   const opts: { label: string; value: string }[] = [{ label: '全部类型', value: 'all' }]
   for (const ext of supportedExts.value) {
-    // Avoid duplicate entries for multi-ext parsers (e.g. md + markdown)
-    if (!opts.some(o => o.value === ext)) {
-      opts.push({ label: getFileTypeConfig(ext).label, value: ext })
+    const label = getFileTypeConfig(ext).label
+    // Avoid duplicate labels for multi-ext parsers (e.g. md + markdown)
+    if (!opts.some(o => o.label === label)) {
+      opts.push({ label, value: ext })
     }
   }
   return opts
@@ -1224,15 +1242,15 @@ async function loadSupportedTypes() {
     >
       <div class="select-docs-modal">
         <div class="select-docs-filters">
-          <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="loadAvailableDocs" style="flex:1">
+          <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="onAvailableSearch" style="flex:1">
             <template #prefix><NIcon><Search /></NIcon></template>
           </NInput>
-          <NButton type="primary" @click="loadAvailableDocs">
+          <NButton type="primary" @click="onAvailableSearch">
             <template #icon><NIcon><Search /></NIcon></template>
             搜索
           </NButton>
-          <NSelect v-model:value="availableStatus" :options="availableStatusOptions" placeholder="状态" style="width:110px" @update:value="loadAvailableDocs" />
-          <NSelect v-model:value="availableType" :options="typeOptions" placeholder="类型" style="width:110px" @update:value="loadAvailableDocs" />
+          <NSelect v-model:value="availableStatus" :options="availableStatusOptions" placeholder="状态" style="width:110px" @update:value="onAvailableStatusChange" />
+          <NSelect v-model:value="availableType" :options="typeOptions" placeholder="类型" style="width:110px" @update:value="onAvailableTypeChange" />
           <NButton @click="resetAvailableFilters" secondary>重置</NButton>
         </div>
         <NSpin :show="loadingAvailableDocs">
@@ -1251,13 +1269,16 @@ async function loadSupportedTypes() {
                 : selectedDocIds.push(doc.id)"
             >
               <NCheckbox :checked="selectedDocIds.includes(doc.id)" style="flex-shrink:0" />
-              <span class="select-doc-name">{{ getFileTypeConfig(doc.file_type).icon }} {{ doc.filename }}</span>
-              <NSpace size="small">
-                <NTag size="small">{{ doc.file_type.toUpperCase() }}</NTag>
-                <NTag size="small">{{ formatSize(doc.file_size) }}</NTag>
-                <NTag size="small" type="success">已完成</NTag>
-              </NSpace>
+              <span class="select-doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
+          </div>
+          <div class="select-docs-pagination" v-if="availableTotal > availablePageSize">
+            <NPagination
+              :page="availablePage"
+              :page-size="availablePageSize"
+              :item-count="availableTotal"
+              @update:page="onAvailablePageChange"
+            />
           </div>
         </NSpin>
         <div class="select-docs-actions">
@@ -1553,11 +1574,18 @@ async function loadSupportedTypes() {
 
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
 .select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.select-docs-list { max-height: 50vh; overflow-y: auto; }
-.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border-bottom: 1px solid var(--color-border); transition: background .15s; }
+.select-docs-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--radius); transition: background .15s; }
 .select-doc-row:hover { background: rgba(88, 166, 255, 0.04); }
-.select-doc-row.selected { background: rgba(88, 166, 255, 0.1); }
+.select-doc-row.selected { background: rgba(88, 166, 255, 0.1); border-color: var(--color-primary); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .select-docs-left { display: flex; align-items: center; gap: 12px; }
 .select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
