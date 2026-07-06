@@ -67,6 +67,7 @@ async def _get_doc_kb_ids(doc_id: str, db: AsyncSession) -> list[str]:
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    kb_id: str | None = Query(None),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
@@ -89,8 +90,13 @@ async def upload_document(
         owner_id=current_user.id, tenant_id=current_user.tenant_id,
     )
     db.add(doc)
-    await db.commit()
+    await db.flush()
     await db.refresh(doc)
+
+    if kb_id:
+        db.add(KBDocument(kb_id=kb_id, doc_id=doc.id))
+
+    await db.commit()
 
     # Auto-trigger async processing
     from app.services.doc_processor import process_document
@@ -102,6 +108,7 @@ async def upload_document(
 @router.post("/upload/batch", response_model=list[DocumentResponse])
 async def upload_documents_batch(
     files: list[UploadFile] = File(...),
+    kb_id: str | None = Query(None),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
@@ -137,6 +144,12 @@ async def upload_documents_batch(
         )
         db.add(doc)
         await db.flush()
+        await db.refresh(doc)
+
+        if kb_id:
+            db.add(KBDocument(kb_id=kb_id, doc_id=doc.id))
+            await db.flush()
+
         results.append(_model_to_response(doc))
 
     await db.commit()

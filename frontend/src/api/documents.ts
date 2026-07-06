@@ -26,23 +26,25 @@ export const removeDocumentFromKB = (kbId: string, docId: string) =>
 
 // ─── Documents ───
 
-export const uploadDocument = (file: File, onProgress?: (pct: number) => void, signal?: AbortSignal) => {
+export const uploadDocument = (file: File, onProgress?: (pct: number) => void, signal?: AbortSignal, kb_id?: string) => {
   const form = new FormData()
   form.append('file', file)
   return client.post<DocumentItem>('/documents/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     signal,
+    params: kb_id ? { kb_id } : undefined,
     onUploadProgress: (e) => {
       if (e.total && onProgress) onProgress(Math.round((e.loaded * 100) / e.total))
     },
   })
 }
 
-export const uploadDocumentsBatch = (files: File[], onProgress?: (pct: number) => void) => {
+export const uploadDocumentsBatch = (files: File[], onProgress?: (pct: number) => void, kb_id?: string) => {
   const form = new FormData()
   files.forEach(f => form.append('files', f))
   return client.post<DocumentItem[]>('/documents/upload/batch', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    params: kb_id ? { kb_id } : undefined,
     onUploadProgress: (e) => {
       if (e.total && onProgress) onProgress(Math.round((e.loaded * 100) / e.total))
     },

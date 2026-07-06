@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
@@ -20,6 +20,7 @@ import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
 
 const message = useMessage()
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 
 // List state
@@ -219,7 +220,17 @@ function toggleChunkExpand(id: string) {
 // Progress polling
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-onMounted(() => { loadDocs(); startPolling(); loadKBs(); loadSupportedTypes(); loadUploadItems() })
+onMounted(async () => {
+  loadSupportedTypes()
+  loadUploadItems()
+  startPolling()
+  await loadKBs()
+  const qkb = route.query.kb
+  if (typeof qkb === 'string' && allKbs.value.some(k => k.id === qkb)) {
+    filterKbId.value = qkb
+  }
+  await loadDocs()
+})
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -247,6 +258,10 @@ function selectKb(kbId: string | null) {
   filterKbId.value = kbId
   page.value = 1
   showKbFilter.value = false
+  const query = { ...route.query }
+  if (kbId) query.kb = kbId
+  else delete query.kb
+  router.replace({ query })
   loadDocs()
 }
 
@@ -287,9 +302,7 @@ async function handleDeleteKb(id: string) {
   try {
     await deleteKnowledgeBase(id)
     if (filterKbId.value === id) {
-      filterKbId.value = null
-      page.value = 1
-      loadDocs()
+      selectKb(null)
     }
     await loadKBs()
     message.success('知识库已删除')
@@ -478,14 +491,10 @@ async function startUploads() {
     item.controller = controller
 
     try {
-      const res = await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal)
+      const res = await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal, uploadTargetKb.value || undefined)
       item.status = 'success'
       item.progress = 100
       item.docId = res.data.id
-      const targetKb = uploadTargetKb.value
-      if (targetKb && item.docId) {
-        linkDocToKb(item.docId, targetKb)
-      }
     } catch (e: any) {
       if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
         item.status = 'cancelled'
@@ -505,21 +514,7 @@ async function startUploads() {
     saveUploadItems()
   }, 5000)
   await loadDocs()
-}
-
-async function linkDocToKb(docId: string, kbId: string) {
-  // Poll document status until it's completed, then link to KB
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await getDocumentStatus(docId)
-      if (res.data.status === 'completed') {
-        await addDocumentsToKB(kbId, [docId])
-        return
-      }
-      if (res.data.status === 'failed') return
-    } catch { return }
-    await new Promise(r => setTimeout(r, 5000))
-  }
+  await loadKBs()
 }
 
 function cancelUpload(itemId: string) {
