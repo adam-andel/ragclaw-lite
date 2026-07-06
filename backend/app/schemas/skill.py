@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class SkillCreate(BaseModel):
     """Online skill creation — generates SKILL.md + folder."""
     name: str = Field(..., min_length=1, max_length=200)
-    description: str = Field("", max_length=250)
+    description: str = Field("", max_length=250, description="≤250 chars for Layer 1 routing")
     mcp_servers: list[str] = Field(default_factory=list)
     is_active: bool = True
     body: str = Field("", description="SKILL.md markdown body (after front matter)")
