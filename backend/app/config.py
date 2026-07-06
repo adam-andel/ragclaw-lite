@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # --- Cache ---
     cache_enabled: bool = True
     cache_max_size: int = 1000
-    cache_ttl_seconds: int = 86400  # 24 hours
+    cache_ttl_seconds: int = 3600  # 60 min (default), runtime override via config_manager
 
     # --- Server ---
     host: str = "0.0.0.0"
