@@ -427,6 +427,13 @@ function startPolling() {
 
 function onPageChange(p: number) { page.value = p; loadDocs() }
 function onSearch() { page.value = 1; loadDocs() }
+function resetFilters() {
+  search.value = ''
+  filterStatus.value = null
+  filterType.value = null
+  page.value = 1
+  loadDocs()
+}
 
 // ── File drop ──
 
@@ -873,9 +880,13 @@ async function loadSupportedTypes() {
       <NInput v-model:value="search" placeholder="搜索文件名…" clearable @keyup.enter="onSearch" style="flex:1">
         <template #prefix><NIcon><Search /></NIcon></template>
       </NInput>
+      <NButton type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        搜索
+      </NButton>
       <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="状态" style="width:120px" @update:value="onSearch" />
       <NSelect v-model:value="filterType" :options="typeOptions" placeholder="类型" style="width:120px" @update:value="onSearch" />
-      <NButton @click="onSearch" secondary>筛选</NButton>
+      <NButton @click="resetFilters" secondary>重置</NButton>
     </div>
 
     <!-- Doc List -->
