@@ -7,7 +7,7 @@ import {
   NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
   NCheckbox, NTooltip,
 } from 'naive-ui'
-import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash } from '@vicons/ionicons5'
+import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close } from '@vicons/ionicons5'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -895,10 +895,15 @@ async function loadSupportedTypes() {
               <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
               发起对话
             </NButton>
-            <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
-              <template #icon><NIcon size="14"><People /></NIcon></template>
-              共享
-            </NButton>
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
+                  <template #icon><NIcon size="14"><People /></NIcon></template>
+                  选择用户
+                </NButton>
+              </template>
+              选择可以使用这个知识库的用户
+            </NTooltip>
             <NButton size="small" @click="openSelectDocs(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Search /></NIcon></template>
               添加文档
@@ -1207,6 +1212,7 @@ async function loadSupportedTypes() {
       style="width: 90vw; max-width: 640px"
     >
       <div class="share-form">
+        <p class="share-modal-hint">选择可以使用这个知识库的用户</p>
         <NSpin :show="shareLoading">
           <div class="share-add-row">
             <NSelect v-model:value="shareAddUser" :options="allUserOptions"
@@ -1221,15 +1227,26 @@ async function loadSupportedTypes() {
             <NEmpty description="暂无共享用户" />
           </div>
           <div class="share-list" v-if="shareUsers.length > 0">
-            <div v-for="u in shareUsers" :key="u.id" class="share-row">
-              <div class="share-user-info">
+            <div v-for="u in shareUsers" :key="u.id" class="share-card">
+              <div class="share-card-header">
                 <span class="share-user-avatar">👤</span>
-                <div>
-                  <div class="share-user-name">{{ u.display_name || u.username }}</div>
-                  <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
-                </div>
+                <NPopconfirm @positive-click="removeKbUser(u.id)">
+                  <template #trigger>
+                    <NButton
+                      class="share-card-remove"
+                      size="tiny"
+                      text
+                      type="error"
+                      @click.stop
+                    >
+                      <template #icon><NIcon size="16"><Close /></NIcon></template>
+                    </NButton>
+                  </template>
+                  确定取消共享给此用户吗
+                </NPopconfirm>
               </div>
-              <NButton text type="error" @click="removeKbUser(u.id)">移除</NButton>
+              <div class="share-user-name">{{ u.display_name || u.username }}</div>
+              <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
             </div>
           </div>
         </NSpin>
@@ -1562,15 +1579,25 @@ async function loadSupportedTypes() {
 /* KB action modals */
 .kb-form { display: flex; flex-direction: column; gap: 12px; }
 .share-form { display: flex; flex-direction: column; max-height: 60vh; }
+.share-modal-hint { margin: 0 0 12px; font-size: var(--text-sm); color: var(--color-text-muted); }
 .share-add-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .share-empty { padding: 20px 0; }
-.share-list { flex: 1; overflow-y: auto; min-height: 0; }
-.share-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--color-border); transition: background .15s; }
-.share-row:hover { background: rgba(88, 166, 255, 0.04); }
-.share-user-info { display: flex; align-items: center; gap: 10px; }
+.share-list { flex: 1; overflow-y: auto; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.share-card {
+  position: relative;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  transition: box-shadow .2s, border-color .2s;
+}
+.share-card:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary); }
+.share-card:hover .share-card-remove { opacity: 1; }
+.share-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.share-card-remove { opacity: 0; transition: opacity .2s; }
 .share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
-.share-user-name { font-weight: 500; font-size: 0.9rem; }
-.share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); }
+.share-user-name { font-weight: 500; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
 .select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1593,10 +1620,12 @@ async function loadSupportedTypes() {
 
 @media (max-width: 640px) {
   .kb-filter-grid { grid-template-columns: repeat(2, 1fr); }
+  .share-list { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 420px) {
   .kb-filter-grid { grid-template-columns: 1fr; }
   .kb-filter-toolbar { flex-direction: column; }
   .kb-filter-toolbar :deep(.n-base-selection) { width: 100% !important; }
+  .share-list { grid-template-columns: 1fr; }
 }
 </style>
