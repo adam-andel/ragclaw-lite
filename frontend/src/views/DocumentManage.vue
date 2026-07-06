@@ -241,7 +241,13 @@ async function loadDocs() {
   try {
     const params: any = { page: page.value, size: size.value }
     if (search.value) params.search = search.value
-    if (filterStatus.value) params.status = filterStatus.value
+    if (filterStatus.value) {
+      if (filterStatus.value === 'unlinked') {
+        params.unlinked = true
+      } else {
+        params.status = filterStatus.value
+      }
+    }
     if (filterType.value) params.file_type = filterType.value
     if (filterKbId.value) params.kb_id = filterKbId.value
     const res = await listAllDocuments(params)
@@ -644,6 +650,7 @@ const statusOptions = [
   { label: '全部状态', value: null },
   { label: '已完成', value: 'completed' }, { label: '处理中', value: 'pending' },
   { label: '等待中', value: 'pending' }, { label: '失败', value: 'failed' },
+  { label: '未关联', value: 'unlinked' },
 ]
 
 const availableStatusOptions = [

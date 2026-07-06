@@ -172,6 +172,7 @@ async def list_all_documents(
     file_type: str | None = Query(None),
     search: str | None = Query(None),
     kb_id: str | None = Query(None),
+    unlinked: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -184,6 +185,8 @@ async def list_all_documents(
         conditions.append(Document.file_type == file_type)
     if search:
         conditions.append(Document.filename.ilike(f"%{search}%"))
+    if unlinked:
+        conditions.append(~Document.kb_links.any())
 
     if kb_id:
         count_q = (
