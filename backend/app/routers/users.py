@@ -15,16 +15,22 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
 
 @router.get("", response_model=list[UserResponse])
 async def list_users(
+    search: str | None = None,
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """List users. ADMIN sees all, MODERATOR sees only USER role."""
+    """List users. ADMIN sees all, MODERATOR sees only USER role.
+    Optional `search` filters by username or display_name (case-insensitive)."""
+    query = select(User)
     if current_user.role == UserRole.ADMIN:
-        result = await db.execute(select(User).order_by(User.created_at.desc()))
+        pass
     else:
-        result = await db.execute(
-            select(User).where(User.role == UserRole.USER).order_by(User.created_at.desc())
-        )
+        query = query.where(User.role == UserRole.USER)
+    if search:
+        like = f"%{search}%"
+        query = query.where(or_(User.username.ilike(like), User.display_name.ilike(like)))
+    query = query.order_by(User.created_at.desc())
+    result = await db.execute(query)
     return [UserResponse.model_validate(u) for u in result.scalars().all()]
 
 

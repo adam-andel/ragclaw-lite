@@ -180,6 +180,11 @@ const shareAddUser = ref('')
 const allUsers = ref<any[]>([])
 const shareLoading = ref(false)
 const showAddMoreUsers = ref(false)
+const shareUserSearch = ref('')
+const shareUserPage = ref(1)
+const shareUserPageSize = ref(9)
+const shareAddedPage = ref(1)
+const shareAddedPageSize = ref(9)
 
 const showSelectDocs = ref(false)
 const availableDocs = ref<DocumentItem[]>([])
@@ -342,21 +347,28 @@ async function handleDeleteKb(id: string) {
   }
 }
 
-const allUserOptions = computed(() =>
-  allUsers.value
-    .filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
-    .map((u: any) => ({ label: `${u.display_name || u.username} (${u.username})`, value: u.id }))
-)
-
 const unaddedUsers = computed(() =>
   allUsers.value.filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
 )
+
+const paginatedShareUsers = computed(() => {
+  const start = (shareAddedPage.value - 1) * shareAddedPageSize.value
+  return shareUsers.value.slice(start, start + shareAddedPageSize.value)
+})
+
+const paginatedUnaddedUsers = computed(() => {
+  const start = (shareUserPage.value - 1) * shareUserPageSize.value
+  return unaddedUsers.value.slice(start, start + shareUserPageSize.value)
+})
 
 async function openShare(kbId: string) {
   shareKbId.value = kbId
   shareLoading.value = true
   showShare.value = true
   showAddMoreUsers.value = false
+  shareUserSearch.value = ''
+  shareUserPage.value = 1
+  shareAddedPage.value = 1
   try {
     const r = await client.get(`/kb/${kbId}/users`)
     shareUsers.value = r.data
@@ -368,6 +380,18 @@ async function openShare(kbId: string) {
   shareLoading.value = false
 }
 
+async function searchShareUsers() {
+  shareLoading.value = true
+  try {
+    const params: any = {}
+    if (shareUserSearch.value.trim()) params.search = shareUserSearch.value.trim()
+    const r = await client.get('/users', { params })
+    allUsers.value = r.data
+    shareUserPage.value = 1
+  } catch { allUsers.value = [] }
+  shareLoading.value = false
+}
+
 async function addKbUser(uid: string) {
   if (!uid) return
   try {
@@ -375,6 +399,8 @@ async function addKbUser(uid: string) {
     const r = await client.get(`/kb/${shareKbId.value}/users`)
     shareUsers.value = r.data
     shareAddUser.value = ''
+    shareAddedPage.value = 1
+    shareUserPage.value = 1
     message.success('已添加共享用户')
   } catch (e: any) {
     message.error('添加失败：' + (e?.response?.data?.detail || e.message))
@@ -386,6 +412,7 @@ async function removeKbUser(uid: string) {
     await client.delete(`/kb/${shareKbId.value}/users/${uid}`)
     const r = await client.get(`/kb/${shareKbId.value}/users`)
     shareUsers.value = r.data
+    shareAddedPage.value = 1
     message.success('已移除共享用户')
   } catch (e: any) {
     message.error('移除失败：' + (e?.response?.data?.detail || e.message))
@@ -1214,7 +1241,7 @@ async function loadSupportedTypes() {
     </NModal>
 
     <!-- Share Modal -->
-    <NModal v-model:show="showShare" preset="card" title="可以使用这个知识库的用户"
+    <NModal v-model:show="showShare" preset="card" title="共享用户"
       style="width: 90vw; max-width: 640px"
     >
       <div class="share-form">
@@ -1222,64 +1249,92 @@ async function loadSupportedTypes() {
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
             <NEmpty description="暂无共享用户" />
           </div>
-          <div class="share-list" v-if="shareUsers.length > 0">
-            <div v-for="u in shareUsers" :key="u.id" class="share-card">
-              <div class="share-card-header">
-                <span class="share-user-avatar">👤</span>
-                <NPopconfirm @positive-click="removeKbUser(u.id)">
-                  <template #trigger>
-                    <NButton
-                      class="share-card-remove"
-                      size="tiny"
-                      text
-                      type="error"
-                      @click.stop
-                    >
-                      <template #icon><NIcon size="16"><Close /></NIcon></template>
-                    </NButton>
-                  </template>
-                  确定取消共享给此用户吗
-                </NPopconfirm>
+          <div v-if="shareUsers.length > 0">
+            <div class="share-list">
+              <div v-for="u in paginatedShareUsers" :key="u.id" class="share-card">
+                <div class="share-card-header">
+                  <div class="share-user-info-row">
+                    <span class="share-user-avatar">👤</span>
+                    <div class="share-user-title">
+                      <div class="share-user-name">{{ u.display_name || u.username }}</div>
+                      <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+                    </div>
+                  </div>
+                  <NPopconfirm @positive-click="removeKbUser(u.id)">
+                    <template #trigger>
+                      <NButton
+                        class="share-card-remove"
+                        size="tiny"
+                        text
+                        type="error"
+                        @click.stop
+                      >
+                        <template #icon><NIcon size="16"><Close /></NIcon></template>
+                      </NButton>
+                    </template>
+                    确定取消共享给此用户吗
+                  </NPopconfirm>
+                </div>
               </div>
-              <div class="share-user-name">{{ u.display_name || u.username }}</div>
-              <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+            </div>
+            <div class="share-pagination" v-if="shareUsers.length > shareAddedPageSize">
+              <NPagination
+                :page="shareAddedPage"
+                :page-size="shareAddedPageSize"
+                :item-count="shareUsers.length"
+                @update:page="shareAddedPage = $event"
+              />
             </div>
           </div>
           <div class="share-add-more">
-            <NButton v-if="!showAddMoreUsers" dashed block @click="showAddMoreUsers = true">
+            <NButton v-if="!showAddMoreUsers" dashed block @click="showAddMoreUsers = true; searchShareUsers()">
               <template #icon><NIcon><Add /></NIcon></template>
               添加更多用户
             </NButton>
           </div>
           <template v-if="showAddMoreUsers">
             <div class="share-add-row">
-              <NSelect v-model:value="shareAddUser" :options="allUserOptions"
-                placeholder="搜索用户…" filterable clearable style="flex:1"
-              />
-              <NButton type="primary" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
-                <template #icon><NIcon><Add /></NIcon></template>
-                添加
+              <NInput v-model:value="shareUserSearch" placeholder="搜索用户…" clearable @keyup.enter="searchShareUsers" style="flex:1">
+                <template #prefix><NIcon><Search /></NIcon></template>
+              </NInput>
+              <NButton type="primary" @click="searchShareUsers">
+                <template #icon><NIcon><Search /></NIcon></template>
+                搜索
               </NButton>
             </div>
             <div v-if="unaddedUsers.length === 0" class="share-empty">
               <NEmpty description="暂无可添加的用户" />
             </div>
-            <div class="share-list share-unadded-list" v-if="unaddedUsers.length > 0">
-              <div
-                v-for="u in unaddedUsers"
-                :key="u.id"
-                class="share-card share-card-addable"
-                role="button"
-                tabindex="0"
-                @click="addKbUser(u.id)"
-                @keydown.enter.prevent="addKbUser(u.id)"
-                @keydown.space.prevent="addKbUser(u.id)"
-              >
-                <div class="share-card-header">
-                  <span class="share-user-avatar">👤</span>
+            <div v-if="unaddedUsers.length > 0">
+              <div class="share-list share-unadded-list">
+                <div
+                  v-for="u in paginatedUnaddedUsers"
+                  :key="u.id"
+                  class="share-card share-card-addable"
+                  role="button"
+                  tabindex="0"
+                  @click="addKbUser(u.id)"
+                  @keydown.enter.prevent="addKbUser(u.id)"
+                  @keydown.space.prevent="addKbUser(u.id)"
+                >
+                  <div class="share-card-header">
+                    <div class="share-user-info-row">
+                      <span class="share-user-avatar">👤</span>
+                      <div class="share-user-title">
+                        <div class="share-user-name">{{ u.display_name || u.username }}</div>
+                        <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="share-user-name">{{ u.display_name || u.username }}</div>
-                <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+              </div>
+              <div class="share-pagination" v-if="unaddedUsers.length > shareUserPageSize">
+                <NPagination
+                  :page="shareUserPage"
+                  :page-size="shareUserPageSize"
+                  :item-count="unaddedUsers.length"
+                  @update:page="shareUserPage = $event"
+                />
               </div>
             </div>
           </template>
@@ -1627,15 +1682,18 @@ async function loadSupportedTypes() {
 }
 .share-card:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary); }
 .share-card:hover .share-card-remove { opacity: 1; }
-.share-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.share-card-remove { opacity: 0; transition: opacity .2s; }
+.share-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.share-card-remove { opacity: 0; transition: opacity .2s; flex-shrink: 0; }
 .share-card-addable { cursor: pointer; }
 .share-card-addable:hover { border-color: var(--color-primary); background: rgba(88, 166, 255, 0.04); }
 .share-card-addable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
 .share-add-more { margin-top: 12px; }
-.share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
+.share-user-info-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.share-user-title { flex: 1; min-width: 0; }
+.share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; flex-shrink: 0; }
 .share-user-name { font-weight: 500; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-pagination { display: flex; justify-content: center; margin-top: 12px; }
 
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
 .select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
