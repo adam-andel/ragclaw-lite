@@ -68,7 +68,7 @@ async def create_skill(data: SkillCreate, current_user=Depends(get_current_staff
 
 
 @router.get("", response_model=SkillListResponse)
-async def list_skills(page=Query(1, ge=1), size=Query(20, ge=1, le=100), search=None,
+async def list_skills(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), search: str | None = None,
                       current_user=Depends(get_current_user), db=Depends(get_db)):
     conditions = []
     if current_user.tenant_id:
