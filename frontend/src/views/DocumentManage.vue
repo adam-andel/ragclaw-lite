@@ -7,7 +7,7 @@ import {
   NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
   NCheckbox, NTooltip,
 } from 'naive-ui'
-import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close } from '@vicons/ionicons5'
+import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -1287,8 +1287,8 @@ async function loadSupportedTypes() {
             </div>
           </div>
           <div class="share-add-more">
-            <NButton v-if="!showAddMoreUsers" dashed block @click="showAddMoreUsers = true; searchShareUsers()">
-              <template #icon><NIcon><Add /></NIcon></template>
+            <NButton dashed block @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
+              <template #icon><NIcon><component :is="showAddMoreUsers ? Remove : Add" /></NIcon></template>
               添加更多用户
             </NButton>
           </div>
