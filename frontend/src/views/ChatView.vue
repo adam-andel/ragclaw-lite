@@ -209,13 +209,13 @@ onMounted(() => {
   })
 })
 
-async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string) {
+async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false) {
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
@@ -314,7 +314,7 @@ async function regenerateAnswer(assistantMsgId: string) {
   await scrollToBottom()
   isStreaming.value = true
   await nextTick()
-  doStream(userMsg.content, proxyMsg, userMsg.id)
+  doStream(userMsg.content, proxyMsg, userMsg.id, true)
 }
 
 function stopStream() {

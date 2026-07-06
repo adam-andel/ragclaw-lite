@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
     kb_id: str = Field(...)              # 保持必填，一次对话一个 KB
     skill_id: str | None = None          # 可选：指定 SKILL，None 则自动路由
     conversation_id: str | None = None
+    skip_cache: bool = False             # 重新生成时跳过缓存
 
 
 class CitationSchema(BaseModel):

@@ -112,9 +112,10 @@ async def skill_router_node(state: dict) -> dict:
     """
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
-    cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
-    if cached:
-        return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
+    if not state.get("skip_cache"):
+        cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
+        if cached:
+            return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
 
     active_skill = None
     if skill_id:
