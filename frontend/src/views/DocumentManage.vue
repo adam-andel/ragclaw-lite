@@ -30,8 +30,8 @@ const page = ref(1)
 const size = ref(15)
 const loading = ref(false)
 const search = ref('')
-const filterStatus = ref<string | null>(null)
-const filterType = ref<string | null>(null)
+const filterStatus = ref<string>('all')
+const filterType = ref<string>('all')
 const filterKbId = ref<string | null>(null)
 const showKbFilter = ref(false)
 
@@ -124,6 +124,29 @@ const kbSortOptions = [
   { label: '最近更新', value: 'recent' },
   { label: '文档数量', value: 'doc_count' },
 ]
+
+const kbFilterMode = ref<'filter' | 'upload'>('filter')
+
+function openKbFilter(mode: 'filter' | 'upload' = 'filter') {
+  kbFilterMode.value = mode
+  kbFilterSearch.value = ''
+  kbFilterSortBy.value = 'recent'
+  showKbFilter.value = true
+}
+
+function onKbFilterSelect(kbId: string | null) {
+  if (kbFilterMode.value === 'upload') {
+    uploadTargetKb.value = kbId
+    showKbFilter.value = false
+  } else {
+    selectKb(kbId)
+  }
+}
+
+const uploadTargetKbName = computed(() => {
+  if (!uploadTargetKb.value) return '不关联'
+  return allKbs.value.find(k => k.id === uploadTargetKb.value)?.name || '不关联'
+})
 
 const filteredKbsForFilter = computed(() => {
   let list = [...allKbs.value]
@@ -241,14 +264,14 @@ async function loadDocs() {
   try {
     const params: any = { page: page.value, size: size.value }
     if (search.value) params.search = search.value
-    if (filterStatus.value) {
+    if (filterStatus.value && filterStatus.value !== 'all') {
       if (filterStatus.value === 'unlinked') {
         params.unlinked = true
       } else {
         params.status = filterStatus.value
       }
     }
-    if (filterType.value) params.file_type = filterType.value
+    if (filterType.value && filterType.value !== 'all') params.file_type = filterType.value
     if (filterKbId.value) params.kb_id = filterKbId.value
     const res = await listAllDocuments(params)
     docs.value = res.data.items
@@ -388,6 +411,18 @@ async function loadAvailableDocs(kbId?: string) {
     loadingAvailableDocs.value = false
   }
 }
+function resetAvailableFilters() {
+  availableSearch.value = ''
+  availableStatus.value = null
+  availableType.value = null
+  availablePage.value = 1
+  loadAvailableDocs()
+}
+function openUploadFromSelectDocs() {
+  showSelectDocs.value = false
+  uploadTargetKb.value = filterKbId.value
+  showUploadModal.value = true
+}
 
 async function handleSelectDocs() {
   if (selectedDocIds.value.length === 0 || !filterKbId.value) return
@@ -429,8 +464,8 @@ function onPageChange(p: number) { page.value = p; loadDocs() }
 function onSearch() { page.value = 1; loadDocs() }
 function resetFilters() {
   search.value = ''
-  filterStatus.value = null
-  filterType.value = null
+  filterStatus.value = 'all'
+  filterType.value = 'all'
   page.value = 1
   loadDocs()
 }
@@ -633,7 +668,7 @@ function getFileTypeConfig(ext: string) {
 }
 
 const typeOptions = computed(() => {
-  const opts: { label: string; value: string | null }[] = [{ label: '全部类型', value: null }]
+  const opts: { label: string; value: string }[] = [{ label: '全部类型', value: 'all' }]
   for (const ext of supportedExts.value) {
     // Avoid duplicate entries for multi-ext parsers (e.g. md + markdown)
     if (!opts.some(o => o.value === ext)) {
@@ -654,7 +689,7 @@ const supportedFormatsHint = computed(() => {
 })
 
 const statusOptions = [
-  { label: '全部状态', value: null },
+  { label: '全部状态', value: 'all' },
   { label: '已完成', value: 'completed' }, { label: '处理中', value: 'pending' },
   { label: '等待中', value: 'pending' }, { label: '失败', value: 'failed' },
   { label: '未关联', value: 'unlinked' },
@@ -761,14 +796,8 @@ async function loadSupportedTypes() {
         <!-- Knowledge base selector -->
         <div class="upload-kb-select">
           <span class="upload-kb-label">关联知识库</span>
-          <NSelect
-            v-model:value="uploadTargetKb"
-            :options="[{ label: '不关联（仅上传）', value: null }, ...allKbs.map((kb: any) => ({ label: kb.name, value: kb.id }))]"
-            placeholder="选择知识库（可选）"
-            size="small"
-            clearable
-            style="flex:1"
-          />
+          <span class="upload-kb-value">{{ uploadTargetKbName }}</span>
+          <NButton size="small" @click="openKbFilter('upload')">切换</NButton>
         </div>
 
         <!-- Drop zone -->
@@ -830,7 +859,7 @@ async function loadSupportedTypes() {
       <span class="dm-kb-label">当前知识库</span>
       <div class="dm-kb-panel">
         <div class="dm-kb-top">
-          <NButton secondary @click="showKbFilter = true">
+          <NButton secondary @click="openKbFilter('filter')">
             <template #icon><NIcon><DocumentText /></NIcon></template>
             {{ filterKbId ? filterKbName : '全部' }}
           </NButton>
@@ -1113,28 +1142,28 @@ async function loadSupportedTypes() {
         <NCard
           size="small"
           class="kb-filter-card"
-          :class="{ 'kb-filter-active': filterKbId === null }"
+          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null }"
           role="button"
           tabindex="0"
-          @click="selectKb(null)"
-          @keydown.enter.prevent="selectKb(null)"
-          @keydown.space.prevent="selectKb(null)"
+          @click="onKbFilterSelect(null)"
+          @keydown.enter.prevent="onKbFilterSelect(null)"
+          @keydown.space.prevent="onKbFilterSelect(null)"
         >
-          <strong>全部</strong>
+          <strong>{{ kbFilterMode === 'upload' ? '不关联' : '全部' }}</strong>
           <span class="kb-filter-count">共 {{ allKbs.length }} 个知识库</span>
-          <span class="kb-filter-meta">显示所有文档</span>
+          <span class="kb-filter-meta">{{ kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档' }}</span>
         </NCard>
         <NCard
           v-for="kb in filteredKbsForFilter"
           :key="kb.id"
           size="small"
           class="kb-filter-card"
-          :class="{ 'kb-filter-active': filterKbId === kb.id }"
+          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === kb.id : filterKbId === kb.id }"
           role="button"
           tabindex="0"
-          @click="selectKb(kb.id)"
-          @keydown.enter.prevent="selectKb(kb.id)"
-          @keydown.space.prevent="selectKb(kb.id)"
+          @click="onKbFilterSelect(kb.id)"
+          @keydown.enter.prevent="onKbFilterSelect(kb.id)"
+          @keydown.space.prevent="onKbFilterSelect(kb.id)"
         >
           <strong>{{ kb.name }}</strong>
           <span v-if="kb.description" class="kb-filter-desc">{{ kb.description }}</span>
@@ -1198,9 +1227,13 @@ async function loadSupportedTypes() {
           <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="loadAvailableDocs" style="flex:1">
             <template #prefix><NIcon><Search /></NIcon></template>
           </NInput>
+          <NButton type="primary" @click="loadAvailableDocs">
+            <template #icon><NIcon><Search /></NIcon></template>
+            搜索
+          </NButton>
           <NSelect v-model:value="availableStatus" :options="availableStatusOptions" placeholder="状态" style="width:110px" @update:value="loadAvailableDocs" />
           <NSelect v-model:value="availableType" :options="typeOptions" placeholder="类型" style="width:110px" @update:value="loadAvailableDocs" />
-          <NButton @click="loadAvailableDocs" secondary>筛选</NButton>
+          <NButton @click="resetAvailableFilters" secondary>重置</NButton>
         </div>
         <NSpin :show="loadingAvailableDocs">
           <div v-if="!loadingAvailableDocs && availableDocs.length === 0" class="select-docs-empty">
@@ -1230,7 +1263,7 @@ async function loadSupportedTypes() {
         <div class="select-docs-actions">
           <div class="select-docs-left">
             <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
-            <NButton text size="tiny" type="primary" @click="showSelectDocs = false; router.push('/documents')">
+            <NButton text size="tiny" type="primary" @click="openUploadFromSelectDocs">
               上传更多文档 →
             </NButton>
           </div>
@@ -1277,6 +1310,7 @@ async function loadSupportedTypes() {
 /* Upload Modal */
 .upload-kb-select { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .upload-kb-label { font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
+.upload-kb-value { flex: 0 1 auto; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-modal-body { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
 .upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(88,166,255,0.04); }
