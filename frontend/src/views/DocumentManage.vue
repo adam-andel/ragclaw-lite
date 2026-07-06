@@ -179,6 +179,7 @@ const shareUsers = ref<any[]>([])
 const shareAddUser = ref('')
 const allUsers = ref<any[]>([])
 const shareLoading = ref(false)
+const showAddMoreUsers = ref(false)
 
 const showSelectDocs = ref(false)
 const availableDocs = ref<DocumentItem[]>([])
@@ -347,10 +348,15 @@ const allUserOptions = computed(() =>
     .map((u: any) => ({ label: `${u.display_name || u.username} (${u.username})`, value: u.id }))
 )
 
+const unaddedUsers = computed(() =>
+  allUsers.value.filter((u: any) => !shareUsers.value.some((s: any) => s.id === u.id))
+)
+
 async function openShare(kbId: string) {
   shareKbId.value = kbId
   shareLoading.value = true
   showShare.value = true
+  showAddMoreUsers.value = false
   try {
     const r = await client.get(`/kb/${kbId}/users`)
     shareUsers.value = r.data
@@ -899,7 +905,7 @@ async function loadSupportedTypes() {
               <template #trigger>
                 <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
                   <template #icon><NIcon size="14"><People /></NIcon></template>
-                  选择用户
+                  共享用户
                 </NButton>
               </template>
               选择可以使用这个知识库的用户
@@ -1208,21 +1214,11 @@ async function loadSupportedTypes() {
     </NModal>
 
     <!-- Share Modal -->
-    <NModal v-model:show="showShare" preset="card" title="共享管理"
+    <NModal v-model:show="showShare" preset="card" title="可以使用这个知识库的用户"
       style="width: 90vw; max-width: 640px"
     >
       <div class="share-form">
-        <p class="share-modal-hint">选择可以使用这个知识库的用户</p>
         <NSpin :show="shareLoading">
-          <div class="share-add-row">
-            <NSelect v-model:value="shareAddUser" :options="allUserOptions"
-              placeholder="搜索用户…" filterable clearable style="flex:1"
-            />
-            <NButton type="primary" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
-              <template #icon><NIcon><Add /></NIcon></template>
-              添加
-            </NButton>
-          </div>
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
             <NEmpty description="暂无共享用户" />
           </div>
@@ -1249,6 +1245,44 @@ async function loadSupportedTypes() {
               <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
             </div>
           </div>
+          <div class="share-add-more">
+            <NButton v-if="!showAddMoreUsers" dashed block @click="showAddMoreUsers = true">
+              <template #icon><NIcon><Add /></NIcon></template>
+              添加更多用户
+            </NButton>
+          </div>
+          <template v-if="showAddMoreUsers">
+            <div class="share-add-row">
+              <NSelect v-model:value="shareAddUser" :options="allUserOptions"
+                placeholder="搜索用户…" filterable clearable style="flex:1"
+              />
+              <NButton type="primary" :disabled="!shareAddUser" @click="addKbUser(shareAddUser)">
+                <template #icon><NIcon><Add /></NIcon></template>
+                添加
+              </NButton>
+            </div>
+            <div v-if="unaddedUsers.length === 0" class="share-empty">
+              <NEmpty description="暂无可添加的用户" />
+            </div>
+            <div class="share-list share-unadded-list" v-if="unaddedUsers.length > 0">
+              <div
+                v-for="u in unaddedUsers"
+                :key="u.id"
+                class="share-card share-card-addable"
+                role="button"
+                tabindex="0"
+                @click="addKbUser(u.id)"
+                @keydown.enter.prevent="addKbUser(u.id)"
+                @keydown.space.prevent="addKbUser(u.id)"
+              >
+                <div class="share-card-header">
+                  <span class="share-user-avatar">👤</span>
+                </div>
+                <div class="share-user-name">{{ u.display_name || u.username }}</div>
+                <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+              </div>
+            </div>
+          </template>
         </NSpin>
       </div>
     </NModal>
@@ -1595,6 +1629,10 @@ async function loadSupportedTypes() {
 .share-card:hover .share-card-remove { opacity: 1; }
 .share-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .share-card-remove { opacity: 0; transition: opacity .2s; }
+.share-card-addable { cursor: pointer; }
+.share-card-addable:hover { border-color: var(--color-primary); background: rgba(88, 166, 255, 0.04); }
+.share-card-addable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
+.share-add-more { margin-top: 12px; }
 .share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; }
 .share-user-name { font-weight: 500; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
