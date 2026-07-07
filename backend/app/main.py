@@ -180,13 +180,13 @@ async def health_check():
 @app.get("/api/download/{uuid}/{filename}")
 async def download_mcp_file(uuid: str, filename: str):
     """Proxy file download from MCP REPL server.
-    
+
     Fetches the file from the MCP server's internal /files/ endpoint and
-    streams it back to the client. This keeps the MCP server isolated — no
+    returns it to the client. This keeps the MCP server isolated — no
     host port mapping needed, and no localhost-dependent URLs.
     """
     from fastapi import HTTPException
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import Response
     import httpx
     import mimetypes
 
@@ -201,6 +201,7 @@ async def download_mcp_file(uuid: str, filename: str):
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(mcp_url)
             resp.raise_for_status()
+            body = resp.content  # read full body before client exits
     except httpx.ConnectError:
         raise HTTPException(503, detail="MCP REPL server unreachable")
     except httpx.HTTPStatusError as e:
@@ -213,13 +214,10 @@ async def download_mcp_file(uuid: str, filename: str):
     mime_type, _ = mimetypes.guess_type(safe_filename)
     media_type = mime_type or "application/octet-stream"
 
-    return StreamingResponse(
-        content=resp.aiter_bytes(),
+    return Response(
+        content=body,
         media_type=media_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_filename}"',
-            "Content-Length": resp.headers.get("Content-Length", ""),
-        },
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
     )
 
 

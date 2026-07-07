@@ -450,15 +450,22 @@ def _extract_download_links_from_state(state: dict) -> str:
     """Scan tool results for download links and format them for final display.
 
     This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
+    Formats [File] tags as clickable Markdown links the frontend can render.
     """
     tool_results = state.get("tool_results", [])
     links = []
+    seen = set()
     for r in tool_results:
-        if "[File]" in r:
-            idx = r.index("[File]")
-            links.append(r[idx:])
+        for url_match in _re.finditer(
+            r'\[File\]\s*(https?://[^\s]+/([^/\s]+))', r
+        ):
+            full_url = url_match.group(1)
+            filename = url_match.group(2)
+            if full_url not in seen:
+                seen.add(full_url)
+                links.append(f"- [📥 {filename}]({full_url})")
     if links:
-        return "\n\n---\n\n" + "\n\n".join(links)
+        return "\n\n---\n\n**下载文件：**\n" + "\n".join(links)
     return ""
 
 async def tool_executor_node(state: dict) -> dict:

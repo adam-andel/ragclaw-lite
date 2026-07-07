@@ -13,7 +13,9 @@ WORKDIR /app
 
 # Install Python dependencies into a shared site
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt || \
+    (pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+     pip install --no-cache-dir -r requirements.txt)
 
 # Copy server code (kept minimal — no venv, no tests)
 COPY python_repl_mcp_server.py .
@@ -28,7 +30,7 @@ RUN mkdir -p /app/workspace && chown mcpuser:mcpuser /app/workspace
 ENV PYTHONDONTWRITEBYTECODE=1
 
 USER mcpuser
-EXPOSE 9200
+# EXPOSE 9200
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9200/health')" || exit 1
