@@ -440,9 +440,8 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
             f'{proxy_prefix}/\\1',
             result
         )
-    else:
-        # No [File] tags — add them pointing to ERAG proxy
-        result += f"\n\n[File] {proxy_prefix}/"
+    # If MCP didn't generate [File] links (missing REPL_PUBLIC_URL),
+    # we don't fabricate broken links — let the result speak for itself.
 
     return result
 
@@ -460,12 +459,12 @@ def _extract_download_links_from_state(state: dict) -> str:
             r'\[File\]\s*(https?://[^\s]+/([^/\s]+))', r
         ):
             full_url = url_match.group(1)
-            filename = url_match.group(2)
+            # filename = url_match.group(2)
             if full_url not in seen:
                 seen.add(full_url)
-                links.append(f"- [📥 {filename}]({full_url})")
+                links.append(f"- [📥 {full_url}]({full_url})")
     if links:
-        return "\n\n---\n\n**下载文件：**\n" + "\n".join(links)
+        return "\n\n---\n" + "\n".join(links)
     return ""
 
 async def tool_executor_node(state: dict) -> dict:
