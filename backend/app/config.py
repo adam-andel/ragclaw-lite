@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:8000", "http://localhost:5173"]
 
+    # --- Download Proxy ---
+    public_url: str = ""  # External URL for download links; empty = use relative URLs
+    mcp_repl_internal_url: str = "http://mcp-repl:9200"  # Docker internal network URL for MCP REPL
+
     # --- Conversation ---
     conversation_max_history: int = 10
 
