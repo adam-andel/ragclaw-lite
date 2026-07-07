@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NDataTable, NEmpty } from 'naive-ui'
-import { Add, Trash, Eye } from '@vicons/ionicons5'
+import { Add, Trash, Eye, People } from '@vicons/ionicons5'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -105,13 +105,19 @@ import { h } from 'vue'
 </script>
 
 <template>
-  <div class="user-view">
-    <div class="header">
-      <h2>👥 用户管理</h2>
-      <NButton type="primary" size="small" @click="showCreate = true">
-        <template #icon><NIcon><Add /></NIcon></template>
-        新建用户
-      </NButton>
+  <div class="page-container">
+    <div class="dm-header">
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><People /></NIcon>
+        <h2>用户管理</h2>
+        <span v-if="users.length > 0" class="kb-header-badge">{{ users.length }}</span>
+      </div>
+      <div class="dm-header-actions">
+        <NButton type="primary" size="small" @click="showCreate = true">
+          <template #icon><NIcon><Add /></NIcon></template>
+          新建用户
+        </NButton>
+      </div>
     </div>
 
     <NDataTable
@@ -144,11 +150,45 @@ import { h } from 'vue'
 </template>
 
 <style scoped>
-.user-view { max-width: 1000px; margin: 0 auto; }
-.header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 20px;
+.page-container {
+  padding: var(--space-4);
+  max-width: 1000px;
+  margin: 0 auto;
 }
-.header h2 { font-size: 1.25rem; }
+.dm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.dm-header .kb-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dm-header .kb-header-title h2 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin: 0;
+}
+.dm-header .kb-header-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+}
+.dm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
 </style>

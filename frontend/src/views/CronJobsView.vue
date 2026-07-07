@@ -218,14 +218,20 @@ const columns = [
 </script>
 
 <template>
-  <div>
-    <NCard title="定时任务管理">
-      <template #header-extra>
-        <NButton type="primary" @click="openCreate">
+  <div class="page-container">
+    <div class="dm-header">
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><Time /></NIcon>
+        <h2>定时任务管理</h2>
+        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
+      </div>
+      <div class="dm-header-actions">
+        <NButton type="primary" size="small" @click="openCreate">
           <template #icon><NIcon><Add /></NIcon></template>
           新建定时任务
         </NButton>
-      </template>
+      </div>
+    </div>
 
       <NDataTable
         :columns="columns"
@@ -235,7 +241,6 @@ const columns = [
         :row-key="(row: CronJob) => row.id"
         striped
       />
-    </NCard>
 
     <!-- Create/Edit Modal -->
     <NModal v-model:show="showModal" :title="editing ? '编辑定时任务' : '新建定时任务'" preset="card" style="width: 640px">
@@ -295,6 +300,46 @@ const columns = [
 </template>
 
 <style scoped>
+.page-container {
+  padding: var(--space-4);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.dm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.dm-header .kb-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dm-header .kb-header-title h2 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin: 0;
+}
+.dm-header .kb-header-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+}
+.dm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .empty {
   color: var(--color-text-muted);
   text-align: center;

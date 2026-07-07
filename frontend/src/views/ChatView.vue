@@ -629,7 +629,7 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
 .chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .kb-select-label {
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   font-weight: 500;
   white-space: nowrap;
@@ -836,6 +836,7 @@ function handleKeydown(e: KeyboardEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 700;
 }
 
 /* ── Mobile: header wraps gracefully ── */

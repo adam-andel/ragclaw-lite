@@ -814,11 +814,11 @@ async function loadSupportedTypes() {
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton type="primary" @click="showCreateKb = true">
+        <NButton size="small" type="primary" @click="showCreateKb = true">
           <template #icon><NIcon><Create /></NIcon></template>
           新建知识库
         </NButton>
-        <NButton type="primary" @click="openUploadModal">
+        <NButton size="small" type="primary" @click="openUploadModal">
           <template #icon><NIcon><Add /></NIcon></template>
           上传文件
         </NButton>
@@ -910,7 +910,7 @@ async function loadSupportedTypes() {
       <span class="dm-kb-label">当前知识库</span>
       <div class="dm-kb-panel">
         <div class="dm-kb-top">
-          <NButton secondary @click="openKbFilter('filter')">
+          <NButton secondary :style="{ fontWeight: 700 }" @click="openKbFilter('filter')">
             <template #icon><NIcon><DocumentText /></NIcon></template>
             {{ filterKbId ? filterKbName : '全部' }}
           </NButton>
@@ -945,7 +945,7 @@ async function loadSupportedTypes() {
               <template #trigger>
                 <NTooltip trigger="hover">
                   <template #trigger>
-                    <NButton size="small" type="error" @click="blurActive()">
+                    <NButton size="small" class="dm-danger-btn" @click="blurActive()" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                       <template #icon><NIcon size="14"><Trash /></NIcon></template>
                       删除
                     </NButton>
@@ -962,16 +962,16 @@ async function loadSupportedTypes() {
 
     <!-- Filters -->
     <div class="dm-filters">
-      <NInput v-model:value="search" placeholder="搜索文件名…" clearable @keyup.enter="onSearch" style="flex:1">
+      <NInput v-model:value="search" placeholder="搜索文件名…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
         <template #prefix><NIcon><Search /></NIcon></template>
       </NInput>
-      <NButton type="primary" @click="onSearch">
+      <NButton size="small" type="primary" @click="onSearch">
         <template #icon><NIcon><Search /></NIcon></template>
         搜索
       </NButton>
-      <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="状态" style="width:120px" @update:value="onSearch" />
-      <NSelect v-model:value="filterType" :options="typeOptions" placeholder="类型" style="width:120px" @update:value="onSearch" />
-      <NButton @click="resetFilters" secondary>重置</NButton>
+      <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="状态" size="small" style="width:120px" @update:value="onSearch" />
+      <NSelect v-model:value="filterType" :options="typeOptions" placeholder="类型" size="small" style="width:120px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
     </div>
 
     <!-- Doc List -->

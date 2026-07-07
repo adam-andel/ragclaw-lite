@@ -5,7 +5,7 @@ import {
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
   NUpload, NDivider, NScrollbar,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, ChevronDown } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, ChevronDown, Bulb } from '@vicons/ionicons5'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
@@ -354,42 +354,45 @@ onMounted(() => {
 
 <template>
   <div class="page-container">
-    <NCard title="技能管理" size="small">
-      <template #header-extra>
-        <NSpace>
-          <NButton size="small" @click="handleSync">
-            <template #icon><NIcon><Sync /></NIcon></template>
-            同步
-          </NButton>
-          <NButton size="small" @click="triggerFolderUpload">
+    <div class="dm-header">
+      <div class="kb-header-title">
+        <NIcon size="22" color="var(--color-primary)"><Bulb /></NIcon>
+        <h2>技能管理</h2>
+        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
+      </div>
+      <div class="dm-header-actions">
+        <NButton size="small" @click="handleSync">
+          <template #icon><NIcon><Sync /></NIcon></template>
+          同步
+        </NButton>
+        <NButton size="small" @click="triggerFolderUpload">
+          <template #icon><NIcon><CloudUpload /></NIcon></template>
+          上传文件夹
+        </NButton>
+        <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
+          <NButton size="small">
             <template #icon><NIcon><CloudUpload /></NIcon></template>
-            上传文件夹
+            上传ZIP
           </NButton>
-          <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
-            <NButton size="small">
-              <template #icon><NIcon><CloudUpload /></NIcon></template>
-              上传ZIP
-            </NButton>
-          </NUpload>
-          <NButton type="primary" size="small" @click="openCreate">
-            <template #icon><NIcon><Add /></NIcon></template>
-            在线创建
-          </NButton>
-        </NSpace>
-      </template>
+        </NUpload>
+        <NButton type="primary" size="small" @click="openCreate">
+          <template #icon><NIcon><Add /></NIcon></template>
+          在线创建
+        </NButton>
+      </div>
+    </div>
 
-      <!-- Hidden folder inputs -->
-      <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
-      <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
+    <!-- Hidden folder inputs -->
+    <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
+    <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
 
-      <NDataTable
-        :columns="columns"
-        :data="skills"
-        :loading="loading"
-        :pagination="{ page, pageSize: 20, itemCount: total, showSizePicker: false, onChange: (p: number) => { page = p; load() } }"
-        :row-key="(r: Skill) => r.id"
-      />
-    </NCard>
+    <NDataTable
+      :columns="columns"
+      :data="skills"
+      :loading="loading"
+      :pagination="{ page, pageSize: 20, itemCount: total, showSizePicker: false, onChange: (p: number) => { page = p; load() } }"
+      :row-key="(r: Skill) => r.id"
+    />
 
     <!-- Create Modal -->
     <NModal v-model:show="showCreateModal" title="在线创建技能" preset="card" style="width:640px">
@@ -448,5 +451,40 @@ onMounted(() => {
   padding: var(--space-4);
   max-width: 1100px;
   margin: 0 auto;
+}
+.dm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.dm-header .kb-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dm-header .kb-header-title h2 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin: 0;
+}
+.dm-header .kb-header-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-primary);
+}
+.dm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

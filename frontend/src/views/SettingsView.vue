@@ -351,7 +351,7 @@ async function handleTest() {
 
           <!-- Test Connection -->
           <NFormItem :show-feedback="false">
-            <NSpace>
+            <NSpace align="center">
               <NButton
                 type="info"
                 :loading="testing"
@@ -361,14 +361,12 @@ async function handleTest() {
                 <template #icon><NIcon><Flash /></NIcon></template>
                 测试连接
               </NButton>
+              <div v-if="testResult" :class="['test-result', testResult.ok ? 'test-ok' : 'test-fail']">
+                <NIcon :component="testResult.ok ? CheckmarkCircle : AlertCircle" size="16" />
+                <span>{{ testResult.text }}</span>
+              </div>
             </NSpace>
           </NFormItem>
-
-          <!-- 测试结果 -->
-          <div v-if="testResult" :class="['test-result', testResult.ok ? 'test-ok' : 'test-fail']">
-            <NIcon :component="testResult.ok ? CheckmarkCircle : AlertCircle" size="16" />
-            <span>{{ testResult.text }}</span>
-          </div>
 
         </section>
 
@@ -536,8 +534,8 @@ async function handleTest() {
 .help-icon:hover { color: var(--color-primary); }
 
 .test-result {
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: var(--text-sm); white-space: pre-wrap;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 6px; font-size: var(--text-sm); white-space: nowrap; line-height: 1;
 }
 .test-ok { background: rgba(34,197,94,0.1); color: #16a34a; }
 .test-fail { background: rgba(239,68,68,0.1); color: #dc2626; }

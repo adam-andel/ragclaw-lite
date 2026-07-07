@@ -293,10 +293,6 @@ const roleColor = computed(() => {
   position: relative;
   cursor: pointer;
   border-radius: 50%;
-  transition: box-shadow 0.2s;
-}
-.avatar-block:hover {
-  box-shadow: 0 0 0 4px var(--color-primary-soft);
 }
 .avatar-edit-hint {
   display: flex;
