@@ -5,13 +5,14 @@ services:
       dockerfile: Dockerfile
     container_name: erag-lite
     ports:
-      - "8000:8000"
+      - "${ERAG_PORT:-8000}:8000"
     volumes:
       - erag_data:/app/data
     env_file:
       - .env
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
+      - PUBLIC_URL=${PUBLIC_URL:-}
     restart: unless-stopped
     networks:
       - erag
@@ -22,8 +23,8 @@ services:
       context: ./mcp
       dockerfile: Dockerfile
     container_name: erag-mcp-repl
-    ports:
-      - "9200:9200"
+    # No host port mapping — MCP is internal-only, accessed via Docker network.
+    # File downloads go through ERAG's /api/download/{uuid}/{filename} proxy.
     # ── Container security hardening ──
     read_only: true
     tmpfs:
@@ -34,8 +35,6 @@ services:
       - seccomp:./mcp/seccomp.json
     cap_drop:
       - ALL
-    environment:
-      - REPL_PUBLIC_URL=http://localhost:9200
     # ── Resource limits ──
     deploy:
       resources:

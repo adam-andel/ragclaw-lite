@@ -1,10 +1,10 @@
 """Python REPL MCP Server — execute Python code in isolated subprocesses.
 
 Security: runs in a single allowed directory only.
-  --allow-dir D:\workspace  → subprocess can only read/write inside this dir
+  --allow-dir /app/workspace  → subprocess can only read/write inside this dir
 
 Usage:
-  python python_repl_mcp_server.py --port 9200 --allow-dir D:\workspace
+  python python_repl_mcp_server.py --port 9200 --allow-dir /app/workspace
 """
 
 import json

@@ -176,6 +176,53 @@ async def health_check():
     }
 
 
+# --- Download proxy: relay MCP-generated files through ERAG ---
+@app.get("/api/download/{uuid}/{filename}")
+async def download_mcp_file(uuid: str, filename: str):
+    """Proxy file download from MCP REPL server.
+    
+    Fetches the file from the MCP server's internal /files/ endpoint and
+    streams it back to the client. This keeps the MCP server isolated — no
+    host port mapping needed, and no localhost-dependent URLs.
+    """
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+    import httpx
+    import mimetypes
+
+    # Sanitize inputs to prevent path traversal
+    safe_uuid = uuid.replace("/", "").replace("\\", "").replace("..", "")
+    safe_filename = filename.replace("..", "").replace("/", "").replace("\\", "")
+
+    mcp_base = settings.mcp_repl_internal_url.rstrip("/")
+    mcp_url = f"{mcp_base}/files/{safe_uuid}/{safe_filename}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(mcp_url)
+            resp.raise_for_status()
+    except httpx.ConnectError:
+        raise HTTPException(503, detail="MCP REPL server unreachable")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(404, detail="File not found or expired")
+        raise HTTPException(502, detail=f"MCP server error: {e.response.status_code}")
+    except Exception as e:
+        raise HTTPException(502, detail=f"Download proxy error: {str(e)}")
+
+    mime_type, _ = mimetypes.guess_type(safe_filename)
+    media_type = mime_type or "application/octet-stream"
+
+    return StreamingResponse(
+        content=resp.aiter_bytes(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+            "Content-Length": resp.headers.get("Content-Length", ""),
+        },
+    )
+
+
 # --- Workspace static files (user-accessible download) ---
 workspace_dir = settings.project_root / "data" / "workspace"
 workspace_dir.mkdir(parents=True, exist_ok=True)

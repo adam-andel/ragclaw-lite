@@ -420,41 +420,31 @@ import re as _re
 def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
     """Ensure download links are present in tool result.
 
-    If the MCP server already included a [File] (via --public-url), pass through.
-    Otherwise, construct one from the MCP endpoint as fallback.
+    Generates download URLs pointing to ERAG's own /api/download/{uuid}/ proxy
+    endpoint, so the user only needs access to ERAG — the MCP server stays
+    fully internal with no host port exposure.
     """
-    if "[File]" in result:
-        return result  # MCP server already provided links
-
     m = _re.search(r'\[workspace:\s*([a-f0-9]{8})/\]', result)
     if not m:
         return result
     uuid_dir = m.group(1)
-    base = ""
-    if mcp_endpoint:
-        ep_match = _re.match(r'(https?://[^/]+)', mcp_endpoint)
-        if ep_match:
-            base = ep_match.group(1)
-    if not base:
-        return result  # can't construct without base URL
-    return result + f"\n\n[File] {base}/files/{uuid_dir}/"
 
+    from app.config import settings
+    public_base = settings.public_url.rstrip("/") if settings.public_url else ""
+    proxy_prefix = f"{public_base}/api/download/{uuid_dir}" if public_base else f"/api/download/{uuid_dir}"
 
-def _extract_download_links_from_state(state: dict) -> str:
-    """Scan tool results for download links and format them for final display.
+    if "[File]" in result:
+        # MCP server included [File] tags with its own URL — rewrite to ERAG proxy
+        result = _re.sub(
+            r'(?<=\[File\] )\S+/files/' + uuid_dir + r'/(\S+)',
+            f'{proxy_prefix}/\\1',
+            result
+        )
+    else:
+        # No [File] tags — add them pointing to ERAG proxy
+        result += f"\n\n[File] {proxy_prefix}/"
 
-    This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
-    """
-    tool_results = state.get("tool_results", [])
-    links = []
-    for r in tool_results:
-        if "[File]" in r:
-            idx = r.index("[File]")
-            links.append(r[idx:])
-    if links:
-        return "\n\n---\n\n" + "\n\n".join(links)
-    return ""
-
+    return result
 
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
