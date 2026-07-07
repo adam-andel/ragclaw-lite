@@ -25,6 +25,8 @@ services:
     container_name: erag-mcp-repl
     # No host port mapping — MCP is internal-only, accessed via Docker network.
     # File downloads go through ERAG's /api/download/{uuid}/{filename} proxy.
+    environment:
+      - REPL_PUBLIC_URL=http://mcp-repl:9200
     # ── Container security hardening ──
     read_only: true
     tmpfs:

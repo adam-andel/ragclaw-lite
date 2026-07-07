@@ -446,6 +446,21 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
 
     return result
 
+def _extract_download_links_from_state(state: dict) -> str:
+    """Scan tool results for download links and format them for final display.
+
+    This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
+    """
+    tool_results = state.get("tool_results", [])
+    links = []
+    for r in tool_results:
+        if "[File]" in r:
+            idx = r.index("[File]")
+            links.append(r[idx:])
+    if links:
+        return "\n\n---\n\n" + "\n\n".join(links)
+    return ""
+
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
     if not tool_calls:
