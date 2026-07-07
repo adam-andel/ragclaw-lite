@@ -226,8 +226,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  默认使用本地Embedding模型。<br/>
-                  如须修改可二次开发。
+                  默认使用本地Embedding模型。
                 </NTooltip>
               </span>
             </template>

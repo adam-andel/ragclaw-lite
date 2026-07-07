@@ -21,13 +21,7 @@ const uploading = ref(false)
 const MAX_AVATAR_SIZE = 1 * 1024 * 1024 // 1MB
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
-const avatarSrc = computed(() => {
-  if (auth.user?.avatar_url) {
-    // Cache-bust to avoid stale browser cache after re-upload
-    return `${auth.user.avatar_url}?t=${Date.now()}`
-  }
-  return undefined
-})
+const avatarSrc = computed(() => auth.user?.avatar_url || undefined)
 
 function selectAvatar(emoji: string) {
   selectedAvatar.value = emoji
@@ -59,9 +53,7 @@ async function handleAvatarUpload(e: Event) {
   try {
     const formData = new FormData()
     formData.append('file', file)
-    const res = await client.post('/auth/me/avatar', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+    const res = await client.post('/auth/me/avatar', formData)
     auth.user = res.data
     message.success('头像已更新')
     showAvatarPicker.value = false
@@ -156,13 +148,14 @@ const roleColor = computed(() => {
           style="display: none"
           @change="handleAvatarUpload"
         />
-        <div class="avatar-block" @click="showAvatarPicker = !showAvatarPicker">
-          <NAvatar :size="72" round :src="avatarSrc" :style="{ fontSize: '36px', background: auth.user?.avatar_url ? 'transparent' : 'var(--color-border)' }">
-            {{ auth.user?.avatar_url ? '' : selectedAvatar }}
+        <div class="avatar-block" @click="triggerUpload">
+          <NAvatar v-if="auth.user?.avatar_url" :size="72" round :src="avatarSrc" :style="{ background: 'transparent' }" />
+          <NAvatar v-else :size="72" round :style="{ fontSize: '36px', background: 'var(--color-border)' }">
+            {{ selectedAvatar }}
           </NAvatar>
           <div class="avatar-edit-hint">
             <NIcon size="14"><Create /></NIcon>
-            <span>更换头像</span>
+            <span>更换头像aaa</span>
           </div>
         </div>
         <div v-if="showAvatarPicker" class="avatar-picker">

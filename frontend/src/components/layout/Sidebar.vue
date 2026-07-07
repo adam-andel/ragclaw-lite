@@ -16,7 +16,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const notificationStore = useNotificationStore()
 
-const userAvatar = computed(() => localStorage.getItem('erag:avatar') || '👤')
+const userAvatar = computed(() => auth.user?.avatar_url || '')
+const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
 
 // ── Menu ──
 
@@ -93,7 +94,9 @@ function goToNotifications() {
       <div class="user-row">
         <div class="user-info-wrapper">
           <div class="user-info" role="button" tabindex="0" @click="router.push('/profile')" @keydown.enter="router.push('/profile')">
-            <div class="user-avatar">{{ userAvatar }}</div>
+            <div class="user-avatar" :style="userAvatar ? { backgroundImage: `url(${userAvatar})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}">
+              {{ userAvatar ? '' : userEmoji }}
+            </div>
             <div class="user-detail">
               <div class="user-name">{{ auth.user?.display_name || auth.user?.username }}</div>
               <div class="user-role">
