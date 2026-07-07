@@ -10,6 +10,7 @@ export interface UserInfo {
   email: string | null
   role: string
   is_active: boolean
+  avatar_url: string | null
   tenant_id: string | null
   created_at: string
 }

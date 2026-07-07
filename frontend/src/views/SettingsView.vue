@@ -43,6 +43,7 @@ const config = ref<LLMConfig>({
   embedding_api_key: '',
   llm_system_prompt: '',
   server_host: '0.0.0.0', server_port: 8000,
+  cache_ttl_seconds: 3600,
   is_configured: false,
 })
 
@@ -128,6 +129,7 @@ async function handleSave() {
       llm_system_prompt: config.value.llm_system_prompt,
       server_host: config.value.server_host,
       server_port: config.value.server_port,
+      cache_ttl_seconds: config.value.cache_ttl_seconds,
     }
     if (apiKeyInput.value.trim()) {
       payload.llm_api_key = apiKeyInput.value.trim()
@@ -215,6 +217,23 @@ async function handleTest() {
 
         <!-- LLM -->
         <section id="llm">
+          <!-- Embedding Model -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                Embedding 模型
+                <NTooltip trigger="hover" :width="260">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  默认使用本地Embedding模型。
+                </NTooltip>
+              </span>
+            </template>
+            <NInput v-model:value="config.embedding_model" placeholder="BAAI/bge-small-zh-v1.5" @input="clearTest" disabled>
+              <template #prefix><NIcon :component="HardwareChip" /></template>
+            </NInput>
+          </NFormItem>
           <!-- Provider -->
           <NFormItem label="LLM 提供商">
             <NSelect
@@ -309,6 +328,27 @@ async function handleTest() {
             <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" />
           </NFormItem>
 
+          <!-- Cache TTL -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                缓存有效期
+                <NTooltip trigger="hover" :width="300">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  相同问题的回答缓存有效时间（秒）。<br/>
+                  默认 3600 秒（60 分钟）。设为 0 可完全禁用缓存。<br/>
+                  <b>修改后立即生效</b>，不影响已缓存的条目（按各自创建时间判定过期）。
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest" />
+            <span class="muted" style="margin-left:8px;font-size:12px">
+              {{ config.cache_ttl_seconds === 0 ? '已禁用' : (config.cache_ttl_seconds + ' 秒 ≈ ' + Math.round(config.cache_ttl_seconds / 60) + ' 分钟') }}
+            </span>
+          </NFormItem>
+
           <!-- Test Connection -->
           <NFormItem :show-feedback="false">
             <NSpace>
@@ -330,24 +370,6 @@ async function handleTest() {
             <span>{{ testResult.text }}</span>
           </div>
 
-          <!-- Embedding Model -->
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                Embedding 模型
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  默认使用本地Embedding模型。<br/>
-                  如须修改可二次开发。
-                </NTooltip>
-              </span>
-            </template>
-            <NInput v-model:value="config.embedding_model" placeholder="BAAI/bge-small-zh-v1.5" @input="clearTest" disabled>
-              <template #prefix><NIcon :component="HardwareChip" /></template>
-            </NInput>
-          </NFormItem>
         </section>
 
         <NDivider />

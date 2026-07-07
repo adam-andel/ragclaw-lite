@@ -27,6 +27,7 @@ class EragAgentState(TypedDict):
     # ── Router output (Layer 1: name + description only) ──
     active_skill: dict | None     # {id, name, description, folder_name} — no system_prompt yet
     available_tools: list[dict]   # Tools in OpenAI function-calling format (empty until skill_loader)
+    skip_cache: bool              # When True, bypass all cache (used on regenerate)
 
     # ── Skill loader output (Layer 2: SKILL.md full text + tools) ──
     # system_prompt is stored inside active_skill after skill_loader runs

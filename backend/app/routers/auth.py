@@ -1,6 +1,9 @@
 """Authentication routes: login, profile."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import uuid
+from pathlib import Path
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,4 +56,69 @@ async def update_me(
         current_user.hashed_password = hash_password(data.password)
     await db.commit()
     await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
+MAX_AVATAR_SIZE = 1 * 1024 * 1024  # 1MB
+
+
+def _avatar_dir() -> Path:
+    from app.config import settings
+    d = settings.project_root / "frontend" / "dist" / "avatar"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@router.post("/me/avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a custom avatar image (max 1MB, image types only)."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="请上传图片文件")
+
+    contents = await file.read()
+    if len(contents) > MAX_AVATAR_SIZE:
+        raise HTTPException(status_code=400, detail=f"图片大小不能超过 {MAX_AVATAR_SIZE // 1024 // 1024}MB")
+
+    # Delete old avatar file if exists
+    if current_user.avatar_url:
+        old_path = _avatar_dir() / Path(current_user.avatar_url).name
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+
+    # Determine extension from content type
+    ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}
+    ext = ext_map.get(file.content_type, ".jpg")
+    filename = f"{current_user.id}_{uuid.uuid4().hex[:8]}{ext}"
+    filepath = _avatar_dir() / filename
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    current_user.avatar_url = f"/avatar/{filename}"
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
+@router.delete("/me/avatar", response_model=UserResponse)
+async def delete_avatar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove custom avatar, fall back to emoji."""
+    if current_user.avatar_url:
+        old_path = _avatar_dir() / Path(current_user.avatar_url).name
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass
+        current_user.avatar_url = None
+        await db.commit()
+        await db.refresh(current_user)
     return UserResponse.model_validate(current_user)

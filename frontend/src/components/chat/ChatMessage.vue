@@ -73,6 +73,9 @@ const renderedContent = computed(() => {
   return html
 })
 
+const copied = ref(false)
+let copyTimer: number | null = null
+
 async function copyText(content: string) {
   try {
     await navigator.clipboard.writeText(content)
@@ -88,6 +91,9 @@ async function copyText(content: string) {
     document.execCommand('copy')
     document.body.removeChild(ta)
   }
+  copied.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = window.setTimeout(() => { copied.value = false }, 1500)
 }
 
 function regenerate(msg: ChatMessage) {
@@ -264,10 +270,15 @@ onBeforeUnmount(() => {
 
     </div>
     <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
-      <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
-        <template #icon><NIcon><Copy /></NIcon></template>
-        复制
-      </NButton>
+      <div class="copy-btn-wrapper">
+        <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
+          <template #icon><NIcon><Copy /></NIcon></template>
+          复制
+        </NButton>
+        <Transition name="copy-tip-fade">
+          <span v-if="copied" class="copy-tip">已复制</span>
+        </Transition>
+      </div>
       <NButton text size="tiny" @click="regenerate(message)" class="msg-action-btn">
         <template #icon><NIcon><Refresh /></NIcon></template>
         重新生成
@@ -500,5 +511,33 @@ onBeforeUnmount(() => {
 }
 .msg-action-btn:hover {
   color: var(--color-text) !important;
+}
+
+.copy-btn-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+.copy-tip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.copy-tip-fade-enter-active,
+.copy-tip-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.copy-tip-fade-enter-from,
+.copy-tip-fade-leave-to {
+  opacity: 0;
 }
 </style>

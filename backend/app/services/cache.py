@@ -18,7 +18,8 @@ class CacheEntry:
 
     @property
     def is_expired(self) -> bool:
-        return (time.time() - self.timestamp) > settings.cache_ttl_seconds
+        from app.services.config_manager import config_manager
+        return (time.time() - self.timestamp) > config_manager.cache_ttl_seconds
 
 
 class AnswerCache:

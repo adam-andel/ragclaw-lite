@@ -30,6 +30,7 @@ class UserResponse(BaseModel):
     email: str | None = None
     role: str
     is_active: bool
+    avatar_url: str | None = None
     tenant_id: str | None = None
     created_at: datetime
 

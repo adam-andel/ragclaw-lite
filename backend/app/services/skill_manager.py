@@ -1,20 +1,21 @@
-"""Skill filesystem manager — scan/create/delete/sync folder-based skills.
+"""Skill filesystem manager - scan/create/delete/sync folder-based skills.
 
 The filesystem (data/skills/{folder_name}/SKILL.md) is the source of truth for
 content (name, description, mcp_servers, body). The DB skills table is a cache
-for fast routing, including the UI-managed `is_active` flag.
+for fast routing, including the UI-managed is_active flag.
 
 SKILL.md format:
     ---
-    name: Skill显示名
-    description: "≤250字符的描述"
+    name: Skill Display Name
+    description: "<=250 chars description"
     mcp_servers:
-      - MCP服务器名1
+      - MCP Server Name 1
     ---
 
     # Markdown body (Gotchas / Examples / Constraints etc.)
 """
 
+import hashlib
 import re
 import shutil
 from pathlib import Path
@@ -26,8 +27,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.skill import Skill
 
+# ---- Pinyin support ----
 
-# ─── Path helpers ───
+try:
+    from pypinyin import pinyin, Style
+    _PYIN_AVAILABLE = True
+except ImportError:
+    _PYIN_AVAILABLE = False
+
+
+def _to_pinyin(text: str) -> str:
+    """Convert Chinese characters to pinyin with hyphens."""
+    if not _PYIN_AVAILABLE:
+        return re.sub(r'[^a-zA-Z0-9]', '', text)
+    result = pinyin(text, style=Style.NORMAL)
+    return '-'.join(item[0] for item in result if item[0])
+
+
+# ---- Path helpers ----
 
 def get_skill_dir(folder_name: str) -> Path:
     """Return the absolute path to a skill's folder."""
@@ -39,7 +56,7 @@ def get_skill_md_path(folder_name: str) -> Path:
     return get_skill_dir(folder_name) / "SKILL.md"
 
 
-# ─── Folder name sanitization ───
+# ---- Folder name sanitization ----
 
 _FOLDER_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$')
 
@@ -47,35 +64,38 @@ _FOLDER_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$')
 def sanitize_folder_name(name: str) -> str:
     """Convert a display name to a valid folder name.
 
-    Rules: lowercase, spaces→hyphens, keep only [a-z0-9_-], must start with
-    alphanumeric. Returns sanitized name or raises ValueError.
+    Rules:
+    1. Chinese characters -> pinyin (via pypinyin if available, else stripped)
+    2. ASCII: lowercase, spaces/hyphens->hyphens, keep [a-z0-9_-]
+    3. Must start with alphanumeric; if result is empty, fall back to hash prefix.
+
+    Returns sanitized name or raises ValueError.
     """
-    # Replace spaces and common separators with hyphens
-    sanitized = re.sub(r'[\s/\\]+', '-', name.strip().lower())
-    # Remove invalid characters
+    # Step 1: Convert Chinese to pinyin
+    name_ascii = _to_pinyin(name) if re.search(r'[\u4e00-\u9fff]', name) else name
+
+    # Step 2: Standard sanitization
+    sanitized = re.sub(r'[\s/\\]+', '-', name_ascii.strip().lower())
     sanitized = re.sub(r'[^a-z0-9_\-]', '', sanitized)
-    # Collapse multiple hyphens
     sanitized = re.sub(r'-+', '-', sanitized).strip('-_')
+
+    # Step 3: Fallback for pure non-ASCII names when pinyin unavailable
     if not sanitized:
-        raise ValueError(f"无法从名称 '{name}' 生成合法的文件夹名")
+        name_hash = hashlib.sha256(name.encode('utf-8')).hexdigest()[:8]
+        sanitized = f"skill-{name_hash}"
+
     if not _FOLDER_NAME_RE.match(sanitized):
-        raise ValueError(f"文件夹名 '{sanitized}' 不合法（仅允许字母数字、下划线、连字符）")
+        raise ValueError(f"Folder name '{sanitized}' invalid (only [a-zA-Z0-9_-] allowed)")
     return sanitized
 
 
-# ─── SKILL.md parsing / writing ───
+# ---- SKILL.md parsing / writing ----
 
 def parse_skill_md(content: str) -> dict:
-    """Parse SKILL.md content into front_matter dict + body string.
-
-    Returns {"name": ..., "description": ..., "mcp_servers": [...],
-             "body": "markdown body"}. The is_active flag is managed in DB/UI,
-    not in SKILL.md front matter.
-    """
+    """Parse SKILL.md content into front_matter dict + body string."""
     front_matter = {}
     body = content
 
-    # Extract YAML front matter between --- delimiters
     if content.startswith("---"):
         parts = content.split("---", 2)
         if len(parts) >= 3:
@@ -85,9 +105,14 @@ def parse_skill_md(content: str) -> dict:
                 front_matter = {}
             body = parts[2].strip()
 
+    # Force-truncate description to 250 chars for routing (Layer 1 contract)
+    desc = front_matter.get("description", "") or ""
+    if isinstance(desc, str) and len(desc) > 250:
+        desc = desc[:250]
+
     return {
         "name": front_matter.get("name", ""),
-        "description": front_matter.get("description", ""),
+        "description": desc,
         "mcp_servers": front_matter.get("mcp_servers", []) or [],
         "body": body,
     }
@@ -101,9 +126,7 @@ def build_skill_md(
 ) -> str:
     """Build SKILL.md content from components."""
     mcp_servers = mcp_servers or []
-    # Build YAML front matter
     fm_lines = ["---", f"name: {name}"]
-    # Quote description if it contains special chars
     desc = description or ""
     if any(c in desc for c in [':', '#', '"', "'", '\n', '{', '}', '[', ']', ',']):
         desc = desc.replace('"', '\\"')
@@ -127,14 +150,10 @@ def build_skill_md(
 
 
 
-# ─── Filesystem operations ───
+# ---- Filesystem operations ----
 
 def scan_skills_dir() -> list[dict]:
-    """Scan data/skills/ and return list of skill info dicts.
-
-    Each dict: {folder_name, name, description, mcp_servers, body}
-    Only folders containing SKILL.md are included.
-    """
+    """Scan data/skills/ and return list of skill info dicts."""
     skills = []
     if not settings.skills_dir.exists():
         return skills
@@ -167,7 +186,6 @@ def read_skill_md(folder_name: str) -> str | None:
         return None
     return path.read_text(encoding="utf-8")
 
-
 def create_skill_folder(
     folder_name: str,
     name: str,
@@ -181,7 +199,7 @@ def create_skill_folder(
     """
     skill_dir = get_skill_dir(folder_name)
     if skill_dir.exists():
-        raise ValueError(f"Skill 文件夹 '{folder_name}' 已存在")
+        raise ValueError(f"Skill folder '{folder_name}' already exists")
 
     skill_dir.mkdir(parents=True)
     content = build_skill_md(name, description, mcp_servers, body)
@@ -193,14 +211,13 @@ def create_skill_folder(
 def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> None:
     """Replace an existing skill folder with new files.
 
-    Preserves the DB-managed `is_active` flag by not touching the DB row.
-    Raises ValueError if folder does not exist (use create_skill_folder for new).
+    Preserves the DB-managed is_active flag by not touching the DB row.
+    Raises ValueError if folder does not exist.
     """
     skill_dir = get_skill_dir(folder_name)
     if not skill_dir.exists():
-        raise ValueError(f"Skill 文件夹 '{folder_name}' 不存在")
+        raise ValueError(f"Skill folder '{folder_name}' does not exist")
 
-    # Clear existing folder contents but keep the folder
     for entry in skill_dir.iterdir():
         if entry.is_dir():
             shutil.rmtree(entry)
@@ -208,10 +225,9 @@ def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> 
             entry.unlink()
 
     for rel_path, content in file_map.items():
-        # Security: prevent path traversal
         target = (skill_dir / rel_path).resolve()
         if not str(target).startswith(str(skill_dir.resolve())):
-            raise ValueError(f"非法路径: {rel_path}")
+            raise ValueError(f"Invalid path: {rel_path}")
         target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
             target.write_bytes(content)
@@ -224,7 +240,7 @@ def update_skill_md(folder_name: str, content: str) -> None:
     """Overwrite SKILL.md with new content."""
     path = get_skill_md_path(folder_name)
     if not path.exists():
-        raise ValueError(f"Skill '{folder_name}' 的 SKILL.md 不存在")
+        raise ValueError(f"Skill '{folder_name}' SKILL.md not found")
     path.write_text(content, encoding="utf-8")
 
 
@@ -235,7 +251,7 @@ def delete_skill_folder(folder_name: str) -> None:
         shutil.rmtree(skill_dir)
 
 
-# ─── Resource file management ───
+# ---- Resource file management ----
 
 ALLOWED_SUBDIRS = {"scripts", "data", "references"}
 
@@ -277,16 +293,15 @@ def save_resource_file(folder_name: str, subdir: str, filename: str, content: by
     Returns the relative path. Raises ValueError for invalid subdir.
     """
     if subdir not in ALLOWED_SUBDIRS:
-        raise ValueError(f"非法子目录: {subdir}，允许: {ALLOWED_SUBDIRS}")
+        raise ValueError(f"Invalid subdir: {subdir}, allowed: {ALLOWED_SUBDIRS}")
 
     skill_dir = get_skill_dir(folder_name)
     target_dir = skill_dir / subdir
     target_dir.mkdir(parents=True, exist_ok=True)
     target = (target_dir / filename).resolve()
 
-    # Security: prevent path traversal
     if not str(target).startswith(str(target_dir.resolve())):
-        raise ValueError(f"非法文件路径: {filename}")
+        raise ValueError(f"Invalid file path: {filename}")
 
     target.write_bytes(content)
     return f"{subdir}/{filename}"
@@ -295,18 +310,81 @@ def save_resource_file(folder_name: str, subdir: str, filename: str, content: by
 def delete_resource_file(folder_name: str, subdir: str, filename: str) -> None:
     """Delete a resource file from a skill's subdirectory."""
     if subdir not in ALLOWED_SUBDIRS:
-        raise ValueError(f"非法子目录: {subdir}")
+        raise ValueError(f"Invalid subdir: {subdir}")
 
     target = (get_skill_dir(folder_name) / subdir / filename).resolve()
     target_dir = (get_skill_dir(folder_name) / subdir).resolve()
 
     if not str(target).startswith(str(target_dir)):
-        raise ValueError(f"非法文件路径: {filename}")
+        raise ValueError(f"Invalid file path: {filename}")
     if target.exists():
         target.unlink()
 
 
-# ─── DB sync ───
+# ---- Layer 3: on-demand resource loading ----
+
+_RESOURCE_SUBDIRS = ALLOWED_SUBDIRS  # scripts, data, references
+
+
+def get_skill_resource(folder_name: str, resource_path: str) -> str | None:
+    """Read a resource file from a skill folder (Layer 3 on-demand).
+
+    Args:
+        folder_name: Skill folder name
+        resource_path: Relative path within the skill folder
+                       (e.g. "references/guide.md", "data/config.json")
+
+    Returns:
+        File content as string, or None if not found / access denied.
+    """
+    skill_dir = get_skill_dir(folder_name)
+    target = (skill_dir / resource_path).resolve()
+
+    # Security: prevent path traversal and restrict to allowed subdirs
+    if not str(target).startswith(str(skill_dir.resolve())):
+        return None
+    if not target.is_file():
+        return None
+    if target.name == "SKILL.md":
+        return None  # Already loaded in Layer 2
+
+    try:
+        rel = target.relative_to(skill_dir)
+    except ValueError:
+        return None
+    parts = str(rel).replace("\\", "/").split("/")
+    if len(parts) > 1 and parts[0] not in _RESOURCE_SUBDIRS:
+        return None
+
+    try:
+        return target.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return None  # Binary files not supported for in-context loading
+
+
+def list_resource_paths(folder_name: str) -> list[str]:
+    """List all readable resource paths for a skill (for tool description).
+
+    Returns relative paths like ["references/guide.md", "data/config.json"].
+    Skips binary files and SKILL.md.
+    """
+    skill_dir = get_skill_dir(folder_name)
+    paths = []
+    if not skill_dir.exists():
+        return paths
+
+    for entry in sorted(skill_dir.iterdir()):
+        if entry.is_dir() and entry.name in _RESOURCE_SUBDIRS:
+            for f in sorted(entry.rglob("*")):
+                if f.is_file():
+                    rel = str(f.relative_to(skill_dir)).replace("\\", "/")
+                    paths.append(rel)
+        elif entry.is_file() and entry.name != "SKILL.md":
+            paths.append(entry.name)
+    return paths
+
+
+# ---- DB sync ----
 
 async def sync_skills_to_db(session: AsyncSession) -> dict:
     """Sync filesystem skills to DB index.
@@ -314,47 +392,42 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
     - Adds DB rows for folders not in DB
     - Updates name/description from SKILL.md (is_active is UI-managed)
     - Marks DB rows as inactive if folder is missing
-    - Does NOT delete DB rows (user may have temporarily moved folders)
+    - Does NOT delete DB rows
 
     Returns {"added": N, "updated": N, "deactivated": N}
     """
     fs_skills = scan_skills_dir()
     fs_folders = {s["folder_name"] for s in fs_skills}
 
-    # Load all DB rows
     result = await session.execute(select(Skill))
     db_skills = {s.folder_name: s for s in result.scalars().all()}
 
     added = updated = deactivated = 0
 
-    # Add or update
     for fs_skill in fs_skills:
         folder = fs_skill["folder_name"]
         if folder not in db_skills:
-            # Add new (default active, user can toggle later)
             new_skill = Skill(
                 folder_name=folder,
                 name=fs_skill["name"],
-                description=(fs_skill["description"] or "")[:500],
+                description=(fs_skill["description"] or "")[:250],
                 is_active=True,
             )
             session.add(new_skill)
             added += 1
         else:
-            # Update existing
             db_skill = db_skills[folder]
             changed = False
             if db_skill.name != fs_skill["name"]:
                 db_skill.name = fs_skill["name"]
                 changed = True
-            new_desc = (fs_skill["description"] or "")[:500]
+            new_desc = (fs_skill["description"] or "")[:250]
             if db_skill.description != new_desc:
                 db_skill.description = new_desc
                 changed = True
             if changed:
                 updated += 1
 
-    # Deactivate DB rows whose folders are missing
     for folder, db_skill in db_skills.items():
         if folder not in fs_folders and db_skill.is_active:
             db_skill.is_active = False

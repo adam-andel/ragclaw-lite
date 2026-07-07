@@ -115,6 +115,8 @@ class ConfigManager:
             "server_port": 8000,
             # System prompt
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
+            # Cache
+            "cache_ttl_seconds": 3600,
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -129,6 +131,7 @@ class ConfigManager:
             "server_host": "0.0.0.0",
             "server_port": 8000,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
+            "cache_ttl_seconds": 3600,
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -241,6 +244,11 @@ class ConfigManager:
             return self._config.get("embedding_api_key", "")
 
     @property
+    def cache_ttl_seconds(self) -> int:
+        with self._lock:
+            return self._config.get("cache_ttl_seconds", 3600)
+
+    @property
     def system_prompt(self) -> str:
         with self._lock:
             return self._config.get("llm_system_prompt", DEFAULT_SYSTEM_PROMPT)
@@ -263,6 +271,7 @@ class ConfigManager:
             "llm_base_url", "llm_temperature", "llm_max_tokens",
             "llm_concurrency", "embedding_model", "embedding_api_key",
             "server_host", "server_port", "llm_system_prompt",
+            "cache_ttl_seconds",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 

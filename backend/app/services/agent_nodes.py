@@ -11,6 +11,7 @@ from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, read_skill_md, parse_skill_md,
+    get_skill_resource, list_resource_paths,
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
@@ -111,9 +112,10 @@ async def skill_router_node(state: dict) -> dict:
     """
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
-    cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
-    if cached:
-        return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
+    if not state.get("skip_cache"):
+        cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
+        if cached:
+            return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
 
     active_skill = None
     if skill_id:
@@ -203,6 +205,33 @@ async def skill_loader_node(state: dict) -> dict:
     logger.info("Skill loader: folder=%s mcp_tools=%d (servers=%s)", folder_name, len(mcp_tools), mcp_server_names)
 
     all_tools = script_tools + mcp_tools
+
+    # Layer 3: add read_skill_resource tool if skill has reference/data files
+    resource_paths = list_resource_paths(folder_name)
+    if resource_paths:
+        path_list = "\n".join(f"  - {p}" for p in resource_paths[:20])
+        more = f"\n  ... and {len(resource_paths) - 20} more" if len(resource_paths) > 20 else ""
+        resource_tool = {
+            "type": "function",
+            "function": {
+                "name": "read_skill_resource",
+                "description": f"Read a resource file from the skill folder. Available files:\n{path_list}{more}",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to the resource file (e.g. 'references/guide.md', 'data/config.json')",
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+            "_source": "resource",
+            "_folder_name": folder_name,
+        }
+        all_tools.append(resource_tool)
+        logger.info("Skill loader: folder=%s added read_skill_resource tool (%d files)", folder_name, len(resource_paths))
 
     return {"active_skill": updated_skill, "available_tools": all_tools}
 
@@ -467,6 +496,20 @@ async def tool_executor_node(state: dict) -> dict:
             if result.ok:
                 return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
             return {"result": f"[{tname}] 错误: {result.error}", "endpoint": repl_config.get("endpoint")}
+
+        # ── Resource tool path (Layer 3: on-demand) ──
+        if tool_source == "resource" and folder_name:
+            resource_path = args.get("path", "")
+            content = get_skill_resource(folder_name, resource_path)
+            if content:
+                preview = content[:2000]
+                truncated = " ... (truncated)" if len(content) > 2000 else ""
+                logger.info("Resource loaded: %s/%s (%d chars)", folder_name, resource_path, len(content))
+                return {
+                    "result": f"[{tname}] Resource '{resource_path}' ({len(content)} chars):\n\n{preview}{truncated}",
+                    "endpoint": None,
+                }
+            return {"result": f"[{tname}] Resource '{resource_path}' not found in skill folder", "endpoint": None}
 
         # ── MCP tool path ──
         # Get MCP server config from tool definition metadata

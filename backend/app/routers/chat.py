@@ -147,7 +147,7 @@ async def chat_stream(
                 from app.services.agent_nodes import _extract_download_links_from_state
 
                 # ── 1. Cache-first check (does not consume a token) ──
-                if settings.cache_enabled:
+                if settings.cache_enabled and not request.skip_cache:
                     cached = answer_cache.get(
                         request.query, request.kb_id, request.skill_id or ""
                     )
@@ -194,6 +194,7 @@ async def chat_stream(
                         "cache_hit": False,
                         "final_answer": "",
                         "retrieval_ms": 0,
+                        "skip_cache": request.skip_cache,
                     }
 
                     state = await erag_agent_graph.run(initial_state)

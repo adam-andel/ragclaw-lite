@@ -74,6 +74,7 @@ export interface ChatRequest {
   kb_id: string
   conversation_id?: string
   skill_id?: string
+  skip_cache?: boolean
 }
 
 export interface ChatMessage {

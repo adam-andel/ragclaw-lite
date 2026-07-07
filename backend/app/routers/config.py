@@ -24,6 +24,7 @@ class LLMConfigUpdate(BaseModel):
     llm_system_prompt: str | None = None
     server_host: str | None = None
     server_port: int | None = None
+    cache_ttl_seconds: int | None = None
 
     @field_validator("llm_temperature")
     @classmethod
