@@ -12,7 +12,7 @@ services:
       - .env
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
-      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8000}
+      - PUBLIC_URL=${PUBLIC_URL:-}
     restart: unless-stopped
     networks:
       - erag

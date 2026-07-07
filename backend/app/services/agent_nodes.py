@@ -450,19 +450,21 @@ def _extract_download_links_from_state(state: dict) -> str:
 
     This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
     Formats [File] tags as clickable Markdown links the frontend can render.
+    Supports both absolute (https://...) and relative (/api/download/...) URLs.
     """
     tool_results = state.get("tool_results", [])
     links = []
     seen = set()
     for r in tool_results:
+        # Match both absolute and relative [File] URLs
         for url_match in _re.finditer(
-            r'\[File\]\s*(https?://[^\s]+/([^/\s]+))', r
+            r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r
         ):
-            full_url = url_match.group(1)
-            # filename = url_match.group(2)
-            if full_url not in seen:
-                seen.add(full_url)
-                links.append(f"- [📥 {full_url}]({full_url})")
+            url = url_match.group(1)
+            if url not in seen:
+                seen.add(url)
+                filename = url.rstrip("/").rsplit("/", 1)[-1]
+                links.append(f"- [📥 {filename}]({url})")
     if links:
         return "\n\n---\n" + "\n".join(links)
     return ""
