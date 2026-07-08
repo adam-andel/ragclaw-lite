@@ -1,4 +1,4 @@
-# ERAG Python REPL MCP Server Control Script
+# ERAG REPL MCP Server Control Script (Python + Shell + JavaScript)
 # Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]
 #
 # Smart mode: auto-detects Docker. If Docker is installed, runs containerized.
@@ -6,6 +6,9 @@
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down
 # Local  mode uses:  .\mcp\venv + python_repl_mcp_server.py
+#
+# Languages: Python (always), Shell (--enable-shell, Docker only by default),
+#           JavaScript (--enable-javascript, requires Node.js)
 
 param([string]$Action = "start")
 
@@ -185,7 +188,7 @@ function Get-ExistingMirrors {
 # =====================================================================
 
 function Start-LocalRepl {
-    Write-Host "=== Python REPL MCP Server (local :$Port) ===" -ForegroundColor Cyan
+    Write-Host "=== REPL MCP Server (local :$Port) ===" -ForegroundColor Cyan
 
     if (Test-LocalRepl) {
         Write-Host "Already running on :$Port (local mode)" -ForegroundColor Yellow
@@ -209,9 +212,36 @@ function Start-LocalRepl {
         return
     }
 
+    # Detect Node.js for JavaScript support
+    $NodePath = $null
+    try { $NodePath = (Get-Command node -ErrorAction Stop).Source } catch {
+        Write-Host "  Node.js not found — JavaScript (run_javascript) will be skipped" -ForegroundColor DarkYellow
+    }
+    if ($NodePath) {
+        Write-Host "  Node.js: $NodePath" -ForegroundColor Gray
+    }
+
+    # Build arg list
+    $Args = @($ServerScript, "--port", $Port, "--allow-dir", $WorkDir, "--no-network",
+              "--keep-minutes", "120", "--max-memory-mb", "512", "--max-nproc", "64", "--max-concurrent", "4")
+
+    # Shell on Windows local mode: explicitly disabled by default (security).
+    # Use --enable-shell-local to override (⚠️ dev only).
+    # If $env:REPL_ENABLE_SHELL_LOCAL is set, pass --enable-shell-local
+    if ($env:REPL_ENABLE_SHELL_LOCAL -eq "1") {
+        Write-Host "  ⚠ Shell (local) ENABLED — use with caution" -ForegroundColor Red
+        $Args += "--enable-shell"
+        $Args += "--enable-shell-local"
+    }
+
+    # JavaScript: enabled if Node.js is available
+    if ($NodePath) {
+        $Args += "--enable-javascript"
+    }
+
     Write-Host "Starting REPL server (workspace: $WorkDir) ..." -ForegroundColor Gray
     $proc = Start-Process -FilePath "$VenvDir\Scripts\python.exe" `
-        -ArgumentList $ServerScript, "--port", $Port, "--allow-dir", $WorkDir, "--no-network", "--keep-minutes", "120", "--max-memory-mb", "512", "--max-nproc", "64", "--max-concurrent", "4" `
+        -ArgumentList $Args `
         -WorkingDirectory $McpDir -PassThru -WindowStyle Minimized
 
     Start-Sleep 3
@@ -220,6 +250,10 @@ function Start-LocalRepl {
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
         Write-Host "  Workspace: $WorkDir" -ForegroundColor Gray
         Write-Host "  Mode: local (no Docker)" -ForegroundColor Gray
+        $langs = @("python")
+        if ($NodePath) { $langs += "javascript" }
+        if ($env:REPL_ENABLE_SHELL_LOCAL -eq "1") { $langs += "shell" }
+        Write-Host "  Languages: $($langs -join ', ')" -ForegroundColor Gray
     }
     else {
         Write-Host "WARNING: Server may not have started, check console window" -ForegroundColor Yellow
@@ -227,7 +261,7 @@ function Start-LocalRepl {
 }
 
 function Start-DockerRepl {
-    Write-Host "=== Python REPL MCP Server (Docker :$Port) ===" -ForegroundColor Cyan
+    Write-Host "=== REPL MCP Server (Docker :$Port) ===" -ForegroundColor Cyan
 
     if (Test-DockerRepl) {
         Write-Host "Already running on :$Port (Docker mode)" -ForegroundColor Yellow
@@ -278,7 +312,7 @@ function Stop-LocalRepl {
     Write-Host "=== Stopping REPL server (local) ===" -ForegroundColor Cyan
     try {
         Get-Process -Name "python*" -ErrorAction SilentlyContinue | Where-Object {
-            $_.CommandLine -like "*python_repl_mcp_server*"
+            $_.CommandLine -like "*repl_mcp_server*"
         } | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     catch { }

@@ -17,7 +17,7 @@ services:
     networks:
       - erag
 
-  # ── Python REPL MCP Server ──────────────────────────────
+  # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
     build:
       context: ./mcp
@@ -42,7 +42,7 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 768M
+          memory: 896M
     restart: unless-stopped
     networks:
       - erag
