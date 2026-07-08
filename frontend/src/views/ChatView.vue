@@ -552,7 +552,7 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown.enter.prevent="selectedSkillId = null; showSkillModal = false"
           @keydown.space.prevent="selectedSkillId = null; showSkillModal = false"
         >
-          <strong>自动选择</strong>
+          <strong>自动选择技能</strong>
           <span class="skill-pick-desc">根据问题自动路由最合适的技能</span>
         </NCard>
         <NCard v-for="s in filteredSkills" :key="s.id" size="small" class="skill-pick-card"

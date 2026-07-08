@@ -227,7 +227,7 @@ const columns = [
       </div>
       <div class="dm-header-actions">
         <NButton type="primary" size="small" @click="openCreate">
-          <template #icon><NIcon><Add /></NIcon></template>
+          <template #icon><NIcon size="14"><Add /></NIcon></template>
           新建定时任务
         </NButton>
       </div>

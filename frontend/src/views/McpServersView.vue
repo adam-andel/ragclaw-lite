@@ -169,11 +169,11 @@ const columns = [
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton size="small" @click="handleRefresh">
-          <NIcon><Refresh /></NIcon> 刷新工具
+        <NButton @click="handleRefresh">
+          <NIcon size="16"><Refresh /></NIcon> 刷新工具
         </NButton>
-        <NButton type="primary" size="small" @click="openCreate">
-          <NIcon><Add /></NIcon> 注册服务
+        <NButton type="primary" @click="openCreate">
+          <NIcon size="16"><Add /></NIcon> 注册服务
         </NButton>
       </div>
     </div>

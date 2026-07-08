@@ -288,32 +288,32 @@ const columns = [
     title: '操作', key: 'actions', width: 320,
     render: (row: Skill) => h(NSpace, { size: 'small', align: 'center' }, {
       default: () => [
-        h(NButton, { size: 'tiny', quaternary: true, onClick: () => openEdit(row) },
-          { icon: () => h(NIcon, null, { default: () => h(Create) }), default: () => '编辑' }),
+        h(NButton, { size: 'small', quaternary: true, onClick: () => openEdit(row) },
+          { icon: () => h(NIcon, { size: 15 }, { default: () => h(Create) }), default: () => '编辑' }),
         h(NButtonGroup, null, {
           default: () => [
             h(NButton, {
-              size: 'tiny',
+              size: 'small',
               quaternary: true,
               onClick: () => triggerReuploadFolder(row.id)
             }, {
-              icon: () => h(NIcon, null, { default: () => h(CloudUpload) }),
+              icon: () => h(NIcon, { size: 15 }, { default: () => h(CloudUpload) }),
               default: () => '重新上传'
             }),
             h(NPopover, { trigger: 'click', placement: 'bottom-start', showArrow: false }, {
               trigger: () => h(NButton, {
-                size: 'tiny',
+                size: 'small',
                 quaternary: true,
-                style: 'padding: 0 4px; min-width: 20px;'
+                style: 'padding: 0 4px; min-width: 22px;'
               }, {
-                default: () => h(NIcon, { size: 12 }, { default: () => h(ChevronDown) })
+                default: () => h(NIcon, { size: 14 }, { default: () => h(ChevronDown) })
               }),
               default: () => h(NUpload, {
                 'show-file-list': false,
                 customRequest: (o: any) => handleReuploadZip(row.id, o)
               }, {
-                default: () => h(NButton, { size: 'tiny' }, {
-                  icon: () => h(NIcon, null, { default: () => h(CloudUpload) }),
+                default: () => h(NButton, { size: 'small' }, {
+                  icon: () => h(NIcon, { size: 15 }, { default: () => h(CloudUpload) }),
                   default: () => '重新上传ZIP'
                 })
               })
@@ -329,8 +329,8 @@ const columns = [
           unchecked: () => '禁用',
         }),
         h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
-          trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' },
-            { icon: () => h(NIcon, null, { default: () => h(Trash) }), default: () => '删除' }),
+          trigger: () => h(NButton, { size: 'small', quaternary: true, type: 'error' },
+            { icon: () => h(NIcon, { size: 15 }, { default: () => h(Trash) }), default: () => '删除' }),
           default: () => '确认删除此技能？文件夹和DB记录都会被删除。',
         }),
       ],
@@ -361,22 +361,22 @@ onMounted(() => {
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton size="small" @click="handleSync">
-          <template #icon><NIcon><Sync /></NIcon></template>
+        <NButton @click="handleSync">
+          <template #icon><NIcon size="16"><Sync /></NIcon></template>
           同步
         </NButton>
-        <NButton size="small" @click="triggerFolderUpload">
-          <template #icon><NIcon><CloudUpload /></NIcon></template>
+        <NButton @click="triggerFolderUpload">
+          <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
           上传文件夹
         </NButton>
         <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
-          <NButton size="small">
-            <template #icon><NIcon><CloudUpload /></NIcon></template>
+          <NButton>
+            <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
             上传ZIP
           </NButton>
         </NUpload>
-        <NButton type="primary" size="small" @click="openCreate">
-          <template #icon><NIcon><Add /></NIcon></template>
+        <NButton type="primary" @click="openCreate">
+          <template #icon><NIcon size="16"><Add /></NIcon></template>
           在线创建
         </NButton>
       </div>

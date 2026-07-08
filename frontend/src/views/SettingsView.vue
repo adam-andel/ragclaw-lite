@@ -175,6 +175,7 @@ async function handleTest() {
         </div>
         <div class="settings-header-right">
           <NButton
+            size="small"
             type="primary"
             :loading="saving"
             :disabled="!apiKeyInput.trim() && !config.is_configured"
