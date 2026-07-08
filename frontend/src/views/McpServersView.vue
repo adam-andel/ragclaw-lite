@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted } from 'vue'
 import {
-  NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
+  NPagination, NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
 import {
@@ -18,6 +19,7 @@ const servers = ref<MCPServer[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
+const pageSize = 20
 
 const showModal = ref(false)
 const editing = ref<MCPServer | null>(null)
@@ -28,13 +30,15 @@ const form = ref<MCPServerCreatePayload & { id?: string }>({
 
 const testingId = ref('')
 const testResult = ref<{ ok?: boolean; message?: string; error?: string; tools?: any[] } | null>(null)
+const showTestModal = ref(false)
+const testServerName = ref('')
 
 // ── Load ──
 
 async function load() {
   loading.value = true
   try {
-    const data = await listServers(page.value, 20)
+    const data = await listServers(page.value, pageSize)
     servers.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -42,6 +46,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onPageChange(p: number) {
+  page.value = p
+  load()
 }
 
 onMounted(load)
@@ -75,10 +84,10 @@ async function handleSave() {
     if (editing.value) {
       await updateServer(editing.value.id, {
         name: form.value.name, transport_type: form.value.transport_type,
-        endpoint: form.value.transport_type === 'http' ? form.value.endpoint : null,
-        command: form.value.transport_type === 'stdio' ? form.value.command : null,
-        args_json: form.value.args_json || null,
-        env_json: form.value.env_json || null,
+        endpoint: form.value.transport_type === 'http' ? form.value.endpoint : undefined,
+        command: form.value.transport_type === 'stdio' ? form.value.command : undefined,
+        args_json: form.value.args_json || undefined,
+        env_json: form.value.env_json || undefined,
         timeout_seconds: form.value.timeout_seconds,
         is_active: form.value.is_active,
       })
@@ -86,10 +95,10 @@ async function handleSave() {
     } else {
       await createServer({
         name: form.value.name, transport_type: form.value.transport_type,
-        endpoint: form.value.transport_type === 'http' ? form.value.endpoint : null,
-        command: form.value.transport_type === 'stdio' ? form.value.command : null,
-        args_json: form.value.args_json || null,
-        env_json: form.value.env_json || null,
+        endpoint: form.value.transport_type === 'http' ? form.value.endpoint : undefined,
+        command: form.value.transport_type === 'stdio' ? form.value.command : undefined,
+        args_json: form.value.args_json || undefined,
+        env_json: form.value.env_json || undefined,
         timeout_seconds: form.value.timeout_seconds,
         is_active: form.value.is_active,
       })
@@ -112,10 +121,23 @@ async function handleDelete(server: MCPServer) {
   }
 }
 
+// ── Enable / Disable ──
+
+async function handleToggle(server: MCPServer) {
+  try {
+    await updateServer(server.id, { is_active: !server.is_active })
+    message.success(server.is_active ? 'MCP 服务已禁用' : 'MCP 服务已启用')
+    await load()
+  } catch (e: any) {
+    message.error(e.message || '操作失败')
+  }
+}
+
 // ── Test ──
 
 async function handleTest(server: MCPServer) {
   testingId.value = server.id
+  testServerName.value = server.name
   testResult.value = null
   try {
     const result = await testServer(server.id)
@@ -124,6 +146,7 @@ async function handleTest(server: MCPServer) {
     testResult.value = { ok: false, error: e.message || '测试请求失败' }
   } finally {
     testingId.value = ''
+    showTestModal.value = true
   }
 }
 
@@ -135,29 +158,6 @@ async function handleRefresh() {
     message.error(e.message || '刷新失败')
   }
 }
-
-// ── Columns ──
-
-const columns = [
-  { title: '名称', key: 'name', width: 160, render: (row: MCPServer) => h('span', [h(NText, { strong: true }, { default: () => row.name }), row.is_active ? null : h(NTag, { size: 'tiny', type: 'default', style: 'margin-left:8px' }, { default: () => '禁用' })]) },
-  { title: '传输', key: 'transport_type', width: 80, render: (row: MCPServer) => h(NTag, { type: row.transport_type === 'http' ? 'info' : 'warning', size: 'small' }, { default: () => row.transport_type }) },
-  { title: '地址', key: 'endpoint', width: 260, ellipsis: { tooltip: true }, render: (row: MCPServer) => row.endpoint || row.command || '-' },
-  { title: '超时(s)', key: 'timeout_seconds', width: 80 },
-  {
-    title: '操作', key: 'actions', width: 240,
-    render: (row: MCPServer) =>
-      h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'tiny', quaternary: true, onClick: () => openEdit(row) }, { icon: () => h(NIcon, null, { default: () => h(Create) }), default: () => '编辑' }),
-          h(NButton, { size: 'tiny', quaternary: true, loading: testingId.value === row.id, onClick: () => handleTest(row) }, { icon: () => h(NIcon, null, { default: () => h(Flash) }), default: () => '测试' }),
-          h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
-            trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' }, { icon: () => h(NIcon, null, { default: () => h(Trash) }), default: () => '删除' }),
-            default: () => '确认删除此 MCP 服务？',
-          }),
-        ],
-      }),
-  },
-]
 </script>
 
 <template>
@@ -169,29 +169,99 @@ const columns = [
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton @click="handleRefresh">
-          <NIcon size="16"><Refresh /></NIcon> 刷新工具
+        <NButton size="small" @click="handleRefresh">
+          <template #icon><NIcon><Refresh /></NIcon></template>
+          刷新工具
         </NButton>
-        <NButton type="primary" @click="openCreate">
-          <NIcon size="16"><Add /></NIcon> 注册服务
+        <NButton size="small" type="primary" @click="openCreate">
+          <template #icon><NIcon><Add /></NIcon></template>
+          注册服务
         </NButton>
       </div>
     </div>
 
-      <NDataTable
-        :columns="columns"
-        :data="servers"
-        :loading="loading"
-        :pagination="{ page, pageSize: 20, itemCount: total, showSizePicker: false, onChange: (p: number) => { page = p; load() } }"
-        :row-key="(r: MCPServer) => r.id"
-      />
+    <NSpin :show="loading">
+      <NEmpty v-if="!loading && servers.length === 0" description="暂无 MCP 服务，请注册" />
+      <div class="mcp-list" v-if="servers.length > 0">
+        <NCard
+          v-for="server in servers"
+          :key="server.id"
+          size="small"
+          :class="['mcp-card', { 'mcp-card-disabled': !server.is_active }]"
+          hoverable
+        >
+          <div class="mcp-card-header">
+            <div class="mcp-card-title-wrap">
+              <span class="mcp-name" :title="server.name">{{ server.name }}</span>
+              <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">禁用</NTag>
+            </div>
+            <div class="mcp-card-toggle" @click.stop>
+              <NSwitch
+                size="small"
+                :value="server.is_active"
+                @update:value="() => handleToggle(server)"
+              >
+                <template #checked>启用</template>
+                <template #unchecked>禁用</template>
+              </NSwitch>
+            </div>
+          </div>
 
-      <!-- Test Result -->
-      <div v-if="testResult" style="margin-top:12px">
-        <NCard size="small" :title="testResult.ok ? '✅ 连接成功' : '❌ 连接失败'">
+          <div class="mcp-card-row">
+            <span class="mcp-card-label">传输</span>
+            <NTag :type="server.transport_type === 'http' ? 'info' : 'warning'" size="tiny" :bordered="false">{{ server.transport_type }}</NTag>
+          </div>
+
+          <div class="mcp-card-row">
+            <span class="mcp-card-label">地址</span>
+            <span class="mcp-meta" :title="(server.endpoint || server.command) ?? undefined">{{ server.endpoint || server.command || '—' }}</span>
+          </div>
+
+          <div class="mcp-card-row">
+            <span class="mcp-card-label">超时</span>
+            <span class="mcp-meta">{{ server.timeout_seconds }}s</span>
+          </div>
+
+          <template #footer>
+            <NSpace justify="end">
+              <NButton size="small" @click="openEdit(server)">
+                <template #icon><NIcon><Create /></NIcon></template>
+                编辑
+              </NButton>
+              <NButton size="small" :loading="testingId === server.id" @click="handleTest(server)">
+                <template #icon><NIcon><Flash /></NIcon></template>
+                测试
+              </NButton>
+              <NPopconfirm @positive-click="handleDelete(server)">
+                <template #trigger>
+                  <NButton size="small" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                    <template #icon><NIcon><Trash /></NIcon></template>
+                    删除
+                  </NButton>
+                </template>
+                确认删除此 MCP 服务？
+              </NPopconfirm>
+            </NSpace>
+          </template>
+        </NCard>
+      </div>
+
+      <div class="mcp-pagination" v-if="total > pageSize">
+        <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+      </div>
+    </NSpin>
+
+      <!-- Test Result Modal -->
+      <NModal
+        v-model:show="showTestModal"
+        preset="card"
+        :title="`${testServerName} · ${testResult?.ok ? '✅ 连接成功' : '❌ 连接失败'}`"
+        style="width: 520px"
+      >
+        <template v-if="testResult">
           <template v-if="testResult.ok">
             <p>{{ testResult.message }}</p>
-            <ul v-if="testResult.tools?.length">
+            <ul v-if="testResult.tools?.length" class="mcp-test-tools">
               <li v-for="t in testResult.tools" :key="t.name">
                 <NText strong>{{ t.name }}</NText>
                 <NText depth="3" style="margin-left:8px">{{ t.description }}</NText>
@@ -201,8 +271,8 @@ const columns = [
           <template v-else>
             <NText type="error">{{ testResult.error }}</NText>
           </template>
-        </NCard>
-      </div>
+        </template>
+      </NModal>
 
     <!-- Create/Edit Modal -->
     <NModal v-model:show="showModal" title="MCP 服务" preset="card" style="width:640px">
@@ -286,5 +356,75 @@ const columns = [
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* MCP card grid (style reference: SkillsView.vue) */
+.mcp-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.mcp-card {
+  transition: box-shadow .2s, border-color .2s;
+}
+.mcp-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+.mcp-card-disabled {
+  background: #f1f5f9;
+}
+html.dark .mcp-card-disabled {
+  background: #334155;
+}
+.mcp-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.mcp-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mcp-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.mcp-card-toggle {
+  flex-shrink: 0;
+}
+.mcp-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  margin-bottom: 8px;
+}
+.mcp-card-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  flex-shrink: 0;
+  width: 36px;
+}
+.mcp-meta {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  padding-bottom: 24px;
 }
 </style>
