@@ -820,7 +820,7 @@ async function loadSupportedTypes() {
         </NButton>
         <NButton size="small" type="primary" @click="openUploadModal">
           <template #icon><NIcon><Add /></NIcon></template>
-          上传文件
+          上传文档
         </NButton>
       </div>
     </div>

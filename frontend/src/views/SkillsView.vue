@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted } from 'vue'
 import {
-  NDataTable, NButton, NButtonGroup, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
-  NUpload, NDivider, NScrollbar,
+  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem, NPagination,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, ChevronDown, Bulb } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
@@ -20,6 +20,7 @@ const skills = ref<Skill[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
+const pageSize = 20
 
 // Create modal
 const showCreateModal = ref(false)
@@ -43,12 +44,17 @@ const serverOptions = ref<{ label: string; value: string }[]>([])
 // Folder upload input ref (global upload)
 const folderInput = ref<HTMLInputElement>()
 
+// Detail modal
+const showDetail = ref(false)
+const detailSkill = ref<Skill | null>(null)
+const detailLoading = ref(false)
+
 // ── Load ──
 
 async function load() {
   loading.value = true
   try {
-    const data = await listSkills(page.value, 20)
+    const data = await listSkills(page.value, pageSize)
     skills.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -113,12 +119,28 @@ async function handleSaveEdit() {
   }
 }
 
+// ── Detail ──
+
+async function openDetail(skill: Skill) {
+  detailLoading.value = true
+  showDetail.value = true
+  try {
+    detailSkill.value = await getSkill(skill.id)
+  } catch (e: any) {
+    message.error(e.message || '加载技能详情失败')
+    detailSkill.value = skill
+  } finally {
+    detailLoading.value = false
+  }
+}
+
 // ── Delete ──
 
 async function handleDelete(skill: Skill) {
   try {
     await deleteSkill(skill.id)
     message.success('技能已删除')
+    if (detailSkill.value?.id === skill.id) showDetail.value = false
     await load()
   } catch (e: any) {
     message.error(e.message || '删除失败')
@@ -247,6 +269,9 @@ async function handleToggle(skill: Skill) {
   try {
     await toggleSkill(skill.id)
     message.success(skill.is_active ? '技能已禁用' : '技能已启用')
+    if (detailSkill.value?.id === skill.id) {
+      detailSkill.value = { ...detailSkill.value, is_active: !detailSkill.value.is_active }
+    }
     await load()
   } catch (e: any) {
     message.error(e.message || '操作失败')
@@ -268,75 +293,15 @@ async function handleSync() {
   }
 }
 
-// ── Columns ──
+function onPageChange(p: number) {
+  page.value = p
+  load()
+}
 
-const columns = [
-  { title: '名称', key: 'name', width: 140,
-    render: (row: Skill) => h('span', [
-      h(NText, { strong: true }, { default: () => row.name }),
-      row.is_active ? null : h(NTag, { size: 'tiny', type: 'default', style: 'margin-left:8px' }, { default: () => '禁用' }),
-    ]),
-  },
-  { title: '文件夹', key: 'folder_name', width: 140 },
-  { title: 'MCP服务', key: 'mcp_servers', width: 120,
-    render: (row: Skill) => row.mcp_servers?.length
-      ? h(NSpace, { size: 'small' }, { default: () => row.mcp_servers.map((s: string) => h(NTag, { size: 'tiny', type: 'info' }, { default: () => s })) })
-      : h(NText, { depth: 3 }, { default: () => '无' }),
-  },
-  { title: '更新时间', key: 'updated_at', width: 150, render: (row: Skill) => row.updated_at?.slice(0, 16)?.replace('T', ' ') || '-' },
-  {
-    title: '操作', key: 'actions', width: 320,
-    render: (row: Skill) => h(NSpace, { size: 'small', align: 'center' }, {
-      default: () => [
-        h(NButton, { size: 'small', quaternary: true, onClick: () => openEdit(row) },
-          { icon: () => h(NIcon, { size: 15 }, { default: () => h(Create) }), default: () => '编辑' }),
-        h(NButtonGroup, null, {
-          default: () => [
-            h(NButton, {
-              size: 'small',
-              quaternary: true,
-              onClick: () => triggerReuploadFolder(row.id)
-            }, {
-              icon: () => h(NIcon, { size: 15 }, { default: () => h(CloudUpload) }),
-              default: () => '重新上传'
-            }),
-            h(NPopover, { trigger: 'click', placement: 'bottom-start', showArrow: false }, {
-              trigger: () => h(NButton, {
-                size: 'small',
-                quaternary: true,
-                style: 'padding: 0 4px; min-width: 22px;'
-              }, {
-                default: () => h(NIcon, { size: 14 }, { default: () => h(ChevronDown) })
-              }),
-              default: () => h(NUpload, {
-                'show-file-list': false,
-                customRequest: (o: any) => handleReuploadZip(row.id, o)
-              }, {
-                default: () => h(NButton, { size: 'small' }, {
-                  icon: () => h(NIcon, { size: 15 }, { default: () => h(CloudUpload) }),
-                  default: () => '重新上传ZIP'
-                })
-              })
-            }),
-          ]
-        }),
-        h(NSwitch, {
-          size: 'small',
-          value: row.is_active,
-          'on-update:value': () => handleToggle(row),
-        }, {
-          checked: () => '启用',
-          unchecked: () => '禁用',
-        }),
-        h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
-          trigger: () => h(NButton, { size: 'small', quaternary: true, type: 'error' },
-            { icon: () => h(NIcon, { size: 15 }, { default: () => h(Trash) }), default: () => '删除' }),
-          default: () => '确认删除此技能？文件夹和DB记录都会被删除。',
-        }),
-      ],
-    }),
-  },
-]
+function formatTime(t?: string | null) {
+  if (!t) return '-'
+  return t.slice(0, 16)?.replace('T', ' ') || '-'
+}
 
 // ── Init ──
 
@@ -386,13 +351,67 @@ onMounted(() => {
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
     <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
 
-    <NDataTable
-      :columns="columns"
-      :data="skills"
-      :loading="loading"
-      :pagination="{ page, pageSize: 20, itemCount: total, showSizePicker: false, onChange: (p: number) => { page = p; load() } }"
-      :row-key="(r: Skill) => r.id"
-    />
+    <NSpin :show="loading">
+      <NEmpty v-if="!loading && skills.length === 0" description="暂无技能，请上传或在线创建" />
+      <div class="sk-list" v-if="skills.length > 0">
+        <NCard
+          v-for="skill in skills"
+          :key="skill.id"
+          size="small"
+          :class="['sk-card', { 'sk-card-disabled': !skill.is_active }]"
+          hoverable
+          role="button"
+          tabindex="0"
+          @click="openDetail(skill)"
+          @keydown.enter.prevent="openDetail(skill)"
+          @keydown.space.prevent="openDetail(skill)"
+        >
+          <div class="sk-card-header">
+            <div class="sk-card-title-wrap">
+              <span class="sk-name" :title="skill.name">{{ skill.name }}</span>
+              <NTag v-if="!skill.is_active" size="tiny" :bordered="false" type="default" class="sk-disabled-tag">禁用</NTag>
+            </div>
+            <div class="sk-card-toggle" @click.stop>
+              <NSwitch
+                size="small"
+                :value="skill.is_active"
+                @update:value="() => handleToggle(skill)"
+              >
+                <template #checked>启用</template>
+                <template #unchecked>禁用</template>
+              </NSwitch>
+            </div>
+          </div>
+
+          <p class="sk-card-desc" :title="skill.description ?? undefined">{{ skill.description || '暂无描述' }}</p>
+
+          <div class="sk-card-mcp">
+            <span class="sk-card-label">MCP服务</span>
+            <template v-if="skill.mcp_servers && skill.mcp_servers.length">
+              <NTag
+                v-for="s in skill.mcp_servers"
+                :key="s"
+                size="tiny"
+                type="info"
+                :bordered="false"
+                class="sk-mcp-tag"
+              >{{ s }}</NTag>
+            </template>
+            <span v-else class="sk-meta-muted">无</span>
+          </div>
+
+          <div class="sk-card-meta">
+            <span class="sk-meta-muted">📁 {{ skill.folder_name }}</span>
+            <span class="sk-meta-sep">·</span>
+            <span class="sk-meta-muted">更新 {{ formatTime(skill.updated_at) }}</span>
+          </div>
+        </NCard>
+      </div>
+    </NSpin>
+
+    <div class="sk-pagination" v-if="total > pageSize">
+      <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+    </div>
 
     <!-- Create Modal -->
     <NModal v-model:show="showCreateModal" title="在线创建技能" preset="card" style="width:640px">
@@ -443,6 +462,100 @@ onMounted(() => {
       </template>
     </NModal>
 
+    <!-- Detail Modal -->
+    <NModal
+      v-model:show="showDetail"
+      preset="card"
+      :title="detailSkill?.name || '技能详情'"
+      style="width: 90vw; max-width: 560px"
+    >
+      <NSpin :show="detailLoading">
+        <NDescriptions
+          v-if="detailSkill"
+          bordered
+          :column="1"
+          size="small"
+          label-placement="left"
+          label-style="width: 110px"
+        >
+          <NDescriptionsItem label="名称">
+            <span class="sk-detail-name">{{ detailSkill.name }}</span>
+            <NTag v-if="!detailSkill.is_active" size="tiny" :bordered="false" type="default" style="margin-left:8px">禁用</NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="描述">
+            <span v-if="detailSkill.description">{{ detailSkill.description }}</span>
+            <span v-else class="sk-meta-muted">暂无描述</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="文件夹">{{ detailSkill.folder_name }}</NDescriptionsItem>
+          <NDescriptionsItem label="MCP服务">
+            <template v-if="detailSkill.mcp_servers && detailSkill.mcp_servers.length">
+              <NSpace :size="6">
+                <NTag v-for="s in detailSkill.mcp_servers" :key="s" size="tiny" type="info" :bordered="false">{{ s }}</NTag>
+              </NSpace>
+            </template>
+            <span v-else class="sk-meta-muted">无</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="状态">
+            <NTag :type="detailSkill.is_active ? 'success' : 'default'" size="small">
+              {{ detailSkill.is_active ? '已启用' : '已禁用' }}
+            </NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="创建时间">{{ formatTime(detailSkill.created_at) }}</NDescriptionsItem>
+          <NDescriptionsItem label="更新时间">{{ formatTime(detailSkill.updated_at) }}</NDescriptionsItem>
+          <NDescriptionsItem label="技能 ID">
+            <span class="sk-id">{{ detailSkill.id }}</span>
+          </NDescriptionsItem>
+        </NDescriptions>
+      </NSpin>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton size="small" v-if="detailSkill" @click="openEdit(detailSkill)">
+            <template #icon><NIcon size="16"><Create /></NIcon></template>
+            编辑
+          </NButton>
+          <NButton size="small" v-if="detailSkill" @click="triggerReuploadFolder(detailSkill.id)">
+            <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
+            重新上传
+          </NButton>
+          <NPopover v-if="detailSkill" trigger="click" placement="top-end" show-arrow>
+            <template #trigger>
+              <NButton size="small">
+                <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
+                重新上传ZIP
+              </NButton>
+            </template>
+            <NUpload
+              :show-file-list="false"
+              :custom-request="(o: any) => handleReuploadZip(detailSkill!.id, o)"
+            >
+              <NButton size="small">选择 ZIP 文件</NButton>
+            </NUpload>
+          </NPopover>
+          <NButton size="small" v-if="detailSkill" @click="handleToggle(detailSkill)" :style="detailSkill.is_active
+            ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
+            : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
+            <template #icon>
+              <NIcon size="16">
+                <Ban v-if="detailSkill.is_active" />
+                <CheckmarkCircle v-else />
+              </NIcon>
+            </template>
+            {{ detailSkill.is_active ? '禁用' : '启用' }}
+          </NButton>
+          <NPopconfirm v-if="detailSkill" @positive-click="handleDelete(detailSkill)">
+            <template #trigger>
+              <NButton size="small" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                <template #icon><NIcon size="16"><Trash /></NIcon></template>
+                删除
+              </NButton>
+            </template>
+            确认删除此技能？文件夹和DB记录都会被删除。
+          </NPopconfirm>
+        </NSpace>
+      </template>
+    </NModal>
+
   </div>
 </template>
 
@@ -486,5 +599,133 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Skill card grid */
+.sk-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.sk-card {
+  cursor: pointer;
+  transition: box-shadow .2s, border-color .2s;
+}
+.sk-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+.sk-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+}
+.sk-card-disabled {
+  background: #f1f5f9;
+}
+.sk-card-disabled:hover {
+  box-shadow: var(--shadow-sm);
+}
+html.dark .sk-card-disabled {
+  background: #334155;
+}
+
+.sk-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.sk-card-icon {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-soft);
+  border-radius: var(--radius);
+}
+.sk-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sk-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+.sk-card-toggle {
+  flex-shrink: 0;
+}
+
+.sk-card-desc {
+  margin: 0 0 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.4em;
+}
+
+.sk-card-mcp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.sk-card-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  flex-shrink: 0;
+}
+.sk-mcp-tag {
+  margin-right: 2px;
+}
+
+.sk-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+}
+.sk-meta-sep {
+  color: var(--color-border);
+  margin: 0 2px;
+}
+.sk-meta-muted {
+  color: var(--color-text);
+}
+
+.sk-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  padding-bottom: 24px;
+}
+
+/* Detail modal */
+.sk-detail-name {
+  font-weight: 600;
+}
+.sk-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  word-break: break-all;
 }
 </style>
