@@ -84,8 +84,8 @@ const filteredSkills = computed(() =>
   )
 )
 const selectedSkillName = computed(() => {
-  if (!selectedSkillId.value) return '自动选择'
-  return skills.value.find(s => s.id === selectedSkillId.value)?.name || '自动选择'
+  if (!selectedSkillId.value) return '自动选择技能'
+  return skills.value.find(s => s.id === selectedSkillId.value)?.name || '自动选择技能'
 })
 
 

@@ -299,6 +299,8 @@ function isPaused(job: CronJob) {
             </div>
           </div>
 
+          <div class="cj-card-desc" v-if="job.description">{{ job.description }}</div>
+
           <div class="cj-card-row">
             <span class="cj-card-label">执行次数</span>
             <span class="cj-meta">{{ job.run_count }}</span>
@@ -509,6 +511,9 @@ function isPaused(job: CronJob) {
 html.dark .cj-card-disabled {
   background: #334155;
 }
+.cj-card :deep(.n-card__footer) {
+  padding-top: 6px;
+}
 .cj-card-header {
   display: flex;
   align-items: flex-start;
@@ -534,12 +539,25 @@ html.dark .cj-card-disabled {
 .cj-card-toggle {
   flex-shrink: 0;
 }
+.cj-card-desc {
+  font-size: 12px;
+  color: #1f2937;
+  line-height: 1.5;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+html.dark .cj-card-desc {
+  color: #e5e7eb;
+}
 .cj-card-row {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: var(--text-xs);
   margin-bottom: 8px;
+}
+.cj-card-row:last-child {
+  margin-bottom: 2px;
 }
 .cj-card-label {
   font-size: var(--text-xs);

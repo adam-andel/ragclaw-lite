@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NDataTable, NEmpty } from 'naive-ui'
-import { Add, Trash, Eye, People } from '@vicons/ionicons5'
+import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSwitch } from 'naive-ui'
+import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -14,6 +14,7 @@ interface UserRow {
   role: string
   is_active: boolean
   tenant_id: string | null
+  avatar_url: string | null
   created_at: string
 }
 
@@ -26,12 +27,26 @@ const showCreate = ref(false)
 const newUser = ref({ username: '', password: '', display_name: '', role: 'user' })
 const creating = ref(false)
 
+const showDetail = ref(false)
+const detailUser = ref<UserRow | null>(null)
+
 onMounted(loadUsers)
 
 async function loadUsers() {
   loading.value = true
   try { const r = await client.get('/users'); users.value = r.data } catch { /* noop */ }
-  loading.value = false
+  finally { loading.value = false }
+}
+
+function roleLabel(role: string) {
+  if (role === 'admin') return '超级管理员'
+  if (role === 'moderator') return '普通管理员'
+  return '用户'
+}
+function roleType(role: string): 'error' | 'warning' | 'info' {
+  if (role === 'admin') return 'error'
+  if (role === 'moderator') return 'warning'
+  return 'info'
 }
 
 async function createUser() {
@@ -55,53 +70,30 @@ function viewConversations(userId: string) {
 }
 
 async function toggleStatus(user: UserRow) {
-  try { await client.put(`/users/${user.id}`, { is_active: !user.is_active }); await loadUsers() } catch { /* noop */ }
+  try {
+    await client.put(`/users/${user.id}`, { is_active: !user.is_active })
+    await loadUsers()
+    if (detailUser.value && detailUser.value.id === user.id) detailUser.value = { ...detailUser.value, is_active: !user.is_active }
+  } catch { /* noop */ }
 }
 
-async function toggleRole(user: UserRow) {
-  const next: Record<string, string> = { user: 'moderator', moderator: 'user' }
-  const newRole = next[user.role] || 'user'
-  try { await client.put(`/users/${user.id}`, { role: newRole }); await loadUsers() } catch { /* noop */ }
+async function setRole(user: UserRow, newRole: string) {
+  if (newRole === user.role) return
+  try {
+    await client.put(`/users/${user.id}`, { role: newRole })
+    await loadUsers()
+    if (detailUser.value && detailUser.value.id === user.id) detailUser.value = { ...detailUser.value, role: newRole }
+  } catch { /* noop */ }
 }
 
-const columns = [
-  { title: '用户名', key: 'username', width: 130 },
-  { title: '显示名', key: 'display_name', width: 130 },
-  { title: '邮箱', key: 'email', width: 180, render: (r: UserRow) => r.email || '-' },
-  {
-    title: '角色', key: 'role', width: 80,
-    render: (r: UserRow) => {
-      const label = r.role === 'admin' ? '超级管理员' : r.role === 'moderator' ? '普通管理员' : '用户'
-      const type = r.role === 'admin' ? 'error' : r.role === 'moderator' ? 'warning' : 'info'
-      return h(NTag, { type: type as any, size: 'small' as const }, { default: () => label })
-    },
-  },
-  {
-    title: '状态', key: 'is_active', width: 80,
-    render: (r: UserRow) => h(NTag, { type: r.is_active ? 'success' : 'default', size: 'small' as const }, { default: () => r.is_active ? '正常' : '已禁用' }),
-  },
-  { title: '创建时间', key: 'created_at', width: 170, render: (r: UserRow) => new Date(r.created_at).toLocaleString('zh-CN') },
-  {
-    title: '操作', key: 'actions', width: 280,
-    render: (r: UserRow) => {
-      if (r.id === auth.user?.id) return h('span', { style: 'color: var(--color-text-muted)' }, '当前用户')
-      return h(NSpace, { size: 'small' }, {
-        default: () => [
-          h(NButton, { text: true, size: 'tiny', onClick: () => viewConversations(r.id) }, { default: () => h(NIcon, null, { default: () => h(Eye) }) }),
-          auth.isAdmin ? h(NButton, { text: true, size: 'tiny', type: 'warning', onClick: () => toggleRole(r) }, { default: () => r.role === 'admin' ? '降为普通管理员' : r.role === 'moderator' ? '降为用户' : '升普通管理员' }) : null,
-          h(NButton, { text: true, size: 'tiny', onClick: () => toggleStatus(r) }, { default: () => r.is_active ? '禁用' : '启用' }),
-          h(NPopconfirm, { onPositiveClick: () => deleteUser(r.id) }, {
-            trigger: () => h(NButton, { text: true, size: 'tiny', type: 'error' }, { default: () => h(NIcon, null, { default: () => h(Trash) }) }),
-            default: () => '确定删除该用户？',
-          }),
-        ],
-      })
-    },
-  },
-]
-</script>
-<script lang="ts">
-import { h } from 'vue'
+function openDetail(user: UserRow) {
+  detailUser.value = user
+  showDetail.value = true
+}
+
+function formatTime(t: string) {
+  return new Date(t).toLocaleString('zh-CN')
+}
 </script>
 
 <template>
@@ -120,18 +112,60 @@ import { h } from 'vue'
       </div>
     </div>
 
-    <NDataTable
-      :columns="columns"
-      :data="users"
-      :loading="loading"
-      :bordered="false"
-      size="small"
-    >
-      <template #empty>
-        <NEmpty description="暂无用户" />
-      </template>
-    </NDataTable>
+    <NSpin :show="loading">
+      <NEmpty v-if="!loading && users.length === 0" description="暂无用户" />
+      <div class="um-list" v-if="users.length > 0">
+        <NCard
+          v-for="user in users"
+          :key="user.id"
+          size="small"
+          :class="['um-card', { 'um-card-disabled': !user.is_active }]"
+          hoverable
+          role="button"
+          tabindex="0"
+          @click="openDetail(user)"
+          @keydown.enter.prevent="openDetail(user)"
+          @keydown.space.prevent="openDetail(user)"
+        >
+          <div class="um-card-header">
+            <div
+              class="um-avatar"
+              :style="user.avatar_url
+                ? { backgroundImage: `url(${user.avatar_url})`, backgroundSize: 'cover', backgroundPosition: 'center', color: 'transparent' }
+                : {}"
+            >{{ (user.display_name || user.username || '?').charAt(0).toUpperCase() }}</div>
+            <div class="um-card-info">
+              <div class="um-card-info-top">
+                <span class="um-name" :title="user.username">{{ user.username }}</span>
+                <span class="um-display-name" :title="user.display_name">{{ user.display_name }}</span>
+              </div>
+              <div class="um-card-info-bottom">
+                <NTag size="small" :type="roleType(user.role)" :bordered="false">{{ roleLabel(user.role) }}</NTag>
+                <NTag size="small" :type="user.is_active ? 'success' : 'default'" :bordered="false">
+                  {{ user.is_active ? '正常' : '已禁用' }}
+                </NTag>
+              </div>
+            </div>
+            <div class="um-card-toggle" @click.stop>
+              <NSwitch
+                size="small"
+                :value="user.is_active"
+                :disabled="user.id === auth.user?.id"
+                @update:value="() => toggleStatus(user)"
+              >
+                <template #checked>启用</template>
+                <template #unchecked>禁用</template>
+              </NSwitch>
+            </div>
+          </div>
+          <div class="um-card-meta">
+            <span class="um-meta-muted">创建时间 {{ formatTime(user.created_at) }}</span>
+          </div>
+        </NCard>
+      </div>
+    </NSpin>
 
+    <!-- Create Modal -->
     <NModal v-model:show="showCreate" title="新建用户" style="width:70vw; max-width:600px; height:70vh; max-height:460px" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
       <div class="create-form">
         <NInput v-model:value="newUser.username" placeholder="用户名" size="large" />
@@ -146,13 +180,92 @@ import { h } from 'vue'
         <NButton type="primary" :loading="creating" @click="createUser" block size="large">创建</NButton>
       </div>
     </NModal>
+
+    <!-- Detail Modal -->
+    <NModal
+      v-model:show="showDetail"
+      preset="card"
+      :title="detailUser?.username || '用户详情'"
+      style="width: 90vw; max-width: 560px"
+    >
+      <NSpin :show="loading">
+        <NDescriptions
+          v-if="detailUser"
+          bordered
+          :column="1"
+          size="small"
+          label-placement="left"
+          label-style="width: 110px"
+        >
+          <NDescriptionsItem label="用户名">{{ detailUser.username }}</NDescriptionsItem>
+          <NDescriptionsItem label="显示名">{{ detailUser.display_name || '—' }}</NDescriptionsItem>
+          <NDescriptionsItem label="邮箱">
+            <span v-if="detailUser.email">{{ detailUser.email }}</span>
+            <span v-else class="um-meta-muted">—</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="角色">
+            <NTag :type="roleType(detailUser.role)" size="small">{{ roleLabel(detailUser.role) }}</NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="状态">
+            <NTag :type="detailUser.is_active ? 'success' : 'default'" size="small">
+              {{ detailUser.is_active ? '正常' : '已禁用' }}
+            </NTag>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="创建时间">{{ formatTime(detailUser.created_at) }}</NDescriptionsItem>
+          <NDescriptionsItem label="租户 ID">
+            <span v-if="detailUser.tenant_id" class="um-id">{{ detailUser.tenant_id }}</span>
+            <span v-else class="um-meta-muted">—</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem label="用户 ID">
+            <span class="um-id">{{ detailUser.id }}</span>
+          </NDescriptionsItem>
+        </NDescriptions>
+      </NSpin>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton size="small" v-if="detailUser" @click="viewConversations(detailUser.id)">
+            <template #icon><NIcon><Eye /></NIcon></template>
+            查看对话
+          </NButton>
+          <NSelect
+            v-if="detailUser && auth.isAdmin"
+            size="small"
+            style="width: 140px"
+            :value="detailUser.role"
+            :options="[{ label: '普通用户', value: 'user' }, { label: '普通管理员', value: 'moderator' }, { label: '超级管理员', value: 'admin' }]"
+            @update:value="(r: string) => { if (detailUser) setRole(detailUser, r) }"
+          />
+          <NButton size="small" v-if="detailUser" :disabled="detailUser.id === auth.user?.id" @click="toggleStatus(detailUser)" :style="detailUser.is_active
+            ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
+            : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
+            <template #icon>
+              <NIcon>
+                <Ban v-if="detailUser.is_active" />
+                <CheckmarkCircle v-else />
+              </NIcon>
+            </template>
+            {{ detailUser.is_active ? '禁用' : '启用' }}
+          </NButton>
+          <NPopconfirm v-if="detailUser" @positive-click="deleteUser(detailUser.id)">
+            <template #trigger>
+              <NButton size="small" :disabled="detailUser.id === auth.user?.id" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                <template #icon><NIcon><Trash /></NIcon></template>
+                删除
+              </NButton>
+            </template>
+            确定删除该用户？
+          </NPopconfirm>
+        </NSpace>
+      </template>
+    </NModal>
   </div>
 </template>
 
 <style scoped>
 .page-container {
   padding: var(--space-4);
-  max-width: 1000px;
+  max-width: 1100px;
   margin: 0 auto;
 }
 .dm-header {
@@ -190,5 +303,112 @@ import { h } from 'vue'
   align-items: center;
   gap: 8px;
 }
+
+/* User card grid */
+.um-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.um-card {
+  cursor: pointer;
+  transition: box-shadow .2s, border-color .2s;
+}
+.um-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+.um-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+}
+.um-card-disabled {
+  background: #f1f5f9;
+}
+.um-card-disabled:hover {
+  box-shadow: var(--shadow-sm);
+}
+html.dark .um-card-disabled {
+  background: #334155;
+}
+
+.um-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.um-avatar {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 600;
+  font-size: var(--text-lg);
+}
+.um-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.um-card-info-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.um-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+.um-display-name {
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 90px;
+}
+.um-card-info-bottom {
+  display: flex;
+  align-items: center;
+}
+.um-card-toggle {
+  flex-shrink: 0;
+}
+
+.um-card-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.um-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+.um-meta-muted {
+  color: var(--color-text);
+}
+.um-id {
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
 </style>

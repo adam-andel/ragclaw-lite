@@ -284,6 +284,17 @@ onBeforeUnmount(() => {
         重新生成
       </NButton>
     </div>
+    <div v-if="!isStreaming && message.role === 'user'" class="message-actions">
+      <div class="copy-btn-wrapper">
+        <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
+          <template #icon><NIcon><Copy /></NIcon></template>
+          复制
+        </NButton>
+        <Transition name="copy-tip-fade">
+          <span v-if="copied" class="copy-tip">已复制</span>
+        </Transition>
+      </div>
+    </div>
     </div>
   </div>
 </template>

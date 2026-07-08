@@ -243,18 +243,17 @@ function goToNotifications() {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 0;
   background: var(--color-primary);
   color: #fff;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-4) var(--space-4);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   cursor: pointer;
   z-index: 10;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  gap: 6px;
 }
 .notification-toast:hover {
   filter: brightness(1.1);
@@ -262,17 +261,15 @@ function goToNotifications() {
 .toast-title {
   font-size: var(--text-sm);
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .toast-content {
   font-size: var(--text-xs);
   opacity: 0.9;
   margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ── Toast slide animation ── */
