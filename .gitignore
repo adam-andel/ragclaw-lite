@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.egg-info/
 .venv/
@@ -20,22 +21,15 @@ data/uploads/*
 .env
 
 # IDE
-.idea/
 .vscode/
+.idea/
+.trae/
+.codebuddy/
+.claude/
+CLAUDE.md
 *.swp
 *.swo
 
 # OS
 .DS_Store
 Thumbs.db
-
-#CLAUDE
-.claude/
-CLAUDE.md
-
-backend/.pytest_cache/
-docs/
-ux-research/
-
-#Trae
-.trae/

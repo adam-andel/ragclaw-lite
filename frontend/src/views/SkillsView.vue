@@ -326,22 +326,22 @@ onMounted(() => {
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton @click="handleSync">
-          <template #icon><NIcon size="16"><Sync /></NIcon></template>
+        <NButton size="small" @click="handleSync">
+          <template #icon><NIcon><Sync /></NIcon></template>
           同步
         </NButton>
-        <NButton @click="triggerFolderUpload">
-          <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
+        <NButton size="small" @click="triggerFolderUpload">
+          <template #icon><NIcon><CloudUpload /></NIcon></template>
           上传文件夹
         </NButton>
         <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
-          <NButton>
-            <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
+          <NButton size="small">
+            <template #icon><NIcon><CloudUpload /></NIcon></template>
             上传ZIP
           </NButton>
         </NUpload>
-        <NButton type="primary" @click="openCreate">
-          <template #icon><NIcon size="16"><Add /></NIcon></template>
+        <NButton size="small" type="primary" @click="openCreate">
+          <template #icon><NIcon><Add /></NIcon></template>
           在线创建
         </NButton>
       </div>

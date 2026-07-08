@@ -11,6 +11,10 @@ __pycache__/
 # IDE / editor
 .vscode/
 .idea/
+.trae/
+.codebuddy/
+.claude/
+CLAUDE.md
 *.swp
 
 # OS junk
@@ -20,3 +24,6 @@ Thumbs.db
 # Git
 .git/
 .gitignore
+.gitattributes
+
+
