@@ -1,4 +1,13 @@
-"""In-process async scheduler for cron jobs."""
+"""In-process async scheduler for cron jobs.
+
+Concurrency model:
+- A single scheduler loop ticks every 60 seconds.
+- Each tick sequentially processes due jobs one at a time via
+  ``execute_and_record_cron_job``, which internally holds a per-job
+  ``asyncio.Lock`` for the full execution lifespan.
+- This guarantees that a given cron job is never executed concurrently,
+  whether the trigger comes from the scheduler or from a manual API call.
+"""
 
 import asyncio
 import logging
@@ -16,7 +25,13 @@ TICK_INTERVAL_SECONDS = 60
 
 
 async def scheduler_loop():
-    """Background task: wake up periodically and run due cron jobs."""
+    """Background task: wake up periodically and run due cron jobs.
+
+    Jobs are processed one at a time to keep the scheduler predictable.
+    The per-job lock inside ``execute_and_record_cron_job`` is still the
+    authoritative concurrency guard — this loop simply avoids creating a
+    flood of ``create_task`` fire-and-forget calls.
+    """
     logger.info("Cron scheduler started")
     while True:
         try:
@@ -27,7 +42,7 @@ async def scheduler_loop():
 
 
 async def _tick():
-    """Fetch and trigger all due scheduled jobs."""
+    """Fetch and sequentially execute all due scheduled jobs."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with async_session() as db:
         result = await db.execute(
@@ -41,13 +56,7 @@ async def _tick():
         jobs = result.scalars().all()
 
     for job in jobs:
-        # Fire-and-forget each job execution.
-        asyncio.create_task(_execute_job(job.id))
-
-
-async def _execute_job(cron_job_id: str):
-    """Execute a single cron job and update its state."""
-    try:
-        await execute_and_record_cron_job(cron_job_id)
-    except Exception as e:
-        logger.exception("Scheduled cron job %s failed: %s", cron_job_id, e)
+        try:
+            await execute_and_record_cron_job(job.id)
+        except Exception as e:
+            logger.exception("Cron job %s execution threw: %s", job.id, e)
