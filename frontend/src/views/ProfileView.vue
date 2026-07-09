@@ -209,7 +209,7 @@ const roleColor = computed(() => {
           <NInput
             v-model:value="form.email"
             placeholder="输入邮箱地址"
-            type="email"
+            :input-props="{ type: 'email' }"
             clearable
           >
             <template #prefix>

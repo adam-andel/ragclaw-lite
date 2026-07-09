@@ -447,7 +447,7 @@ async function loadAvailableDocs(kbId?: string) {
 }
 function resetAvailableFilters() {
   availableSearch.value = ''
-  availableStatus.value = null
+  availableStatus.value = ''
   availableType.value = 'all'
   availablePage.value = 1
   loadAvailableDocs()
@@ -781,7 +781,7 @@ const statusOptions = [
 ]
 
 const availableStatusOptions = [
-  { label: '全部状态', value: null },
+  { label: '全部状态', value: '' },
   { label: '已完成', value: 'completed' },
   { label: '处理中', value: 'pending' },
   { label: '失败', value: 'failed' },

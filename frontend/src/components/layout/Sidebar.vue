@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NMenu, NIcon, NButton, NTag, NBadge } from 'naive-ui'
+import { NMenu, NIcon, NButton, NTag, NBadge, NSwitch } from 'naive-ui'
 import {
   Chatbubbles, FolderOpen, StatsChart,
   LogOut, People, Settings, Time,
@@ -10,11 +10,13 @@ import {
 import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
+import { useTheme } from '@/composables/useTheme'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const notificationStore = useNotificationStore()
+const { isDark, setDark } = useTheme()
 
 const userAvatar = computed(() => auth.user?.avatar_url || '')
 const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
@@ -91,6 +93,11 @@ function goToNotifications() {
         />
       </div>
 
+      <div class="theme-row">
+        <span class="theme-label">深色模式</span>
+        <NSwitch :value="isDark" @update:value="setDark" size="small" />
+      </div>
+      
       <div class="user-row">
         <div class="user-info-wrapper">
           <div class="user-info" role="button" tabindex="0" @click="router.push('/profile')" @keydown.enter="router.push('/profile')">
@@ -176,6 +183,17 @@ function goToNotifications() {
   gap: var(--space-2);
   flex-shrink: 0;
   position: relative;
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+}
+.theme-label {
+  font-size: var(--text-sm);
+  color: var(--color-text);
 }
 .notification-entry {
   display: flex;
