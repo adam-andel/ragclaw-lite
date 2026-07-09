@@ -356,12 +356,6 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
       <div class="chat-header-right">
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
-        <template v-if="!isReadonly">
-          <span class="kb-select-label">知识库</span>
-          <NButton size="small" @click="showMoreKb = true" class="kb-trigger-btn">
-            {{ currentKbName }}
-          </NButton>
-        </template>
         <NButton size="small" @click="showMoreConv = true">
           <template #icon><NIcon size="16"><List /></NIcon></template>
           对话历史
@@ -571,6 +565,9 @@ function handleKeydown(e: KeyboardEvent) {
 
     <div v-if="!isReadonly" class="chat-input-wrapper">
       <div class="skill-selector-bar">
+        <NButton size="tiny" ghost class="kb-trigger-btn" @click="showMoreKb = true">
+          {{ currentKbName }}
+        </NButton>
         <NButton size="tiny" ghost class="skill-selector-btn" @click="showSkillModal = true">
           <template #icon><NIcon size="14"><Sparkles /></NIcon></template>
           {{ selectedSkillName }}
@@ -628,12 +625,6 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
 .chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
 .chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.kb-select-label {
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  font-weight: 500;
-  white-space: nowrap;
-}
 
 .chat-messages {
   flex: 1;
@@ -852,9 +843,6 @@ function handleKeydown(e: KeyboardEvent) {
   .chat-header-right {
     flex-wrap: wrap;
     gap: 4px;
-  }
-  .kb-select-label {
-    display: none;
   }
   .kb-trigger-btn {
     max-width: 120px;

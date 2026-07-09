@@ -192,10 +192,9 @@ function goToNotifications() {
 }
 .notification-label {
   font-size: var(--text-sm);
-  flex: 1;
 }
 .notification-badge {
-  margin-left: auto;
+  margin-left: 0;
 }
 .user-row {
   display: flex;
@@ -240,7 +239,7 @@ function goToNotifications() {
 /* ── Notification toast ── */
 .notification-toast {
   position: absolute;
-  top: 0;
+  bottom: 0;
   left: 0;
   right: 0;
   background: var(--color-primary);
@@ -260,7 +259,7 @@ function goToNotifications() {
 }
 .toast-title {
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 400;
   white-space: normal;
   overflow-wrap: anywhere;
 }
