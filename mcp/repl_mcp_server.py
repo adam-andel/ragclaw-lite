@@ -114,203 +114,47 @@ def _subprocess_flags() -> int:
 
 
 # ═══════════════════════════════════════════════════════════
-# Python executor (layers 0–4, preserved exactly as original)
+# Python executor — Docker-simplified guard
 # ═══════════════════════════════════════════════════════════
-
-_BLOCKED_MODULES = {
-    "ctypes", "_ctypes", "cffi",
-    "mmap",
-    "_winapi", "msvcrt", "win32api", "win32file", "win32con",
-    "multiprocessing", "_multiprocessing", "_posixsubprocess",
-    "pickle", "_pickle", "dill",
-    "dbm", "_dbm", "gdbm", "shelve", "marshal",
-    # Note: "signal" and "resource" removed — they are needed by ssl/http/urllib
-    # which pptx and other libraries import indirectly. Security is enforced at
-    # the Docker level (seccomp + cap_drop: ALL + --no-network).
-}
-
+# Docker provides hardware-level isolation:
+#   read_only rootfs, tmpfs workspace, cap_drop ALL, seccomp,
+#   no-new-privileges, non-root user, resource limits.
+# Python-level guards only handle network blocking (--no-network).
+# All import/filesystem/subprocess guards removed — they caused
+# compatibility issues with pptx, PIL, ssl, lxml, etc.
 
 def _py_build_guard(per_call_dir: str) -> str:
-    """Build Python security preamble for a specific call directory."""
-    preamble = """# --- guard preamble: all imports before restrictions ---
-import os as _g_os, builtins as _g_bi, builtins as _g_bi2
-import functools as _g_ft, shutil as _g_shutil, pathlib as _g_pl, io as _g_io
-import socket as _g_socket, subprocess as _g_subprocess
+    """Build security preamble. Only network guard if --no-network is set."""
+    preamble = """# --- guard preamble (Docker-simplified) ---
+import socket as _g_socket
 """
     guards = []
-    blocked = repr(set(_BLOCKED_MODULES))
-    guards.append(f"""
-# --- import guard: block bypass vectors ---
-_blocked = {blocked}
-_orig_import = _g_bi2.__import__
-def _safe_import(name, *a, **kw):
-    root = name.split('.')[0]
-    if root in _blocked:
-        raise ImportError(f"禁止导入 {{name}}——该模块可能绕过安全限制")
-    return _orig_import(name, *a, **kw)
-_g_bi2.__import__ = _safe_import
-""")
 
-    if _allow_dir:
-        target = _allow_dir.replace("\\", "\\\\")
-        guards.append(f"""
-# --- filesystem guard: default-deny, allow only --allow-dir ---
-_ALLOW = r'{target}'
-
-def _check_path(path, op='操作'):
-    if not isinstance(path, str):
-        return True
-    p = _g_os.path.normpath(_g_os.path.abspath(path))
-    allow = _g_os.path.normpath(_ALLOW)
-    if p.startswith(allow + _g_os.sep) or p == allow:
-        return True
-    # Allow READ-ONLY access to system/Python directories.
-    # Libraries like pptx need to read template files from site-packages.
-    _ok_prefixes = ('/usr/local/lib/', '/usr/lib/', '/usr/share/', '/etc/', '/tmp/')
-    if any(p.startswith(d) for d in _ok_prefixes):
-        return True
-    raise PermissionError(f"{{op}} {{path}} 被拒绝——仅允许操作 {{_ALLOW}} 目录")
-
-# open()
-_orig_open = _g_bi.open
-@_g_ft.wraps(_orig_open)
-def _safe_open(file, mode='r', *a, **kw):
-    _check_path(str(file), '打开')
-    return _orig_open(file, mode, *a, **kw)
-_g_bi.open = _safe_open
-
-# io.FileIO / io.open
-if hasattr(_g_io, 'FileIO'):
-    _orig_fileio = _g_io.FileIO
-    @_g_ft.wraps(_orig_fileio)
-    def _safe_fileio(file, *a, **kw):
-        _check_path(str(file), 'FileIO')
-        return _orig_fileio(file, *a, **kw)
-    _g_io.FileIO = _safe_fileio
-if hasattr(_g_io, 'open'):
-    _orig_io_open = _g_io.open
-    @_g_ft.wraps(_orig_io_open)
-    def _safe_io_open(file, *a, **kw):
-        _check_path(str(file), 'io.open')
-        return _orig_io_open(file, *a, **kw)
-    _g_io.open = _safe_io_open
-
-# os path-taking functions
-for _name in dir(_g_os):
-    if _name.startswith('_') or _name in ('fspath','path','sep','PathLike','StatResult','DIRSYNC','pathsep','linesep','altsep','name','curdir','pardir','extsep','defpath','devnull','sep'):
-        continue
-    _orig = getattr(_g_os, _name, None)
-    if not callable(_orig):
-        continue
-    @_g_ft.wraps(_orig)
-    def _mk_wrapper(original=_orig, fn_name=_name):
-        _BS = chr(92)
-        def _wrapped(*a, **kw):
-            for arg in a:
-                if isinstance(arg, str) and (arg.startswith('/') or _BS in arg or (':' in arg and len(arg) > 2)):
-                    _check_path(arg, fn_name)
-            return original(*a, **kw)
-        return _wrapped
-    setattr(_g_os, _name, _mk_wrapper())
-
-# shutil
-for _name in dir(_g_shutil):
-    if _name.startswith('_'):
-        continue
-    _orig = getattr(_g_shutil, _name, None)
-    if not callable(_orig):
-        continue
-    @_g_ft.wraps(_orig)
-    def _mk_sh_impl(original=_orig):
-        def _wrapped(*a, **kw):
-            for arg in a:
-                if isinstance(arg, str):
-                    _check_path(arg, _name)
-            return original(*a, **kw)
-        return _wrapped
-    setattr(_g_shutil, _name, _mk_sh_impl())
-
-# pathlib
-_orig_path_init = _g_pl.Path.__init__
-def _safe_path_init(self, *a, **kw):
-    _orig_path_init(self, *a, **kw)
-    _check_path(str(self), 'pathlib')
-_g_pl.Path.__init__ = _safe_path_init
-""")
-
+    # Network guard — only block outbound connection functions, NOT the socket
+    # class itself. This allows ssl.py, urllib, etc. to import correctly.
     if _no_network:
         guards.append("""
-# --- network guard ---
-_orig_socket = _g_socket.socket
+# --- network guard: block outbound connections only ---
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
 
 def _net_blocked(*a, **kw):
     raise PermissionError("网络访问已被禁止。如需外部数据，请通过 MCP 工具获取。")
 
-# Use a CLASS (not function) so ssl.py can subclass socket.socket without TypeError.
-# Actual instantiation still raises PermissionError.
-class _BlockedSocket(_orig_socket if isinstance(_orig_socket, type) else object):
-    def __init__(self, *a, **kw):
-        raise PermissionError("网络访问已被禁止。")
-    def connect(self, *a, **kw):
-        raise PermissionError("网络访问已被禁止。")
-    def send(self, *a, **kw):
-        raise PermissionError("网络访问已被禁止。")
-    def recv(self, *a, **kw):
-        raise PermissionError("网络访问已被禁止。")
-
-_g_socket.socket = _BlockedSocket
 if _orig_create_conn:
     _g_socket.create_connection = _net_blocked
 _g_socket.getaddrinfo = _net_blocked
-
-# --- subprocess guard ---
-_orig_popen = _g_subprocess.Popen
-_orig_run = _g_subprocess.run
-_orig_call = _g_subprocess.call
-def _blocked_proc(*a, **kw):
-    raise PermissionError("子进程调用已被禁止")
-_g_subprocess.Popen = _blocked_proc
-_g_subprocess.run = _blocked_proc
-_g_subprocess.call = _blocked_proc
-_g_subprocess.check_call = _blocked_proc
-_g_subprocess.check_output = _blocked_proc
 """)
 
     return "\n".join([preamble] + guards) if guards else preamble
 
 
 def _py_ast_prescreen(code: str) -> str | None:
-    """AST scan for Python code. Returns error string or None."""
+    """Lightweight AST scan — syntax check only. Docker handles security."""
     try:
-        tree = _ast_module.parse(code)
+        _ast_module.parse(code)
     except SyntaxError as e:
         return f"语法错误 (行 {e.lineno}): {e.msg}"
-
-    blocked_imports = _BLOCKED_MODULES
-    blocked_calls = {"eval", "exec", "compile", "__import__",
-                     "input", "breakpoint", "help"}
-    blocked_attrs = {"__import__", "__builtins__", "__globals__", "__dict__",
-                     "__class__", "__bases__", "__subclasses__", "__mro__"}
-
-    for node in _ast_module.walk(tree):
-        if isinstance(node, _ast_module.Import):
-            for alias in node.names:
-                root = alias.name.split('.')[0]
-                if root in blocked_imports:
-                    return f"禁止导入模块: {root}"
-        if isinstance(node, _ast_module.ImportFrom):
-            if node.module:
-                root = node.module.split('.')[0]
-                if root in blocked_imports:
-                    return f"禁止导入模块: {root}"
-        if isinstance(node, _ast_module.Call):
-            if isinstance(node.func, _ast_module.Name) and node.func.id in blocked_calls:
-                return f"禁止调用: {node.func.id}()"
-        if isinstance(node, _ast_module.Attribute):
-            if node.attr in blocked_attrs:
-                return f"禁止访问: .{node.attr}"
     return None
 
 

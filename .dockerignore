@@ -21,6 +21,12 @@ data
 .idea
 .vscode
 *.swp
+CLAUDE.md
+.claude
+.trae
+.codebuddy
+.workbuddy
+
 
 # Docs
 docs
@@ -35,7 +41,3 @@ Thumbs.db
 # the image. Runtime values are injected via docker-compose `env_file:` instead.
 .env
 .env.example
-
-# CLAUDE
-CLAUDE.md
-.claude
