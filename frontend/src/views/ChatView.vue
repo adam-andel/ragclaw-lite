@@ -2,6 +2,7 @@
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NPagination, useMessage } from 'naive-ui'
+import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -70,7 +71,6 @@ const skillSearchText = ref('')
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
-const kbSearchText = ref('')
 const convKbMap = ref<Record<string, string>>({})
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
@@ -102,16 +102,16 @@ const showPicker = computed(() => emptyMode.value !== '' && messages.value.lengt
 
 const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
 const currentKbName = computed(() => selectedKb.value?.name || '选择知识库')
-const filteredKbs = computed(() =>
-  kbs.value.filter((kb: any) =>
-    !kbSearchText.value || kb.name.toLowerCase().includes(kbSearchText.value.toLowerCase())
-  )
-)
 
 function selectAndClose(convId: string) {
   emptyMode.value = ''
   showMoreConv.value = false
   router.push(`/chat/${convId}`)
+}
+
+function onKbPick(id: string | null) {
+  if (id) selectedKbId.value = id
+  showMoreKb.value = false
 }
 
 async function loadConversations() {
@@ -536,28 +536,15 @@ function handleKeydown(e: KeyboardEvent) {
     </NModal>
 
     <!-- Modal: KB picker with search -->
-    <NModal v-model:show="showMoreKb" preset="card" title="选择知识库"
-      style="width: 90vw; max-width: 520px"
-      @after-leave="kbSearchText = ''"
-    >
-      <NInput v-model:value="kbSearchText" placeholder="搜索知识库名称..." clearable style="margin-bottom:12px" />
-      <template v-if="filteredKbs.length > 0">
-        <div class="picker-scroll">
-          <NCard v-for="kb in filteredKbs" :key="kb.id" size="small" class="kb-pick-card"
-            :class="{ active: kb.id === selectedKbId }"
-            role="button" tabindex="0"
-            @click="selectedKbId = kb.id; showMoreKb = false"
-            @keydown.enter.prevent="selectedKbId = kb.id; showMoreKb = false"
-            @keydown.space.prevent="selectedKbId = kb.id; showMoreKb = false"
-          >
-            <strong>{{ kb.name }}</strong>
-            <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-            <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
-          </NCard>
-        </div>
-      </template>
-      <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
-    </NModal>
+    <KbPickerModal
+      v-model:show="showMoreKb"
+      :kbs="kbs"
+      :selected-id="selectedKbId"
+      :show-all="false"
+      :sortable="false"
+      :page-size="12"
+      @select="onKbPick"
+    />
 
     <NModal v-model:show="showSkillModal" preset="card" title="选择技能"
       style="width: 90vw; max-width: 520px"

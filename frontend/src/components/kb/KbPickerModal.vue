@@ -1,0 +1,214 @@
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+import { NModal, NCard, NInput, NSelect, NIcon, NEmpty, NPagination } from 'naive-ui'
+import { Search } from '@vicons/ionicons5'
+
+const props = withDefaults(defineProps<{
+  show: boolean
+  kbs: any[]
+  selectedId?: string | null
+  title?: string
+  /** 是否显示「全部 / 不关联」特殊卡片（用于筛选场景） */
+  showAll?: boolean
+  allLabel?: string
+  allMeta?: string
+  allActive?: boolean
+  allCount?: number
+  /** 是否显示排序下拉（文档管理页用，聊天页不选） */
+  sortable?: boolean
+  pageSize?: number
+  searchPlaceholder?: string
+}>(), {
+  selectedId: null,
+  title: '选择知识库',
+  showAll: false,
+  allLabel: '全部',
+  allMeta: '',
+  allActive: false,
+  allCount: 0,
+  sortable: false,
+  pageSize: 12,
+  searchPlaceholder: '搜索知识库名称...',
+})
+
+const emit = defineEmits<{
+  (e: 'update:show', v: boolean): void
+  (e: 'select', id: string | null): void
+}>()
+
+const search = ref('')
+const sortBy = ref<'recent' | 'doc_count'>('recent')
+const page = ref(1)
+
+const sortOptions = [
+  { label: '最近更新', value: 'recent' },
+  { label: '文档数量', value: 'doc_count' },
+]
+
+const filtered = computed(() => {
+  let list = props.kbs
+  const q = search.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((kb: any) =>
+      kb.name.toLowerCase().includes(q) ||
+      (kb.description && kb.description.toLowerCase().includes(q))
+    )
+  }
+  if (props.sortable) {
+    const copy = [...list]
+    if (sortBy.value === 'doc_count') {
+      copy.sort((a: any, b: any) => b.doc_count - a.doc_count)
+    } else {
+      copy.sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+    }
+    return copy
+  }
+  return list
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / props.pageSize)))
+const paged = computed(() => {
+  const start = (page.value - 1) * props.pageSize
+  return filtered.value.slice(start, start + props.pageSize)
+})
+
+watch([search, sortBy], () => { page.value = 1 })
+
+function onCardClick(id: string | null) {
+  emit('select', id)
+}
+function onAfterLeave() {
+  search.value = ''
+  sortBy.value = 'recent'
+  page.value = 1
+}
+</script>
+
+<template>
+  <NModal
+    :show="show"
+    preset="card"
+    :title="title"
+    style="width: 90vw; max-width: 720px"
+    @update:show="emit('update:show', $event)"
+    @after-leave="onAfterLeave"
+  >
+    <div class="kb-picker-toolbar">
+      <NInput v-model:value="search" :placeholder="searchPlaceholder" clearable>
+        <template #prefix><NIcon size="15"><Search /></NIcon></template>
+      </NInput>
+      <NSelect v-if="sortable" v-model:value="sortBy" :options="sortOptions" style="width: 140px" />
+    </div>
+
+    <div class="kb-picker-grid">
+      <NCard
+        v-if="showAll"
+        size="small"
+        class="kb-picker-card"
+        :class="{ active: allActive }"
+        role="button"
+        tabindex="0"
+        @click="onCardClick(null)"
+        @keydown.enter.prevent="onCardClick(null)"
+        @keydown.space.prevent="onCardClick(null)"
+      >
+        <div class="kb-picker-inner">
+          <div class="kb-picker-avatar kb-picker-avatar-all">🗂️</div>
+          <div class="kb-picker-body">
+            <strong class="kb-picker-name">{{ allLabel }}</strong>
+            <div class="kb-picker-stats">
+              <span class="kb-picker-chip kb-picker-chip-soft">共 {{ allCount }} 个知识库</span>
+            </div>
+            <span v-if="allMeta" class="kb-picker-meta">{{ allMeta }}</span>
+          </div>
+        </div>
+      </NCard>
+
+      <NCard
+        v-for="kb in paged"
+        :key="kb.id"
+        size="small"
+        class="kb-picker-card"
+        :class="{ active: kb.id === selectedId }"
+        role="button"
+        tabindex="0"
+        @click="onCardClick(kb.id)"
+        @keydown.enter.prevent="onCardClick(kb.id)"
+        @keydown.space.prevent="onCardClick(kb.id)"
+      >
+        <div class="kb-picker-inner">
+          <div class="kb-picker-avatar">📚</div>
+          <div class="kb-picker-body">
+            <strong class="kb-picker-name">{{ kb.name }}</strong>
+            <span v-if="kb.description" class="kb-picker-desc">{{ kb.description }}</span>
+            <div class="kb-picker-stats">
+              <span class="kb-picker-chip">{{ kb.doc_count }} 文档</span>
+              <span class="kb-picker-chip">{{ kb.vector_count }} 分片</span>
+            </div>
+          </div>
+        </div>
+      </NCard>
+    </div>
+
+    <NEmpty v-if="filtered.length === 0" description="无匹配的知识库" style="padding:16px 0" />
+    <div class="kb-picker-pager" v-if="totalPages > 1">
+      <NPagination
+        :page="page"
+        :page-size="pageSize"
+        :item-count="filtered.length"
+        @update:page="(p: number) => page = p"
+      />
+    </div>
+  </NModal>
+</template>
+
+<style scoped>
+.kb-picker-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.kb-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.kb-picker-card {
+  cursor: pointer;
+  transition: border-color .2s, box-shadow .2s, background .2s, transform .15s;
+  border: 1px solid var(--color-border);
+}
+.kb-picker-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.kb-picker-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+.kb-picker-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.kb-picker-inner { display: flex; align-items: flex-start; gap: 10px; }
+.kb-picker-avatar {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  background: var(--color-primary-soft);
+}
+.kb-picker-avatar-all { background: var(--color-border); }
+.kb-picker-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.kb-picker-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-picker-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-picker-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-picker-chip {
+  font-size: 0.7rem; line-height: 1.4;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2, #f1f5f9);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+  padding: 1px 8px;
+}
+.kb-picker-chip-soft { color: var(--color-primary); background: var(--color-primary-soft); border-color: transparent; }
+.kb-picker-meta { font-size: 0.7rem; color: var(--color-text-muted); }
+.kb-picker-pager { display: flex; justify-content: center; margin-top: 14px; }
+
+@media (max-width: 640px) {
+  .kb-picker-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .kb-picker-grid { grid-template-columns: 1fr; }
+  .kb-picker-toolbar { flex-direction: column; }
+  .kb-picker-toolbar :deep(.n-base-selection) { width: 100% !important; }
+}
+</style>

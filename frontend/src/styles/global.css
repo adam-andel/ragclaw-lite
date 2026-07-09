@@ -23,6 +23,7 @@
   /* ── Colors: Surface ── */
   --color-bg: #f8fafc;
   --color-surface: #ffffff;
+  --color-surface-2: #f1f5f9;
   --color-border: #e5e9f0;
 
   /* ── Colors: Text ── */
@@ -80,6 +81,7 @@ html.dark {
 
   --color-bg: #0f172a;
   --color-surface: #1e293b;
+  --color-surface-2: #334155;
   --color-border: #334155;
   --color-text: #e2e8f0;
   --color-text-muted: #94a3b8;

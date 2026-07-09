@@ -17,6 +17,7 @@ import {
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
+import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 
 const message = useMessage()
 const auth = useAuthStore()
@@ -117,20 +118,10 @@ const allKbs = ref<any[]>([])
 const showDocKbs = ref(false)
 const docKbSearchText = ref('')
 const selectedDocKbIds = ref<string[]>([])
-const kbFilterSearch = ref('')
-const kbFilterSortBy = ref<'recent' | 'doc_count'>('recent')
-
-const kbSortOptions = [
-  { label: '最近更新', value: 'recent' },
-  { label: '文档数量', value: 'doc_count' },
-]
-
 const kbFilterMode = ref<'filter' | 'upload'>('filter')
 
 function openKbFilter(mode: 'filter' | 'upload' = 'filter') {
   kbFilterMode.value = mode
-  kbFilterSearch.value = ''
-  kbFilterSortBy.value = 'recent'
   showKbFilter.value = true
 }
 
@@ -146,24 +137,6 @@ function onKbFilterSelect(kbId: string | null) {
 const uploadTargetKbName = computed(() => {
   if (!uploadTargetKb.value) return '不关联'
   return allKbs.value.find(k => k.id === uploadTargetKb.value)?.name || '不关联'
-})
-
-const filteredKbsForFilter = computed(() => {
-  let list = [...allKbs.value]
-  if (kbFilterSearch.value.trim()) {
-    const q = kbFilterSearch.value.trim().toLowerCase()
-    list = list.filter(kb =>
-      kb.name.toLowerCase().includes(q) ||
-      (kb.description && kb.description.toLowerCase().includes(q))
-    )
-  }
-  list.sort((a, b) => {
-    if (kbFilterSortBy.value === 'doc_count') {
-      return b.doc_count - a.doc_count
-    }
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-  })
-  return list
 })
 
 // KB action modals
@@ -1241,51 +1214,20 @@ async function loadSupportedTypes() {
       </template>
     </NModal>
 
-    <!-- KB Filter Modal -->
-    <NModal v-model:show="showKbFilter" preset="card" title="选择知识库"
-      style="width: 90vw; max-width: 720px"
-      @after-leave="kbFilterSearch = ''; kbFilterSortBy = 'recent'"
-    >
-      <div class="kb-filter-toolbar">
-        <NInput v-model:value="kbFilterSearch" placeholder="搜索知识库名称…" clearable style="flex:1">
-          <template #prefix><NIcon size="15"><Search /></NIcon></template>
-        </NInput>
-        <NSelect v-model:value="kbFilterSortBy" :options="kbSortOptions" style="width: 140px" />
-      </div>
-      <div class="kb-filter-grid">
-        <NCard
-          size="small"
-          class="kb-filter-card"
-          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null }"
-          role="button"
-          tabindex="0"
-          @click="onKbFilterSelect(null)"
-          @keydown.enter.prevent="onKbFilterSelect(null)"
-          @keydown.space.prevent="onKbFilterSelect(null)"
-        >
-          <strong>{{ kbFilterMode === 'upload' ? '不关联' : '全部' }}</strong>
-          <span class="kb-filter-count">共 {{ allKbs.length }} 个知识库</span>
-          <span class="kb-filter-meta">{{ kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档' }}</span>
-        </NCard>
-        <NCard
-          v-for="kb in filteredKbsForFilter"
-          :key="kb.id"
-          size="small"
-          class="kb-filter-card"
-          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === kb.id : filterKbId === kb.id }"
-          role="button"
-          tabindex="0"
-          @click="onKbFilterSelect(kb.id)"
-          @keydown.enter.prevent="onKbFilterSelect(kb.id)"
-          @keydown.space.prevent="onKbFilterSelect(kb.id)"
-        >
-          <strong>{{ kb.name }}</strong>
-          <span v-if="kb.description" class="kb-filter-desc">{{ kb.description }}</span>
-          <span class="kb-filter-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 分片</span>
-        </NCard>
-      </div>
-      <NEmpty v-if="filteredKbsForFilter.length === 0" description="无匹配的知识库" />
-    </NModal>
+    <!-- KB Filter Modal（复用共享组件） -->
+    <KbPickerModal
+      v-model:show="showKbFilter"
+      :kbs="allKbs"
+      :selected-id="kbFilterMode === 'upload' ? uploadTargetKb : filterKbId"
+      :show-all="true"
+      :all-label="kbFilterMode === 'upload' ? '不关联' : '全部'"
+      :all-meta="kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档'"
+      :all-active="kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null"
+      :all-count="allKbs.length"
+      :sortable="true"
+      :page-size="12"
+      @select="onKbFilterSelect"
+    />
 
     <!-- Rename KB Modal -->
     <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
@@ -1720,27 +1662,6 @@ async function loadSupportedTypes() {
 .kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
 
-/* KB filter modal */
-.kb-filter-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.kb-filter-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  max-height: 55vh;
-  overflow-y: auto;
-}
-.kb-filter-card {
-  cursor: pointer;
-  transition: border-color .2s, box-shadow .2s, background .2s;
-  border: 1px solid var(--color-border);
-}
-.kb-filter-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.kb-filter-active { border-color: var(--color-primary); background: var(--color-primary-soft); }
-.kb-filter-card strong { display: block; font-size: var(--text-sm); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-filter-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-filter-count { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; }
-.kb-filter-meta { display: block; font-size: 0.65rem; color: var(--color-text-muted); }
-
 /* KB action modals */
 .kb-form { display: flex; flex-direction: column; gap: 12px; }
 .share-form { display: flex; flex-direction: column; max-height: 60vh; }
@@ -1791,13 +1712,9 @@ async function loadSupportedTypes() {
 .select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
 
 @media (max-width: 640px) {
-  .kb-filter-grid { grid-template-columns: repeat(2, 1fr); }
   .share-list { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 420px) {
-  .kb-filter-grid { grid-template-columns: 1fr; }
-  .kb-filter-toolbar { flex-direction: column; }
-  .kb-filter-toolbar :deep(.n-base-selection) { width: 100% !important; }
   .share-list { grid-template-columns: 1fr; }
 }
 </style>
