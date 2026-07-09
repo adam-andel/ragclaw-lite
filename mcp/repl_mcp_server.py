@@ -54,7 +54,13 @@ DEFAULT_KEEP_MINUTES = 60
 _CLEANUP_EVERY = 300
 
 _allow_dir: str | None = None
-_no_network: bool = False
+# ── Network policy (hot-reloadable at runtime) ──
+# mode: "deny" (default, block all) | "allow" (open, debug) | "allowlist" (per-domain)
+_network_mode: str = "deny"
+_allow_domains: list[str] = []      # allowed hostnames in allowlist mode
+_allow_methods: list[str] = []      # reserved for L7 filtering (Phase 2)
+_policy_file: str = "/tmp/repl_network_policy.json"
+_no_network: bool = False           # backward-compat alias (sets initial mode=deny)
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
 _max_nproc: int = DEFAULT_MAX_NPROC
 _max_concurrent: int = DEFAULT_MAX_CONCURRENT
@@ -97,6 +103,8 @@ def _sanitize_env() -> dict:
     env["NUMEXPR_NUM_THREADS"] = "1"
     # Matplotlib config dir (read-only rootfs workaround)
     env["MPLCONFIGDIR"] = "/tmp/matplotlib"
+    # Inject current network policy so the guard preamble can enforce it.
+    env["REPL_NETWORK_POLICY"] = json.dumps(_build_policy(), ensure_ascii=False)
     return env
 
 
@@ -130,30 +138,126 @@ def _subprocess_flags() -> int:
 # All import/filesystem/subprocess guards removed — they caused
 # compatibility issues with pptx, PIL, ssl, lxml, etc.
 
-def _py_build_guard(per_call_dir: str) -> str:
-    """Build security preamble. Only network guard if --no-network is set."""
-    preamble = """# --- guard preamble (Docker-simplified) ---
-import socket as _g_socket
-"""
-    guards = []
+def _build_policy() -> dict:
+    """Serialize current network policy for injection into child subprocesses."""
+    return {
+        "mode": _network_mode,
+        "domains": list(_allow_domains),
+        "methods": list(_allow_methods),
+    }
 
-    # Network guard — only block outbound connection functions, NOT the socket
-    # class itself. This allows ssl.py, urllib, etc. to import correctly.
-    if _no_network:
-        guards.append("""
-# --- network guard: block outbound connections only ---
+
+def _set_network_policy(mode: str, domains: list, methods: list) -> None:
+    """Apply a new network policy at runtime (hot-reload, no restart)."""
+    global _network_mode, _allow_domains, _allow_methods
+    _network_mode = mode
+    _allow_domains = list(domains)
+    _allow_methods = list(methods)
+    try:
+        with open(_policy_file, "w", encoding="utf-8") as f:
+            json.dump(_build_policy(), f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_policy_file() -> None:
+    """Load persisted policy from disk (survives container restart)."""
+    global _network_mode, _allow_domains, _allow_methods
+    try:
+        if os.path.exists(_policy_file):
+            with open(_policy_file, "r", encoding="utf-8") as f:
+                p = json.load(f)
+            _network_mode = p.get("mode", _network_mode)
+            _allow_domains = list(p.get("domains", _allow_domains))
+            _allow_methods = list(p.get("methods", _allow_methods))
+            logger.info("policy_loaded_from_file mode=%s domains=%d",
+                        _network_mode, len(_allow_domains))
+    except Exception as e:
+        logger.warning("policy_load_failed %s", e)
+
+
+def _py_build_guard(per_call_dir: str) -> str:
+    """Always install the network guard; runtime behavior is driven by the
+    REPL_NETWORK_POLICY env var (injected per-call from _build_policy()).
+
+    Modes:
+      deny      -> block all outbound connections & DNS (default, safe)
+      allow     -> permit all (debug only)
+      allowlist -> permit only hostnames in 'domains'; bare IP literals are
+                   rejected to prevent DNS-rebind / direct-IP bypass.
+    """
+    preamble = r'''# --- guard preamble (Docker-simplified) ---
+import socket as _g_socket
+import os as _g_os
+import json as _g_json
+
+def _g_load_policy():
+    try:
+        return _g_json.loads(_g_os.environ.get("REPL_NETWORK_POLICY", "{}"))
+    except Exception:
+        return {}
+
+_G_POLICY = _g_load_policy()
+_G_MODE = _G_POLICY.get("mode", "deny")
+_G_DOMAINS = set(d.lower() for d in _G_POLICY.get("domains", []))
+_G_METHODS = set(m.upper() for m in _G_POLICY.get("methods", []))
+
+def _g_is_ip(h):
+    try:
+        _g_socket.inet_pton(_g_socket.AF_INET, h); return True
+    except Exception:
+        pass
+    try:
+        _g_socket.inet_pton(_g_socket.AF_INET6, h); return True
+    except Exception:
+        pass
+    return False
+
+def _g_host_allowed(host):
+    if not host:
+        return False
+    h = str(host).lower()
+    if ":" in h:
+        h = h.split(":")[0]
+    # Reject bare IP literals (anti DNS-rebind / direct-IP bypass)
+    if _g_is_ip(h):
+        return False
+    for d in _G_DOMAINS:
+        if h == d or h.endswith("." + d):
+            return True
+    return False
+
+def _g_create_connection(orig, *a, **kw):
+    host = None
+    if a and isinstance(a[0], (tuple, list)) and a[0]:
+        host = a[0][0]
+    if _G_MODE == "allow":
+        return orig(*a, **kw)
+    if _G_MODE == "allowlist":
+        if _g_host_allowed(host):
+            return orig(*a, **kw)
+        raise PermissionError("网络访问被拒绝（目标不在白名单中）: %s" % (host,))
+    raise PermissionError("网络访问已被禁止（deny 模式）。如需外部数据，请通过 MCP 工具获取。")
+
+def _g_getaddrinfo(orig, *a, **kw):
+    host = a[0] if a else None
+    if _G_MODE == "allow":
+        return orig(*a, **kw)
+    if _G_MODE == "allowlist":
+        if _g_host_allowed(host):
+            return orig(*a, **kw)
+        raise PermissionError("DNS 解析被拒绝（目标不在白名单中）: %s" % (host,))
+    raise PermissionError("网络访问已被禁止（deny 模式，DNS 解析被阻断）。")
+
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
-
-def _net_blocked(*a, **kw):
-    raise PermissionError("网络访问已被禁止。如需外部数据，请通过 MCP 工具获取。")
-
-if _orig_create_conn:
-    _g_socket.create_connection = _net_blocked
-_g_socket.getaddrinfo = _net_blocked
-""")
-
-    return "\n".join([preamble] + guards) if guards else preamble
+if _orig_create_conn is not None:
+    def _g_cc(*a, **kw):
+        return _g_create_connection(_orig_create_conn, *a, **kw)
+    _g_socket.create_connection = _g_cc
+_g_socket.getaddrinfo = lambda *a, **kw: _g_getaddrinfo(_orig_getaddrinfo, *a, **kw)
+'''
+    return preamble
 
 
 def _py_ast_prescreen(code: str) -> str | None:
@@ -248,9 +352,22 @@ _SHELL_DANGEROUS: list[tuple[str, str]] = [
 ]
 
 
+# Shell network-tool reasons that may be permitted in 'allow' mode
+_SHELL_NETWORK_REASONS = {
+    "curl", "wget", "netcat", "ncat", "ssh", "scp",
+    "ftp", "telnet", "nmap", "socat",
+}
+
+
 def _sh_prescreen(code: str) -> str | None:
-    """Scan shell command for dangerous patterns. Returns error or None."""
+    """Scan shell command for dangerous patterns. Returns error or None.
+
+    In 'allow' mode, network tools (curl/wget/...) are permitted, but
+    destructive filesystem/kernel patterns remain blocked.
+    """
     for pattern, reason in _SHELL_DANGEROUS:
+        if _network_mode == "allow" and reason in _SHELL_NETWORK_REASONS:
+            continue
         if re.search(pattern, code, re.IGNORECASE):
             return f"禁止执行 Shell 命令（匹配危险模式: {reason}）"
     return None
@@ -297,7 +414,15 @@ _JS_GUARD_PREAMBLE = r"""
   var _allowDirNorm = _allowDir ? require('path').resolve(_allowDir) : null;
 
   // ── Block dangerous modules at require level ──
-  var blockedModules = [
+  // In 'allow' mode, network modules (net/http/https/dns/tls) are permitted;
+  // child_process / vm / inspector remain blocked in all modes.
+  var _netPol = {};
+  try { _netPol = JSON.parse(process.env.REPL_NETWORK_POLICY || '{}'); } catch (e) {}
+  var _allowNet = (_netPol.mode === 'allow');
+  var blockedModules = _allowNet ? [
+    'child_process', 'cluster', 'worker_threads',
+    'vm', 'inspector', 'repl', 'v8'
+  ] : [
     'child_process', 'cluster', 'worker_threads',
     'net', 'dgram', 'http', 'https', 'http2', 'tls', 'dns',
     'vm', 'inspector', 'repl', 'v8'
@@ -493,6 +618,16 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     return execute
 
 
+def _net_status_text() -> str:
+    """Human-readable network status for tool descriptions."""
+    if _network_mode == "allow":
+        return "网络访问已开放（不受限制，调试用）。"
+    if _network_mode == "allowlist":
+        dom = ", ".join(_allow_domains) if _allow_domains else "（未配置任何域名）"
+        return f"仅允许访问白名单域名: {dom}。"
+    return "无网络访问。"
+
+
 def _build_tools() -> list[dict]:
     """Build MCP tool definitions based on enabled languages."""
     tools = []
@@ -503,7 +638,7 @@ def _build_tools() -> list[dict]:
         "description": (
             "在隔离子进程中执行 Python 代码并返回输出。适用场景：文件生成、数据处理、计算。"
             + ("工作目录已隔离。" if _allow_dir else "")
-            + ("无网络访问。" if _no_network else "")
+            + _net_status_text()
         ),
         "inputSchema": {
             "type": "object",
@@ -519,7 +654,7 @@ def _build_tools() -> list[dict]:
             "description": (
                 "在隔离子进程中执行 Shell 命令并返回输出。适用场景：文件操作、文本处理、简单脚本。"
                 + ("工作目录已隔离。" if _allow_dir else "")
-                + ("网络工具已被拦截。" if _no_network else "")
+                + ("网络工具已被拦截。" if _network_mode != "allow" else "网络访问已开放（不受限制，调试用）。")
             ),
             "inputSchema": {
                 "type": "object",
@@ -535,7 +670,7 @@ def _build_tools() -> list[dict]:
             "description": (
                 "在隔离子进程中通过 Node.js 执行 JavaScript 代码并返回输出。适用场景：数据处理、算法验证、JSON 转换。"
                 + ("工作目录已隔离。" if _allow_dir else "")
-                + ("无网络访问。" if _no_network else "")
+                + ("网络模块已被拦截。" if _network_mode != "allow" else "网络访问已开放（不受限制，调试用）。")
             ),
             "inputSchema": {
                 "type": "object",
@@ -636,6 +771,36 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(resp, ensure_ascii=False).encode())
 
+    def _json_response(self, code: int, obj: dict):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(obj, ensure_ascii=False).encode())
+
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
+        if self.path == "/policy":
+            self._handle_policy_update(body)
+            return
+        self.send_error(404)
+
+    def _handle_policy_update(self, body: dict):
+        """Hot-reload network policy (called by backend /api/config/sandbox-network)."""
+        mode = body.get("mode")
+        if mode not in ("deny", "allow", "allowlist"):
+            self._json_response(400, {"error": "invalid mode, expected deny|allow|allowlist"})
+            return
+        domains = body.get("domains") or []
+        methods = body.get("methods") or []
+        if isinstance(domains, str):
+            domains = [d.strip() for d in domains.split(",") if d.strip()]
+        if isinstance(methods, str):
+            methods = [m.strip().upper() for m in methods.split(",") if m.strip()]
+        _set_network_policy(mode, domains, methods)
+        logger.info("policy_updated mode=%s domains=%d", mode, len(domains))
+        self._json_response(200, {"status": "ok", "policy": _build_policy()})
+
     def log_message(self, _fmt, *args):
         logger.info("http %s", args[0])
 
@@ -654,7 +819,14 @@ if __name__ == "__main__":
     p.add_argument("--allow-dir", type=str,
                    help="仅允许子进程访问此目录")
     p.add_argument("--no-network", action="store_true",
-                   help="禁止子进程网络访问")
+                   help="禁止子进程网络访问（= --network-mode deny，向后兼容）")
+    p.add_argument("--network-mode", type=str, default=None,
+                   choices=["deny", "allow", "allowlist"],
+                   help="网络策略: deny(默认,禁止) / allow(全放开,调试) / allowlist(白名单域名)")
+    p.add_argument("--allow-domains", type=str, default="",
+                   help="allowlist 模式下允许的域名，逗号分隔，如 api.github.com,raw.githubusercontent.com")
+    p.add_argument("--allow-methods", type=str, default="",
+                   help="allowlist 模式下允许的 HTTP 方法（保留字段，暂未启用）")
     p.add_argument("--keep-minutes", type=int, default=DEFAULT_KEEP_MINUTES,
                    help=f"生成文件保留时长（分钟），默认 {DEFAULT_KEEP_MINUTES}")
     p.add_argument("--max-memory-mb", type=int, default=DEFAULT_MAX_MEMORY_MB,
@@ -678,6 +850,23 @@ if __name__ == "__main__":
     _allow_dir = os.path.abspath(_allow_dir) if _allow_dir else None
     _no_network = (args.no_network
                    or os.environ.get("REPL_NO_NETWORK", "").lower() in ("1", "true", "yes"))
+
+    # ── Network policy resolution ──
+    # Precedence: --network-mode > --no-network/env > default(deny)
+    if args.network_mode:
+        _network_mode = args.network_mode
+    elif _no_network:
+        _network_mode = "deny"
+    else:
+        _network_mode = "deny"
+
+    _dom_env = args.allow_domains or os.environ.get("REPL_ALLOW_DOMAINS", "")
+    _allow_domains = [d.strip() for d in _dom_env.split(",") if d.strip()] if _dom_env else []
+    _meth_env = args.allow_methods or os.environ.get("REPL_ALLOW_METHODS", "")
+    _allow_methods = [m.strip().upper() for m in _meth_env.split(",") if m.strip()] if _meth_env else []
+
+    # Load persisted policy file (survives container restart) — overrides CLI if present
+    _load_policy_file()
     _keep_minutes = int(os.environ.get("REPL_KEEP_MINUTES", args.keep_minutes))
     _max_memory_mb = int(os.environ.get("REPL_MAX_MEMORY_MB", args.max_memory_mb))
     _max_nproc = int(os.environ.get("REPL_MAX_NPROC", args.max_nproc))
@@ -752,8 +941,8 @@ if __name__ == "__main__":
                 args.port, DEFAULT_TIMEOUT, _max_memory_mb, _max_nproc, _max_concurrent, _keep_minutes)
     if _allow_dir:
         logger.info("allow_dir=%s", _allow_dir)
-    if _no_network:
-        logger.info("network=blocked")
+    logger.info("network_mode=%s allow_domains=%d allow_methods=%d",
+                _network_mode, len(_allow_domains), len(_allow_methods))
 
     # Language status
     enabled_langs = [k.replace("run_", "") for k in _EXECUTORS.keys()]

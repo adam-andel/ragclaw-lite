@@ -1,5 +1,8 @@
 """LLM configuration management routes (admin only)."""
 
+import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 import httpx
@@ -7,8 +10,11 @@ import httpx
 from app.services.auth import get_current_admin
 from app.services.config_manager import config_manager
 from app.services.llm_semaphore import llm_limiter
+from app.config import settings
 
 router = APIRouter(prefix="/api/config", tags=["Config"])
+
+logger = logging.getLogger("erag.config")
 
 
 class LLMConfigUpdate(BaseModel):
@@ -118,3 +124,83 @@ async def test_llm_connection(data: TestRequest, current_user=Depends(get_curren
         return {"ok": False, "error": f"连接失败: {str(e)}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════
+# Sandbox network policy (REPL MCP) — hot-reloadable
+# ═══════════════════════════════════════════════════════════
+
+class SandboxNetworkUpdate(BaseModel):
+    sandbox_network_mode: str | None = None   # deny | allow | allowlist
+    sandbox_allow_domains: str | None = None  # comma-separated
+    sandbox_allow_methods: str | None = None  # comma-separated (reserved)
+
+    @field_validator("sandbox_network_mode")
+    @classmethod
+    def _mode_range(cls, v):
+        if v is not None and v not in ("deny", "allow", "allowlist"):
+            raise ValueError("network mode 必须是 deny / allow / allowlist")
+        return v
+
+
+@router.get("/sandbox-network")
+async def get_sandbox_network(current_user=Depends(get_current_admin)):
+    """读取沙盒网络策略（模式 + 白名单域名）。"""
+    return {
+        "sandbox_network_mode": config_manager.sandbox_network_mode,
+        "sandbox_allow_domains": config_manager.sandbox_allow_domains,
+        "sandbox_allow_methods": config_manager.sandbox_allow_methods,
+    }
+
+
+@router.put("/sandbox-network")
+async def update_sandbox_network(
+    data: SandboxNetworkUpdate,
+    current_user=Depends(get_current_admin),
+):
+    """更新沙盒网络策略，保存后立即热加载到 MCP REPL 服务（无需重启）。"""
+    patch = {
+        k: v for k, v in data.model_dump(exclude_none=True).items()
+        if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods"}
+    }
+    if not patch:
+        raise HTTPException(status_code=400, detail="没有提供任何可更新的字段")
+    await config_manager.update(patch)
+    pushed = await _push_mcp_policy()
+    return {
+        "message": "沙盒网络策略已更新，立即生效"
+        + ("" if pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        "config": {
+            "sandbox_network_mode": config_manager.sandbox_network_mode,
+            "sandbox_allow_domains": config_manager.sandbox_allow_domains,
+            "sandbox_allow_methods": config_manager.sandbox_allow_methods,
+        },
+        "mcp_pushed": pushed,
+    }
+
+
+async def _push_mcp_policy() -> bool:
+    """Best-effort: hot-reload network policy into the MCP REPL container.
+
+    The MCP server exposes PUT /policy on its internal Docker-network URL.
+    Falls back to localhost for local (non-Docker) deployments.
+    """
+    domains = [d.strip() for d in config_manager.sandbox_allow_domains.split(",") if d.strip()]
+    methods = [m.strip().upper() for m in config_manager.sandbox_allow_methods.split(",") if m.strip()]
+    payload = {
+        "mode": config_manager.sandbox_network_mode,
+        "domains": domains,
+        "methods": methods,
+    }
+    urls = [settings.mcp_repl_internal_url, "http://127.0.0.1:9200"]
+    for url in urls:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.put(url.rstrip("/") + "/policy", json=payload)
+                if resp.status_code == 200:
+                    logger.info("pushed network policy to %s ok", url)
+                    return True
+                logger.warning("push policy to %s -> HTTP %d", url, resp.status_code)
+        except Exception as e:
+            logger.warning("push policy to %s failed: %s", url, e)
+    return False

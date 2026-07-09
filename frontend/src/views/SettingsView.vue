@@ -6,7 +6,7 @@ import {
   NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, type LLMConfig } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, type LLMConfig, type SandboxNetworkConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
 const message = useMessage()
@@ -30,7 +30,14 @@ const sections = [
   { id: 'llm', label: 'LLM' },
   { id: 'server', label: '服务器' },
   { id: 'system-prompt', label: '系统提示词' },
+  { id: 'sandbox-network', label: '沙盒网络' },
   { id: 'plugins', label: '插件管理' },
+]
+
+const networkModeOptions = [
+  { label: 'deny（默认，禁止所有网络访问）', value: 'deny' },
+  { label: 'allow（全放开，仅调试用）', value: 'allow' },
+  { label: 'allowlist（仅允许白名单域名）', value: 'allowlist' },
 ]
 
 const config = ref<LLMConfig>({
@@ -53,6 +60,13 @@ const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
+const sandboxConfig = ref<SandboxNetworkConfig>({
+  sandbox_network_mode: 'deny',
+  sandbox_allow_domains: '',
+  sandbox_allow_methods: '',
+})
+const savingSandbox = ref(false)
+
 let observer: IntersectionObserver | null = null
 let scrollTimer: number | null = null
 
@@ -61,6 +75,12 @@ onMounted(async () => {
     config.value = await getLLMConfig()
   } catch (e: any) {
     message.error(e.message || '加载配置失败')
+  }
+
+  try {
+    sandboxConfig.value = await getSandboxNetwork()
+  } catch (e: any) {
+    message.error(e.message || '加载沙盒网络配置失败')
   }
 
   if (route.hash) {
@@ -158,6 +178,27 @@ async function handleTest() {
     testResult.value = { ok: false, text: `❌ 请求异常: ${e.message}` }
   } finally {
     testing.value = false
+  }
+}
+
+async function handleSaveSandbox() {
+  savingSandbox.value = true
+  try {
+    const res = await updateSandboxNetwork({
+      sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
+      sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
+      sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
+    })
+    sandboxConfig.value = res.config
+    if (res.mcp_pushed) {
+      message.success('沙盒网络策略已保存并热加载，立即生效')
+    } else {
+      message.warning('已保存（MCP 热加载未成功，重启 MCP 容器后生效）')
+    }
+  } catch (e: any) {
+    message.error(e.message || '保存失败')
+  } finally {
+    savingSandbox.value = false
   }
 }
 </script>
@@ -462,6 +503,41 @@ async function handleTest() {
 
       <section id="plugins">
         <PluginManagementSection />
+      </section>
+    </NCard>
+
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <section id="sandbox-network">
+        <h3 class="section-title">沙盒网络策略（REPL 代码执行环境）</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">
+          控制 LLM 生成的代码在沙盒中能否访问外部网络。默认 <b>deny</b>（完全禁止，最安全）。
+          选择 <b>allowlist</b> 后可填写允许访问的域名（逗号或换行分隔），Python 代码仅能访问白名单域名，
+          且直连 IP 会被拦截（防 DNS 重绑）。修改后通过 MCP 服务热加载，<b>立即生效，无需重启</b>。
+        </p>
+        <NForm label-placement="left" label-width="140">
+          <NFormItem label="网络策略模式">
+            <NSelect v-model:value="sandboxConfig.sandbox_network_mode" :options="networkModeOptions" />
+          </NFormItem>
+          <NFormItem v-if="sandboxConfig.sandbox_network_mode === 'allowlist'" label="允许域名">
+            <NInput
+              v-model:value="sandboxConfig.sandbox_allow_domains"
+              type="textarea"
+              :rows="3"
+              placeholder="api.github.com, raw.githubusercontent.com"
+            />
+          </NFormItem>
+          <NFormItem>
+            <NSpace align="center">
+              <NButton type="primary" :loading="savingSandbox" @click="handleSaveSandbox">保存沙盒网络策略</NButton>
+              <span class="muted" style="font-size: 12px">
+                当前：{{ sandboxConfig.sandbox_network_mode }}
+                <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
+                  （{{ sandboxConfig.sandbox_allow_domains || '未配置域名' }}）
+                </template>
+              </span>
+            </NSpace>
+          </NFormItem>
+        </NForm>
       </section>
     </NCard>
   </div>

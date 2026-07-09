@@ -166,6 +166,10 @@ class ConfigManager:
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             # Cache
             "cache_ttl_seconds": 3600,
+            # Sandbox network policy
+            "sandbox_network_mode": "deny",
+            "sandbox_allow_domains": "",
+            "sandbox_allow_methods": "",
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -182,6 +186,9 @@ class ConfigManager:
             "server_port": 8000,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "cache_ttl_seconds": 3600,
+            "sandbox_network_mode": "deny",
+            "sandbox_allow_domains": "",
+            "sandbox_allow_methods": "",
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -304,6 +311,21 @@ class ConfigManager:
             return self._config.get("cache_ttl_seconds", 3600)
 
     @property
+    def sandbox_network_mode(self) -> str:
+        with self._lock:
+            return self._config.get("sandbox_network_mode", "deny")
+
+    @property
+    def sandbox_allow_domains(self) -> str:
+        with self._lock:
+            return self._config.get("sandbox_allow_domains", "")
+
+    @property
+    def sandbox_allow_methods(self) -> str:
+        with self._lock:
+            return self._config.get("sandbox_allow_methods", "")
+
+    @property
     def system_prompt(self) -> str:
         with self._lock:
             return self._config.get("llm_system_prompt", DEFAULT_SYSTEM_PROMPT)
@@ -329,6 +351,7 @@ class ConfigManager:
             "agent_max_tokens", "llm_concurrency", "embedding_model", "embedding_api_key",
             "server_host", "server_port", "llm_system_prompt",
             "cache_ttl_seconds",
+            "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 

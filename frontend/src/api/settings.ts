@@ -50,3 +50,19 @@ export async function testLLMConnection(query?: string): Promise<{ ok: boolean; 
   const res = await client.post('/config/llm/test', { query: query || 'Hello, respond with OK only.' })
   return res.data
 }
+
+export interface SandboxNetworkConfig {
+  sandbox_network_mode: 'deny' | 'allow' | 'allowlist'
+  sandbox_allow_domains: string
+  sandbox_allow_methods: string
+}
+
+export async function getSandboxNetwork(): Promise<SandboxNetworkConfig> {
+  const res = await client.get('/config/sandbox-network')
+  return res.data
+}
+
+export async function updateSandboxNetwork(data: Partial<SandboxNetworkConfig>): Promise<{ message: string; config: SandboxNetworkConfig; mcp_pushed: boolean }> {
+  const res = await client.put('/config/sandbox-network', data)
+  return res.data
+}
