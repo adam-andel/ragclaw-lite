@@ -17,12 +17,21 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 
 logger = logging.getLogger("erag.agent")
+logger.setLevel(logging.INFO)
 
 MAX_TOOL_ROUNDS = 3
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
     import re
+    _clog = logging.getLogger("erag.agent")
+
+    # ── Step 0: strip [TOOL_CALL]...[/TOOL_CALL] wrappers (LLMs sometimes add these) ──
+    tool_call_match = re.search(r'\[TOOL_CALL\]([\s\S]*?)\[/TOOL_CALL\]', content, re.IGNORECASE)
+    if tool_call_match:
+        _clog.info("parse_tool_call: found [TOOL_CALL] wrapper, extracting inner content")
+        content = tool_call_match.group(1)
+
     # Strip code blocks
     cleaned = re.sub(r'```(?:json)?\s*|```', '', content).strip()
     # Strip leading conversational text — models often add greetings before JSON
@@ -32,22 +41,135 @@ def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict
         cleaned = obj_match.group(0)
     if not cleaned.startswith('{'):
         return None
+
+    # ── Step 1: try standard JSON parsing first ──
+    data = None
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None
+        pass
+
+    # ── Step 2: if JSON parsing failed, try => (arrow) syntax fixup ──
+    if data is None:
+        _clog.info("parse_tool_call: JSON parse failed, trying arrow-syntax fixup")
+        fixed = _fix_arrow_syntax(cleaned)
+        try:
+            data = json.loads(fixed)
+        except json.JSONDecodeError:
+            _clog.info("parse_tool_call: arrow-syntax fixup also failed, content=%.200s", cleaned[:200])
+            # ── Step 2b: heuristic extraction — try to extract code from broken JSON ──
+            has_python_tool = any(t.get('function', {}).get('name') == 'run_python' for t in available_tools)
+            if has_python_tool and ('code' in cleaned.lower() or 'run_python' in cleaned):
+                heuristic = _try_heuristic_code_extract(cleaned)
+                if heuristic:
+                    return heuristic
+            return None
+
+    # ── Step 3: dispatch by format ──
+    # Format: {"jsonrpc": "2.0", "method": "...", "params": {...}}
     if data.get("jsonrpc") == "2.0" and data.get("method"):
         tool_name = data["method"]
         if any(t.get("function", {}).get("name") == tool_name for t in available_tools):
             return [{"id": f"call_{tool_name}", "type": "function",
                      "function": {"name": tool_name, "arguments": json.dumps(data.get("params", {}), ensure_ascii=False)}}]
-    if data.get("tool") and any(t.get("function", {}).get("name") == data["tool"] for t in available_tools):
-        return [{"id": f"call_{data['tool']}", "type": "function",
-                 "function": {"name": data["tool"], "arguments": json.dumps(data.get("arguments", {}), ensure_ascii=False)}}]
 
+    # Format: {"tool": "...", "arguments": {...}}   OR   {"tool": "...", "args": {...}}
+    if data.get("tool") and any(t.get("function", {}).get("name") == data["tool"] for t in available_tools):
+        tool_args = data.get("arguments") or data.get("args") or data.get("params") or {}
+        return [{"id": f"call_{data['tool']}", "type": "function",
+                 "function": {"name": data["tool"], "arguments": json.dumps(tool_args, ensure_ascii=False)}}]
+
+    # Format: {"name": "...", "arguments": {...}}
     if data.get("name") and any(t.get("function", {}).get("name") == data["name"] for t in available_tools):
+        tool_args = data.get("arguments") or data.get("args") or data.get("params") or {}
         return [{"id": f"call_{data['name']}", "type": "function",
-                 "function": {"name": data["name"], "arguments": json.dumps(data.get("arguments", {}), ensure_ascii=False)}}]
+                 "function": {"name": data["name"], "arguments": json.dumps(tool_args, ensure_ascii=False)}}]
+
+    return None
+
+
+def _fix_arrow_syntax(text: str) -> str:
+    """Convert Ruby-style => arrows and JS-style unquoted keys to valid JSON.
+
+    Handles patterns like:
+        {tool => "run_python", args => {code: "...", timeout: 15}}
+        {tool => "run_python", args => {"--code": "..."}}
+        {tool => 'run_python', args => {code => 'print(1)'}}
+
+    Strategy:
+      1. Convert => to :
+      2. Quote unquoted keys
+      3. Remove -- prefix hallucination
+      4. Try ast.literal_eval for single-quoted values (Python dict literal)
+      5. Fallback: safe single-to-double quote for simple values only
+    """
+    import re, ast
+    result = text
+
+    # 1. Convert => to :
+    result = re.sub(r'\s*=>\s*', ': ', result)
+
+    # 2. Quote unquoted keys: word: → "word":
+    #    Handles keys after { or , even across newlines.
+    result = re.sub(r'([\{,])\s*([a-zA-Z_][a-zA-Z0-9_-]*)\s*:', r'\1 "\2":', result)
+
+    # 3. Remove -- prefix from keys that LLM might hallucinate
+    result = re.sub(r'"--([a-zA-Z_][a-zA-Z0-9_]*)"', r'"\1"', result)
+
+    # 4. Try ast.literal_eval — can handle mixed single/double quote dicts
+    #    as long as the code string inside is properly Python-escaped.
+    try:
+        data = ast.literal_eval(result)
+        return json.dumps(data, ensure_ascii=False)
+    except (SyntaxError, ValueError):
+        pass
+
+    # 5. Safe single→double quote: only for values that contain no nested quotes.
+    #    Uses a callback to escape any double-quotes found inside the value.
+    def _safe_value(m):
+        inner = m.group(1)
+        inner = inner.replace('\\', '\\\\').replace('"', '\\"')
+        return '"' + inner + '"'
+
+    # Only match single-quoted values at VALUE positions (after colon + optional whitespace)
+    # This avoids matching single quotes inside already-double-quoted JSON values.
+    result = re.sub(r":\s*'([^']*)'", lambda m: ': "' + m.group(1).replace('\\', '\\\\').replace('"', '\\"') + '"', result)
+
+    return result
+
+
+def _try_heuristic_code_extract(content: str) -> list[dict] | None:
+    """Last-resort: extract code from broken JSON/arrow-syntax tool call.
+
+    Called when json.loads and _fix_arrow_syntax both failed, but the content
+    clearly looks like a run_python tool call with embedded code.
+
+    Strategy: find the 'code' key and extract everything between its value
+    delimiters and the closing braces. Handles single/double quotes.
+    """
+    import re as _hre
+    import logging as _hlog
+    _clog = _hlog.getLogger("erag.agent")
+
+    patterns = [
+        r"""code\s*[:=]>\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$""",
+        r'code\s*[:=]>\s*"([\s\S]+?)"\s*\}?\s*\}?\s*$',
+        r'''''"code"\s*:\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$''''',
+    ]
+
+    for pat in patterns:
+        m = _hre.search(pat, content)
+        if m:
+            code = m.group(1).strip()
+            code = code.replace('\\n', '\n').replace('\\t', '\t')
+            code = code.replace('\\"', '"').replace("\\'", "'")
+            code = code.replace('\\\\', '\\')
+            if code and len(code) > 10:
+                _clog.info("heuristic_extract: found code, len=%d", len(code))
+                return [{"id": "call_run_python_heuristic", "type": "function",
+                         "function": {"name": "run_python",
+                                      "arguments": json.dumps({"code": code}, ensure_ascii=False)}}]
+    _clog.info("heuristic_extract: no code found")
     return None
 
 
@@ -300,19 +422,31 @@ async def tool_decision_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
     available_tools = state.get("available_tools", [])
+    tool_round = state.get("tool_round", 0)
+    prev_results = state.get("tool_results", [])
+    # ── Force WARNING for debugging: print state on every entry ──
+    logger.warning("🔍 tool_decision ENTER: round=%d tools=%d prev_results=%d cache=%s",
+                   tool_round, len(available_tools), len(prev_results),
+                   state.get("cache_hit"))
     if not available_tools:
         logger.warning("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
-    tool_round = state.get("tool_round", 0)
     if tool_round >= MAX_TOOL_ROUNDS:
-        logger.warning("Tool decision: max rounds reached")
+        logger.warning("Tool decision: max rounds reached (round=%d, max=%d)", tool_round, MAX_TOOL_ROUNDS)
         return {"tool_calls": None}
 
-    # Force-stop if all previous tool results were errors
+    # ── Error guard: only stop the tool loop when ALL results are errors
+    # AND we've already given the LLM at least one chance to fix (tool_round >= 2).
+    # A single error on the first attempt is often fixable by the LLM on retry.
     prev_results = state.get("tool_results", [])
     if prev_results and all("error" in r.lower() or "异常" in r for r in prev_results):
-        logger.warning("Tool decision: all tools errored, stopping loop")
-        return {"tool_calls": None}
+        if tool_round >= 2:
+            logger.warning("Tool decision: all tools errored after %d rounds, stopping loop. Last error: %.200s",
+                          tool_round, prev_results[-1][:200])
+            return {"tool_calls": None}
+        else:
+            logger.info("Tool decision: tool errored (round %d), giving LLM one chance to fix. Error: %.200s",
+                       tool_round, prev_results[-1][:200])
     active = state.get("active_skill") or {}
     skill_prompt = active.get("system_prompt", config_manager.system_prompt)
     if available_tools:
@@ -337,7 +471,11 @@ async def tool_decision_node(state: dict) -> dict:
             + '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
             + "## 规则\n"
             + "- 只输出上述 JSON 对象，不要附加任何文字\n"
+            + "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
+            + "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
             + "- 不要用 ``` 包裹 JSON\n"
+            + "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
+            + "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
             + "- 不要输出最终回复——那是下一阶段的事\n"
             + "- **绝对不要**编造File、文件路径或 uuid"
         )
@@ -359,48 +497,85 @@ async def tool_decision_node(state: dict) -> dict:
     messages.append({"role": "user", "content": "\n\n".join(user_parts)})
     tool_messages = state.get("tool_messages", [])
     if tool_messages:
-        messages.extend(tool_messages)
+        # ── Sanitize tool_messages before sending to LLM ──
+        # TokenHub validates that assistant.tool_calls[].function.arguments is valid JSON.
+        # If the LLM's output was truncated by max_tokens, the arguments string may be
+        # incomplete JSON → TokenHub returns 400 on the next round.
+        # Fix: validate each tool_call's arguments; if invalid, replace with error stub.
+        sanitized_msgs = []
+        for msg in tool_messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                clean_tcs = []
+                for tc in msg["tool_calls"]:
+                    args_str = tc.get("function", {}).get("arguments", "")
+                    try:
+                        json.loads(args_str)
+                        clean_tcs.append(tc)  # valid JSON, keep as-is
+                    except json.JSONDecodeError:
+                        logger.warning("Tool decision: dropping invalid tool_call arguments (truncated?), preview=%.100s", args_str[:100])
+                        clean_tcs.append({
+                            "id": tc.get("id", "call_invalid"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("function", {}).get("name", "unknown"),
+                                "arguments": json.dumps({"error": "arguments were truncated/invalid"})
+                            }
+                        })
+                sanitized_msgs.append({**msg, "tool_calls": clean_tcs})
+            else:
+                sanitized_msgs.append(msg)
+        messages.extend(sanitized_msgs)
     try:
-        # Use "auto" — Tencent tokenhub proxy does not support "required" (returns 502).
-        # Rely on a strong system prompt to steer the LLM toward tool usage.
-        tc = "auto"
-        logger.info("Tool decision: calling LLM with %d tools, max_tokens=2048, tool_choice=%s, round=%d",
-                   len(available_tools), tc, tool_round)
-        response = await llm_client.chat_with_tools(messages=messages, tools=available_tools,
-                                                     temperature=0.1, max_tokens=2048, tool_choice=tc)
-        
-        if not response:
-            logger.warning("Tool decision: LLM returned empty content and no native tool_calls")
+        # ── Dual-mode strategy: try native function calling first, fall back to text mode ──
+        # TokenHub officially supports tools + tool_choice="auto", but some models may
+        # have compatibility issues. We try chat_with_tools first; on 400/error,
+        # we fall back to chat() + prompt-based JSON parsing.
+        tool_calls = None
+        content = ""
 
-        tool_calls = response.get("tool_calls")
-        content_preview = (response.get("content") or "")[:200]
-        logger.info("Tool decision: native_tool_calls=%s content_preview=%s", bool(tool_calls), content_preview)
-        if not tool_calls:
-            parsed = None
-            if response.get("content"):
-                parsed = _try_parse_tool_call(response["content"], available_tools)
-                if parsed:
-                    logger.info("Tool decision: parsed tool_calls from JSON in content (round %d)", tool_round)
-                    tool_calls = parsed
-                    response["content"] = ""
-            if not tool_calls and response.get("content"):
-                # No native tool_calls and no JSON — try code extraction as last resort.
-                # If this is round 1+, this is expected (LLM received tool results and needs
-                # no more tools). Using info-level to avoid false-alarm warnings.
-                logger.info("Tool decision: no native/JSON tool call (round %d), trying code extraction", tool_round)
-                logger.info("Tool decision: code_extract input preview=%.200s", response["content"][:200])
-                code_tool = _try_extract_code_as_tool(response["content"], available_tools)
-                if code_tool:
-                    logger.info("Tool decision: extracted code from LLM response, built run_python call")
-                    tool_calls = code_tool
-                    response["content"] = ""
-                else:
-                    # Not an error — LLM may be done using tools (round 1+) or responded with plain text
-                    logger.info("Tool decision: code extraction yielded nothing (round %d, this is normal after tools)",
-                               tool_round)
+        try:
+            logger.warning("Tool decision: trying chat_with_tools (native), %d tools, round=%d",
+                       len(available_tools), tool_round)
+            response = await llm_client.chat_with_tools(
+                messages=messages, tools=available_tools,
+                temperature=0.1, max_tokens=4096, tool_choice="auto",
+            )
+            tool_calls = response.get("tool_calls")
+            content = response.get("content") or ""
+            logger.warning("Tool decision: native_tool_calls=%s content_preview=%.200s",
+                       bool(tool_calls), content[:200])
+        except Exception as native_err:
+            logger.warning("Tool decision: chat_with_tools failed (%s), falling back to text mode", str(native_err)[:200])
+            content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=4096)
+            logger.warning("Tool decision: text mode content_preview=%.200s", content[:200])
+
+        if not content and not tool_calls:
+            logger.warning("Tool decision: LLM returned empty content and no tool_calls")
+            return {"tool_calls": None}
+
+        # Try structured JSON parsing from content (handles [TOOL_CALL], =>, etc.)
+        if not tool_calls and content:
+            parsed = _try_parse_tool_call(content, available_tools)
+            if parsed:
+                logger.warning("Tool decision: parsed tool_calls from JSON in content (round %d)", tool_round)
+                tool_calls = parsed
+                content = ""
+
+        # Fallback: try extracting Python code blocks from LLM response
+        if not tool_calls and content:
+            logger.warning("Tool decision: no JSON tool call (round %d), trying code extraction", tool_round)
+            code_tool = _try_extract_code_as_tool(content, available_tools)
+            if code_tool:
+                logger.warning("Tool decision: extracted code from LLM response, built run_python call")
+                tool_calls = code_tool
+                content = ""
+            else:
+                logger.info("Tool decision: code extraction yielded nothing (round %d)", tool_round)
+
         if tool_calls:
-            tool_msg = {"role": "assistant", "content": response.get("content") or "", "tool_calls": tool_calls}
+            tool_msg = {"role": "assistant", "content": content or "", "tool_calls": tool_calls}
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
+
         logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
         return {"tool_calls": None}
     except Exception as e:
@@ -471,6 +646,8 @@ def _extract_download_links_from_state(state: dict) -> str:
 
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
+    logger.warning(">>> tool_executor ENTER: tool_calls=%d round=%d <<<",
+                   len(tool_calls), state.get("tool_round", 0))
     if not tool_calls:
         return {"tool_results": [], "tool_round": state.get("tool_round", 0) + 1}
     from app.services.mcp_client import mcp_client as _mc
@@ -550,6 +727,8 @@ async def tool_executor_node(state: dict) -> dict:
                 return {"result": f"[{tname}] 错误: no MCP server binding for tool", "endpoint": None}
         try:
             res = await _mc.call_tool(cfg, tname, args)
+            logger.warning(">>> tool_executor RESULT: tool=%s ok=%s result=%.200s <<<",
+                          tname, res.ok, (res.result or res.error)[:200])
             if res.ok:
                 return {"result": f"[{tname}] {res.result}", "endpoint": endpoint}
             return {"result": f"[{tname}] 错误: {res.error}", "endpoint": endpoint}

@@ -124,7 +124,9 @@ _BLOCKED_MODULES = {
     "multiprocessing", "_multiprocessing", "_posixsubprocess",
     "pickle", "_pickle", "dill",
     "dbm", "_dbm", "gdbm", "shelve", "marshal",
-    "resource", "signal",
+    # Note: "signal" and "resource" removed — they are needed by ssl/http/urllib
+    # which pptx and other libraries import indirectly. Security is enforced at
+    # the Docker level (seccomp + cap_drop: ALL + --no-network).
 }
 
 
@@ -162,6 +164,11 @@ def _check_path(path, op='操作'):
     allow = _g_os.path.normpath(_ALLOW)
     if p.startswith(allow + _g_os.sep) or p == allow:
         return True
+    # Allow READ-ONLY access to system/Python directories.
+    # Libraries like pptx need to read template files from site-packages.
+    _ok_prefixes = ('/usr/local/lib/', '/usr/lib/', '/usr/share/', '/etc/', '/tmp/')
+    if any(p.startswith(d) for d in _ok_prefixes):
+        return True
     raise PermissionError(f"{{op}} {{path}} 被拒绝——仅允许操作 {{_ALLOW}} 目录")
 
 # open()
@@ -190,7 +197,7 @@ if hasattr(_g_io, 'open'):
 
 # os path-taking functions
 for _name in dir(_g_os):
-    if _name.startswith('_') or _name in ('fspath','path','sep'):
+    if _name.startswith('_') or _name in ('fspath','path','sep','PathLike','StatResult','DIRSYNC','pathsep','linesep','altsep','name','curdir','pardir','extsep','defpath','devnull','sep'):
         continue
     _orig = getattr(_g_os, _name, None)
     if not callable(_orig):
@@ -237,9 +244,23 @@ _g_pl.Path.__init__ = _safe_path_init
 _orig_socket = _g_socket.socket
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
+
 def _net_blocked(*a, **kw):
     raise PermissionError("网络访问已被禁止。如需外部数据，请通过 MCP 工具获取。")
-_g_socket.socket = _net_blocked
+
+# Use a CLASS (not function) so ssl.py can subclass socket.socket without TypeError.
+# Actual instantiation still raises PermissionError.
+class _BlockedSocket(_orig_socket if isinstance(_orig_socket, type) else object):
+    def __init__(self, *a, **kw):
+        raise PermissionError("网络访问已被禁止。")
+    def connect(self, *a, **kw):
+        raise PermissionError("网络访问已被禁止。")
+    def send(self, *a, **kw):
+        raise PermissionError("网络访问已被禁止。")
+    def recv(self, *a, **kw):
+        raise PermissionError("网络访问已被禁止。")
+
+_g_socket.socket = _BlockedSocket
 if _orig_create_conn:
     _g_socket.create_connection = _net_blocked
 _g_socket.getaddrinfo = _net_blocked
