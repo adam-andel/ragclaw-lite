@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted } from 'vue'
 import {
-  NDataTable, NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
-  NInputNumber, NTag, NSelect, NSpin,
+  NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
+  NPagination, NEmpty,
 } from 'naive-ui'
-import { Add, Trash, Create, Flash, Play, Time, Refresh } from '@vicons/ionicons5'
+import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, listCronJobRuns,
@@ -20,6 +21,7 @@ const jobs = ref<CronJob[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
+const pageSize = 20
 
 const showModal = ref(false)
 const editing = ref<CronJob | null>(null)
@@ -34,18 +36,38 @@ const form = ref<CronJobCreatePayload & { id?: string }>({
   skill_id: '',
 })
 
+const detailJob = ref<CronJob | null>(null)
+const showDetail = ref(false)
+
 const runsDrawerOpen = ref(false)
 const selectedJobId = ref('')
 const runs = ref<CronJobRun[]>([])
 const runsLoading = ref(false)
 const runningId = ref('')
 
+// ── Button style constants (consistent with SkillsView / DocumentManage) ──
+const yellowStyle = {
+  '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b',
+  '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706',
+  '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706',
+}
+const greenStyle = {
+  '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e',
+  '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a',
+  '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a',
+}
+const redStyle = {
+  '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444',
+  '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626',
+  '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626',
+}
+
 // ── Load ──
 
 async function load() {
   loading.value = true
   try {
-    const data = await listCronJobs(page.value, 20)
+    const data = await listCronJobs(page.value, pageSize)
     jobs.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -53,6 +75,18 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onPageChange(p: number) {
+  page.value = p
+  load()
+}
+
+function refreshDetail() {
+  if (!detailJob.value) return
+  const u = jobs.value.find(j => j.id === detailJob.value!.id)
+  if (u) detailJob.value = u
+  else detailJob.value = null
 }
 
 onMounted(load)
@@ -111,6 +145,7 @@ async function handleSave() {
     }
     showModal.value = false
     await load()
+    refreshDetail()
   } catch (e: any) {
     message.error(e.message || '保存失败')
   }
@@ -120,6 +155,10 @@ async function handleDelete(job: CronJob) {
   try {
     await deleteCronJob(job.id)
     message.success('定时任务已删除')
+    if (detailJob.value?.id === job.id) {
+      showDetail.value = false
+      detailJob.value = null
+    }
     await load()
   } catch (e: any) {
     message.error(e.message || '删除失败')
@@ -131,6 +170,7 @@ async function handleToggle(job: CronJob) {
     await toggleCronJob(job.id)
     message.success('状态已切换')
     await load()
+    refreshDetail()
   } catch (e: any) {
     message.error(e.message || '切换失败')
   }
@@ -142,11 +182,17 @@ async function handleRunNow(job: CronJob) {
     const res = await runCronJobNow(job.id)
     message.success(res.result ? `执行完成：${res.result.slice(0, 100)}` : '执行完成')
     await load()
+    refreshDetail()
   } catch (e: any) {
     message.error(e.message || '执行失败')
   } finally {
     runningId.value = ''
   }
+}
+
+function openDetail(job: CronJob) {
+  detailJob.value = job
+  showDetail.value = true
 }
 
 async function openRuns(job: CronJob) {
@@ -164,6 +210,14 @@ async function openRuns(job: CronJob) {
 }
 
 // ── Helpers ──
+
+function formatTime(t?: string | null) {
+  if (!t) return '—'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return t
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 function statusType(status: string) {
   switch (status) {
@@ -187,34 +241,9 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-// ── Table ──
-
-const columns = [
-  { title: '名称', key: 'name', ellipsis: { tooltip: true } },
-  { title: 'Crontab', key: 'cron_expr', width: 140 },
-  { title: '状态', key: 'status', width: 100, render: (row: CronJob) => h(NTag, { type: statusType(row.status) }, { default: () => statusLabel(row.status) }) },
-  { title: '执行次数', key: 'run_count', width: 90 },
-  { title: '下次执行', key: 'next_run_at', width: 170 },
-  { title: '最后执行', key: 'last_run_at', width: 170 },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 280,
-    render: (row: CronJob) =>
-      h(NSpace, { size: 'small' }, {
-        default: () => [
-          h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '编辑', icon: () => h(NIcon, null, { default: () => h(Create) }) }),
-          h(NButton, { size: 'small', onClick: () => handleToggle(row) }, { default: () => (row.status === 'paused' || row.status === 'failed' ? '启用' : '暂停') }),
-          h(NButton, { size: 'small', loading: runningId.value === row.id, onClick: () => handleRunNow(row) }, { default: () => '立即执行', icon: () => h(NIcon, null, { default: () => h(Play) }) }),
-          h(NButton, { size: 'small', onClick: () => openRuns(row) }, { default: () => '日志', icon: () => h(NIcon, null, { default: () => h(Time) }) }),
-          h(NPopconfirm, { onPositiveClick: () => handleDelete(row) }, {
-            trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除', icon: () => h(NIcon, null, { default: () => h(Trash) }) }),
-            default: () => '确定删除该定时任务？',
-          }),
-        ],
-      }),
-  },
-]
+function isPaused(job: CronJob) {
+  return job.status === 'paused' || job.status === 'failed'
+}
 </script>
 
 <template>
@@ -226,21 +255,135 @@ const columns = [
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton type="primary" size="small" @click="openCreate">
-          <template #icon><NIcon size="14"><Add /></NIcon></template>
-          新建定时任务
-        </NButton>
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton type="primary" size="small" @click="openCreate">
+              <template #icon><NIcon size="14"><Add /></NIcon></template>
+              新建定时任务
+            </NButton>
+          </template>
+          可在对话中用自然语言创建定时任务
+        </NTooltip>
       </div>
     </div>
 
-      <NDataTable
-        :columns="columns"
-        :data="jobs"
-        :loading="loading"
-        :pagination="{ page: page, pageSize: 20, itemCount: total, onChange: (p) => { page = p; load() } }"
-        :row-key="(row: CronJob) => row.id"
-        striped
-      />
+    <NSpin :show="loading">
+      <NEmpty v-if="!loading && jobs.length === 0" description="暂无定时任务" />
+      <div class="cj-list" v-if="jobs.length > 0">
+        <NCard
+          v-for="job in jobs"
+          :key="job.id"
+          size="small"
+          :class="['cj-card', { 'cj-card-disabled': isPaused(job) }]"
+          hoverable
+          role="button"
+          tabindex="0"
+          @click="openDetail(job)"
+          @keydown.enter.prevent="openDetail(job)"
+          @keydown.space.prevent="openDetail(job)"
+        >
+          <div class="cj-card-header">
+            <div class="cj-card-title-wrap">
+              <span class="cj-name" :title="job.name">{{ job.name }}</span>
+              <NTag :type="statusType(job.status)" size="tiny" :bordered="false">{{ statusLabel(job.status) }}</NTag>
+            </div>
+            <div class="cj-card-toggle" @click.stop>
+              <NSwitch
+                size="small"
+                :value="!isPaused(job)"
+                @update:value="() => handleToggle(job)"
+              >
+                <template #checked>启用</template>
+                <template #unchecked>禁用</template>
+              </NSwitch>
+            </div>
+          </div>
+
+          <div class="cj-card-desc" v-if="job.description">{{ job.description }}</div>
+
+          <div class="cj-card-row">
+            <span class="cj-card-label">执行次数</span>
+            <span class="cj-meta">{{ job.run_count }}</span>
+          </div>
+
+          <div class="cj-card-row">
+            <span class="cj-card-label">下次执行</span>
+            <span class="cj-meta">{{ formatTime(job.next_run_at) }}</span>
+          </div>
+
+          <template #footer>
+            <NSpace justify="end">
+              <NButton size="small" :loading="runningId === job.id" @click.stop="handleRunNow(job)">
+                <template #icon><NIcon><Play /></NIcon></template>
+                立即执行
+              </NButton>
+            </NSpace>
+          </template>
+        </NCard>
+      </div>
+
+      <div class="cj-pagination" v-if="total > pageSize">
+        <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+      </div>
+    </NSpin>
+
+    <!-- Detail Modal -->
+    <NModal v-model:show="showDetail" title="定时任务详情" preset="card" style="width: 640px">
+      <NDescriptions v-if="detailJob" :column="1" label-placement="left" bordered>
+        <NDescriptionsItem label="名称">{{ detailJob.name }}</NDescriptionsItem>
+        <NDescriptionsItem label="状态">
+          <NTag :type="statusType(detailJob.status)" size="tiny" :bordered="false">{{ statusLabel(detailJob.status) }}</NTag>
+        </NDescriptionsItem>
+        <NDescriptionsItem label="描述">{{ detailJob.description || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem label="Crontab">{{ detailJob.cron_expr }}</NDescriptionsItem>
+        <NDescriptionsItem label="时区">{{ detailJob.timezone }}</NDescriptionsItem>
+        <NDescriptionsItem label="最大执行次数">{{ detailJob.max_runs ?? '无限' }}</NDescriptionsItem>
+        <NDescriptionsItem label="执行次数">{{ detailJob.run_count }}</NDescriptionsItem>
+        <NDescriptionsItem label="任务内容">{{ detailJob.task_content }}</NDescriptionsItem>
+        <NDescriptionsItem label="知识库 ID">{{ detailJob.kb_id || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem label="技能 ID">{{ detailJob.skill_id || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem label="下次执行">{{ formatTime(detailJob.next_run_at) }}</NDescriptionsItem>
+        <NDescriptionsItem label="最后执行">{{ formatTime(detailJob.last_run_at) }}</NDescriptionsItem>
+        <NDescriptionsItem label="创建时间">{{ formatTime(detailJob.created_at) }}</NDescriptionsItem>
+        <NDescriptionsItem label="更新时间">{{ formatTime(detailJob.updated_at) }}</NDescriptionsItem>
+        <NDescriptionsItem label="任务 ID">{{ detailJob.id }}</NDescriptionsItem>
+      </NDescriptions>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton size="small" v-if="detailJob" @click="openEdit(detailJob)">
+            <template #icon><NIcon><Create /></NIcon></template>
+            编辑
+          </NButton>
+          <NButton size="small" v-if="detailJob" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
+            <template #icon><NIcon><Play /></NIcon></template>
+            立即执行
+          </NButton>
+          <NButton size="small" v-if="detailJob" @click="openRuns(detailJob)">
+            <template #icon><NIcon><Time /></NIcon></template>
+            日志
+          </NButton>
+          <NButton size="small" v-if="detailJob" @click="handleToggle(detailJob)" :style="isPaused(detailJob) ? greenStyle : yellowStyle">
+            <template #icon>
+              <NIcon>
+                <CheckmarkCircle v-if="isPaused(detailJob)" />
+                <Ban v-else />
+              </NIcon>
+            </template>
+            {{ isPaused(detailJob) ? '启用' : '暂停' }}
+          </NButton>
+          <NPopconfirm v-if="detailJob" @positive-click="handleDelete(detailJob)">
+            <template #trigger>
+              <NButton size="small" :style="redStyle">
+                <template #icon><NIcon><Trash /></NIcon></template>
+                删除
+              </NButton>
+            </template>
+            确定删除该定时任务？
+          </NPopconfirm>
+        </NSpace>
+      </template>
+    </NModal>
 
     <!-- Create/Edit Modal -->
     <NModal v-model:show="showModal" :title="editing ? '编辑定时任务' : '新建定时任务'" preset="card" style="width: 640px">
@@ -255,7 +398,7 @@ const columns = [
           <NInput v-model:value="form.cron_expr" placeholder="例如：0 9 * * *" />
         </NFormItem>
         <NFormItem label="时区">
-          <NInput v-model:value="form.timezone" placeholder="UTC" />
+          <NInput v-model:value="form.timezone" placeholder="UTC" disabled />
         </NFormItem>
         <NFormItem label="最大执行次数">
           <NInputNumber v-model:value="form.max_runs" :min="1" :show-button="false" placeholder="留空表示无限次" style="width: 100%" />
@@ -340,6 +483,102 @@ const columns = [
   align-items: center;
   gap: 8px;
 }
+
+/* Cron job card grid (style reference: SkillsView.vue) */
+.cj-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.cj-card {
+  cursor: pointer;
+  transition: box-shadow .2s, border-color .2s;
+}
+.cj-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+.cj-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+}
+.cj-card-disabled {
+  background: #f1f5f9;
+}
+.cj-card-disabled:hover {
+  box-shadow: var(--shadow-sm);
+}
+html.dark .cj-card-disabled {
+  background: #334155;
+}
+.cj-card :deep(.n-card__footer) {
+  padding-top: 6px;
+}
+.cj-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cj-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cj-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+.cj-card-toggle {
+  flex-shrink: 0;
+}
+.cj-card-desc {
+  font-size: 12px;
+  color: #1f2937;
+  line-height: 1.5;
+  margin-bottom: 10px;
+  word-break: break-word;
+}
+html.dark .cj-card-desc {
+  color: #e5e7eb;
+}
+.cj-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  margin-bottom: 8px;
+}
+.cj-card-row:last-child {
+  margin-bottom: 2px;
+}
+.cj-card-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  flex-shrink: 0;
+  width: 56px;
+}
+.cj-meta {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cj-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  padding-bottom: 24px;
+}
+
 .empty {
   color: var(--color-text-muted);
   text-align: center;

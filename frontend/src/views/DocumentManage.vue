@@ -12,7 +12,7 @@ import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
   listKnowledgeBases, createKnowledgeBase, getSupportedTypes, downloadDocument,
-  updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB,
+  updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB, removeDocumentFromKB,
 } from '@/api/documents'
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -645,6 +645,40 @@ async function handleDelete(id: string) {
   }
 }
 
+async function handleUnlink(doc: DocumentItem) {
+  if (!filterKbId.value) return
+  const kbId = filterKbId.value
+  try {
+    await removeDocumentFromKB(kbId, doc.id)
+    message.success(`已解除与「${filterKbName.value}」的关联`)
+    docs.value = docs.value.filter(d => d.id !== doc.id)
+    total.value -= 1
+    if (detailDoc.value && detailDoc.value.id === doc.id) {
+      detailDoc.value = { ...detailDoc.value, kb_ids: detailDoc.value.kb_ids.filter(id => id !== kbId) }
+    }
+  } catch (e: any) {
+    message.error('解除关联失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
+async function handleUnlinkDocKb(kbId: string) {
+  if (!detailDoc.value) return
+  const docId = detailDoc.value.id
+  const kb = allKbs.value.find(k => k.id === kbId)
+  try {
+    await removeDocumentFromKB(kbId, docId)
+    message.success(`已解除与「${kb?.name || '知识库'}」的关联`)
+    detailDoc.value = { ...detailDoc.value, kb_ids: detailDoc.value.kb_ids.filter(id => id !== kbId) }
+    selectedDocKbIds.value = selectedDocKbIds.value.filter(id => id !== kbId)
+    if (filterKbId.value === kbId) {
+      docs.value = docs.value.filter(d => d.id !== docId)
+      total.value -= 1
+    }
+  } catch (e: any) {
+    message.error('解除关联失败：' + (e?.response?.data?.detail || e.message))
+  }
+}
+
 async function handleDownload(doc: DocumentItem) {
   try {
     const res = await downloadDocument(doc.id)
@@ -997,6 +1031,17 @@ async function loadSupportedTypes() {
             <div class="doc-card-title-wrap">
               <span class="doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
+            <NPopconfirm
+              v-if="filterKbId && doc.kb_ids.includes(filterKbId)"
+              @positive-click="handleUnlink(doc)"
+            >
+              <template #trigger>
+                <NButton size="tiny" type="error" class="doc-unlink-btn" @click.stop>
+                  <template #icon><NIcon><Remove /></NIcon></template>
+                </NButton>
+              </template>
+              确定解除该文档与「{{ filterKbName }}」的关联？
+            </NPopconfirm>
           </div>
           <div class="doc-card-meta">
             <span>{{ doc.chunk_count }} 分块</span>
@@ -1111,9 +1156,21 @@ async function loadSupportedTypes() {
             @keydown.enter.prevent="goToKb(kb.id)"
             @keydown.space.prevent="goToKb(kb.id)"
           >
-            <strong>{{ kb.name }}</strong>
-            <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-            <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+            <div class="kb-pick-row">
+              <div class="kb-pick-info">
+                <strong>{{ kb.name }}</strong>
+                <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+                <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+              </div>
+              <NPopconfirm @positive-click="handleUnlinkDocKb(kb.id)">
+                <template #trigger>
+                  <NButton size="tiny" type="error" class="kb-pick-unlink" @click.stop>
+                    <template #icon><NIcon><Remove /></NIcon></template>
+                  </NButton>
+                </template>
+                确定解除该文档与「{{ kb.name }}」的关联？
+              </NPopconfirm>
+            </div>
           </NCard>
         </div>
       </template>
@@ -1488,6 +1545,18 @@ async function loadSupportedTypes() {
   margin-bottom: 10px;
 }
 .doc-card-icon { font-size: 1.6rem; }
+.doc-unlink-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity .15s;
+  padding: 0 4px;
+  height: 22px;
+}
+.doc-unlink-btn :deep(.n-icon) {
+  font-size: 13px;
+}
+.dm-card:hover .doc-unlink-btn { opacity: 1; }
 .doc-card-title-wrap {
   flex: 1;
   min-width: 0;
@@ -1641,6 +1710,11 @@ async function loadSupportedTypes() {
 .kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
 .kb-pick-active { border-left-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
+.kb-pick-row { display: flex; align-items: flex-start; gap: 10px; }
+.kb-pick-info { flex: 1; min-width: 0; }
+.kb-pick-unlink { flex-shrink: 0; margin-top: 2px; opacity: 0; transition: opacity .15s; padding: 0 4px; height: 22px; }
+.kb-pick-unlink :deep(.n-icon) { font-size: 13px; }
+.kb-pick-card:hover .kb-pick-unlink { opacity: 1; }
 .kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
 

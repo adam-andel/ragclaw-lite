@@ -7,7 +7,6 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, type LLMConfig } from '@/api/settings'
-import RetrievalDebugSection from '@/components/settings/RetrievalDebugSection.vue'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
 const message = useMessage()
@@ -31,7 +30,6 @@ const sections = [
   { id: 'llm', label: 'LLM' },
   { id: 'server', label: '服务器' },
   { id: 'system-prompt', label: '系统提示词' },
-  { id: 'retrieval', label: '检索调试' },
   { id: 'plugins', label: '插件管理' },
 ]
 
@@ -439,12 +437,6 @@ async function handleTest() {
         </section>
 
       </NForm>
-
-      <NDivider />
-
-      <section id="retrieval">
-        <RetrievalDebugSection />
-      </section>
 
       <NDivider />
 
