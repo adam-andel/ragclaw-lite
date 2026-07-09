@@ -85,11 +85,18 @@ def _set_limits():
 # Shared execution helpers
 # ═══════════════════════════════════════════════════════════
 def _sanitize_env() -> dict:
-    """Copy environ, strip credential-like vars."""
+    """Copy environ, strip credential-like vars, set thread limits for Docker."""
     env = os.environ.copy()
     for k in list(env.keys()):
         if any(pat in k.upper() for pat in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")):
             env.pop(k, None)
+    # Limit BLAS/numpy threads to avoid pthread_create failures under RLIMIT_NPROC
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["NUMEXPR_NUM_THREADS"] = "1"
+    # Matplotlib config dir (read-only rootfs workaround)
+    env["MPLCONFIGDIR"] = "/tmp/matplotlib"
     return env
 
 

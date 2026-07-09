@@ -19,7 +19,7 @@ from app.services.tool_registry import tool_registry
 logger = logging.getLogger("erag.agent")
 logger.setLevel(logging.INFO)
 
-MAX_TOOL_ROUNDS = 3
+MAX_TOOL_ROUNDS = 5
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
