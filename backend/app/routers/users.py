@@ -1,37 +1,48 @@
 """User management routes (admin/moderator)."""
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.schemas.user import UserResponse, UserCreateRequest, UserUpdateRequest
+from app.schemas.user import UserResponse, UserListResponse, UserCreateRequest, UserUpdateRequest
 from app.services.auth import hash_password, get_current_staff, can_manage_user
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
 
-@router.get("", response_model=list[UserResponse])
+@router.get("", response_model=UserListResponse)
 async def list_users(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=200),
     search: str | None = None,
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """List users. ADMIN sees all, MODERATOR sees only USER role.
-    Optional `search` filters by username or display_name (case-insensitive)."""
-    query = select(User)
-    if current_user.role == UserRole.ADMIN:
-        pass
-    else:
-        query = query.where(User.role == UserRole.USER)
+    """List users (paginated). ADMIN sees all, MODERATOR sees only USER role.
+    Optional `search` filters by username or display_name (case-insensitive).
+    Returns `{items, total, page, size}`."""
+    conditions = []
+    if current_user.role != UserRole.ADMIN:
+        conditions.append(User.role == UserRole.USER)
     if search:
         like = f"%{search}%"
-        query = query.where(or_(User.username.ilike(like), User.display_name.ilike(like)))
-    query = query.order_by(User.created_at.desc())
-    result = await db.execute(query)
-    return [UserResponse.model_validate(u) for u in result.scalars().all()]
+        conditions.append(or_(User.username.ilike(like), User.display_name.ilike(like)))
+
+    count_q = select(func.count()).select_from(User)
+    if conditions:
+        count_q = count_q.where(*conditions)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    items_q = select(User).order_by(User.created_at.desc())
+    if conditions:
+        items_q = items_q.where(*conditions)
+    items_q = items_q.offset((page - 1) * size).limit(size)
+    result = await db.execute(items_q)
+    items = [UserResponse.model_validate(u) for u in result.scalars().all()]
+    return UserListResponse(items=items, total=total, page=page, size=size)
 
 
 @router.post("", response_model=UserResponse, status_code=201)

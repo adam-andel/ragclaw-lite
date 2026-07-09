@@ -37,6 +37,13 @@ class UserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class UserListResponse(BaseModel):
+    items: list[UserResponse]
+    total: int
+    page: int
+    size: int
+
+
 class UserUpdateRequest(BaseModel):
     display_name: str | None = None
     email: str | None = None

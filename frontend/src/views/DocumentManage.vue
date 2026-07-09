@@ -374,8 +374,9 @@ async function openShare(kbId: string) {
     shareUsers.value = r.data
   } catch { shareUsers.value = [] }
   try {
-    const r = await client.get('/users')
-    allUsers.value = r.data
+    // /users 已改为服务端分页，返回 {items,total,page,size}；共享弹窗按用户名搜索缩小范围，取前 200 条供本地过滤/分页
+    const r = await client.get('/users', { params: { size: 200 } })
+    allUsers.value = r.data.items
   } catch { allUsers.value = [] }
   shareLoading.value = false
 }
@@ -383,10 +384,10 @@ async function openShare(kbId: string) {
 async function searchShareUsers() {
   shareLoading.value = true
   try {
-    const params: any = {}
+    const params: any = { size: 200 }
     if (shareUserSearch.value.trim()) params.search = shareUserSearch.value.trim()
     const r = await client.get('/users', { params })
-    allUsers.value = r.data
+    allUsers.value = r.data.items
     shareUserPage.value = 1
   } catch { allUsers.value = [] }
   shareLoading.value = false

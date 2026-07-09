@@ -214,9 +214,15 @@ function goToNotifications() {
 .notification-badge {
   margin-left: 0;
 }
-/* 徽标数字默认 12px，scoped 下需 :deep() 穿透到 n-badge-sup；调小到 11px 弱于「通知」(13px) */
+/* 徽标默认 12px 且高度由主题变量控制，1px 改动看不出；这里同时收字号+尺寸才明显变小。
+   Naive 通过 --n-font-size 变量驱动字号，需 font-size 直写 + !important 才能覆盖；
+   scoped 下用 :deep() 穿透到 n-badge-sup。 */
 .notification-badge :deep(.n-badge-sup) {
-  font-size: 11px;
+  font-size: 10px !important;
+  height: 16px;
+  line-height: 16px;
+  min-width: 16px;
+  padding: 0 5px;
 }
 .user-row {
   display: flex;
