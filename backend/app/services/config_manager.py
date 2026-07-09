@@ -1,6 +1,7 @@
 """Runtime configuration manager — DB for non-sensitive settings + AES-256-GCM encrypted file for API keys.
 
-Admin manages all runtime settings through the web UI. No .env file is needed or used as a key source.
+Admin manages all runtime settings through the web UI. A .env LLM_API_KEY is used as the default
+key source when present and no key has been persisted via the web UI; a persisted key overrides it.
 """
 
 import json
@@ -49,6 +50,35 @@ def _decrypt(data: bytes) -> str:
     return aesgcm.decrypt(nonce, ct, None).decode("utf-8")
 
 
+def _read_env_api_key() -> str:
+    """Read LLM_API_KEY to use as the default API key source.
+
+    Priority: process environment first (the .env values are injected as env vars in
+    both local and Docker modes), then fall back to parsing the .env file directly
+    (covers cases where the env var was not propagated but the file is mounted).
+    A key persisted via the web UI (config.enc) still overrides this.
+    """
+    env_val = (os.environ.get("LLM_API_KEY") or "").strip().strip('"').strip("'")
+    if env_val:
+        return env_val
+
+    env_path = settings.project_root / ".env"
+    if not env_path.exists():
+        return ""
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.split("=", 1)[0].strip().upper() == "LLM_API_KEY":
+                    _, _, val = line.partition("=")
+                    return val.strip().strip('"').strip("'")
+    except Exception:
+        return ""
+    return ""
+
+
 def _mask(key: str) -> str:
     """Mask API key for safe display."""
     if not key:
@@ -75,19 +105,37 @@ class ConfigManager:
             return
         self._config: dict = {}
         self._config_file = settings.data_dir / "config.enc"
+        self._env_api_key = ""
+        self._key_from_env = False
         self._initialized = True
 
     # ── Lifecycle ──
 
     async def init(self):
-        """Called once at startup. Loads API keys from encrypted file and non-sensitive settings from DB."""
+        """Called once at startup. Loads API keys from encrypted file and non-sensitive settings from DB.
+
+        A .env LLM_API_KEY is used as the default source. A *non-empty* key persisted via
+        the web UI (config.enc) overrides the .env value; an empty stored key (never
+        configured in the UI) does NOT clobber a present .env key.
+        """
         legacy_file_existed = False
         with self._lock:
-            self._config = self._build_defaults()
+            env_key = _read_env_api_key()
+            self._env_api_key = env_key
+            self._config = self._build_defaults(env_key)
+            # The .env key is the default source unless a non-empty stored key overrides it.
+            self._key_from_env = bool(env_key)
             if self._config_file.exists():
                 try:
                     saved = json.loads(_decrypt(self._config_file.read_bytes()))
-                    self._config.update(saved)
+                    # Only a non-empty stored key overrides the .env source.
+                    stored_key = saved.get("llm_api_key", "")
+                    if stored_key:
+                        self._config["llm_api_key"] = stored_key
+                        self._key_from_env = False
+                    stored_emb = saved.get("embedding_api_key", "")
+                    if stored_emb:
+                        self._config["embedding_api_key"] = stored_emb
                     legacy_file_existed = True
                     print("[ConfigManager] loaded encrypted config")
                 except Exception as e:
@@ -97,12 +145,12 @@ class ConfigManager:
 
         await self._load_from_db(legacy_file_existed)
 
-    def _build_defaults(self) -> dict:
+    def _build_defaults(self, env_api_key: str = "") -> dict:
         return {
             # LLM
             "llm_provider": settings.llm_provider,
             "llm_model": settings.llm_model,
-            "llm_api_key": "",
+            "llm_api_key": env_api_key,
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
@@ -262,6 +310,7 @@ class ConfigManager:
             c["llm_api_key"] = _mask(c.get("llm_api_key", ""))
             c["embedding_api_key"] = _mask(c.get("embedding_api_key", ""))
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
+            c["api_key_source"] = "env" if self._key_from_env else "stored"
             return c
 
     async def update(self, data: dict) -> dict:
@@ -282,6 +331,9 @@ class ConfigManager:
             self._config.update(patch)
             if encrypted_patch:
                 self._persist_keys_locked()
+                # An explicitly saved key now overrides the .env source.
+                if "llm_api_key" in encrypted_patch:
+                    self._key_from_env = False
 
         if db_patch:
             await self._save_db_settings(db_patch)
