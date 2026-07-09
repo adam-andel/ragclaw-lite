@@ -35,7 +35,8 @@ const sections = [
 
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
-  llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 2048,
+  llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 4096,
+  agent_max_tokens: 8192,
   llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
   embedding_api_key: '',
@@ -122,6 +123,7 @@ async function handleSave() {
       llm_base_url: config.value.llm_base_url,
       llm_temperature: config.value.llm_temperature,
       llm_max_tokens: config.value.llm_max_tokens,
+      agent_max_tokens: config.value.agent_max_tokens,
       llm_concurrency: config.value.llm_concurrency,
       embedding_model: config.value.embedding_model,
       llm_system_prompt: config.value.llm_system_prompt,
@@ -302,11 +304,29 @@ async function handleTest() {
                   </template>
                   LLM 单次输出的最大 token 数（≈ 中文字数 × 1.5~2）。<br/>
                   设太小回答会被截断，设太大浪费额度。<br/>
-                  RAG 场景 <b>1024~2048</b> 通常足够。
+                  RAG 场景 <b>1024~4096</b> 通常足够，该值同时限制最终回答长度。
                 </NTooltip>
               </span>
             </template>
             <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
+          </NFormItem>
+
+          <!-- Agent Max Tokens -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                Agent Max Tokens
+                <NTooltip trigger="hover" :width="320">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                    Agent 在「工具决策」环节单次输出的最大 token 数，<b>独立于上面的 Max Tokens</b>。<br/>
+                    工具调用的参数（代码 / 文档 / 查询结果）可能很大，设太小会导致参数 JSON 被截断、工具调用失败。<br/>
+                    默认 <b>8192</b>，比普通回答更宽松；除非模型上下文极小，一般无需调小。
+                  </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.agent_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
           </NFormItem>
 
           <!-- LLM Concurrency -->

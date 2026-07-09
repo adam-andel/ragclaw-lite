@@ -154,6 +154,7 @@ class ConfigManager:
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
+            "agent_max_tokens": settings.agent_max_tokens,
             "llm_concurrency": 3,
             # Embedding
             "embedding_model": settings.embedding_model,
@@ -174,6 +175,7 @@ class ConfigManager:
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
+            "agent_max_tokens": settings.agent_max_tokens,
             "llm_concurrency": 3,
             "embedding_model": settings.embedding_model,
             "server_host": "0.0.0.0",
@@ -259,7 +261,12 @@ class ConfigManager:
     @property
     def max_tokens(self) -> int:
         with self._lock:
-            return self._config.get("llm_max_tokens", 2048)
+            return self._config.get("llm_max_tokens", 4096)
+
+    @property
+    def agent_max_tokens(self) -> int:
+        with self._lock:
+            return self._config.get("agent_max_tokens", 8192)
 
     @property
     def concurrency(self) -> int:
@@ -309,6 +316,7 @@ class ConfigManager:
             c = dict(self._config)
             c["llm_api_key"] = _mask(c.get("llm_api_key", ""))
             c["embedding_api_key"] = _mask(c.get("embedding_api_key", ""))
+            c.setdefault("agent_max_tokens", self.agent_max_tokens)
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
             c["api_key_source"] = "env" if self._key_from_env else "stored"
             return c
@@ -318,7 +326,7 @@ class ConfigManager:
         allowed = {
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
-            "llm_concurrency", "embedding_model", "embedding_api_key",
+            "agent_max_tokens", "llm_concurrency", "embedding_model", "embedding_api_key",
             "server_host", "server_port", "llm_system_prompt",
             "cache_ttl_seconds",
         }

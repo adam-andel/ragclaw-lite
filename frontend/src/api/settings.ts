@@ -7,6 +7,7 @@ export interface LLMConfig {
   llm_base_url: string
   llm_temperature: number
   llm_max_tokens: number
+  agent_max_tokens: number   // Agent 工具决策节点专用上限（独立于 llm_max_tokens）
   llm_concurrency: number
   embedding_model: string
   embedding_api_key: string   // masked, or empty if not configured
@@ -25,6 +26,7 @@ export interface LLMConfigUpdate {
   llm_base_url?: string
   llm_temperature?: number
   llm_max_tokens?: number
+  agent_max_tokens?: number
   llm_concurrency?: number
   embedding_model?: string
   embedding_api_key?: string

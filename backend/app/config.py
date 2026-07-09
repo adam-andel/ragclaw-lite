@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_temperature: float = 0.3
-    llm_max_tokens: int = 2048
+    llm_max_tokens: int = 4096
+    agent_max_tokens: int = 8192  # Agent 工具决策节点专用上限（独立于全局 llm_max_tokens）
 
     # --- Cache ---
     cache_enabled: bool = True

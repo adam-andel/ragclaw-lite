@@ -538,7 +538,7 @@ async def tool_decision_node(state: dict) -> dict:
                        len(available_tools), tool_round)
             response = await llm_client.chat_with_tools(
                 messages=messages, tools=available_tools,
-                temperature=0.1, max_tokens=4096, tool_choice="auto",
+                temperature=0.1, max_tokens=config_manager.agent_max_tokens, tool_choice="auto",
             )
             tool_calls = response.get("tool_calls")
             content = response.get("content") or ""
@@ -546,7 +546,7 @@ async def tool_decision_node(state: dict) -> dict:
                        bool(tool_calls), content[:200])
         except Exception as native_err:
             logger.warning("Tool decision: chat_with_tools failed (%s), falling back to text mode", str(native_err)[:200])
-            content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=4096)
+            content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
             logger.warning("Tool decision: text mode content_preview=%.200s", content[:200])
 
         if not content and not tool_calls:
