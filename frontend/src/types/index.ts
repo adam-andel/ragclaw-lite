@@ -47,6 +47,7 @@ export interface KnowledgeBase {
   id: string
   name: string
   description?: string
+  prompt?: string
   doc_count: number
   vector_count: number
   created_at: string
@@ -56,11 +57,13 @@ export interface KnowledgeBase {
 export interface KBCreatePayload {
   name: string
   description?: string
+  prompt?: string
 }
 
 export interface KBUpdatePayload {
   name?: string
   description?: string
+  prompt?: string
 }
 
 export interface DocKBLinkResponse {

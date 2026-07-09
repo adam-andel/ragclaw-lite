@@ -49,11 +49,14 @@ const filterKbDesc = computed(() => selectedKb.value?.description || '')
 // Supported extensions — loaded from /documents/supported-types at mount time
 const supportedExts = ref<string[]>([])
 
-// Create KB modal
-const showCreateKb = ref(false)
-const newKbName = ref('')
-const newKbDesc = ref('')
-const creating = ref(false)
+// KB form modal (create + edit share the same modal)
+const showKbForm = ref(false)
+const kbFormMode = ref<'create' | 'edit'>('create')
+const kbFormId = ref('')
+const kbFormName = ref('')
+const kbFormDesc = ref('')
+const kbFormPrompt = ref('')
+const kbFormSaving = ref(false)
 
 // Upload modal
 const showUploadModal = ref(false)
@@ -166,12 +169,7 @@ const filteredKbsForFilter = computed(() => {
   return list
 })
 
-// KB action modals
-const showRenameKb = ref(false)
-const renameKbId = ref('')
-const renameKbName = ref('')
-const renameKbDesc = ref('')
-const renaming = ref(false)
+// KB action modals (create + edit share the unified KB form modal above)
 
 const showShare = ref(false)
 const shareKbId = ref('')
@@ -309,28 +307,50 @@ function blurActive() {
   (document.activeElement as HTMLElement | null)?.blur()
 }
 
-function openRenameKb(kb: KnowledgeBase) {
-  renameKbId.value = kb.id
-  renameKbName.value = kb.name
-  renameKbDesc.value = kb.description || ''
-  showRenameKb.value = true
+function openCreateKb() {
+  kbFormMode.value = 'create'
+  kbFormId.value = ''
+  kbFormName.value = ''
+  kbFormDesc.value = ''
+  kbFormPrompt.value = ''
+  showKbForm.value = true
 }
 
-async function handleRenameKb() {
-  if (!renameKbName.value.trim()) return
-  renaming.value = true
+function openRenameKb(kb: KnowledgeBase) {
+  kbFormMode.value = 'edit'
+  kbFormId.value = kb.id
+  kbFormName.value = kb.name
+  kbFormDesc.value = kb.description || ''
+  kbFormPrompt.value = kb.prompt || ''
+  showKbForm.value = true
+}
+
+async function handleKbSubmit() {
+  if (!kbFormName.value.trim()) return
+  kbFormSaving.value = true
   try {
-    await updateKnowledgeBase(renameKbId.value, {
-      name: renameKbName.value,
-      description: renameKbDesc.value || undefined,
-    })
+    if (kbFormMode.value === 'create') {
+      await createKnowledgeBase({
+        name: kbFormName.value.trim(),
+        description: kbFormDesc.value.trim() || undefined,
+        prompt: kbFormPrompt.value.trim() || undefined,
+      })
+      message.success('知识库创建成功')
+    } else {
+      await updateKnowledgeBase(kbFormId.value, {
+        name: kbFormName.value,
+        description: kbFormDesc.value || undefined,
+        prompt: kbFormPrompt.value || undefined,
+      })
+      message.success('知识库已更新')
+    }
     await loadKBs()
-    showRenameKb.value = false
-    message.success('知识库已更新')
+    showKbForm.value = false
   } catch (e: any) {
-    message.error('更新失败：' + (e?.response?.data?.detail || e.message))
+    const verb = kbFormMode.value === 'create' ? '创建' : '更新'
+    message.error(verb + '失败：' + (e?.response?.data?.detail || e.message))
   } finally {
-    renaming.value = false
+    kbFormSaving.value = false
   }
 }
 
@@ -812,22 +832,7 @@ function goToKb(kbId: string) {
   router.push({ path: '/knowledge', query: { kb: kbId } })
 }
 
-async function handleCreateKb() {
-  if (!newKbName.value.trim()) return
-  creating.value = true
-  try {
-    await createKnowledgeBase({ name: newKbName.value.trim(), description: newKbDesc.value.trim() || undefined })
-    message.success('知识库创建成功')
-    showCreateKb.value = false
-    newKbName.value = ''
-    newKbDesc.value = ''
-    await loadKBs()
-  } catch (e: any) {
-    message.error('创建失败：' + (e?.response?.data?.detail || e.message))
-  } finally {
-    creating.value = false
-  }
-}
+
 
 async function loadSupportedTypes() {
   try {
@@ -848,7 +853,7 @@ async function loadSupportedTypes() {
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
-        <NButton size="small" type="primary" @click="showCreateKb = true">
+        <NButton size="small" type="primary" @click="openCreateKb">
           <template #icon><NIcon><Create /></NIcon></template>
           新建知识库
         </NButton>
@@ -859,16 +864,22 @@ async function loadSupportedTypes() {
       </div>
     </div>
 
-    <!-- Create KB Modal -->
-    <NModal v-model:show="showCreateKb" preset="card" title="新建知识库" style="max-width: 440px;">
-      <div class="create-kb-body">
-        <NInput v-model:value="newKbName" placeholder="知识库名称" />
-        <NInput v-model:value="newKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+    <!-- KB Form Modal (create + edit share the same modal) -->
+    <NModal v-model:show="showKbForm" preset="card"
+      :title="kbFormMode === 'create' ? '新建知识库' : '编辑知识库'"
+      style="width: 90vw; max-width: 440px"
+    >
+      <div class="kb-form">
+        <NInput v-model:value="kbFormName" placeholder="知识库名称" />
+        <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选）：给大模型补充本知识库或团队背景，使其更贴合需求" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreateKb = false">取消</NButton>
-          <NButton type="primary" :loading="creating" :disabled="!newKbName.trim()" @click="handleCreateKb">创建</NButton>
+          <NButton @click="showKbForm = false">取消</NButton>
+          <NButton type="primary" :loading="kbFormSaving" :disabled="!kbFormName.trim()" @click="handleKbSubmit">
+            {{ kbFormMode === 'create' ? '创建' : '保存' }}
+          </NButton>
         </NSpace>
       </template>
     </NModal>
@@ -956,7 +967,7 @@ async function loadSupportedTypes() {
           <NSpace class="dm-kb-actions" size="small">
             <NButton size="small" @click="openRenameKb(selectedKb); blurActive()">
               <template #icon><NIcon size="14"><Create /></NIcon></template>
-              修改描述
+              编辑知识库
             </NButton>
             <NButton size="small" @click="goToChat(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
@@ -1286,17 +1297,6 @@ async function loadSupportedTypes() {
       <NEmpty v-if="filteredKbsForFilter.length === 0" description="无匹配的知识库" />
     </NModal>
 
-    <!-- Rename KB Modal -->
-    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
-      style="width: 90vw; max-width: 440px"
-    >
-      <div class="kb-form">
-        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
-        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
-      </div>
-    </NModal>
-
     <!-- Share Modal -->
     <NModal v-model:show="showShare" preset="card" title="共享用户"
       style="width: 90vw; max-width: 640px"
@@ -1489,7 +1489,7 @@ async function loadSupportedTypes() {
 .dm-header-actions { display: flex; align-items: center; gap: 8px; }
 
 /* Create KB Modal */
-.create-kb-body { display: flex; flex-direction: column; gap: 12px; }
+
 
 /* Upload Modal */
 .upload-kb-select { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

@@ -107,17 +107,18 @@ async def run_agent_and_stream(state: dict):
         user_id=state.get("user_id", ""),
         citations=state.get("citations", []),
         skill_id=(state.get("active_skill") or {}).get("id", ""),
+        kb_prompt=state.get("kb_prompt", ""),
     ))
 
 
 async def _store_memory_and_cache(
     query: str, answer: str, kb_id: str, user_id: str,
-    citations: list[dict], skill_id: str,
+    citations: list[dict], skill_id: str, kb_prompt: str = "",
 ):
     """Background task: store to cache and Mem0."""
     try:
         # Cache
-        answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id)
+        answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id, kb_prompt=kb_prompt)
 
         # Mem0 (lazy import)
         if user_id and answer:

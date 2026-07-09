@@ -91,6 +91,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('user_avatar_url', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "kb_prompt" not in applied:
+        _migrate_kb_prompt(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('kb_prompt', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -509,6 +514,15 @@ def _migrate_user_avatar_url(raw):
         print("[migrate] user_avatar_url: added avatar_url column")
     else:
         print("[migrate] user_avatar_url: column already exists, skipping")
+
+
+def _migrate_kb_prompt(raw):
+    """Add prompt column to knowledge_bases table (KB-specific LLM instruction)."""
+    print("[migrate] Running kb_prompt...")
+    if _add_col_if_missing(raw, "knowledge_bases", "prompt", "TEXT"):
+        print("[migrate] kb_prompt: added prompt column to knowledge_bases")
+    else:
+        print("[migrate] kb_prompt: column already exists, skipping")
 
 
 def _migrate_system_settings(raw):

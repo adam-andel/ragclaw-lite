@@ -5,7 +5,7 @@ import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse, DocK
 
 export const listKnowledgeBases = () => client.get<KnowledgeBase[]>('/kb')
 
-export const createKnowledgeBase = (data: { name: string; description?: string }) =>
+export const createKnowledgeBase = (data: { name: string; description?: string; prompt?: string }) =>
   client.post<KnowledgeBase>('/kb', data)
 
 export const updateKnowledgeBase = (id: string, data: KBUpdatePayload) =>

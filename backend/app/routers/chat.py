@@ -18,6 +18,7 @@ from app.models.conversation import Conversation, Message
 from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
+from app.services.kb_service import get_kb_prompt
 from app.services.llm_semaphore import llm_limiter
 from app.services.cron_parser import try_parse_cron_payload
 from app.services.cron_graph import run_cron_creation_subgraph
@@ -116,6 +117,9 @@ async def chat_stream(
     history_msgs = result.scalars().all()
     history = [{"role": m.role, "content": m.content} for m in history_msgs]
 
+    # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
+    kb_prompt = await get_kb_prompt(request.kb_id)
+
     # Save user message
     user_msg = Message(
         id=str(uuid.uuid4()),
@@ -149,7 +153,7 @@ async def chat_stream(
                 # ── 1. Cache-first check (does not consume a token) ──
                 if settings.cache_enabled and not request.skip_cache:
                     cached = answer_cache.get(
-                        request.query, request.kb_id, request.skill_id or ""
+                        request.query, request.kb_id, request.skill_id or "", kb_prompt=kb_prompt
                     )
                     if cached:
                         enqueue("token", {"content": cached.answer})
@@ -195,6 +199,7 @@ async def chat_stream(
                         "final_answer": "",
                         "retrieval_ms": 0,
                         "skip_cache": request.skip_cache,
+                        "kb_prompt": kb_prompt,
                     }
 
                     state = await erag_agent_graph.run(initial_state)
@@ -266,6 +271,7 @@ async def chat_stream(
                         user_id=current_user.id,
                         citations=collected_citations,
                         skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", ""),
+                        kb_prompt=kb_prompt,
                     ))
 
                     assistant_msg = await _save_assistant_message(
@@ -395,11 +401,11 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
 
 async def _store_memory_and_cache(
     query: str, answer: str, kb_id: str, user_id: str,
-    citations: list[dict], skill_id: str,
+    citations: list[dict], skill_id: str, kb_prompt: str = "",
 ):
     """Background task: store answer cache + Mem0 memory."""
     try:
-        answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id)
+        answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id, kb_prompt=kb_prompt)
     except Exception:
         pass
 

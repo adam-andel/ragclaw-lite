@@ -29,21 +29,31 @@ class AnswerCache:
         self.max_size = max_size or settings.cache_max_size
         self.ttl_seconds = ttl_seconds or settings.cache_ttl_seconds
         self._store: OrderedDict[str, CacheEntry] = OrderedDict()
+        self._kb_index: dict[str, set[str]] = {}
         self._lock = Lock()
         self._hit_count: int = 0
         self._miss_count: int = 0
 
-    def _make_key(self, query: str, kb_id: str, skill_id: str = "") -> str:
-        """Generate cache key from query + kb_id + optional skill_id."""
-        raw = f"{skill_id}:{kb_id}:{query.strip().lower()}"
+    def _make_key(self, query: str, kb_id: str, skill_id: str = "", kb_prompt: str = "") -> str:
+        """Generate cache key from query + kb_id + optional skill_id + KB prompt.
+
+        kb_prompt is included so that editing a KB's instruction busts the
+        cached answers (they were generated under the old instruction).
+        """
+        raw = f"{skill_id}:{kb_id}:{kb_prompt}:{query.strip().lower()}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def get(self, query: str, kb_id: str, skill_id: str = "") -> CacheEntry | None:
+    def _remove_from_index(self, key: str) -> None:
+        """Drop a key from the kb_id → keys index (best effort)."""
+        for keys in self._kb_index.values():
+            keys.discard(key)
+
+    def get(self, query: str, kb_id: str, skill_id: str = "", kb_prompt: str = "") -> CacheEntry | None:
         """Look up a cached answer. Returns None on miss or expiry."""
         if not settings.cache_enabled:
             return None
 
-        key = self._make_key(query, kb_id, skill_id)
+        key = self._make_key(query, kb_id, skill_id, kb_prompt)
 
         with self._lock:
             entry = self._store.get(key)
@@ -53,6 +63,7 @@ class AnswerCache:
 
             if entry.is_expired:
                 del self._store[key]
+                self._remove_from_index(key)
                 self._miss_count += 1
                 return None
 
@@ -62,33 +73,32 @@ class AnswerCache:
             self._hit_count += 1
             return entry
 
-    def put(self, query: str, kb_id: str, answer: str, citations: list[dict], skill_id: str = ""):
+    def put(self, query: str, kb_id: str, answer: str, citations: list[dict], skill_id: str = "", kb_prompt: str = ""):
         """Store an answer in the cache."""
         if not settings.cache_enabled:
             return
 
-        key = self._make_key(query, kb_id, skill_id)
+        key = self._make_key(query, kb_id, skill_id, kb_prompt)
 
         with self._lock:
             # Evict oldest if at capacity
             while len(self._store) >= self.max_size:
-                self._store.popitem(last=False)
+                old_key, _ = self._store.popitem(last=False)
+                self._remove_from_index(old_key)
 
             self._store[key] = CacheEntry(answer=answer, citations=citations)
+            self._kb_index.setdefault(kb_id, set()).add(key)
 
     def invalidate(self, kb_id: str | None = None):
         """Invalidate cache entries. If kb_id is None, clear all."""
         with self._lock:
             if kb_id is None:
                 self._store.clear()
+                self._kb_index.clear()
                 return
 
-            to_remove = [
-                k for k in self._store
-                if kb_id in k  # key format: sha256(kb_id:query)
-            ]
-            for k in to_remove:
-                del self._store[k]
+            for key in self._kb_index.pop(kb_id, set()):
+                self._store.pop(key, None)
 
     @property
     def hit_rate(self) -> float:

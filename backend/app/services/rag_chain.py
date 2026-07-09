@@ -13,6 +13,7 @@ from app.services.hybrid_search import hybrid_search
 from app.services.llm_client import llm_client
 from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
+from app.services.kb_service import get_kb_prompt
 from app.services.memory import add_memory
 
 logger = logging.getLogger("erag")
@@ -42,7 +43,8 @@ class RAGChain:
         self, question: str, kb_id: str, user_id: str = "",
         conversation_history: list[dict] | None = None,
     ) -> AsyncGenerator[dict, None]:
-        cached = answer_cache.get(question, kb_id)
+        kb_prompt = await get_kb_prompt(kb_id)
+        cached = answer_cache.get(question, kb_id, kb_prompt=kb_prompt)
         if cached:
             yield {"type": "token", "content": cached.answer}
             for c in cached.citations:
@@ -60,7 +62,10 @@ class RAGChain:
         context_text, citations = _build_context(retrieved)
 
         # Build prompt
-        messages = [{"role": "system", "content": config_manager.system_prompt}]
+        system_content = config_manager.system_prompt
+        if kb_prompt:
+            system_content = system_content + "\n\n## 知识库背景与偏好\n" + kb_prompt
+        messages = [{"role": "system", "content": system_content}]
         if conversation_history:
             messages.extend(conversation_history)
         messages.append({"role": "user", "content": f"## 参考文档\n{context_text}\n\n## 问题\n{question}"})
@@ -86,7 +91,7 @@ class RAGChain:
                     _store_memory(f"Q: {question}\nA: {full_answer[:500]}", user_id)
                 )
 
-            answer_cache.put(question, kb_id, full_answer, citations)
+            answer_cache.put(question, kb_id, full_answer, citations, kb_prompt=kb_prompt)
             total_ttft = round((time.time() - t_total) * 1000)
             yield {"type": "done", "cache_hit": False, "ttft_ms": total_ttft, "retrieval_ms": retrieval_ms, "llm_ms": round(ttft_ms)}
         except Exception as e:

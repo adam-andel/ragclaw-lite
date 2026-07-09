@@ -15,6 +15,7 @@ from app.services.skill_manager import (
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
+from app.services.kb_service import get_kb_prompt
 
 logger = logging.getLogger("erag.agent")
 logger.setLevel(logging.INFO)
@@ -234,10 +235,11 @@ async def skill_router_node(state: dict) -> dict:
     """
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
+    kb_prompt = await get_kb_prompt(kb_id)
     if not state.get("skip_cache"):
-        cached = answer_cache.get(query, kb_id, skill_id=skill_id or "")
+        cached = answer_cache.get(query, kb_id, skill_id=skill_id or "", kb_prompt=kb_prompt)
         if cached:
-            return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": []}
+            return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": [], "kb_prompt": kb_prompt}
 
     active_skill = None
     if skill_id:
@@ -251,7 +253,8 @@ async def skill_router_node(state: dict) -> dict:
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
-            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": []}
+            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": [],
+            "kb_prompt": kb_prompt}
 
 
 async def _get_skill_index(skill_id: str) -> dict | None:
@@ -449,6 +452,10 @@ async def tool_decision_node(state: dict) -> dict:
                        tool_round, prev_results[-1][:200])
     active = state.get("active_skill") or {}
     skill_prompt = active.get("system_prompt", config_manager.system_prompt)
+    kb_prompt = state.get("kb_prompt") or ""
+    if not kb_prompt:
+        kb_prompt = await get_kb_prompt(state["kb_id"])
+    kb_context = f"\n\n## 知识库背景与偏好\n{kb_prompt}" if kb_prompt else ""
     if available_tools:
         tool_desc = "\n".join(
             f"- {t['function']['name']}: {t['function']['description']}"
@@ -481,10 +488,10 @@ async def tool_decision_node(state: dict) -> dict:
         )
         messages = [
             {"role": "system", "content": tool_system},
-            {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt},
+            {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt + kb_context},
         ]
     else:
-        messages = [{"role": "system", "content": skill_prompt}]
+        messages = [{"role": "system", "content": skill_prompt + kb_context}]
     history = state.get("conversation_history", [])
     if history:
         messages.extend(history)

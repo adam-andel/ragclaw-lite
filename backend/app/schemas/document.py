@@ -8,17 +8,20 @@ from pydantic import BaseModel, Field
 class KBCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
+    prompt: str | None = None
 
 
 class KBUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = None
+    prompt: str | None = None
 
 
 class KBResponse(BaseModel):
     id: str
     name: str
     description: str | None = None
+    prompt: str | None = None
     doc_count: int = 0
     vector_count: int = 0
     created_at: datetime

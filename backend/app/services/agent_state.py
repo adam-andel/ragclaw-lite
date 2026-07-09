@@ -22,6 +22,7 @@ class EragAgentState(TypedDict):
     tenant_id: str
     skill_id: str | None          # Optional: force a specific SKILL
     kb_id: str                    # Single KB per conversation (design rule)
+    kb_prompt: str               # KB-specific instruction injected into system prompt
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
 
     # ── Router output (Layer 1: name + description only) ──

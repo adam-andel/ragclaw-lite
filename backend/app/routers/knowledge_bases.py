@@ -20,6 +20,7 @@ from app.schemas.document import (
 from app.schemas.user import UserResponse
 from app.services.auth import get_current_user, get_current_staff
 from app.services.vector_store import vector_store
+from app.services.cache import answer_cache
 
 router = APIRouter(prefix="/api/kb", tags=["Knowledge Bases"])
 
@@ -57,7 +58,7 @@ async def _get_kb_stats(kb_id: str, db: AsyncSession) -> tuple[int, int]:
 async def _kb_to_response(kb: KnowledgeBase, db: AsyncSession) -> KBResponse:
     doc_count, vec_count = await _get_kb_stats(kb.id, db)
     return KBResponse(
-        id=kb.id, name=kb.name, description=kb.description,
+        id=kb.id, name=kb.name, description=kb.description, prompt=kb.prompt,
         doc_count=doc_count, vector_count=vec_count,
         created_at=kb.created_at, updated_at=kb.updated_at,
     )
@@ -68,7 +69,7 @@ async def create_kb(
     db: AsyncSession = Depends(get_db),
 ):
     kb = KnowledgeBase(
-        id=_gen_id(), name=data.name, description=data.description,
+        id=_gen_id(), name=data.name, description=data.description, prompt=data.prompt,
         tenant_id=current_user.tenant_id, owner_id=current_user.id,
     )
     db.add(kb)
@@ -142,6 +143,11 @@ async def update_kb(
         kb.name = data.name
     if data.description is not None:
         kb.description = data.description
+    if data.prompt is not None:
+        kb.prompt = data.prompt
+        # The instruction changed → cached answers were generated under the old
+        # prompt and must not be served. Bust this KB's cache.
+        answer_cache.invalidate(kb.id)
     await db.commit()
     await db.refresh(kb)
     return await _kb_to_response(kb, db)

@@ -124,6 +124,12 @@ class EragAgentGraph:
             config_manager.system_prompt,
         )
 
+        # KB-specific instruction (set by skill_router_node), appended after the
+        # stable system prompt so the cached prefix stays consistent across KBs.
+        kb_prompt = state.get("kb_prompt") or ""
+        if kb_prompt:
+            system_prompt = system_prompt + "\n\n## 知识库背景与偏好\n" + kb_prompt
+
         # ── Final generation guidance: when no tools were executed, prevent
         # the LLM from outputting [TOOL_CALL] or JSON tool invocations in free text.
         # The tool-decision phase already determined no tools were needed (or usable),
