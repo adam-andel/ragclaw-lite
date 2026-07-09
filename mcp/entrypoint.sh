@@ -1,6 +1,6 @@
 #!/bin/sh
-# Entrypoint: ensure workspace directory exists after tmpfs mount
+# REPL MCP Server entrypoint — Python / Shell / JavaScript sandbox
 mkdir -p /app/workspace
 
-# Run the MCP server with all arguments passed through
+# python_repl_mcp_server.py delegates to repl_mcp_server.py (backward compat)
 exec python python_repl_mcp_server.py "$@"

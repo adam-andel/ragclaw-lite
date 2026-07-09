@@ -124,6 +124,28 @@ class EragAgentGraph:
             config_manager.system_prompt,
         )
 
+        # ── Final generation guidance: when no tools were executed, prevent
+        # the LLM from outputting [TOOL_CALL] or JSON tool invocations in free text.
+        # The tool-decision phase already determined no tools were needed (or usable),
+        # so the LLM should generate a natural language answer. ──
+        tool_results = state.get("tool_results", [])
+        final_note = ""
+        if not tool_results:
+            # Check if the skill prompt tells the LLM to use tools
+            has_tool_instruction = (
+                "run_python" in system_prompt
+                or "工具" in system_prompt
+                or "调用" in system_prompt
+            )
+            if has_tool_instruction:
+                final_note = (
+                    "\n\n## ⚠️ 当前阶段：最终回答生成\n\n"
+                    "这是最终生成阶段，不再有工具调用能力。"
+                    "请直接以自然语言回复用户的问题。"
+                    "**绝对不要**输出 [TOOL_CALL]、JSON 格式的工具调用、或任何代码块伪装成工具调用。"
+                    "如果用户的任务需要工具但工具未执行，请如实告知用户。"
+                )
+
         cron_rule = (
             "\n\n## Scheduled Task Rule\n\n"
             "If the user wants to create a recurring or one-time scheduled task "
@@ -144,7 +166,7 @@ class EragAgentGraph:
             "Do not wrap the JSON in markdown code fences."
         )
 
-        messages = [{"role": "system", "content": system_prompt + cron_rule}]
+        messages = [{"role": "system", "content": system_prompt + final_note + cron_rule}]
 
         # Conversation history
         history = state.get("conversation_history", [])

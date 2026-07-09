@@ -21,6 +21,12 @@ data
 .idea
 .vscode
 *.swp
+CLAUDE.md
+.claude
+.trae
+.codebuddy
+.workbuddy
+
 
 # Docs
 docs
@@ -30,8 +36,8 @@ docs
 Thumbs.db
 
 # Environment
+# Keep .env.example (template, no secrets) OUT of ignore; ignore the real .env
+# (contains secrets) so it is never sent to the Docker build context / baked into
+# the image. Runtime values are injected via docker-compose `env_file:` instead.
 .env
-
-# CLAUDE
-CLAUDE.md
-.claude
+.env.example

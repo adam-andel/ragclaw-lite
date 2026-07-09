@@ -1,11 +1,15 @@
 """LLM client abstraction layer supporting multiple providers."""
 
 import json
+import logging
 from typing import AsyncGenerator
 
 import httpx
 
 from app.services.config_manager import config_manager
+
+logger = logging.getLogger("erag.llm")
+logger.setLevel(logging.INFO)
 
 
 class LLMClient:
@@ -60,7 +64,11 @@ class LLMClient:
 
         url = f"{self.base_url}/chat/completions"
 
+        logger.info("chat request: model=%s messages=%d temp=%s max_tokens=%s",
+                    self.model, len(messages), temp, max_tok)
         response = await self._client.post(url, headers=headers, json=body)
+        if response.status_code != 200:
+            logger.error("chat error %d: %s", response.status_code, response.text[:1000])
         response.raise_for_status()
 
         data = response.json()
@@ -154,7 +162,20 @@ class LLMClient:
 
         url = f"{self.base_url}/chat/completions"
 
+        # ── Debug logging: print FULL request body for TokenHub compatibility diagnosis ──
+        logger.info("chat_with_tools request: model=%s tool_choice=%s tools_count=%d messages=%d",
+                    self.model, tool_choice, len(tools), len(messages))
+        logger.info("chat_with_tools FULL request body: %s",
+                    json.dumps(body, ensure_ascii=False))
+
         response = await self._client.post(url, headers=headers, json=body)
+
+        # ── Debug logging: print FULL error response on non-200 ──
+        if response.status_code != 200:
+            logger.error("chat_with_tools error %d FULL response: %s",
+                         response.status_code, response.text)
+            logger.error("chat_with_tools FULL request that failed: %s",
+                         json.dumps(body, ensure_ascii=False))
         response.raise_for_status()
 
         data = response.json()

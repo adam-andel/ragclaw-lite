@@ -1,5 +1,12 @@
-"""Run cron jobs through the LangGraph ToolNode-based cron subgraph."""
+"""Run cron jobs through the LangGraph ToolNode-based cron subgraph.
 
+Concurrency safety: an in-memory asyncio.Lock per job_id prevents the same
+job from being executed in parallel.  The lock is held for the entire
+execution lifespan (LLM call included).  If a caller attempts to run a job
+that is already running, the call is rejected immediately.
+"""
+
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -11,18 +18,78 @@ from app.services.notification import create_cron_job_notification
 
 logger = logging.getLogger("erag.cron")
 
+# ── Per-job concurrency guard ────────────────────────────────────────────────
+_job_locks: dict[str, asyncio.Lock] = {}
+_lock_registry_lock = asyncio.Lock()
+
+
+async def _get_job_lock(cron_job_id: str) -> asyncio.Lock:
+    """Return (or create) the asyncio.Lock for the given cron job id."""
+    async with _lock_registry_lock:
+        if cron_job_id not in _job_locks:
+            _job_locks[cron_job_id] = asyncio.Lock()
+        return _job_locks[cron_job_id]
+
 
 async def execute_and_record_cron_job(cron_job_id: str) -> dict:
     """Run a cron job through the ToolNode subgraph and persist the result.
 
-    The subgraph itself calls record_cron_result_tool to update CronJob.last_result.
-    This function additionally creates a CronJobRun audit log and manages
-    next_run_at / status transitions.
+    Acquires an in-memory lock for *cron_job_id* so that a single job can
+    never have two concurrent executions.  Additionally checks the persisted
+    status: if the job is already RUNNING or COMPLETED the call is rejected
+    with a descriptive result instead of creating a duplicate CronJobRun.
+
+    The subgraph itself calls record_cron_result_tool to update
+    CronJob.last_result.  This function additionally creates a CronJobRun
+    audit log and manages next_run_at / status transitions.
     """
+    lock = await _get_job_lock(cron_job_id)
+
+    # Try-lock: if another coroutine is already inside the critical section
+    # we bail out immediately rather than queueing up behind it.
+    if lock.locked():
+        logger.info("Cron job %s is already running; skipping duplicate trigger", cron_job_id)
+        return {
+            "output": None,
+            "result": None,
+            "status": "skipped",
+            "error": "Job is already running",
+        }
+
+    async with lock:
+        return await _execute_and_record_locked(cron_job_id)
+
+
+async def _execute_and_record_locked(cron_job_id: str) -> dict:
+    """Internal: execute a cron job while holding the per-job lock."""
     async with async_session() as db:
         job = await db.get(CronJob, cron_job_id)
         if not job:
             raise ValueError(f"Cron job {cron_job_id} not found")
+
+        # Status guard: refuse to run a job that is already in a terminal or
+        # already-running state.  This closes the gap between the lock check
+        # and the DB read for cases where the lock was just freed by a
+        # completed run.
+        if job.status == CronJobStatus.RUNNING:
+            logger.warning(
+                "Cron job %s status is RUNNING inside lock; rejecting",
+                cron_job_id,
+            )
+            return {
+                "output": None,
+                "result": None,
+                "status": "skipped",
+                "error": "Job is already running (status guard)",
+            }
+        if job.status == CronJobStatus.COMPLETED:
+            logger.info("Cron job %s is COMPLETED; skipping", cron_job_id)
+            return {
+                "output": None,
+                "result": None,
+                "status": "skipped",
+                "error": "Job has already completed",
+            }
 
         previous_status = job.status
         job.status = CronJobStatus.RUNNING

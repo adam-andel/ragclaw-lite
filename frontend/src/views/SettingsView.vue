@@ -248,7 +248,7 @@ async function handleTest() {
               v-model:value="apiKeyInput"
               type="password"
               show-password-on="click"
-              :placeholder="config.is_configured ? `当前: ${config.llm_api_key}（留空不修改）` : '请输入 API Key（首次录入）'"
+              :placeholder="config.is_configured ? (config.api_key_source === 'env' ? `当前: ${config.llm_api_key}（来自 .env 文件，留空不修改）` : `当前: ${config.llm_api_key}（留空不修改）`) : '请输入 API Key（首次录入）'"
               maxlength="512"
               @input="clearTest"
             >

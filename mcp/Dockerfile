@@ -1,5 +1,5 @@
-# Python REPL MCP Server — Docker image
-# Isolated execution environment for LLM-generated Python code
+# REPL MCP Server — Docker image (Python + Shell + JavaScript sandbox)
+# Isolated execution environment for LLM-generated code
 # REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
 #   docker build --build-arg REGISTRY=docker.xuanyuan.me ...
 #   Or via compose: docker compose build --build-arg REGISTRY=docker.xuanyuan.me mcp-repl
@@ -11,6 +11,13 @@ RUN useradd -m -s /bin/bash mcpuser
 
 WORKDIR /app
 
+# Install Node.js LTS for JavaScript execution support
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies into a shared site
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt || \
@@ -18,6 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt || \
      pip install --no-cache-dir -r requirements.txt)
 
 # Copy server code (kept minimal — no venv, no tests)
+COPY repl_mcp_server.py .
 COPY python_repl_mcp_server.py .
 
 COPY entrypoint.sh .
@@ -42,4 +50,6 @@ CMD ["--port", "9200", \
      "--keep-minutes", "120", \
      "--max-memory-mb", "512", \
      "--max-nproc", "64", \
-     "--max-concurrent", "4"]
+     "--max-concurrent", "4", \
+     "--enable-shell", \
+     "--enable-javascript"]

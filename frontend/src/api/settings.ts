@@ -15,6 +15,7 @@ export interface LLMConfig {
   server_port: number
   cache_ttl_seconds: number   // cache TTL in seconds (default 3600 = 60 min)
   is_configured: boolean       // whether LLM API key has been set
+  api_key_source?: 'env' | 'stored'  // where the effective API key comes from
 }
 
 export interface LLMConfigUpdate {

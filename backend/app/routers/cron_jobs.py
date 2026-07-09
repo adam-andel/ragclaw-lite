@@ -233,12 +233,22 @@ async def run_cron_job_now(
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a cron job immediately, outside its normal schedule."""
+    """Trigger a cron job immediately, outside its normal schedule.
+
+    Refuses to start a new execution when the job is already RUNNING or
+    COMPLETED.  For RUNNING jobs this prevents duplicate concurrent LLM
+    calls; for COMPLETED jobs the user must reset the job first.
+    """
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
     if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
         raise HTTPException(403, "无权访问")
+
+    if job.status == CronJobStatus.RUNNING:
+        raise HTTPException(409, "任务正在执行中，请等待当前执行完成")
+    if job.status == CronJobStatus.COMPLETED:
+        raise HTTPException(400, "任务已完成，请先重置状态后再执行")
 
     try:
         result = await execute_and_record_cron_job(job_id)
