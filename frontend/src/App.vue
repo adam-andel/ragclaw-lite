@@ -14,18 +14,28 @@ const theme = computed(() => (isDark.value ? darkTheme : undefined))
 
 const lightThemeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#4338ca',
-    primaryColorHover: '#3730a3',
-    primaryColorPressed: '#3730a3',
-    primaryColorSuppl: '#4338ca',
+    primaryColor: '#3b82f6',
+    primaryColorHover: '#2563eb',
+    primaryColorPressed: '#1d4ed8',
+    primaryColorSuppl: '#3b82f6',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
+    fontSize: '13px',
+    fontSizeMedium: '13px',
+    fontSizeSmall: '13px',
   },
 }
 const darkThemeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#6366f1',
-    primaryColorHover: '#818cf8',
-    primaryColorPressed: '#4f46e5',
-    primaryColorSuppl: '#818cf8',
+    primaryColor: '#60a5fa',
+    primaryColorHover: '#93c5fd',
+    primaryColorPressed: '#3b82f6',
+    primaryColorSuppl: '#93c5fd',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
+    fontSize: '13px',
+    fontSizeMedium: '13px',
+    fontSizeSmall: '13px',
   },
   Button: {
     // dark theme 下 baseColor 为深色，会导致 primary 实心按钮文字变黑；

@@ -214,6 +214,10 @@ function goToNotifications() {
 .notification-badge {
   margin-left: 0;
 }
+/* 徽标数字默认 12px，scoped 下需 :deep() 穿透到 n-badge-sup；调小到 11px 弱于「通知」(13px) */
+.notification-badge :deep(.n-badge-sup) {
+  font-size: 11px;
+}
 .user-row {
   display: flex;
   align-items: center;
@@ -252,6 +256,12 @@ function goToNotifications() {
 }
 .user-role {
   margin-top: 1px;
+}
+
+/* ── Menu: 加粗提升导航层次（保持精致紧凑，不动字号） ── */
+/* 侧边栏为 scoped 样式，NMenu 内部节点不带 scope 属性，需用 :deep() 穿透 */
+.sidebar :deep(.n-menu-item-content) {
+  font-weight: 600;
 }
 
 /* ── Notification toast ── */
