@@ -844,7 +844,7 @@ async function loadSupportedTypes() {
     <div class="dm-header">
       <div class="kb-header-title">
         <NIcon size="22" color="var(--color-primary)"><DocumentText /></NIcon>
-        <h2>文档管理</h2>
+        <h2>文档管理111</h2>
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
@@ -1058,7 +1058,7 @@ async function loadSupportedTypes() {
               :percentage="doc.progress"
               :height="6"
               :border-radius="3"
-              :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#4f6ef7'"
+              :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#4338ca'"
               :rail-color="'var(--color-border)'"
               style="flex:1; min-width:100px"
             />
@@ -1497,7 +1497,7 @@ async function loadSupportedTypes() {
 .upload-kb-value { flex: 0 1 auto; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-modal-body { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
-.upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(88,166,255,0.04); }
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(67,56,202,0.04); }
 .upload-zone-content p { margin: 10px 0 4px; font-weight: 500; }
 .upload-hint { font-size: 0.8rem; color: var(--color-text-muted); }
 
@@ -1759,7 +1759,7 @@ async function loadSupportedTypes() {
 .share-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .share-card-remove { opacity: 0; transition: opacity .2s; flex-shrink: 0; }
 .share-card-addable { cursor: pointer; }
-.share-card-addable:hover { border-color: var(--color-primary); background: rgba(88, 166, 255, 0.04); }
+.share-card-addable:hover { border-color: var(--color-primary); background: rgba(67, 56, 202, 0.04); }
 .share-card-addable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
 .share-add-more { margin-top: 12px; }
 .share-user-info-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1779,8 +1779,8 @@ async function loadSupportedTypes() {
   overflow-y: auto;
 }
 .select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--radius); transition: background .15s; }
-.select-doc-row:hover { background: rgba(88, 166, 255, 0.04); }
-.select-doc-row.selected { background: rgba(88, 166, 255, 0.1); border-color: var(--color-primary); }
+.select-doc-row:hover { background: rgba(67, 56, 202, 0.04); }
+.select-doc-row.selected { background: rgba(67, 56, 202, 0.1); border-color: var(--color-primary); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }

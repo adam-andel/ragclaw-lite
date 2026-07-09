@@ -4,14 +4,14 @@
 
 :root {
   /* ── Colors: Primary ── */
-  --color-primary: #4f6ef7;
-  --color-primary-hover: #3b5de7;
+  --color-primary: #4338ca;
+  --color-primary-hover: #3730a3;
   --color-primary-soft: #eef2ff;
 
   /* ── Colors: Semantic ── */
   --color-secondary: #8b5cf6;
   --color-secondary-soft: #f3f0ff;
-  --color-accent: #06b6d4;
+  --color-accent: #0ea5b7;
   --color-accent-soft: #ecfeff;
   --color-success: #22c55e;
   --color-success-soft: #f0fdf4;
@@ -23,11 +23,11 @@
   /* ── Colors: Surface ── */
   --color-bg: #f8fafc;
   --color-surface: #ffffff;
-  --color-border: #e2e8f0;
+  --color-border: #e5e9f0;
 
   /* ── Colors: Text ── */
-  --color-text: #1e293b;
-  --color-text-muted: #94a3b8;
+  --color-text: #1e2433;
+  --color-text-muted: #64748b;
 
   /* ── Spacing ── */
   --space-1: 4px;
@@ -69,9 +69,9 @@
 
 /* ── Dark Mode ── */
 html.dark {
-  --color-primary-soft: rgba(79, 110, 247, 0.15);
+  --color-primary-soft: rgba(67, 56, 202, 0.15);
   --color-secondary-soft: rgba(139, 92, 246, 0.15);
-  --color-accent-soft: rgba(6, 182, 212, 0.15);
+  --color-accent-soft: rgba(14, 165, 183, 0.15);
   --color-success-soft: rgba(34, 197, 94, 0.15);
   --color-warning-soft: rgba(245, 158, 11, 0.15);
   --color-danger-soft: rgba(239, 68, 68, 0.15);

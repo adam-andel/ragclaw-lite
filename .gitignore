@@ -25,6 +25,7 @@ data/uploads/*
 .idea/
 .trae/
 .codebuddy/
+.workbuddy
 .claude/
 CLAUDE.md
 *.swp

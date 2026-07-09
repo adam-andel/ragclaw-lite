@@ -240,9 +240,17 @@ if frontend_dist.exists():
         name="frontend-avatar",
     )
 
+    class _ImmutableStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):  # type: ignore[override]
+            response = await super().get_response(path, scope)
+            response.headers.update(
+                {"Cache-Control": "public, max-age=31536000, immutable"}
+            )
+            return response
+
     app.mount(
         "/assets",
-        StaticFiles(directory=str(frontend_dist / "assets")),
+        _ImmutableStaticFiles(directory=str(frontend_dist / "assets")),
         name="frontend-assets",
     )
 
@@ -250,11 +258,14 @@ if frontend_dist.exists():
     async def spa_fallback(full_path: str):
         from fastapi.responses import FileResponse
 
+        # The HTML entry must always be revalidated so a fresh build
+        # (new hashed assets) is picked up immediately after redeploy.
+        no_cache = {"Cache-Control": "no-cache"}
         candidate = (frontend_dist / full_path).resolve()
         if (
             full_path
             and candidate.is_file()
             and frontend_dist in candidate.parents
         ):
-            return FileResponse(candidate)
-        return FileResponse(frontend_dist / "index.html")
+            return FileResponse(candidate, headers=no_cache)
+        return FileResponse(frontend_dist / "index.html", headers=no_cache)

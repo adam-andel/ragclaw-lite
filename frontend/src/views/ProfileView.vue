@@ -127,7 +127,7 @@ const roleColor = computed(() => {
   switch (auth.user?.role) {
     case 'admin': return '#ef4444'
     case 'moderator': return '#f59e0b'
-    default: return '#4f6ef7'
+    default: return '#4338ca'
   }
 })
 </script>

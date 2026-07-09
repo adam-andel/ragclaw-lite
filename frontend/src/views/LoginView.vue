@@ -128,8 +128,8 @@ async function handleLogin() {
   min-height: 100vh;
   padding: 24px;
   background:
-    radial-gradient(1200px 600px at 100% 0%, rgba(79, 110, 247, 0.08), transparent 60%),
-    radial-gradient(900px 500px at 0% 100%, rgba(79, 110, 247, 0.06), transparent 55%),
+    radial-gradient(1200px 600px at 100% 0%, rgba(67, 56, 202, 0.08), transparent 60%),
+    radial-gradient(900px 500px at 0% 100%, rgba(67, 56, 202, 0.06), transparent 55%),
     var(--color-bg);
 }
 
