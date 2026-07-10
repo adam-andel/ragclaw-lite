@@ -12,14 +12,44 @@ const auth = useAuthStore()
 const { isDark } = useTheme()
 const theme = computed(() => (isDark.value ? darkTheme : undefined))
 
-const themeOverrides: GlobalThemeOverrides = {
+const lightThemeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#4338ca',
-    primaryColorHover: '#3730a3',
-    primaryColorPressed: '#3730a3',
-    primaryColorSuppl: '#4338ca',
+    primaryColor: '#3b82f6',
+    primaryColorHover: '#2563eb',
+    primaryColorPressed: '#1d4ed8',
+    primaryColorSuppl: '#3b82f6',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
+    fontSize: '13px',
+    fontSizeMedium: '13px',
+    fontSizeSmall: '13px',
   },
 }
+const darkThemeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#60a5fa',
+    primaryColorHover: '#93c5fd',
+    primaryColorPressed: '#3b82f6',
+    primaryColorSuppl: '#93c5fd',
+    borderRadius: '8px',
+    borderRadiusSmall: '6px',
+    fontSize: '13px',
+    fontSizeMedium: '13px',
+    fontSizeSmall: '13px',
+  },
+  Button: {
+    // dark theme 下 baseColor 为深色，会导致 primary 实心按钮文字变黑；
+    // 显式锁定为白色，保证深色模式主色按钮文字始终可读
+    textColorPrimary: '#ffffff',
+    textColorHoverPrimary: '#ffffff',
+    textColorPressedPrimary: '#ffffff',
+    textColorFocusPrimary: '#ffffff',
+    textColorDisabledPrimary: 'rgba(255, 255, 255, 0.5)',
+  },
+}
+const themeOverrides = computed(() =>
+  isDark.value ? darkThemeOverrides : lightThemeOverrides,
+)
 
 onMounted(async () => {
   if (auth.token) await auth.fetchMe()

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NPagination, useMessage } from 'naive-ui'
+import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -70,11 +71,19 @@ const skillSearchText = ref('')
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
-const kbSearchText = ref('')
 const convKbMap = ref<Record<string, string>>({})
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
+// ── 对话历史 modal 分页 ──
+const convPage = ref(1)
+const convPageSize = 8
+const pagedConversations = computed(() => {
+  const start = (convPage.value - 1) * convPageSize
+  return conversations.value.slice(start, start + convPageSize)
+})
+const convTotalPages = computed(() => Math.max(1, Math.ceil(conversations.value.length / convPageSize)))
+watch(showMoreConv, (v) => { if (v) convPage.value = 1 })
 const kbPreview = computed(() => kbs.value.slice(0, 3))
 const kbHasMore = computed(() => kbs.value.length > 3)
 
@@ -93,16 +102,16 @@ const showPicker = computed(() => emptyMode.value !== '' && messages.value.lengt
 
 const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
 const currentKbName = computed(() => selectedKb.value?.name || '选择知识库')
-const filteredKbs = computed(() =>
-  kbs.value.filter((kb: any) =>
-    !kbSearchText.value || kb.name.toLowerCase().includes(kbSearchText.value.toLowerCase())
-  )
-)
 
 function selectAndClose(convId: string) {
   emptyMode.value = ''
   showMoreConv.value = false
   router.push(`/chat/${convId}`)
+}
+
+function onKbPick(id: string | null) {
+  if (id) selectedKbId.value = id
+  showMoreKb.value = false
 }
 
 async function loadConversations() {
@@ -371,35 +380,41 @@ function handleKeydown(e: KeyboardEvent) {
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
-          <div class="empty-icon">💬</div>
-          <h3>选择一个对话</h3>
-          <div class="center-panel-list">
-            <NCard v-for="c in convPreview" :key="c.id" size="small" class="conv-pick-card"
+          <div class="center-panel-head">
+            <div class="center-panel-icon">💬</div>
+            <h3>选择一个对话</h3>
+            <p class="center-panel-subtitle">从最近对话继续，或开启新的对话</p>
+          </div>
+          <div class="conv-list">
+            <div v-for="c in convPreview" :key="c.id" class="conv-row"
               role="button" tabindex="0"
               @click="selectAndClose(c.id)"
               @keydown.enter.prevent="selectAndClose(c.id)"
               @keydown.space.prevent="selectAndClose(c.id)"
             >
-              <div class="conv-pick-name">{{ c.title || '新对话' }}</div>
-              <div class="conv-pick-meta">
-                <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
-                <NTag v-if="c.message_count" size="tiny">{{ c.message_count }} 条消息</NTag>
+              <div class="conv-row-avatar">💬</div>
+              <div class="conv-row-body">
+                <div class="conv-row-title">{{ c.title || '新对话' }}</div>
+                <div class="conv-row-meta">
+                  <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
+                  <span v-if="c.message_count" class="conv-row-count">{{ c.message_count }} 条消息</span>
+                </div>
               </div>
-            </NCard>
+            </div>
           </div>
-          <NButton v-if="convHasMore" text size="small" type="primary" @click="showMoreConv = true">
-            更多对话 ({{ conversations.length }})
+          <NButton v-if="convHasMore" text size="small" type="primary" class="conv-more-btn" @click="showMoreConv = true">
+            更多对话 ({{ conversations.length }}) →
           </NButton>
           <NEmpty v-if="conversations.length === 0" description="暂无对话记录" style="padding:8px 0" />
-          <div class="center-panel-actions" style="justify-content:center">
-            <span class="fallback-hint">或者<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline;font-size:inherit">新建对话</NButton></span>
+          <div class="conv-fallback">
+            或者<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 3px;height:auto;vertical-align:baseline;font-size:inherit">新建对话</NButton>
           </div>
         </div>
       </div>
 
       <!-- Centered panel: KB list preview -->
       <div v-else-if="showPicker && emptyMode === 'kb'" class="center-panel">
-        <div class="center-panel-box">
+        <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' }">
           <div class="empty-icon">🧠</div>
           <h3>新建对话 — 选择知识库</h3>
           <div class="center-panel-list">
@@ -410,9 +425,17 @@ function handleKeydown(e: KeyboardEvent) {
               @keydown.enter.prevent="selectedKbId = kb.id"
               @keydown.space.prevent="selectedKbId = kb.id"
             >
-              <strong>{{ kb.name }}</strong>
-              <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-              <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+              <div class="kb-pick-inner">
+                <div class="kb-pick-avatar">📚</div>
+                <div class="kb-pick-body">
+                  <strong class="kb-pick-name">{{ kb.name }}</strong>
+                  <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+                  <div class="kb-pick-stats">
+                    <span class="kb-pick-chip">{{ kb.doc_count }} 文档</span>
+                    <span class="kb-pick-chip">{{ kb.vector_count }} 分片</span>
+                  </div>
+                </div>
+              </div>
             </NCard>
           </div>
           <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
@@ -494,44 +517,42 @@ function handleKeydown(e: KeyboardEvent) {
       style="width: 90vw; max-width: 520px"
     >
       <div class="picker-scroll">
-        <NCard v-for="c in conversations" :key="c.id" size="small" class="conv-pick-card"
+        <div v-for="c in pagedConversations" :key="c.id" class="conv-row"
           role="button" tabindex="0"
           @click="selectAndClose(c.id)"
           @keydown.enter.prevent="selectAndClose(c.id)"
           @keydown.space.prevent="selectAndClose(c.id)"
         >
-          <div class="conv-pick-name">{{ c.title || '新对话' }}</div>
-          <div class="conv-pick-meta">
-            <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
-            <NTag v-if="c.message_count" size="tiny">{{ c.message_count }} 条消息</NTag>
+          <div class="conv-row-avatar">💬</div>
+          <div class="conv-row-body">
+            <div class="conv-row-title">{{ c.title || '新对话' }}</div>
+            <div class="conv-row-meta">
+              <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
+              <span v-if="c.message_count" class="conv-row-count">{{ c.message_count }} 条消息</span>
+            </div>
           </div>
-        </NCard>
+        </div>
       </div>
+      <NPagination
+        v-if="convTotalPages > 1"
+        v-model:page="convPage"
+        :item-count="conversations.length"
+        :page-size="convPageSize"
+        simple
+        class="conv-pager"
+      />
     </NModal>
 
     <!-- Modal: KB picker with search -->
-    <NModal v-model:show="showMoreKb" preset="card" title="选择知识库"
-      style="width: 90vw; max-width: 520px"
-      @after-leave="kbSearchText = ''"
-    >
-      <NInput v-model:value="kbSearchText" placeholder="搜索知识库名称..." clearable style="margin-bottom:12px" />
-      <template v-if="filteredKbs.length > 0">
-        <div class="picker-scroll">
-          <NCard v-for="kb in filteredKbs" :key="kb.id" size="small" class="kb-pick-card"
-            :class="{ active: kb.id === selectedKbId }"
-            role="button" tabindex="0"
-            @click="selectedKbId = kb.id; showMoreKb = false"
-            @keydown.enter.prevent="selectedKbId = kb.id; showMoreKb = false"
-            @keydown.space.prevent="selectedKbId = kb.id; showMoreKb = false"
-          >
-            <strong>{{ kb.name }}</strong>
-            <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-            <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
-          </NCard>
-        </div>
-      </template>
-      <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
-    </NModal>
+    <KbPickerModal
+      v-model:show="showMoreKb"
+      :kbs="kbs"
+      :selected-id="selectedKbId"
+      :show-all="false"
+      :sortable="true"
+      :page-size="12"
+      @select="onKbPick"
+    />
 
     <NModal v-model:show="showSkillModal" preset="card" title="选择技能"
       style="width: 90vw; max-width: 520px"
@@ -672,11 +693,19 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-text);
 }
 .center-panel-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
   margin: 12px 0 8px;
   text-align: left;
+}
+/* KB 预览面板单独加宽，以容纳 3 列网格（与 KbPickerModal 观感一致），不影响对话面板 */
+.center-panel-box-wide { max-width: 680px; }
+@media (max-width: 640px) {
+  .center-panel-list { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .center-panel-list { grid-template-columns: 1fr; }
 }
 .center-panel-actions {
   display: flex;
@@ -688,30 +717,146 @@ function handleKeydown(e: KeyboardEvent) {
   border-top: 1px solid var(--color-border);
 }
 
+/* ── Optimized conversation history list (中间「选择一个对话」面板) ── */
+.center-panel-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.center-panel-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-xl);
+  background: var(--color-primary-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: 14px;
+}
+.center-panel-subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+.conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.conv-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.conv-row:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.conv-row:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+.conv-row-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: var(--color-primary-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.conv-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.conv-row-title {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 6px;
+}
+.conv-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.conv-row-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.conv-more-btn {
+  margin-bottom: 4px;
+}
+.conv-fallback {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
 /* Modal scrollable list (shared by "更多对话" and "更多知识库") */
 .picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.conv-pick-card {
-  cursor: pointer;
-  transition: border-color .2s, box-shadow .2s;
+.conv-pager {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
 }
-.conv-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.conv-pick-name { font-weight: 600; font-size: var(--text-sm); margin-bottom: 4px; }
-.conv-pick-meta { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--color-text-muted); }
 
 .kb-pick-card {
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s;
-  border-left: 3px solid transparent;
+  transition: border-color .2s, box-shadow .2s, background .2s, transform .15s;
+  border: 1px solid var(--color-border);
 }
-.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.kb-pick-card.active {
-  border-color: var(--color-primary);
-  border-left-color: var(--color-primary);
+.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.kb-pick-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+.kb-pick-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.kb-pick-inner { display: flex; align-items: flex-start; gap: 10px; }
+.kb-pick-avatar {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
   background: var(--color-primary-soft);
 }
-.kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
-.kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
+.kb-pick-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.kb-pick-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-pick-chip {
+  font-size: 0.7rem; line-height: 1.4;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2, #f1f5f9);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+  padding: 1px 8px;
+}
 .picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
@@ -758,6 +903,10 @@ function handleKeydown(e: KeyboardEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 输入框上方的 KB / 技能选择按钮：字号从 tiny 略放大到 13px，更易读 */
+.skill-selector-bar :deep(.n-button) {
+  font-size: 13px;
 }
 .chat-input-area {
   display: flex;

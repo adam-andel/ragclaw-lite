@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSwitch } from 'naive-ui'
+import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSwitch, NSpin, NPagination } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
@@ -22,6 +22,11 @@ const auth = useAuthStore()
 const router = useRouter()
 const users = ref<UserRow[]>([])
 const loading = ref(false)
+// ── 服务端分页：仅拉取当前页，total 由后端返回 ──
+const page = ref(1)
+const pageSize = 20
+const total = ref(0)
+function onPageChange(p: number) { page.value = p; loadUsers() }
 
 const showCreate = ref(false)
 const newUser = ref({ username: '', password: '', display_name: '', role: 'user' })
@@ -34,7 +39,19 @@ onMounted(loadUsers)
 
 async function loadUsers() {
   loading.value = true
-  try { const r = await client.get('/users'); users.value = r.data } catch { /* noop */ }
+  try {
+    const r = await client.get('/users', { params: { page: page.value, size: pageSize } })
+    users.value = r.data.items
+    total.value = r.data.total
+    // 删除末页最后一条后当前页可能越界，回退到最后一个有效页并重拉
+    const totalPages = Math.max(1, Math.ceil(total.value / pageSize))
+    if (page.value > totalPages) {
+      page.value = totalPages
+      const r2 = await client.get('/users', { params: { page: page.value, size: pageSize } })
+      users.value = r2.data.items
+      total.value = r2.data.total
+    }
+  } catch { /* noop */ }
   finally { loading.value = false }
 }
 
@@ -102,7 +119,7 @@ function formatTime(t: string) {
       <div class="kb-header-title">
         <NIcon size="22" color="var(--color-primary)"><People /></NIcon>
         <h2>用户管理</h2>
-        <span v-if="users.length > 0" class="kb-header-badge">{{ users.length }}</span>
+        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
         <NButton type="primary" size="small" @click="showCreate = true">
@@ -113,7 +130,7 @@ function formatTime(t: string) {
     </div>
 
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && users.length === 0" description="暂无用户" />
+      <NEmpty v-if="!loading && total === 0" description="暂无用户" />
       <div class="um-list" v-if="users.length > 0">
         <NCard
           v-for="user in users"
@@ -164,6 +181,10 @@ function formatTime(t: string) {
         </NCard>
       </div>
     </NSpin>
+
+    <div class="um-pagination" v-if="total > pageSize">
+      <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+    </div>
 
     <!-- Create Modal -->
     <NModal v-model:show="showCreate" title="新建用户" style="width:70vw; max-width:600px; height:70vh; max-height:460px" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
@@ -408,6 +429,13 @@ html.dark .um-card-disabled {
   font-family: monospace;
   font-size: 12px;
   word-break: break-all;
+}
+
+.um-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+  padding-bottom: 24px;
 }
 
 .create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }

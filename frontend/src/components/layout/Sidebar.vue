@@ -214,6 +214,16 @@ function goToNotifications() {
 .notification-badge {
   margin-left: 0;
 }
+/* 徽标默认 12px 且高度由主题变量控制，1px 改动看不出；这里同时收字号+尺寸才明显变小。
+   Naive 通过 --n-font-size 变量驱动字号，需 font-size 直写 + !important 才能覆盖；
+   scoped 下用 :deep() 穿透到 n-badge-sup。 */
+.notification-badge :deep(.n-badge-sup) {
+  font-size: 10px !important;
+  height: 16px;
+  line-height: 16px;
+  min-width: 16px;
+  padding: 0 5px;
+}
 .user-row {
   display: flex;
   align-items: center;
@@ -252,6 +262,12 @@ function goToNotifications() {
 }
 .user-role {
   margin-top: 1px;
+}
+
+/* ── Menu: 加粗提升导航层次（保持精致紧凑，不动字号） ── */
+/* 侧边栏为 scoped 样式，NMenu 内部节点不带 scope 属性，需用 :deep() 穿透 */
+.sidebar :deep(.n-menu-item-content) {
+  font-weight: 600;
 }
 
 /* ── Notification toast ── */

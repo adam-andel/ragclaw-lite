@@ -17,6 +17,7 @@ import {
 import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
+import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 
 const message = useMessage()
 const auth = useAuthStore()
@@ -120,20 +121,10 @@ const allKbs = ref<any[]>([])
 const showDocKbs = ref(false)
 const docKbSearchText = ref('')
 const selectedDocKbIds = ref<string[]>([])
-const kbFilterSearch = ref('')
-const kbFilterSortBy = ref<'recent' | 'doc_count'>('recent')
-
-const kbSortOptions = [
-  { label: '最近更新', value: 'recent' },
-  { label: '文档数量', value: 'doc_count' },
-]
-
 const kbFilterMode = ref<'filter' | 'upload'>('filter')
 
 function openKbFilter(mode: 'filter' | 'upload' = 'filter') {
   kbFilterMode.value = mode
-  kbFilterSearch.value = ''
-  kbFilterSortBy.value = 'recent'
   showKbFilter.value = true
 }
 
@@ -151,25 +142,12 @@ const uploadTargetKbName = computed(() => {
   return allKbs.value.find(k => k.id === uploadTargetKb.value)?.name || '不关联'
 })
 
-const filteredKbsForFilter = computed(() => {
-  let list = [...allKbs.value]
-  if (kbFilterSearch.value.trim()) {
-    const q = kbFilterSearch.value.trim().toLowerCase()
-    list = list.filter(kb =>
-      kb.name.toLowerCase().includes(q) ||
-      (kb.description && kb.description.toLowerCase().includes(q))
-    )
-  }
-  list.sort((a, b) => {
-    if (kbFilterSortBy.value === 'doc_count') {
-      return b.doc_count - a.doc_count
-    }
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-  })
-  return list
-})
-
-// KB action modals (create + edit share the unified KB form modal above)
+// KB action modals
+const showRenameKb = ref(false)
+const renameKbId = ref('')
+const renameKbName = ref('')
+const renameKbDesc = ref('')
+const renaming = ref(false)
 
 const showShare = ref(false)
 const shareKbId = ref('')
@@ -394,8 +372,9 @@ async function openShare(kbId: string) {
     shareUsers.value = r.data
   } catch { shareUsers.value = [] }
   try {
-    const r = await client.get('/users')
-    allUsers.value = r.data
+    // /users 已改为服务端分页，返回 {items,total,page,size}；共享弹窗按用户名搜索缩小范围，取前 200 条供本地过滤/分页
+    const r = await client.get('/users', { params: { size: 200 } })
+    allUsers.value = r.data.items
   } catch { allUsers.value = [] }
   shareLoading.value = false
 }
@@ -403,10 +382,10 @@ async function openShare(kbId: string) {
 async function searchShareUsers() {
   shareLoading.value = true
   try {
-    const params: any = {}
+    const params: any = { size: 200 }
     if (shareUserSearch.value.trim()) params.search = shareUserSearch.value.trim()
     const r = await client.get('/users', { params })
-    allUsers.value = r.data
+    allUsers.value = r.data.items
     shareUserPage.value = 1
   } catch { allUsers.value = [] }
   shareLoading.value = false
@@ -849,7 +828,7 @@ async function loadSupportedTypes() {
     <div class="dm-header">
       <div class="kb-header-title">
         <NIcon size="22" color="var(--color-primary)"><DocumentText /></NIcon>
-        <h2>文档管理111</h2>
+        <h2>文档管理</h2>
         <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
       </div>
       <div class="dm-header-actions">
@@ -1069,7 +1048,7 @@ async function loadSupportedTypes() {
               :percentage="doc.progress"
               :height="6"
               :border-radius="3"
-              :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#4338ca'"
+              :color="statusColors[doc.status] === 'warning' ? '#f59e0b' : '#3b82f6'"
               :rail-color="'var(--color-border)'"
               style="flex:1; min-width:100px"
             />
@@ -1251,50 +1230,30 @@ async function loadSupportedTypes() {
       </template>
     </NModal>
 
-    <!-- KB Filter Modal -->
-    <NModal v-model:show="showKbFilter" preset="card" title="选择知识库"
-      style="width: 90vw; max-width: 720px"
-      @after-leave="kbFilterSearch = ''; kbFilterSortBy = 'recent'"
+    <!-- KB Filter Modal（复用共享组件） -->
+    <KbPickerModal
+      v-model:show="showKbFilter"
+      :kbs="allKbs"
+      :selected-id="kbFilterMode === 'upload' ? uploadTargetKb : filterKbId"
+      :show-all="true"
+      :all-label="kbFilterMode === 'upload' ? '不关联' : '全部'"
+      :all-meta="kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档'"
+      :all-active="kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null"
+      :all-count="allKbs.length"
+      :sortable="true"
+      :page-size="12"
+      @select="onKbFilterSelect"
+    />
+
+    <!-- Rename KB Modal -->
+    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
+      style="width: 90vw; max-width: 440px"
     >
-      <div class="kb-filter-toolbar">
-        <NInput v-model:value="kbFilterSearch" placeholder="搜索知识库名称…" clearable style="flex:1">
-          <template #prefix><NIcon size="15"><Search /></NIcon></template>
-        </NInput>
-        <NSelect v-model:value="kbFilterSortBy" :options="kbSortOptions" style="width: 140px" />
+      <div class="kb-form">
+        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
+        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
       </div>
-      <div class="kb-filter-grid">
-        <NCard
-          size="small"
-          class="kb-filter-card"
-          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null }"
-          role="button"
-          tabindex="0"
-          @click="onKbFilterSelect(null)"
-          @keydown.enter.prevent="onKbFilterSelect(null)"
-          @keydown.space.prevent="onKbFilterSelect(null)"
-        >
-          <strong>{{ kbFilterMode === 'upload' ? '不关联' : '全部' }}</strong>
-          <span class="kb-filter-count">共 {{ allKbs.length }} 个知识库</span>
-          <span class="kb-filter-meta">{{ kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档' }}</span>
-        </NCard>
-        <NCard
-          v-for="kb in filteredKbsForFilter"
-          :key="kb.id"
-          size="small"
-          class="kb-filter-card"
-          :class="{ 'kb-filter-active': kbFilterMode === 'upload' ? uploadTargetKb === kb.id : filterKbId === kb.id }"
-          role="button"
-          tabindex="0"
-          @click="onKbFilterSelect(kb.id)"
-          @keydown.enter.prevent="onKbFilterSelect(kb.id)"
-          @keydown.space.prevent="onKbFilterSelect(kb.id)"
-        >
-          <strong>{{ kb.name }}</strong>
-          <span v-if="kb.description" class="kb-filter-desc">{{ kb.description }}</span>
-          <span class="kb-filter-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 分片</span>
-        </NCard>
-      </div>
-      <NEmpty v-if="filteredKbsForFilter.length === 0" description="无匹配的知识库" />
     </NModal>
 
     <!-- Share Modal -->
@@ -1476,7 +1435,7 @@ async function loadSupportedTypes() {
   flex-shrink: 0;
 }
 .dm-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
-.dm-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
+.dm-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.01em; }
 .dm-header .kb-header-badge {
   font-size: var(--text-xs);
   font-weight: 600;
@@ -1497,7 +1456,7 @@ async function loadSupportedTypes() {
 .upload-kb-value { flex: 0 1 auto; font-size: var(--text-sm); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-modal-body { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
 .upload-zone { border: 2px dashed var(--color-border); border-radius: 8px; padding: 28px; text-align: center; cursor: pointer; transition: all .2s; }
-.upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(67,56,202,0.04); }
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--color-primary); background: rgba(59,130,246,0.04); }
 .upload-zone-content p { margin: 10px 0 4px; font-weight: 500; }
 .upload-hint { font-size: 0.8rem; color: var(--color-text-muted); }
 
@@ -1572,6 +1531,7 @@ async function loadSupportedTypes() {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   flex-wrap: wrap;
+  line-height: 1.5;
 }
 .doc-card-progress {
   display: flex;
@@ -1596,8 +1556,8 @@ async function loadSupportedTypes() {
 }
 .doc-type-icon { font-size: 1.1rem; flex-shrink: 0; line-height: 1; }
 .doc-name {
-  font-weight: 600;
-  font-size: var(--text-sm);
+  font-weight: 500;
+  font-size: 0.8125rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1718,27 +1678,6 @@ async function loadSupportedTypes() {
 .kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
 
-/* KB filter modal */
-.kb-filter-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.kb-filter-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  max-height: 55vh;
-  overflow-y: auto;
-}
-.kb-filter-card {
-  cursor: pointer;
-  transition: border-color .2s, box-shadow .2s, background .2s;
-  border: 1px solid var(--color-border);
-}
-.kb-filter-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.kb-filter-active { border-color: var(--color-primary); background: var(--color-primary-soft); }
-.kb-filter-card strong { display: block; font-size: var(--text-sm); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-filter-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-filter-count { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; }
-.kb-filter-meta { display: block; font-size: 0.65rem; color: var(--color-text-muted); }
-
 /* KB action modals */
 .kb-form { display: flex; flex-direction: column; gap: 12px; }
 .share-form { display: flex; flex-direction: column; max-height: 60vh; }
@@ -1759,7 +1698,7 @@ async function loadSupportedTypes() {
 .share-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .share-card-remove { opacity: 0; transition: opacity .2s; flex-shrink: 0; }
 .share-card-addable { cursor: pointer; }
-.share-card-addable:hover { border-color: var(--color-primary); background: rgba(67, 56, 202, 0.04); }
+.share-card-addable:hover { border-color: var(--color-primary); background: rgba(59, 130, 246, 0.04); }
 .share-card-addable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
 .share-add-more { margin-top: 12px; }
 .share-user-info-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1779,8 +1718,8 @@ async function loadSupportedTypes() {
   overflow-y: auto;
 }
 .select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--radius); transition: background .15s; }
-.select-doc-row:hover { background: rgba(67, 56, 202, 0.04); }
-.select-doc-row.selected { background: rgba(67, 56, 202, 0.1); border-color: var(--color-primary); }
+.select-doc-row:hover { background: rgba(59, 130, 246, 0.04); }
+.select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
@@ -1789,13 +1728,9 @@ async function loadSupportedTypes() {
 .select-docs-count { font-size: var(--text-sm); color: var(--color-text-muted); }
 
 @media (max-width: 640px) {
-  .kb-filter-grid { grid-template-columns: repeat(2, 1fr); }
   .share-list { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 420px) {
-  .kb-filter-grid { grid-template-columns: 1fr; }
-  .kb-filter-toolbar { flex-direction: column; }
-  .kb-filter-toolbar :deep(.n-base-selection) { width: 100% !important; }
   .share-list { grid-template-columns: 1fr; }
 }
 </style>

@@ -151,7 +151,7 @@ function getScoreColor(score: number): string {
 .bar-label { font-size: 0.7rem; width: 30px; text-align: right; color: var(--color-text-muted); }
 .bar-track { flex: 1; height: 6px; background: var(--color-border); border-radius: 3px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
-.bar-fill.vector { background: #818cf8; }
+.bar-fill.vector { background: #60a5fa; }
 .bar-fill.bm25 { background: #34d399; }
 .bar-fill.fusion { background: var(--color-primary); }
 </style>
