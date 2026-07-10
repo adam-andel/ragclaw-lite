@@ -143,12 +143,6 @@ const uploadTargetKbName = computed(() => {
 })
 
 // KB action modals
-const showRenameKb = ref(false)
-const renameKbId = ref('')
-const renameKbName = ref('')
-const renameKbDesc = ref('')
-const renaming = ref(false)
-
 const showShare = ref(false)
 const shareKbId = ref('')
 const shareUsers = ref<any[]>([])
@@ -1244,17 +1238,6 @@ async function loadSupportedTypes() {
       :page-size="12"
       @select="onKbFilterSelect"
     />
-
-    <!-- Rename KB Modal -->
-    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
-      style="width: 90vw; max-width: 440px"
-    >
-      <div class="kb-form">
-        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
-        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
-      </div>
-    </NModal>
 
     <!-- Share Modal -->
     <NModal v-model:show="showShare" preset="card" title="共享用户"

@@ -27,10 +27,12 @@ const lightThemeOverrides: GlobalThemeOverrides = {
 }
 const darkThemeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#60a5fa',
-    primaryColorHover: '#93c5fd',
-    primaryColorPressed: '#3b82f6',
-    primaryColorSuppl: '#93c5fd',
+    // 暗色模式主色按钮：原 #60a5fa 偏浅、发白，改为与浅色一致的实心蓝 #3b82f6，
+    // hover 提亮、pressed 压深，保证暗色下主按钮清晰不寡淡
+    primaryColor: '#3b82f6',
+    primaryColorHover: '#60a5fa',
+    primaryColorPressed: '#2563eb',
+    primaryColorSuppl: '#60a5fa',
     borderRadius: '8px',
     borderRadiusSmall: '6px',
     fontSize: '13px',
