@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt || \
 # Copy server code (kept minimal — no venv, no tests)
 COPY repl_mcp_server.py .
 COPY python_repl_mcp_server.py .
+COPY egress_proxy.py .
 
 COPY entrypoint.sh .
 RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh

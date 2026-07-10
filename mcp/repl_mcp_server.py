@@ -60,6 +60,11 @@ _network_mode: str = "deny"
 _allow_domains: list[str] = []      # allowed hostnames in allowlist mode
 _allow_methods: list[str] = []      # reserved for L7 filtering (Phase 2)
 _policy_file: str = "/tmp/repl_network_policy.json"
+# ── Egress proxy (network-layer broker, 方案 B) ──
+# Children are forced through this loopback proxy so all HTTP(S) egress
+# (incl. asyncio/httpx/curl) hits the allowlist. Port is shared with
+# mcp/egress_proxy.py via REPL_EGRESS_PORT.
+_EGRESS_PORT: int = int(os.environ.get("REPL_EGRESS_PORT", "1080"))
 _no_network: bool = False           # backward-compat alias (sets initial mode=deny)
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
 _max_nproc: int = DEFAULT_MAX_NPROC
@@ -105,6 +110,21 @@ def _sanitize_env() -> dict:
     env["MPLCONFIGDIR"] = "/tmp/matplotlib"
     # Inject current network policy so the guard preamble can enforce it.
     env["REPL_NETWORK_POLICY"] = json.dumps(_build_policy(), ensure_ascii=False)
+
+    # ── 方案 B: force every child through the egress broker ──
+    # All HTTP(S) clients (requests/urllib3/httpx sync+async, curl, wget...)
+    # read HTTP_PROXY/HTTPS_PROXY, which closes the asyncio/httpx bypass.
+    # Internal ERAG traffic (mcp-repl <-> backend) stays direct via NO_PROXY.
+    # In deny mode no proxy is injected — the in-process guard already blocks
+    # everything, and there is nothing legitimate to proxy.
+    if _network_mode != "deny":
+        proxy = f"http://127.0.0.1:{_EGRESS_PORT}"
+        env["HTTP_PROXY"] = proxy
+        env["HTTPS_PROXY"] = proxy
+        env["http_proxy"] = proxy
+        env["https_proxy"] = proxy
+        env["NO_PROXY"] = "localhost,127.0.0.1,mcp-repl,erag-lite"
+        env["no_proxy"] = "localhost,127.0.0.1,mcp-repl,erag-lite"
     return env
 
 
@@ -190,6 +210,7 @@ def _py_build_guard(per_call_dir: str) -> str:
 import socket as _g_socket
 import os as _g_os
 import json as _g_json
+import ssl as _g_ssl
 
 def _g_load_policy():
     try:
@@ -201,6 +222,9 @@ _G_POLICY = _g_load_policy()
 _G_MODE = _G_POLICY.get("mode", "deny")
 _G_DOMAINS = set(d.lower() for d in _G_POLICY.get("domains", []))
 _G_METHODS = set(m.upper() for m in _G_POLICY.get("methods", []))
+# IPs produced by an allowed getaddrinfo() — used to admit the subsequent
+# socket.connect(ip) that create_connection performs internally.
+_g_resolved_ips = set()
 
 def _g_is_ip(h):
     try:
@@ -245,17 +269,68 @@ def _g_getaddrinfo(orig, *a, **kw):
         return orig(*a, **kw)
     if _G_MODE == "allowlist":
         if _g_host_allowed(host):
-            return orig(*a, **kw)
+            res = orig(*a, **kw)
+            # Cache the resolved IPs so the later socket.connect(ip) (which
+            # create_connection performs internally) is recognised as legal.
+            for item in res:
+                try:
+                    _g_resolved_ips.add(item[4][0])
+                except Exception:
+                    pass
+            return res
         raise PermissionError("DNS 解析被拒绝（目标不在白名单中）: %s" % (host,))
     raise PermissionError("网络访问已被禁止（deny 模式，DNS 解析被阻断）。")
 
+# Optional L7 method allowlist (Phase 2 reserved field).
+def _g_method_allowed(method):
+    if not _G_METHODS:
+        return True
+    return (method or "").upper() in _G_METHODS
+
+# ── Raw-socket fallback (§7): wrap socket.connect + ssl wrap_socket ──
+# Closes the bypass where a C extension or asyncio reaches loop.sock_connect
+# -> sock.connect() directly, skipping the create_connection patch above.
+# A resolved (whitelisted) IP is admitted via the cache; a bare hardcoded IP
+# is rejected in allowlist (anti direct-IP / DNS-rebind bypass).
+def _g_connect(self, address, *a, **kw):
+    host = address[0] if isinstance(address, (tuple, list)) and address else None
+    if _G_MODE == "allow":
+        return _orig_connect(self, address, *a, **kw)
+    if _G_MODE == "allowlist":
+        if host and not _g_is_ip(host):
+            if _g_host_allowed(host):
+                return _orig_connect(self, address, *a, **kw)
+            raise PermissionError("网络访问被拒绝（目标不在白名单中）: %s" % (host,))
+        # bare IP literal
+        if host in _g_resolved_ips:
+            return _orig_connect(self, address, *a, **kw)
+        raise PermissionError("网络访问被拒绝（裸 IP 不在解析缓存中）: %s" % (host,))
+    raise PermissionError("网络访问已被禁止（deny 模式）。")
+
+def _g_wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
+                   suppress_ragged_eofs=True, server_hostname=None, session=None):
+    if _G_MODE == "allow":
+        return _orig_wrap(self, sock, server_side, do_handshake_on_connect,
+                          suppress_ragged_eofs, server_hostname, session)
+    if _G_MODE == "allowlist":
+        if server_hostname and not _g_host_allowed(server_hostname):
+            raise PermissionError("TLS 连接被拒绝（目标不在白名单中）: %s" % (server_hostname,))
+        # server_hostname None (IP-based TLS) is covered by the connect cache.
+        return _orig_wrap(self, sock, server_side, do_handshake_on_connect,
+                          suppress_ragged_eofs, server_hostname, session)
+    raise PermissionError("网络访问已被禁止（deny 模式）。")
+
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
+_orig_connect = _g_socket.socket.connect
+_orig_wrap = _g_ssl.SSLContext.wrap_socket
 if _orig_create_conn is not None:
     def _g_cc(*a, **kw):
         return _g_create_connection(_orig_create_conn, *a, **kw)
     _g_socket.create_connection = _g_cc
 _g_socket.getaddrinfo = lambda *a, **kw: _g_getaddrinfo(_orig_getaddrinfo, *a, **kw)
+_g_socket.socket.connect = _g_connect
+_g_ssl.SSLContext.wrap_socket = _g_wrap_socket
 '''
     return preamble
 
@@ -358,15 +433,26 @@ _SHELL_NETWORK_REASONS = {
     "ftp", "telnet", "nmap", "socat",
 }
 
+# Proxy-aware tools that honor HTTP_PROXY: in allowlist mode they are forced
+# through the egress broker (which enforces the domain allowlist), so they are
+# safe to permit. nc/ssh/socat etc. ignore proxy env and stay blocked.
+_SHELL_PROXY_AWARE = {"curl", "wget"}
+
 
 def _sh_prescreen(code: str) -> str | None:
     """Scan shell command for dangerous patterns. Returns error or None.
 
-    In 'allow' mode, network tools (curl/wget/...) are permitted, but
-    destructive filesystem/kernel patterns remain blocked.
+    * 'allow' mode: all network tools permitted, but destructive
+      filesystem/kernel patterns remain blocked.
+    * 'allowlist' mode: only proxy-aware tools (curl/wget) are permitted —
+      they are enforced by the egress broker; nc/ssh/socat stay blocked
+      because they bypass the proxy and would evade L7 enforcement.
+    * destructive filesystem/kernel patterns remain blocked in every mode.
     """
     for pattern, reason in _SHELL_DANGEROUS:
         if _network_mode == "allow" and reason in _SHELL_NETWORK_REASONS:
+            continue
+        if _network_mode == "allowlist" and reason in _SHELL_PROXY_AWARE:
             continue
         if re.search(pattern, code, re.IGNORECASE):
             return f"禁止执行 Shell 命令（匹配危险模式: {reason}）"
