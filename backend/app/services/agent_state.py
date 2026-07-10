@@ -26,7 +26,7 @@ class EragAgentState(TypedDict):
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
 
     # ── Router output (Layer 1: name + description only) ──
-    active_skill: dict | None     # {id, name, description, folder_name} — no system_prompt yet
+    active_skill: dict | None     # {id, name, description, folder_name, system_prompt} — top of skill_stack
     available_tools: list[dict]   # Tools in OpenAI function-calling format (empty until skill_loader)
     skip_cache: bool              # When True, bypass all cache (used on regenerate)
 
@@ -48,3 +48,10 @@ class EragAgentState(TypedDict):
     cache_hit: bool               # Set by router on cache hit
     final_answer: str             # Set by router on cache hit, else empty
     retrieval_ms: float           # Measured in retrieval node
+
+    # ── Skill orchestration (Route D: stack-based chaining) ──
+    skill_stack: list[dict]       # Stack of loaded skills; last entry = current/active_skill
+    loaded_skill_ids: list[str]   # Dedupe list of loaded skill ids (TypedDict has no set)
+    skill_switch_count: int       # Number of use_skill pushes (bounded by MAX_SKILL_SWITCHES)
+    workspace_id: str             # Stable workdir shared across tool calls in a turn/conversation
+    conversation_id: str | None   # Conversation id, used to scope the workspace_id

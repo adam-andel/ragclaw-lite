@@ -283,6 +283,7 @@ async def execute_script_tool(
     func_name: str,
     arguments: dict,
     repl_server_config: dict,
+    workspace_id: str | None = None,
 ) -> ToolResult:
     """Execute a script tool via python_repl_mcp_server sandbox.
 
@@ -292,6 +293,8 @@ async def execute_script_tool(
         func_name: Function name to call
         arguments: Arguments dict from LLM
         repl_server_config: MCP server config dict for python_repl server
+        workspace_id: Optional shared workspace dir (Route D) so generated
+                      files persist across chained skill tool calls.
 
     Returns:
         ToolResult with ok=True and sandbox output, or ok=False with error
@@ -303,9 +306,12 @@ async def execute_script_tool(
         # Construct execution code
         code = build_execution_code(script_content, func_name, arguments)
 
-        # Execute via run_python sandbox
+        # Execute via run_python sandbox (share workspace if provided)
+        call_args: dict = {"code": code}
+        if workspace_id:
+            call_args["workspace_id"] = workspace_id
         result = await mcp_client.call_tool(
-            repl_server_config, "run_python", {"code": code}
+            repl_server_config, "run_python", call_args
         )
 
         if result.ok:

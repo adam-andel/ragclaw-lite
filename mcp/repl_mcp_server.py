@@ -133,8 +133,20 @@ def _acquire_slot(timeout: int = 5) -> bool:
     return _exec_semaphore.acquire(timeout=timeout)
 
 
-def _make_workdir() -> str:
-    """Create per-call UUID workdir inside --allow-dir (or tempdir if not set)."""
+def _make_workdir(workspace_id: str | None = None) -> str:
+    """Create a workdir inside --allow-dir (or tempdir if not set).
+
+    If ``workspace_id`` is provided and safe, reuse a *stable* directory so that
+    multiple tool calls within the same conversation share files (e.g. generate
+    a PPT in one call, then read/beautify it in another). Otherwise a fresh
+    per-call UUID directory is created (original behaviour).
+    """
+    if _allow_dir and workspace_id:
+        # Sanitize: only safe chars, capped length, prevent traversal.
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
+            workdir = os.path.join(_allow_dir, workspace_id)
+            os.makedirs(workdir, exist_ok=True)
+            return workdir
     call_uuid = str(uuid.uuid4())[:8]
     if _allow_dir:
         workdir = os.path.join(_allow_dir, call_uuid)
@@ -660,7 +672,7 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     1. prescreening  2. concurrency gate  3. workspace creation
     4. execution  5. post-processing (workspace note + download links)
     """
-    def execute(code: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+    def execute(code: str, timeout: int = DEFAULT_TIMEOUT, workspace_id: str | None = None) -> str:
         t0 = time.time()
 
         # Pre-screen
@@ -676,7 +688,7 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试"
 
         try:
-            workdir = _make_workdir()
+            workdir = _make_workdir(workspace_id)
             result = run_fn(code, workdir, timeout)
             ws_note = _make_workspace_note(workdir) if lang != "Python" else _make_workspace_note(workdir)
             result = ws_note + result
@@ -728,7 +740,14 @@ def _build_tools() -> list[dict]:
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {"code": {"type": "string", "description": "完整的 Python 代码"}},
+            "properties": {
+                "code": {"type": "string", "description": "完整的 Python 代码"},
+                "workspace_id": {
+                    "type": "string",
+                    "description": "可选：固定 workspace 目录名（仅允许 [A-Za-z0-9_-]，≤64 字符）。"
+                                   "同一 workspace_id 的多次调用共享同一工作目录，便于在一个对话内先生成文件再处理它。",
+                },
+            },
             "required": ["code"],
         },
     })
@@ -839,12 +858,14 @@ class MCPHandler(BaseHTTPRequestHandler):
         elif method == "tools/call":
             params = body.get("params", {})
             tool_name = params.get("name", "")
-            code = params.get("arguments", {}).get("code", "")
+            arguments = params.get("arguments", {})
+            code = arguments.get("code", "")
+            workspace_id = arguments.get("workspace_id")
 
             # Route to correct executor by tool name
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
-                result = {"content": [{"type": "text", "text": executor(code)}]}
+                result = {"content": [{"type": "text", "text": executor(code, workspace_id=workspace_id)}]}
             else:
                 result = {"content": [{"type": "text", "text": f"未知工具: {tool_name}"}]}
         else:

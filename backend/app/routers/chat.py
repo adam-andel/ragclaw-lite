@@ -186,6 +186,8 @@ async def chat_stream(
                         "user_id": current_user.id,
                         "tenant_id": current_user.tenant_id,
                         "conversation_history": history,
+                        "conversation_id": conv_id,
+                        "workspace_id": conv_id or ("run-" + str(uuid.uuid4())),
                         "active_skill": None,
                         "available_tools": [],
                         "rag_context": "",

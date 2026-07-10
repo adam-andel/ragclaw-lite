@@ -10,7 +10,8 @@ from app.services.llm_client import llm_client
 from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
-    get_skill_by_id, get_skill_by_folder, read_skill_md, parse_skill_md,
+    get_skill_by_id, get_skill_by_folder, get_skill_by_name,
+    read_skill_md, parse_skill_md,
     get_skill_resource, list_resource_paths,
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
@@ -21,6 +22,7 @@ logger = logging.getLogger("erag.agent")
 logger.setLevel(logging.INFO)
 
 MAX_TOOL_ROUNDS = 5
+MAX_SKILL_SWITCHES = 4  # Route D: cap on use_skill pushes to prevent runaway chaining
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
@@ -291,43 +293,81 @@ async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
 
 # ── Skill Loader (Layer 2: SKILL.md full text + tools) ──
 
-async def skill_loader_node(state: dict) -> dict:
-    """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
+def _build_meta_skill_tools() -> list[dict]:
+    """Always-available meta tools that let the LLM orchestrate skills (Route D).
 
-    Runs after router (if a skill was selected) and before retrieval.
-    If no active skill, passes through with default system prompt.
+    These are injected into available_tools whenever a skill is loaded, so the
+    LLM can list skills and chain into another skill mid-conversation.
     """
-    if state.get("cache_hit"):
-        return {}
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_skills",
+                "description": "列出当前可用的所有技能（名称与描述）。当需要决定使用哪个技能、或想确认某个技能是否存在时调用。",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+            "_source": "meta",
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "use_skill",
+                "description": (
+                    "加载并使用另一个技能（例如「文档生成助手」）。加载后该技能的规则与工具立即生效，"
+                    "当前对话即可调用其能力。适用于当前技能无法直接完成的子任务"
+                    "（如「PPT美化」需要先有 PPT 文件，可临时 use_skill「文档生成助手」生成后再返回美化）。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {
+                            "type": "string",
+                            "description": "要使用的技能名称，例如「文档生成助手」。可先调用 list_skills 查看可用技能。",
+                        },
+                    },
+                    "required": ["skill_name"],
+                },
+            },
+            "_source": "meta",
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "done_skill",
+                "description": (
+                    "结束当前临时技能，返回到上一层技能（例如用「文档生成助手」生成文件后，"
+                    "调用 done_skill 回到「PPT美化」继续美化）。无需返回时不必调用。"
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+            "_source": "meta",
+        },
+    ]
 
-    active_skill = state.get("active_skill")
-    if not active_skill:
-        return {}
 
-    folder_name = active_skill.get("folder_name")
-    if not folder_name:
-        return {}
+async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]:
+    """Load a skill's SKILL.md body + tools.
 
-    # Read and parse SKILL.md
+    Shared by the initial skill_loader_node and Route D chaining (skill_switcher_node).
+    Returns (system_prompt, tools) where tools already include the
+    read_skill_resource tool when the skill has reference/data files.
+    """
     skill_md_content = read_skill_md(folder_name)
     if not skill_md_content:
-        logger.warning("Skill loader: SKILL.md not found for folder=%s", folder_name)
-        return {}
+        logger.warning("_load_skill_body_and_tools: SKILL.md not found for folder=%s", folder_name)
+        return config_manager.system_prompt, []
 
     parsed = parse_skill_md(skill_md_content)
     system_prompt = parsed["body"] or config_manager.system_prompt
     mcp_server_names = parsed.get("mcp_servers", [])
 
-    # Update active_skill with system_prompt
-    updated_skill = {**active_skill, "system_prompt": system_prompt}
-
-    # Discover script tools (from scripts/*.py)
     script_tools = discover_tools(folder_name)
-    logger.info("Skill loader: folder=%s script_tools=%d", folder_name, len(script_tools))
+    logger.info("_load_skill_body_and_tools: folder=%s script_tools=%d", folder_name, len(script_tools))
 
-    # Load MCP tools (from front matter mcp_servers declaration)
     mcp_tools = await tool_registry.get_mcp_tools(mcp_server_names)
-    logger.info("Skill loader: folder=%s mcp_tools=%d (servers=%s)", folder_name, len(mcp_tools), mcp_server_names)
+    logger.info("_load_skill_body_and_tools: folder=%s mcp_tools=%d (servers=%s)",
+                folder_name, len(mcp_tools), mcp_server_names)
 
     all_tools = script_tools + mcp_tools
 
@@ -356,9 +396,190 @@ async def skill_loader_node(state: dict) -> dict:
             "_folder_name": folder_name,
         }
         all_tools.append(resource_tool)
-        logger.info("Skill loader: folder=%s added read_skill_resource tool (%d files)", folder_name, len(resource_paths))
+        logger.info("_load_skill_body_and_tools: folder=%s added read_skill_resource tool (%d files)",
+                    folder_name, len(resource_paths))
 
-    return {"active_skill": updated_skill, "available_tools": all_tools}
+    return system_prompt, all_tools
+
+
+async def skill_loader_node(state: dict) -> dict:
+    """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
+
+    Runs after router (if a skill was selected) and before retrieval.
+    Also initialises the Route D skill stack and injects the always-available
+    meta tools (list_skills / use_skill / done_skill) for orchestration.
+    """
+    if state.get("cache_hit"):
+        return {}
+
+    active_skill = state.get("active_skill")
+    if not active_skill:
+        return {}
+
+    folder_name = active_skill.get("folder_name")
+    if not folder_name:
+        return {}
+
+    system_prompt, all_tools = await _load_skill_body_and_tools(folder_name)
+    updated_skill = {**active_skill, "system_prompt": system_prompt, "source": "primary"}
+
+    # Always-available meta tools for orchestration (Route D)
+    all_tools = all_tools + _build_meta_skill_tools()
+
+    return {
+        "active_skill": updated_skill,
+        "available_tools": all_tools,
+        "skill_stack": [updated_skill],
+        "loaded_skill_ids": [active_skill["id"]] if active_skill.get("id") else [],
+        "skill_switch_count": 0,
+    }
+
+
+# ── Skill Switcher (Route D: stack-based chaining) ──
+
+_META_CONTROL_TOOLS = {"use_skill", "done_skill", "list_skills"}
+
+
+def _skill_control_return(tc: dict, result: str, stack: list[dict], state: dict) -> dict:
+    """Build a no-op state update for a meta control call (stack unchanged)."""
+    top = stack[-1] if stack else state.get("active_skill")
+    return {
+        "active_skill": top,
+        "skill_stack": stack,
+        "tool_results": [result],
+        "tool_messages": [{
+            "role": "tool",
+            "tool_call_id": tc.get("id", "call_meta"),
+            "name": tc.get("function", {}).get("name", "meta"),
+            "content": result,
+        }],
+        "tool_round": state.get("tool_round", 0) + 1,
+    }
+
+
+async def skill_switcher_node(state: dict) -> dict:
+    """Route D — handle use_skill / done_skill / list_skills control calls.
+
+    * use_skill(name): push the target skill onto the stack, swap its system
+      prompt in as the active one, and UNION its tools into available_tools.
+      The previous skill's body is dropped from the prompt (stack model) so the
+      prompt stays short and only one skill's rules are "in force" at a time,
+      while all tools accumulated so far remain callable.
+    * done_skill(): pop the stack, returning to the previous skill's prompt.
+    * list_skills(): return the active skill catalogue without changing state.
+    """
+    tool_calls = state.get("tool_calls", []) or []
+    if not tool_calls:
+        return {}
+    tc = tool_calls[0]
+    fname = tc.get("function", {}).get("name", "")
+    try:
+        args = json.loads(tc.get("function", {}).get("arguments", "{}") or "{}")
+    except Exception:
+        args = {}
+
+    stack = list(state.get("skill_stack") or [])
+    loaded = list(state.get("loaded_skill_ids") or [])
+    switch_count = state.get("skill_switch_count", 0)
+    tenant_id = state.get("tenant_id")
+
+    async with async_session() as db:
+        # ── list_skills ──
+        if fname == "list_skills":
+            if tenant_id:
+                skills = (await db.execute(
+                    select(Skill).where(
+                        (Skill.tenant_id == tenant_id) & (Skill.is_active == True)  # noqa: E712
+                    )
+                )).scalars().all()
+            else:
+                skills = (await db.execute(
+                    select(Skill).where(Skill.is_active == True)  # noqa: E712
+                )).scalars().all()
+            skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills) or "(无可用技能)"
+            result = f"当前可用技能：\n{skill_list}"
+            return _skill_control_return(tc, result, stack, state)
+
+        # ── done_skill ──
+        if fname == "done_skill":
+            if len(stack) <= 1:
+                result = "done_skill：已经是最顶层技能，没有可返回的上一层。"
+                return _skill_control_return(tc, result, stack, state)
+            stack = stack[:-1]
+            prev = stack[-1]
+            result = f"已返回上一层技能：「{prev.get('name')}」。其规则与工具现已生效。"
+            return {
+                "active_skill": prev,
+                "skill_stack": stack,
+                "tool_results": [result],
+                "tool_messages": [{
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", "call_meta"),
+                    "name": fname,
+                    "content": result,
+                }],
+                "tool_round": state.get("tool_round", 0) + 1,
+            }
+
+        # ── use_skill ──
+        if fname == "use_skill":
+            name = (args.get("skill_name") or "").strip()
+            if not name:
+                return _skill_control_return(tc, "use_skill：未提供 skill_name。", stack, state)
+            if switch_count >= MAX_SKILL_SWITCHES:
+                result = f"use_skill：已达技能切换上限（{MAX_SKILL_SWITCHES}），无法加载「{name}」。"
+                return _skill_control_return(tc, result, stack, state)
+            skill = await get_skill_by_name(db, name, tenant_id)
+            if not skill or not skill.is_active:
+                result = f"use_skill：未找到可用技能「{name}」（可先调用 list_skills 查看）。"
+                return _skill_control_return(tc, result, stack, state)
+            if skill.id in loaded:
+                result = f"use_skill：技能「{skill.name}」已在生效栈中，无需重复加载。"
+                return _skill_control_return(tc, result, stack, state)
+
+            system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name)
+            new_skill = {
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description,
+                "folder_name": skill.folder_name,
+                "system_prompt": system_prompt,
+                "source": "chained",
+            }
+
+            # Union tools (dedup by name) so previously-loaded tools persist.
+            existing = state.get("available_tools", []) or []
+            existing_names = {t.get("function", {}).get("name") for t in existing}
+            added = [t for t in new_tools if t.get("function", {}).get("name") not in existing_names]
+            union_tools = existing + added
+            added_names = [t.get("function", {}).get("name") for t in added]
+
+            stack = stack + [new_skill]
+            result = (
+                f"已加载技能「{skill.name}」，新增工具：{added_names or '（无新工具）'}。"
+                "其规则现已生效，可直接调用相关工具；如需结束该技能请调用 done_skill 返回上一层。"
+            )
+            logger.info("Skill switcher: use_skill '%s' → stack depth=%d, added_tools=%d",
+                        skill.name, len(stack), len(added))
+            return {
+                "active_skill": new_skill,
+                "skill_stack": stack,
+                "loaded_skill_ids": loaded + [skill.id],
+                "skill_switch_count": switch_count + 1,
+                "available_tools": union_tools,
+                "tool_results": [result],
+                "tool_messages": [{
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", "call_meta"),
+                    "name": fname,
+                    "content": result,
+                }],
+                "tool_round": state.get("tool_round", 0) + 1,
+            }
+
+    # Unknown control tool — should not happen, but fail safe.
+    result = f"未知元工具：{fname}"
+    return _skill_control_return(tc, result, stack, state)
 
 
 # ── Retrieval ──
@@ -681,6 +902,10 @@ async def tool_executor_node(state: dict) -> dict:
         tool_def = tool_lookup.get(tname, {})
         tool_source = tool_def.get("_source", "mcp")
 
+        # ── Meta control tools should never reach the executor ──
+        if tool_source == "meta":
+            return {"result": f"[{tname}] 元工具不应在工具执行阶段调用", "endpoint": None}
+
         # ── Script tool path ──
         if tool_source == "script" and folder_name:
             script_path = tool_def.get("_script_path", "")
@@ -689,7 +914,10 @@ async def tool_executor_node(state: dict) -> dict:
             repl_config = await _get_repl_server_config()
             if not repl_config:
                 return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
-            result = await execute_script_tool(folder_name, script_path, func_name, args, repl_config)
+            result = await execute_script_tool(
+                folder_name, script_path, func_name, args, repl_config,
+                workspace_id=state.get("workspace_id"),
+            )
             if result.ok:
                 return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
             return {"result": f"[{tname}] 错误: {result.error}", "endpoint": repl_config.get("endpoint")}
@@ -733,7 +961,13 @@ async def tool_executor_node(state: dict) -> dict:
             else:
                 return {"result": f"[{tname}] 错误: no MCP server binding for tool", "endpoint": None}
         try:
-            res = await _mc.call_tool(cfg, tname, args)
+            # Share the conversation workspace so chained skills can read
+            # files produced by an earlier skill's tool call.
+            call_args = dict(args)
+            ws_id = state.get("workspace_id")
+            if ws_id:
+                call_args["workspace_id"] = ws_id
+            res = await _mc.call_tool(cfg, tname, call_args)
             logger.warning(">>> tool_executor RESULT: tool=%s ok=%s result=%.200s <<<",
                           tname, res.ok, (res.result or res.error)[:200])
             if res.ok:

@@ -19,6 +19,7 @@ from app.services.agent_state import EragAgentState
 from app.services.agent_nodes import (
     skill_router_node,
     skill_loader_node,
+    skill_switcher_node,
     parallel_retrieval_node,
     tool_decision_node,
     tool_executor_node,
@@ -33,6 +34,7 @@ def _build_graph() -> StateGraph:
     # Register nodes
     workflow.add_node("router", skill_router_node)
     workflow.add_node("skill_loader", skill_loader_node)
+    workflow.add_node("skill_switcher", skill_switcher_node)
     workflow.add_node("retrieval", parallel_retrieval_node)
     workflow.add_node("tool_decision", tool_decision_node)
     workflow.add_node("tool_executor", tool_executor_node)
@@ -61,20 +63,27 @@ def _build_graph() -> StateGraph:
     # Retrieval → tool_decision
     workflow.add_edge("retrieval", "tool_decision")
 
-    # Tool decision → tool_executor (has tools) or build_context (no tools)
+    # Tool decision → skill_switcher (meta control) | tool_executor | build_context
     def route_after_tool_decision(state: dict) -> str:
-        if state.get("tool_calls"):
+        tool_calls = state.get("tool_calls")
+        if tool_calls:
+            fname = tool_calls[0].get("function", {}).get("name", "")
+            if fname in ("use_skill", "done_skill", "list_skills"):
+                return "skill_switcher"
             return "tool_executor"
         return "build_context"
 
     workflow.add_conditional_edges(
         "tool_decision",
         route_after_tool_decision,
-        {"tool_executor": "tool_executor", "build_context": "build_context"},
+        {"skill_switcher": "skill_switcher", "tool_executor": "tool_executor", "build_context": "build_context"},
     )
 
     # Tool executor → back to tool_decision (for multi-round)
     workflow.add_edge("tool_executor", "tool_decision")
+
+    # Skill switcher → back to tool_decision (re-decide with updated skill/tools)
+    workflow.add_edge("skill_switcher", "tool_decision")
 
     # Build context → END
     workflow.add_edge("build_context", END)

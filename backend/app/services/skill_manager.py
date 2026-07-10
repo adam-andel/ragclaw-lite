@@ -455,3 +455,20 @@ async def get_skill_by_folder(session: AsyncSession, folder_name: str) -> Skill 
     """Get a skill DB row by folder_name."""
     result = await session.execute(select(Skill).where(Skill.folder_name == folder_name))
     return result.scalar_one_or_none()
+
+
+async def get_skill_by_name(
+    session: AsyncSession, name: str, tenant_id: str | None = None
+) -> Skill | None:
+    """Get an active skill DB row by display name OR folder_name.
+
+    Used by Route D skill orchestration (use_skill). Tenant-scoped when
+    tenant_id is provided, mirroring the auto-router's scoping.
+    """
+    stmt = select(Skill).where(
+        (Skill.is_active == True)  # noqa: E712
+        & ((Skill.name == name) | (Skill.folder_name == name))
+    )
+    if tenant_id:
+        stmt = stmt.where(Skill.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
