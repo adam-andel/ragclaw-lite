@@ -414,7 +414,7 @@ function handleKeydown(e: KeyboardEvent) {
 
       <!-- Centered panel: KB list preview -->
       <div v-else-if="showPicker && emptyMode === 'kb'" class="center-panel">
-        <div class="center-panel-box">
+        <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' }">
           <div class="empty-icon">🧠</div>
           <h3>新建对话 — 选择知识库</h3>
           <div class="center-panel-list">
@@ -425,9 +425,17 @@ function handleKeydown(e: KeyboardEvent) {
               @keydown.enter.prevent="selectedKbId = kb.id"
               @keydown.space.prevent="selectedKbId = kb.id"
             >
-              <strong>{{ kb.name }}</strong>
-              <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-              <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+              <div class="kb-pick-inner">
+                <div class="kb-pick-avatar">📚</div>
+                <div class="kb-pick-body">
+                  <strong class="kb-pick-name">{{ kb.name }}</strong>
+                  <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
+                  <div class="kb-pick-stats">
+                    <span class="kb-pick-chip">{{ kb.doc_count }} 文档</span>
+                    <span class="kb-pick-chip">{{ kb.vector_count }} 分片</span>
+                  </div>
+                </div>
+              </div>
             </NCard>
           </div>
           <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
@@ -541,7 +549,7 @@ function handleKeydown(e: KeyboardEvent) {
       :kbs="kbs"
       :selected-id="selectedKbId"
       :show-all="false"
-      :sortable="false"
+      :sortable="true"
       :page-size="12"
       @select="onKbPick"
     />
@@ -685,11 +693,19 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-text);
 }
 .center-panel-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
   margin: 12px 0 8px;
   text-align: left;
+}
+/* KB 预览面板单独加宽，以容纳 3 列网格（与 KbPickerModal 观感一致），不影响对话面板 */
+.center-panel-box-wide { max-width: 680px; }
+@media (max-width: 640px) {
+  .center-panel-list { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 420px) {
+  .center-panel-list { grid-template-columns: 1fr; }
 }
 .center-panel-actions {
   display: flex;
@@ -814,18 +830,33 @@ function handleKeydown(e: KeyboardEvent) {
 
 .kb-pick-card {
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s;
-  border-left: 3px solid transparent;
+  transition: border-color .2s, box-shadow .2s, background .2s, transform .15s;
+  border: 1px solid var(--color-border);
 }
-.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
-.kb-pick-card.active {
-  border-color: var(--color-primary);
-  border-left-color: var(--color-primary);
+.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.kb-pick-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+.kb-pick-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.kb-pick-inner { display: flex; align-items: flex-start; gap: 10px; }
+.kb-pick-avatar {
+  flex-shrink: 0;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
   background: var(--color-primary-soft);
 }
-.kb-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
-.kb-pick-desc { display: block; font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-pick-meta { font-size: 0.65rem; color: var(--color-text-muted); }
+.kb-pick-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.kb-pick-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pick-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.kb-pick-chip {
+  font-size: 0.7rem; line-height: 1.4;
+  color: var(--color-text-muted);
+  background: var(--color-surface-2, #f1f5f9);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+  padding: 1px 8px;
+}
 .picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
