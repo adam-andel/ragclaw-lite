@@ -92,7 +92,10 @@ class ConfigManager:
     """Thread-safe singleton for runtime configuration."""
 
     _instance = None
-    _lock = threading.Lock()
+    # RLock (reentrant) — get_config_safe() holds the lock and then reads
+    # other (locked) properties; a plain Lock would self-deadlock the same
+    # thread and freeze the entire event loop.
+    _lock = threading.RLock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -338,7 +341,7 @@ class ConfigManager:
             c = dict(self._config)
             c["llm_api_key"] = _mask(c.get("llm_api_key", ""))
             c["embedding_api_key"] = _mask(c.get("embedding_api_key", ""))
-            c.setdefault("agent_max_tokens", self.agent_max_tokens)
+            c.setdefault("agent_max_tokens", self._config.get("agent_max_tokens", 8192))
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
             c["api_key_source"] = "env" if self._key_from_env else "stored"
             return c

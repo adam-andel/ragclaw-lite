@@ -1,5 +1,10 @@
 """EnterpriseRAG-Lite FastAPI application entry point."""
 
+import asyncio as _asyncio
+import faulthandler
+import threading
+import time
+import traceback as _tb
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,10 +16,62 @@ from app.database import init_db, async_session
 from app.models.system_setting import SystemSetting  # noqa: F401
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Loop-stall watchdog (diagnostic).
+# A frozen event loop (0% CPU, all endpoints including /health hanging) is
+# almost always a deadlock or a sync blocking call on the loop thread. This
+# thread pings the loop every few seconds; if the loop stops responding we
+# dump every thread + asyncio coroutine stack to /tmp/loop_stall.txt so the
+# root cause can be read with `docker exec erag-lite cat /tmp/loop_stall.txt`.
+# ───────────────────────────────────────────────────────────────────────────
+_LOOP_STALL_PATH = "/tmp/loop_stall.txt"
+
+
+def _dump_asyncio_stacks(f, loop) -> None:
+    f.write("\n=== asyncio tasks (loop thread) ===\n")
+    try:
+        for t in _asyncio.all_tasks(loop):
+            f.write(f"\n--- task {t.get_name()} {t} ---\n")
+            for frame in t.get_stack(limit=50):
+                f.write("".join(_tb.format_stack([frame], limit=1)))
+    except Exception as e:  # pragma: no cover - best effort
+        f.write(f"  (failed to read asyncio stacks: {e})\n")
+
+
+def _loop_watchdog(loop) -> None:
+    while True:
+        time.sleep(8)
+        try:
+            fut = _asyncio.run_coroutine_threadsafe(_asyncio.sleep(0), loop)
+            fut.result(timeout=15)
+        except Exception:
+            try:
+                with open(_LOOP_STALL_PATH, "w") as f:
+                    f.write("LOOP STALLED at " + time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+                    faulthandler.dump_traceback(f, all_threads=True)
+                    _dump_asyncio_stacks(f, loop)
+                print(f"[watchdog] Loop stall dumped -> {_LOOP_STALL_PATH}")
+            except Exception:
+                pass
+            time.sleep(30)  # avoid dumping in a tight loop
+
+
+def _start_loop_watchdog() -> None:
+    try:
+        loop = _asyncio.get_running_loop()
+        threading.Thread(
+            target=_loop_watchdog, args=(loop,), daemon=True, name="loop-watchdog"
+        ).start()
+        print("[watchdog] loop-stall watchdog started")
+    except Exception as e:  # pragma: no cover
+        print(f"[watchdog] failed to start: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    _start_loop_watchdog()
     await init_db()
     # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
