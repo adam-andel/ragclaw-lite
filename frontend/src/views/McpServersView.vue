@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NPagination, NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
+import StatusToggle from '@/components/common/StatusToggle.vue'
 import {
   listServers, createServer, updateServer, deleteServer, testServer, refreshTools,
 } from '@/api/mcp'
@@ -196,14 +197,10 @@ async function handleRefresh() {
               <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">禁用</NTag>
             </div>
             <div class="mcp-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="server.is_active"
                 @update:value="() => handleToggle(server)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
 

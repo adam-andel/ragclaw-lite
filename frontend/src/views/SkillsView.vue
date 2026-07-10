@@ -10,6 +10,7 @@ import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
 } from '@/api/skills'
+import StatusToggle from '@/components/common/StatusToggle.vue'
 import { listServers } from '@/api/mcp'
 import type { Skill, SkillCreatePayload, MCPServer } from '@/types'
 
@@ -372,14 +373,10 @@ onMounted(() => {
               <NTag v-if="!skill.is_active" size="tiny" :bordered="false" type="default" class="sk-disabled-tag">禁用</NTag>
             </div>
             <div class="sk-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="skill.is_active"
                 @update:value="() => handleToggle(skill)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
 

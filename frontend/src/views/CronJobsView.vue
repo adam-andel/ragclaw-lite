@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NPagination, NEmpty,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import StatusToggle from '@/components/common/StatusToggle.vue'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, listCronJobRuns,
@@ -288,14 +289,10 @@ function isPaused(job: CronJob) {
               <NTag :type="statusType(job.status)" size="tiny" :bordered="false">{{ statusLabel(job.status) }}</NTag>
             </div>
             <div class="cj-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="!isPaused(job)"
                 @update:value="() => handleToggle(job)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
 

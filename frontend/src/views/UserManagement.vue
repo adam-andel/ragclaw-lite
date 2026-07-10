@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSwitch, NSpin, NPagination } from 'naive-ui'
+import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NPagination } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import StatusToggle from '@/components/common/StatusToggle.vue'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -164,15 +165,11 @@ function formatTime(t: string) {
               </div>
             </div>
             <div class="um-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="user.is_active"
                 :disabled="user.id === auth.user?.id"
                 @update:value="() => toggleStatus(user)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
           <div class="um-card-meta">
