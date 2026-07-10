@@ -171,11 +171,23 @@ function onAfterLeave() {
 }
 .kb-picker-card {
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s, background .2s, transform .15s;
-  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
 }
-.kb-picker-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
-.kb-picker-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+.kb-picker-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.kb-picker-card:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
 .kb-picker-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-picker-inner { display: flex; align-items: flex-start; gap: 10px; }
 .kb-picker-avatar {

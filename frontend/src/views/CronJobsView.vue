@@ -492,24 +492,32 @@ function isPaused(job: CronJob) {
 }
 .cj-card {
   cursor: pointer;
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .cj-card:hover {
-  box-shadow: var(--shadow-sm);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 .cj-card:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -1px;
-  border-radius: var(--radius);
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 .cj-card-disabled {
-  background: #f1f5f9;
+  background: var(--color-card-bg-disabled);
+  --n-color: var(--color-card-bg-disabled);
+  cursor: not-allowed;
 }
 .cj-card-disabled:hover {
+  border-color: var(--color-card-border);
   box-shadow: var(--shadow-sm);
-}
-html.dark .cj-card-disabled {
-  background: #334155;
+  transform: none;
 }
 .cj-card :deep(.n-card__footer) {
   padding-top: 6px;

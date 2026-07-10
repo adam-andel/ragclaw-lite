@@ -365,16 +365,27 @@ async function handleRefresh() {
   gap: 16px;
 }
 .mcp-card {
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .mcp-card:hover {
-  box-shadow: var(--shadow-sm);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 .mcp-card-disabled {
-  background: #f1f5f9;
+  background: var(--color-card-bg-disabled);
+  --n-color: var(--color-card-bg-disabled);
+  cursor: not-allowed;
 }
-html.dark .mcp-card-disabled {
-  background: #334155;
+.mcp-card-disabled:hover {
+  border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transform: none;
 }
 .mcp-card-header {
   display: flex;

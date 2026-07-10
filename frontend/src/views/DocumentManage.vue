@@ -845,7 +845,7 @@ async function loadSupportedTypes() {
       <div class="kb-form">
         <NInput v-model:value="kbFormName" placeholder="知识库名称" />
         <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选）：给大模型补充本知识库或团队背景，使其更贴合需求" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -1020,7 +1020,7 @@ async function loadSupportedTypes() {
               @positive-click="handleUnlink(doc)"
             >
               <template #trigger>
-                <NButton size="tiny" type="error" class="doc-unlink-btn" @click.stop>
+                <NButton size="tiny" quaternary type="error" class="doc-unlink-btn" @click.stop>
                   <template #icon><NIcon><Remove /></NIcon></template>
                 </NButton>
               </template>
@@ -1286,7 +1286,7 @@ async function loadSupportedTypes() {
             </div>
           </div>
           <div class="share-add-more">
-            <NButton dashed block @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
+            <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
               <template #icon><NIcon><component :is="showAddMoreUsers ? Remove : Add" /></NIcon></template>
               添加更多用户
             </NButton>
@@ -1476,9 +1476,25 @@ async function loadSupportedTypes() {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
-.dm-card { cursor: pointer; transition: box-shadow .2s, border-color .2s; }
-.dm-card:hover { box-shadow: var(--shadow-sm); }
-.dm-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
+.dm-card {
+  cursor: pointer;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border-color: var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.dm-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.dm-card:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
 
 .doc-card-header {
   display: flex;
@@ -1494,9 +1510,42 @@ async function loadSupportedTypes() {
   transition: opacity .15s;
   padding: 0 4px;
   height: 22px;
+  --n-color: transparent;
+  --n-color-hover: transparent;
+  --n-color-pressed: transparent;
+  --n-color-focus: transparent;
 }
 .doc-unlink-btn :deep(.n-icon) {
   font-size: 13px;
+  color: #dc2626;
+}
+:global(html.dark) .doc-unlink-btn :deep(.n-icon) {
+  color: #fca5a5;
+}
+/* 添加/收起用户按钮：复用无背景样式，但用主色（非红色，非破坏性操作） */
+.share-add-more-btn {
+  opacity: 1;
+  margin-left: 0;
+  width: 100%;
+  justify-content: center;
+  --n-text-color: #3b82f6;
+  --n-text-color-hover: #2563eb;
+  --n-text-color-pressed: #2563eb;
+  --n-icon-color: #3b82f6;
+}
+.share-add-more-btn :deep(.n-icon) {
+  font-size: 13px;
+  color: #3b82f6;
+}
+:global(html.dark) .share-add-more-btn,
+:global(html.dark) .share-add-more-btn :deep(.n-icon) {
+  --n-text-color: #60a5fa;
+  --n-text-color-hover: #93c5fd;
+  --n-icon-color: #60a5fa;
+  color: #60a5fa;
+}
+:global(html.dark) .doc-unlink-btn :deep(.n-icon) {
+  color: #f87171;
 }
 .dm-card:hover .doc-unlink-btn { opacity: 1; }
 .doc-card-title-wrap {
@@ -1588,7 +1637,20 @@ async function loadSupportedTypes() {
 /* Chunks */
 .chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
 .chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
-.chunk-card { margin-bottom: 8px; }
+.chunk-card {
+  margin-bottom: 8px;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border-color: var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.chunk-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
 .chunk-card:last-of-type { margin-bottom: 0; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .chunk-meta-tokens { font-size: var(--text-xs); color: var(--color-text-muted); }
@@ -1671,12 +1733,17 @@ async function loadSupportedTypes() {
 .share-card {
   position: relative;
   padding: 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-card-border);
   border-radius: var(--radius);
-  background: var(--color-surface);
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
-.share-card:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary); }
+.share-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
 .share-card:hover .share-card-remove { opacity: 1; }
 .share-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .share-card-remove { opacity: 0; transition: opacity .2s; flex-shrink: 0; }

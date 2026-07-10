@@ -25,6 +25,15 @@
   --color-surface: #ffffff;
   --color-surface-2: #f1f5f9;
   --color-border: #e5e9f0;
+  --color-border-strong: #d5dbe6;
+
+  /* ── Card (canonical, aligned to ChatView .conv-row) ──
+     启用态：背景 = surface，边框 = border，阴影 = shadow-sm
+     hover：边框 primary + shadow + 上浮（见各卡片样式）
+     禁用态：背景比启用态更暗 */
+  --color-card-bg: var(--color-surface);
+  --color-card-border: var(--color-border);
+  --color-card-bg-disabled: var(--color-surface-2);
 
   /* ── Colors: Text ── */
   --color-text: #1e2433;
@@ -83,6 +92,11 @@ html.dark {
   --color-surface: #1e293b;
   --color-surface-2: #334155;
   --color-border: #334155;
+  --color-border-strong: #3d4a5c;
+  /* 卡片暗色配色基准：启用态 = conv-row 效果（bg = surface #1e293b + border #334155）；禁用态更暗 */
+  --color-card-bg: var(--color-surface);
+  --color-card-border: var(--color-border);
+  --color-card-bg-disabled: #172033;
   --color-text: #e2e8f0;
   --color-text-muted: #94a3b8;
 
