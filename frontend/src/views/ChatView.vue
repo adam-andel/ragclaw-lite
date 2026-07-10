@@ -250,6 +250,9 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         }
       } else if (event.type === 'citation') {
         proxyMsg.citations.push(event.citation)
+      } else if (event.type === 'agent_step') {
+        if (!proxyMsg.agentSteps) proxyMsg.agentSteps = []
+        proxyMsg.agentSteps.push(event)
       } else if (event.type === 'error') {
         streamedText = '❌ 错误: ' + event.message
         break
@@ -298,7 +301,7 @@ async function sendMessage() {
   messages.value.push(userMsg)
   inputText.value = ''
 
-  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
   messages.value.push(assistantMsg)
   const proxyMsg = messages.value[messages.value.length - 1]
   isPinnedToBottom.value = true
@@ -316,7 +319,7 @@ async function regenerateAnswer(assistantMsgId: string) {
   if (userMsg.role !== 'user') return
 
   // replace old assistant message with fresh placeholder
-  const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], created_at: new Date().toISOString() }
+  const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
   messages.value.splice(idx, 1, newAssistant)
   const proxyMsg = messages.value[idx]
   isPinnedToBottom.value = true

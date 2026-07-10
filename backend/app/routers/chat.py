@@ -144,6 +144,10 @@ async def chat_stream(
         async def on_queue_position(pos: int) -> None:
             await sse_queue.put(_sse("queue", {"position": pos}))
 
+        def emit_agent_step(stage: str, message: str, **extra) -> None:
+            """Stream an agent_step progress event (Route D observability)."""
+            enqueue("agent_step", {"stage": stage, "message": message, **extra})
+
         async def producer():
             try:
                 from app.services.agent_graph import erag_agent_graph
@@ -202,6 +206,7 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "skip_cache": request.skip_cache,
                         "kb_prompt": kb_prompt,
+                        "emit": emit_agent_step,
                     }
 
                     state = await erag_agent_graph.run(initial_state)

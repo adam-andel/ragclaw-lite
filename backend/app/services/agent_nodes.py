@@ -325,6 +325,10 @@ def _build_meta_skill_tools() -> list[dict]:
                             "type": "string",
                             "description": "要使用的技能名称，例如「文档生成助手」。可先调用 list_skills 查看可用技能。",
                         },
+                        "reason": {
+                            "type": "string",
+                            "description": "调用该技能的原因/目的，例如「需要先生成 PPT 文档，再返回进行美化」。会展示给用户作为处理过程。",
+                        },
                     },
                     "required": ["skill_name"],
                 },
@@ -402,6 +406,27 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
     return system_prompt, all_tools
 
 
+# ── Agent-step streaming (Route D observability) ──
+_TOOL_LABELS = {
+    "run_python": "执行 Python 脚本",
+    "read_skill_resource": "读取技能资料",
+}
+
+
+def _emit(state: dict, stage: str, message: str, **extra) -> None:
+    """Push an agent_step progress event to the SSE stream, if a callback is wired.
+
+    Must never raise — a broken emit must not interrupt the agent graph.
+    """
+    fn = state.get("emit")
+    if not fn:
+        return
+    try:
+        fn(stage, message, **extra)
+    except Exception:
+        pass
+
+
 async def skill_loader_node(state: dict) -> dict:
     """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
 
@@ -425,6 +450,8 @@ async def skill_loader_node(state: dict) -> dict:
 
     # Always-available meta tools for orchestration (Route D)
     all_tools = all_tools + _build_meta_skill_tools()
+
+    _emit(state, "skill_load", f"已加载技能：{active_skill.get('name', '?')}", skill=active_skill.get("name"))
 
     return {
         "active_skill": updated_skill,
@@ -508,6 +535,7 @@ async def skill_switcher_node(state: dict) -> dict:
             stack = stack[:-1]
             prev = stack[-1]
             result = f"已返回上一层技能：「{prev.get('name')}」。其规则与工具现已生效。"
+            _emit(state, "skill_return", f"返回上一层技能：「{prev.get('name')}」", skill=prev.get("name"))
             return {
                 "active_skill": prev,
                 "skill_stack": stack,
@@ -525,16 +553,20 @@ async def skill_switcher_node(state: dict) -> dict:
         if fname == "use_skill":
             name = (args.get("skill_name") or "").strip()
             if not name:
+                _emit(state, "skill_switch_fail", "use_skill：未提供 skill_name。")
                 return _skill_control_return(tc, "use_skill：未提供 skill_name。", stack, state)
             if switch_count >= MAX_SKILL_SWITCHES:
                 result = f"use_skill：已达技能切换上限（{MAX_SKILL_SWITCHES}），无法加载「{name}」。"
+                _emit(state, "skill_switch_fail", result, skill=name)
                 return _skill_control_return(tc, result, stack, state)
             skill = await get_skill_by_name(db, name, tenant_id)
             if not skill or not skill.is_active:
                 result = f"use_skill：未找到可用技能「{name}」（可先调用 list_skills 查看）。"
+                _emit(state, "skill_switch_fail", result, skill=name)
                 return _skill_control_return(tc, result, stack, state)
             if skill.id in loaded:
                 result = f"use_skill：技能「{skill.name}」已在生效栈中，无需重复加载。"
+                _emit(state, "skill_switch_fail", result, skill=skill.name)
                 return _skill_control_return(tc, result, stack, state)
 
             system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name)
@@ -561,6 +593,11 @@ async def skill_switcher_node(state: dict) -> dict:
             )
             logger.info("Skill switcher: use_skill '%s' → stack depth=%d, added_tools=%d",
                         skill.name, len(stack), len(added))
+            reason = (args.get("reason") or "").strip()
+            switch_msg = f"切换并加载「{skill.name}」"
+            if reason:
+                switch_msg += f"：{reason}"
+            _emit(state, "skill_switch", switch_msg, skill=skill.name, reason=reason)
             return {
                 "active_skill": new_skill,
                 "skill_stack": stack,
@@ -579,6 +616,7 @@ async def skill_switcher_node(state: dict) -> dict:
 
     # Unknown control tool — should not happen, but fail safe.
     result = f"未知元工具：{fname}"
+    _emit(state, "skill_switch_fail", result)
     return _skill_control_return(tc, result, stack, state)
 
 
@@ -587,6 +625,7 @@ async def skill_switcher_node(state: dict) -> dict:
 async def parallel_retrieval_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
+    _emit(state, "retrieval", "检索知识库…")
     query, kb_id, user_id = state["query"], state["kb_id"], state.get("user_id", "")
     t_start = time.time()
     loop = asyncio.get_running_loop()
@@ -604,6 +643,8 @@ async def parallel_retrieval_node(state: dict) -> dict:
         logger.warning("Retrieval error: %s", results[0])
     rag_context, citations = _build_context(retrieved)
     memory_context = _build_memory_context(mem_raw) if mem_raw else ""
+    chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
+    _emit(state, "retrieval_done", f"检索完成，命中 {chunk_count} 段", detail=f"{chunk_count} 段")
     return {"rag_context": rag_context, "citations": citations, "memory_context": memory_context,
             "retrieval_ms": round((time.time() - t_start) * 1000)}
 
@@ -802,6 +843,7 @@ async def tool_decision_node(state: dict) -> dict:
 
         if tool_calls:
             tool_msg = {"role": "assistant", "content": content or "", "tool_calls": tool_calls}
+            _emit(state, "round", f"第 {tool_round + 1} 轮工具调用")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
         logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
@@ -898,6 +940,8 @@ async def tool_executor_node(state: dict) -> dict:
             args = json.loads(func.get("arguments", "{}"))
         except json.JSONDecodeError:
             args = {}
+        label = _TOOL_LABELS.get(tname, tname)
+        _emit(state, "tool", f"执行工具：{label}", tool=tname)
 
         tool_def = tool_lookup.get(tname, {})
         tool_source = tool_def.get("_source", "mcp")
@@ -990,6 +1034,11 @@ async def tool_executor_node(state: dict) -> dict:
 
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
+        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r)
+        if fm:
+            fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
+            tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
+            _emit(state, "tool_done", f"已生成文件：{fname}", tool=tcname, detail=fname)
     result_msgs = []
     for i, tc in enumerate(tool_calls):
         func = tc.get("function", {})

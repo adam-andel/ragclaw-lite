@@ -5,7 +5,7 @@ retrieval, and tool calls; LLM generation and SSE streaming happen
 outside the graph in chat.py.
 """
 
-from typing import TypedDict, Annotated
+from typing import TypedDict, Annotated, Callable
 import operator
 
 
@@ -24,6 +24,9 @@ class EragAgentState(TypedDict):
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
+
+    # ── Runtime (not persisted) ──
+    emit: Callable[[str, str, dict], None] | None   # SSE progress callback (agent_step); None = no streaming
 
     # ── Router output (Layer 1: name + description only) ──
     active_skill: dict | None     # {id, name, description, folder_name, system_prompt} — top of skill_stack

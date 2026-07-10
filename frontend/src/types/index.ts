@@ -80,12 +80,21 @@ export interface ChatRequest {
   skip_cache?: boolean
 }
 
+export interface AgentStep {
+  stage: string
+  message: string
+  skill?: string
+  tool?: string
+  detail?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   citations: Citation[]
   created_at: string
+  agentSteps?: AgentStep[]
 }
 
 export interface Citation {
@@ -136,6 +145,7 @@ export type SSEEvent =
   | { type: 'token'; content: string }
   | { type: 'citation'; citation: Citation }
   | { type: 'error'; message: string }
+  | { type: 'agent_step'; stage: string; message: string; skill?: string; tool?: string; detail?: string }
   | {
       type: 'done'
       conversation_id: string

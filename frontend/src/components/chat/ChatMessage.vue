@@ -73,6 +73,8 @@ const renderedContent = computed(() => {
   return html
 })
 
+const steps = computed(() => props.message.agentSteps || [])
+
 const copied = ref(false)
 let copyTimer: number | null = null
 
@@ -203,6 +205,16 @@ onBeforeUnmount(() => {
         <span class="role-label">{{ message.role === 'user' ? '你' : 'ERAG' }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
+
+      <!-- 处理过程时间线 -->
+      <details v-if="steps.length" class="agent-steps" :open="isStreaming">
+        <summary>🤖 处理过程（{{ steps.length }}）</summary>
+        <ul class="agent-step-list">
+          <li v-for="(s, i) in steps" :key="i" :class="'step-' + s.stage">
+            <span class="step-msg">{{ s.message }}</span>
+          </li>
+        </ul>
+      </details>
 
       <!-- 阶段 1：流式中 — innerHTML 由 chatview 写入（含 think-block + cursor） -->
       <template v-if="isStreaming">
@@ -394,6 +406,35 @@ onBeforeUnmount(() => {
 .role-label { font-weight: 600; }
 .time { color: var(--color-text-muted); }
 .user .time { color: rgba(255,255,255,0.7); }
+
+.agent-steps {
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-primary-soft);
+  font-size: var(--text-sm);
+}
+.agent-steps > summary {
+  cursor: pointer;
+  padding: 6px var(--space-3);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  user-select: none;
+  list-style: none;
+  display: flex; align-items: center; gap: 4px;
+}
+.agent-steps > summary::-webkit-details-marker { display: none; }
+.agent-steps > summary::before {
+  content: '▸'; display: inline-block; transition: transform 0.15s ease; font-size: 0.8em; margin-right: 2px;
+}
+.agent-steps[open] > summary::before { transform: rotate(90deg); }
+.agent-step-list {
+  margin: 0; padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + 14px);
+  list-style: none;
+}
+.agent-step-list li {
+  padding: 2px 0; color: var(--color-text-muted); line-height: 1.6; word-break: break-word;
+}
 .message-content { line-height: 1.65; word-break: break-word; }
 .message-content.streaming { display: flex; align-items: baseline; gap: 2px; }
 .thinking-placeholder { color: var(--color-text-muted); font-style: italic; }
