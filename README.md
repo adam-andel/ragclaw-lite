@@ -81,7 +81,6 @@ erag/
 │       │   ├── agent_state.py  # LangGraph 状态定义
 │       │   ├── agent_nodes.py  # 5 个图节点
 │       │   ├── agent_graph.py  # StateGraph 编排
-│       │   ├── sse_bridge.py   # SSE 事件桥接
 │       │   ├── mcp_client.py   # MCP 客户端
 │       │   └── tool_registry.py # 工具注册表
 │       └── parsers/            # 文档解析器
