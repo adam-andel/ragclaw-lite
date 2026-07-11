@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
-  NInput, NSelect, NPagination, NPopconfirm, useMessage,
+  NInput, NSelect, NPopconfirm, useMessage,
   NIcon, NCard, NDescriptions, NDescriptionsItem,
   NCheckbox, NTooltip,
 } from 'naive-ui'
@@ -1094,11 +1094,11 @@ async function loadSupportedTypes() {
               </NButton>
             </NCard>
 
-            <div v-if="totalChunkPages > 1" class="chunk-pagination">
-              <NButton size="tiny" :disabled="chunkPage <= 1" @click="chunkPage--">上一页</NButton>
-              <span class="chunk-page-indicator">{{ chunkPage }} / {{ totalChunkPages }}</span>
-              <NButton size="tiny" :disabled="chunkPage >= totalChunkPages" @click="chunkPage++">下一页</NButton>
-            </div>
+            <AppPagination
+              :page="chunkPage"
+              :page-count="totalChunkPages"
+              @update:page="chunkPage = $event"
+            />
           </div>
 
           <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
@@ -1267,14 +1267,12 @@ async function loadSupportedTypes() {
                 </div>
               </div>
             </div>
-            <div class="share-pagination" v-if="shareUsers.length > shareAddedPageSize">
-              <NPagination
-                :page="shareAddedPage"
-                :page-size="shareAddedPageSize"
-                :item-count="shareUsers.length"
-                @update:page="shareAddedPage = $event"
-              />
-            </div>
+            <AppPagination
+              :page="shareAddedPage"
+              :page-size="shareAddedPageSize"
+              :item-count="shareUsers.length"
+              @update:page="shareAddedPage = $event"
+            />
           </div>
           <div class="share-add-more">
             <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
@@ -1318,14 +1316,12 @@ async function loadSupportedTypes() {
                   </div>
                 </div>
               </div>
-              <div class="share-pagination" v-if="unaddedUsers.length > shareUserPageSize">
-                <NPagination
-                  :page="shareUserPage"
-                  :page-size="shareUserPageSize"
-                  :item-count="unaddedUsers.length"
-                  @update:page="shareUserPage = $event"
-                />
-              </div>
+              <AppPagination
+                :page="shareUserPage"
+                :page-size="shareUserPageSize"
+                :item-count="unaddedUsers.length"
+                @update:page="shareUserPage = $event"
+              />
             </div>
           </template>
         </NSpin>
@@ -1366,14 +1362,12 @@ async function loadSupportedTypes() {
               <span class="select-doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
           </div>
-          <div class="select-docs-pagination" v-if="availableTotal > availablePageSize">
-            <NPagination
-              :page="availablePage"
-              :page-size="availablePageSize"
-              :item-count="availableTotal"
-              @update:page="onAvailablePageChange"
-            />
-          </div>
+          <AppPagination
+            :page="availablePage"
+            :page-size="availablePageSize"
+            :item-count="availableTotal"
+            @update:page="onAvailablePageChange"
+          />
         </NSpin>
         <div class="select-docs-actions">
           <div class="select-docs-left">
@@ -1653,23 +1647,6 @@ async function loadSupportedTypes() {
   font-size: var(--text-xs);
 }
 
-.chunk-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
-}
-.chunk-page-indicator {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 4em;
-  text-align: center;
-}
-
 /* KB picker modal (shared) */
 .picker-scroll { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .kb-pick-card {
@@ -1721,7 +1698,6 @@ async function loadSupportedTypes() {
 .share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; flex-shrink: 0; }
 .share-user-name { font-weight: 500; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-pagination { display: flex; justify-content: center; margin-top: 12px; }
 
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
 .select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1738,7 +1714,6 @@ async function loadSupportedTypes() {
 .select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); box-shadow: var(--shadow); }
 .select-doc-row:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .select-docs-left { display: flex; align-items: center; gap: 12px; }
 .select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
