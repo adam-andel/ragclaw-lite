@@ -87,15 +87,23 @@ const modalAttrs = computed(() => {
 <style>
 /* 统一 modal 内部布局：卡片为纵向 flex 列，内容区滚动、页脚固定在底部。
    这样无论哪个页面（如 CronJobsView 详情 15 行 / 表单 8 项、SkillsView 编辑 SKILL.md）
-   内容超高，都不会撑破 modal 框，底部操作按钮也始终可见。 */
-.app-modal .n-card {
+   内容超高，都不会撑破 modal 框，底部操作按钮也始终可见。
+
+   关键：preset="card" 时 Naive 把本组件透传的 class 直接挂在 .n-card 根元素上
+   （见 naive-ui BodyWrapper.mjs：h(NCard, { class:[n-modal, $attrs.class] })），
+   所以 .app-modal 与 .n-card 是【同一个元素】——必须用【复合选择器】
+   `.app-modal.n-card` 命中弹窗卡片本身；内容区用【直接子选择器】`> .n-card-content`。
+   切勿用后代选择器 `.app-modal .n-card` / `.app-modal .n-card-content`：那样会误命中
+   弹窗内的【嵌套 NCard】（如分块预览里每页 10 张 chunk 卡片），把每张都变成
+   max-height:85vh 的独立滚动容器，导致关闭动画期间大量多余布局/合成、卡顿变慢。 */
+.app-modal.n-card {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
 }
 /* 注意：Naive 卡片内容区类名是 `n-card-content`（单连词，非 BEM 双下划线
-   `n-card__content`），之前一度写错导致选择器无效、滚动从未生效。 */
-.app-modal .n-card-content {
+   `n-card__content`）。用直接子选择器只作用于弹窗自身内容区，不波及嵌套卡片。 */
+.app-modal.n-card > .n-card-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
