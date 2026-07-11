@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
+  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip, NSwitch,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -49,6 +49,8 @@ const config = ref<LLMConfig>({
   embedding_model: 'BAAI/bge-small-zh-v1.5',
   embedding_api_key: '',
   llm_system_prompt: '',
+  llm_system_prompt_en: '',
+  prompt_language: 'zh',
   server_host: '0.0.0.0', server_port: 8000,
   cache_ttl_seconds: 3600,
   is_configured: false,
@@ -120,6 +122,24 @@ function onProviderChange(val: string) {
   }
 }
 
+// System-prompt textarea binds to the field matching the current prompt language:
+// toggle off (zh) <-> llm_system_prompt, toggle on (en) <-> llm_system_prompt_en.
+// Both fields are persisted independently, so switching never overwrites the other.
+const systemPromptModel = computed<string>({
+  get() {
+    return config.value.prompt_language === 'en'
+      ? config.value.llm_system_prompt_en
+      : config.value.llm_system_prompt
+  },
+  set(v: string) {
+    if (config.value.prompt_language === 'en') {
+      config.value.llm_system_prompt_en = v
+    } else {
+      config.value.llm_system_prompt = v
+    }
+  },
+})
+
 function scrollTo(id: string) {
   const el = document.getElementById(id)
   if (!el) return
@@ -148,6 +168,8 @@ async function handleSave() {
       llm_concurrency: config.value.llm_concurrency,
       embedding_model: config.value.embedding_model,
       llm_system_prompt: config.value.llm_system_prompt,
+      llm_system_prompt_en: config.value.llm_system_prompt_en,
+      prompt_language: config.value.prompt_language,
       server_host: config.value.server_host,
       server_port: config.value.server_port,
       cache_ttl_seconds: config.value.cache_ttl_seconds,
@@ -482,12 +504,38 @@ async function handleSaveSandbox() {
               </span>
             </template>
             <NInput
-              v-model:value="config.llm_system_prompt"
+              v-model:value="systemPromptModel"
               type="textarea"
               :rows="10"
               placeholder="请输入系统提示词..."
               @input="clearTest"
             />
+          </NFormItem>
+
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                Agent 提示词语言
+                <NTooltip trigger="hover" :width="320">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                    控制 Agent Graph 内部提示词（意图路由 + 工具强制 JSON）使用的语言。<br/>
+                    默认 <b>中文</b>；切到 <b>English</b> 可对比英文主导模型（GPT / Claude / DeepSeek 等）的指令遵循率。<br/>
+                    修改后立即生效，无需重启，便于 A/B 对比。
+                  </NTooltip>
+              </span>
+            </template>
+            <NSpace align="center">
+              <NSwitch
+                v-model:value="config.prompt_language"
+                checked-value="en"
+                unchecked-value="zh"
+              />
+              <span class="muted" style="font-size: 13px">
+                {{ config.prompt_language === 'en' ? 'English（英文）' : '中文（默认）' }}
+              </span>
+            </NSpace>
           </NFormItem>
         </section>
 

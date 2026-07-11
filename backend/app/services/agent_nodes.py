@@ -25,6 +25,83 @@ MAX_TOOL_ROUNDS = 5
 MAX_SKILL_SWITCHES = 4  # Route D: cap on use_skill pushes to prevent runaway chaining
 
 
+# ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
+# zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
+# improve instruction-following on English-dominant base models (GPT/Claude/DeepSeek etc.).
+
+def build_intent_router_prompt(query: str, skill_list: str, lang: str = "zh") -> str:
+    """Layer-1 intent-router prompt. lang='zh' reproduces the original behavior."""
+    if lang == "en":
+        return (
+            "You are an intent router. Based on the user's question, select the most "
+            "appropriate skill from the following list.\n\n"
+            "Available skills:\n" + skill_list + "\n\n"
+            "Rules:\n"
+            "- If the user's question closely matches a skill, select that skill.\n"
+            '- If the user\'s question does not match any skill, return "default".\n'
+            "- Return ONLY the skill name, with no other output.\n\n"
+            "User question: " + query + "\n\n"
+            "Skill name:"
+        )
+    return (
+        "你是一个意图路由器。根据用户的问题，从以下技能中选择最合适的一个。\n\n"
+        f"可用技能：\n{skill_list}\n\n"
+        "规则：\n"
+        "- 如果用户的问题与某个技能高度匹配，选择该技能\n"
+        "- 如果用户的问题与所有技能都不匹配，返回 \"default\"\n"
+        "- 只返回技能名称，不要有任何其他输出\n\n"
+        f"用户问题：{query}\n\n"
+        "技能名称："
+    )
+
+
+def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
+    """Forced tool-call JSON system prompt. lang='zh' reproduces the original behavior."""
+    if lang == "en":
+        return (
+            "# ⚠️ CRITICAL INSTRUCTION: Output a tool-call JSON\n\n"
+            "You MUST NOT reply to the user directly, invent file links, or fabricate "
+            "download URLs. You MUST immediately output a single pure JSON object to call a tool.\n\n"
+            "## When you MUST use a tool\n"
+            "- User asks to generate / create / write / save a file -> MUST call run_python\n"
+            "- User asks to run code, do data processing, or compute -> MUST call run_python\n"
+            "- Any file read/write operation -> MUST call run_python\n\n"
+            "## Available tools\n" + tool_desc + "\n\n"
+            "## Output format\n"
+            '{"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n\n'
+            "## Rules\n"
+            "- Output ONLY the JSON object above, with no extra text.\n"
+            '- You MUST use double quotes (") and MUST NOT use single quotes (\').\n'
+            "- You MUST NOT use => arrow syntax; use the standard JSON colon (:).\n"
+            "- Do NOT wrap the JSON in ``` code fences.\n"
+            "- Do NOT output [TOOL_CALL] or <tool_call> tags.\n"
+            '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
+            "- Do NOT output the final reply - that happens in the next stage.\n"
+            "- NEVER fabricate File, file paths, or UUIDs."
+        )
+    return (
+        "# ⚠️ 关键指令：输出工具调用 JSON\n\n"
+        "**绝对禁止**直接回复用户、编造文件链接或下载地址。"
+        "你必须立即输出一个纯 JSON 对象来调用工具。\n\n"
+        "## 何时必须使用工具\n"
+        "- 用户要求「生成」「创建」「写入」「保存」文件 → **必须**调用 run_python\n"
+        "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
+        "- 任何读写文件的操作 → **必须**调用 run_python\n\n"
+        "## 可用工具\n" + tool_desc + "\n\n"
+        "## 输出格式\n"
+        '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
+        "## 规则\n"
+        "- 只输出上述 JSON 对象，不要附加任何文字\n"
+        "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
+        "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
+        "- 不要用 ``` 包裹 JSON\n"
+        "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
+        "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
+        "- 不要输出最终回复——那是下一阶段的事\n"
+        "- **绝对不要**编造File、文件路径或 uuid"
+    )
+
+
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
     import re
     _clog = logging.getLogger("erag.agent")
@@ -280,7 +357,7 @@ async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
     if not skills:
         return None
     skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills)
-    prompt = f"你是一个意图路由器。根据用户的问题，从以下技能中选择最合适的一个。\n\n可用技能：\n{skill_list}\n\n规则：\n- 如果用户的问题与某个技能高度匹配，选择该技能\n- 如果用户的问题与所有技能都不匹配，返回 \"default\"\n- 只返回技能名称，不要有任何其他输出\n\n用户问题：{query}\n\n技能名称："
+    prompt = build_intent_router_prompt(query, skill_list, lang=config_manager.prompt_language)
     try:
         chosen = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip().strip('"').strip("'").strip('。!').strip()
         for s in skills:
@@ -727,27 +804,7 @@ async def tool_decision_node(state: dict) -> dict:
         # Use tool_choice="auto" and steer via prompt. Even when the LLM ignores
         # the JSON instruction, its alternate output (Python code blocks) is caught
         # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
-        tool_system = (
-            "# ⚠️ 关键指令：输出工具调用 JSON\n\n"
-            "**绝对禁止**直接回复用户、编造文件链接或下载地址。"
-            "你必须立即输出一个纯 JSON 对象来调用工具。\n\n"
-            + "## 何时必须使用工具\n"
-            + "- 用户要求「生成」「创建」「写入」「保存」文件 → **必须**调用 run_python\n"
-            + "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
-            + "- 任何读写文件的操作 → **必须**调用 run_python\n\n"
-            + "## 可用工具\n" + tool_desc + "\n\n"
-            + "## 输出格式\n"
-            + '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
-            + "## 规则\n"
-            + "- 只输出上述 JSON 对象，不要附加任何文字\n"
-            + "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
-            + "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
-            + "- 不要用 ``` 包裹 JSON\n"
-            + "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
-            + "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
-            + "- 不要输出最终回复——那是下一阶段的事\n"
-            + "- **绝对不要**编造File、文件路径或 uuid"
-        )
+        tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
         messages = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt + kb_context},

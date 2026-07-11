@@ -11,7 +11,9 @@ export interface LLMConfig {
   llm_concurrency: number
   embedding_model: string
   embedding_api_key: string   // masked, or empty if not configured
-  llm_system_prompt: string
+  llm_system_prompt: string       // Chinese system prompt (default when prompt_language = 'zh')
+  llm_system_prompt_en: string    // English system prompt (used when prompt_language = 'en')
+  prompt_language: string         // Agent-graph prompt language: 'zh' | 'en'
   server_host: string
   server_port: number
   cache_ttl_seconds: number   // cache TTL in seconds (default 3600 = 60 min)
@@ -31,6 +33,8 @@ export interface LLMConfigUpdate {
   embedding_model?: string
   embedding_api_key?: string
   llm_system_prompt?: string
+  llm_system_prompt_en?: string
+  prompt_language?: string
   server_host?: string
   server_port?: number
   cache_ttl_seconds?: number

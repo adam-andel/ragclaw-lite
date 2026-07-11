@@ -27,6 +27,17 @@ DEFAULT_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的�
 4. 回答要简洁、准确，使用中文
 5. 如果文档内容包含代码或表格，保留原始格式"""
 
+# English counterpart — used when prompt_language == "en" (A/B instruction-following test).
+# Answer-language preference (Chinese) is kept so end-user behavior is unchanged.
+DEFAULT_SYSTEM_PROMPT_EN = """You are an enterprise knowledge-base assistant. Answer questions based solely on the provided document content.
+
+## Rules
+1. Answer only based on the provided document content; do not fabricate information.
+2. If the documents contain no relevant information, honestly say "No relevant information found in the documents".
+3. Cite sources in the format: [Source: Document Name - Section Name].
+4. Keep answers concise and accurate, and respond in Chinese.
+5. If the document content includes code or tables, preserve the original formatting."""
+
 
 def _derive_key() -> bytes:
     machine = str(uuid.getnode()).encode()
@@ -165,8 +176,11 @@ class ConfigManager:
             # Server (startup-time only)
             "server_host": "0.0.0.0",
             "server_port": 8000,
-            # System prompt
+            # System prompt (zh = original field; en = A/B variant selected by prompt_language)
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
+            "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
+            # Agent-graph prompt language: "zh" (default) | "en" — for A/B instruction-following tests
+            "prompt_language": "zh",
             # Cache
             "cache_ttl_seconds": 3600,
             # Sandbox network policy
@@ -188,6 +202,8 @@ class ConfigManager:
             "server_host": "0.0.0.0",
             "server_port": 8000,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
+            "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
+            "prompt_language": "zh",
             "cache_ttl_seconds": 3600,
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
@@ -360,8 +376,19 @@ class ConfigManager:
 
     @property
     def system_prompt(self) -> str:
+        """Effective system prompt, selected by prompt_language:
+        'en' -> llm_system_prompt_en, otherwise -> llm_system_prompt (Chinese default)."""
         with self._lock:
-            return self._config.get("llm_system_prompt", DEFAULT_SYSTEM_PROMPT)
+            lang = self._config.get("prompt_language", "zh")
+            if lang == "en":
+                return (self._config.get("llm_system_prompt_en") or "").strip() or DEFAULT_SYSTEM_PROMPT_EN
+            return (self._config.get("llm_system_prompt") or "").strip() or DEFAULT_SYSTEM_PROMPT
+
+    @property
+    def prompt_language(self) -> str:
+        """Agent-graph prompt language for A/B instruction-following tests: 'zh' | 'en'."""
+        with self._lock:
+            return self._config.get("prompt_language", "zh")
 
     # ── Public API ──
 
@@ -382,7 +409,7 @@ class ConfigManager:
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
             "agent_max_tokens", "llm_concurrency", "embedding_model", "embedding_api_key",
-            "server_host", "server_port", "llm_system_prompt",
+            "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
         }
