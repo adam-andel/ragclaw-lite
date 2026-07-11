@@ -1092,15 +1092,16 @@ async function loadSupportedTypes() {
                 {{ expandedChunks.has(c.id) ? '收起' : '展开' }}
               </NButton>
             </NCard>
-
-            <AppPagination
-              :page="chunkPage"
-              :page-count="totalChunkPages"
-              @update:page="chunkPage = $event"
-            />
           </div>
         </NSpin>
       </div>
+      <template v-if="totalChunkPages > 1" #footer>
+        <AppPagination
+          :page="chunkPage"
+          :page-count="totalChunkPages"
+          @update:page="chunkPage = $event"
+        />
+      </template>
     </AppModal>
 
     <!-- Doc KBs Modal -->

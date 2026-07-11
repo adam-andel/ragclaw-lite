@@ -536,7 +536,7 @@ function handleKeydown(e: KeyboardEvent) {
         :page-size="convPageSize"
         :item-count="conversations.length"
         simple
-        align="end"
+        align="center"
       />
     </AppModal>
 
