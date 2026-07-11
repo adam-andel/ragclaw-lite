@@ -275,6 +275,7 @@ async def chat_stream(
                         query=request.query,
                         answer=collected_content,
                         kb_id=request.kb_id,
+                        conversation_id=conv_id,
                         user_id=current_user.id,
                         citations=collected_citations,
                         skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", ""),
@@ -407,7 +408,7 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
 # ── Background helpers ──
 
 async def _store_memory_and_cache(
-    query: str, answer: str, kb_id: str, user_id: str,
+    query: str, answer: str, kb_id: str, conversation_id: str, user_id: str,
     citations: list[dict], skill_id: str, kb_prompt: str = "",
 ):
     """Background task: store answer cache + Mem0 memory."""
@@ -423,8 +424,8 @@ async def _store_memory_and_cache(
             # Structured format for better Mem0 extraction
             memory_text = _json.dumps({
                 "type": "qa",
-                "query": query[:200],
-                "answer": answer[:500],
+                "query": query[:settings.mem0_query_max_chars],
+                "answer": answer[:settings.mem0_answer_max_chars],
                 "kb_id": kb_id,
                 "skill_id": skill_id or "",
             }, ensure_ascii=False)
@@ -432,6 +433,8 @@ async def _store_memory_and_cache(
                 memory_text,
                 user_id=user_id,
                 metadata={"kb_id": kb_id, "skill_id": skill_id},
+                agent_id=kb_id,
+                run_id=conversation_id,
             )
         except Exception:
             pass

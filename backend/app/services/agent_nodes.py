@@ -707,7 +707,11 @@ async def parallel_retrieval_node(state: dict) -> dict:
     t_start = time.time()
     loop = asyncio.get_running_loop()
     rag_task = loop.run_in_executor(None, lambda: hybrid_search.search(kb_id, query))
-    mem_coro = _search_memories_safe(query, user_id) if user_id else None
+    mem_coro = _search_memories_safe(
+        query, user_id,
+        agent_id=state.get("kb_id"),
+        run_id=state.get("conversation_id"),
+    ) if user_id else None
     if mem_coro:
         results = await asyncio.gather(rag_task, mem_coro, return_exceptions=True)
         mem_raw = results[1] if not isinstance(results[1], Exception) and results[1] is not None else []
@@ -726,10 +730,16 @@ async def parallel_retrieval_node(state: dict) -> dict:
             "retrieval_ms": round((time.time() - t_start) * 1000)}
 
 
-async def _search_memories_safe(query: str, user_id: str, limit: int = 5) -> list[dict]:
+async def _search_memories_safe(
+    query: str, user_id: str, limit: int = 5,
+    agent_id: str | None = None, run_id: str | None = None,
+) -> list[dict]:
     try:
         from app.services.memory import search_memories
-        return await search_memories(query, user_id=user_id, limit=limit) or []
+        return await search_memories(
+            query, user_id=user_id, limit=limit,
+            agent_id=agent_id, run_id=run_id,
+        ) or []
     except ImportError:
         return []
     except Exception as e:

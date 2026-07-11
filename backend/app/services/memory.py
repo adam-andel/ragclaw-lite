@@ -39,7 +39,7 @@ def _get_memory() -> Memory:
                     "api_key": config_manager.api_key,
                     "openai_base_url": config_manager.base_url,
                     "temperature": 0.1,
-                    "max_tokens": 500,
+                    "max_tokens": settings.mem0_llm_max_tokens,
                 },
             },
             "embedder": {
@@ -51,40 +51,80 @@ def _get_memory() -> Memory:
     return _memory
 
 
-async def add_memory(text: str, user_id: str, metadata: dict | None = None):
-    """Extract and store a memory from conversation (runs in executor)."""
+async def add_memory(
+    text: str,
+    user_id: str,
+    metadata: dict | None = None,
+    agent_id: str | None = None,
+    run_id: str | None = None,
+):
+    """Extract and store a memory from conversation (runs in executor).
+
+    agent_id scopes memories to a knowledge base (kb_id);
+    run_id scopes them to a single conversation (conversation_id).
+    """
     try:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
-            _add_memory_sync, text, user_id, metadata
+            _add_memory_sync, text, user_id, metadata, agent_id, run_id
         )
     except Exception as e:
         logger.warning("Mem0 add error: %s", e)
         return []
 
 
-def _add_memory_sync(text: str, user_id: str, metadata: dict | None = None):
+def _add_memory_sync(
+    text: str,
+    user_id: str,
+    metadata: dict | None = None,
+    agent_id: str | None = None,
+    run_id: str | None = None,
+):
     m = _get_memory()
-    return m.add(text, user_id=user_id, metadata=metadata or {})
+    return m.add(
+        text,
+        user_id=user_id,
+        agent_id=agent_id,
+        run_id=run_id,
+        metadata=metadata or {},
+    )
 
 
-async def search_memories(query: str, user_id: str, limit: int = 5) -> list[dict]:
+async def search_memories(
+    query: str,
+    user_id: str,
+    limit: int = 5,
+    agent_id: str | None = None,
+    run_id: str | None = None,
+) -> list[dict]:
     """Search relevant memories (runs in executor)."""
     try:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
-            _search_memories_sync, query, user_id, limit
+            _search_memories_sync, query, user_id, limit, agent_id, run_id
         )
     except Exception as e:
         logger.warning("Mem0 search error: %s", e)
         return []
 
 
-def _search_memories_sync(query: str, user_id: str, limit: int) -> list[dict]:
+def _search_memories_sync(
+    query: str,
+    user_id: str,
+    limit: int,
+    agent_id: str | None = None,
+    run_id: str | None = None,
+) -> list[dict]:
     m = _get_memory()
-    return m.search(query, user_id=user_id, limit=limit) or []
+    return m.search(
+        query,
+        user_id=user_id,
+        agent_id=agent_id,
+        run_id=run_id,
+        limit=limit,
+    ) or []
 
 
 async def get_all_memories(user_id: str) -> list[dict]:

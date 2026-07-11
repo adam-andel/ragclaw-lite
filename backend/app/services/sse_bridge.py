@@ -128,6 +128,7 @@ async def _store_memory_and_cache(
                     f"Q: {query}\nA: {answer[:500]}",
                     user_id=user_id,
                     metadata={"kb_id": kb_id, "skill_id": skill_id},
+                    agent_id=kb_id,
                 )
             except ImportError:
                 pass  # Mem0 not available

@@ -61,5 +61,14 @@ class Settings(BaseSettings):
     # --- Conversation ---
     conversation_max_history: int = 10
 
+    # --- Memory (mem0) ---
+    # Max chars of query/answer sent to Mem0 for memory extraction per turn.
+    # These only cap the INPUT to Mem0's LLM; the extracted memory output is
+    # still bounded by memory.py's max_tokens (500). Larger values give the
+    # extraction model more context but cost more tokens per conversation turn.
+    mem0_query_max_chars: int = 500
+    mem0_answer_max_chars: int = 1500
+    mem0_llm_max_tokens: int = 500  # Output token cap for Mem0's extraction LLM
+
 
 settings = Settings()
