@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NPagination, NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
+import PageHeader from '@/components/common/PageHeader.vue'
+import StatusToggle from '@/components/common/StatusToggle.vue'
 import {
   listServers, createServer, updateServer, deleteServer, testServer, refreshTools,
 } from '@/api/mcp'
@@ -162,13 +164,9 @@ async function handleRefresh() {
 
 <template>
   <div class="page-container">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><Flash /></NIcon>
-        <h2>MCP 服务管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="MCP 服务管理" :icon="Flash">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NButton size="small" @click="handleRefresh">
           <template #icon><NIcon><Refresh /></NIcon></template>
           刷新工具
@@ -177,8 +175,8 @@ async function handleRefresh() {
           <template #icon><NIcon><Add /></NIcon></template>
           注册服务
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && servers.length === 0" description="暂无 MCP 服务，请注册" />
@@ -196,14 +194,10 @@ async function handleRefresh() {
               <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">禁用</NTag>
             </div>
             <div class="mcp-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="server.is_active"
                 @update:value="() => handleToggle(server)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
 
@@ -317,47 +311,6 @@ async function handleRefresh() {
 </template>
 
 <style scoped>
-.page-container {
-  padding: var(--space-4);
-  max-width: 1100px;
-  margin: 0 auto;
-}
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dm-header .kb-header-title h2 {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0;
-}
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* MCP card grid (style reference: SkillsView.vue) */
 .mcp-list {
   display: grid;
@@ -365,16 +318,27 @@ async function handleRefresh() {
   gap: 16px;
 }
 .mcp-card {
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .mcp-card:hover {
-  box-shadow: var(--shadow-sm);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 .mcp-card-disabled {
-  background: #f1f5f9;
+  background: var(--color-card-bg-disabled);
+  --n-color: var(--color-card-bg-disabled);
+  cursor: not-allowed;
 }
-html.dark .mcp-card-disabled {
-  background: #334155;
+.mcp-card-disabled:hover {
+  border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transform: none;
 }
 .mcp-card-header {
   display: flex;

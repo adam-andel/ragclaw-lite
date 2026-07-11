@@ -3,6 +3,7 @@ import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NPagination, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -361,12 +362,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="chat-view">
-    <div class="chat-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><Chatbubbles /></NIcon>
-        <h2>RAG 对话</h2>
-      </div>
-      <div class="chat-header-right">
+    <PageHeader title="RAG 对话" :icon="Chatbubbles">
+      <template #actions>
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
         <NButton size="small" @click="showMoreConv = true">
           <template #icon><NIcon size="16"><List /></NIcon></template>
@@ -376,16 +373,14 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="16"><Add /></NIcon></template>
           新建对话
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" aria-label="对话消息">
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
           <div class="center-panel-head">
-            <div class="center-panel-icon">💬</div>
-            <h3>选择一个对话</h3>
             <p class="center-panel-subtitle">从最近对话继续，或开启新的对话</p>
           </div>
           <div class="conv-list">
@@ -558,11 +553,11 @@ function handleKeydown(e: KeyboardEvent) {
     />
 
     <NModal v-model:show="showSkillModal" preset="card" title="选择技能"
-      style="width: 90vw; max-width: 520px"
+      style="width: 92vw; max-width: 680px"
       @after-leave="skillSearchText = ''"
     >
       <NInput v-model:value="skillSearchText" placeholder="搜索技能名称..." clearable style="margin-bottom:12px" />
-      <div class="picker-scroll">
+      <div class="skill-pick-grid">
         <NCard size="small" class="skill-pick-card"
           :class="{ active: !selectedSkillId }"
           role="button" tabindex="0"
@@ -570,8 +565,16 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown.enter.prevent="selectedSkillId = null; showSkillModal = false"
           @keydown.space.prevent="selectedSkillId = null; showSkillModal = false"
         >
-          <strong>自动选择技能</strong>
-          <span class="skill-pick-desc">根据问题自动路由最合适的技能</span>
+          <div class="skill-pick-header">
+            <div class="skill-pick-title-wrap">
+              <span class="skill-pick-name">自动选择技能</span>
+            </div>
+          </div>
+          <p class="skill-pick-desc">根据问题自动路由最合适的技能</p>
+          <div class="skill-pick-tools">
+            <span class="skill-pick-label">工具</span>
+            <span class="skill-pick-tool-muted">自动</span>
+          </div>
         </NCard>
         <NCard v-for="s in filteredSkills" :key="s.id" size="small" class="skill-pick-card"
           :class="{ active: s.id === selectedSkillId }"
@@ -580,8 +583,27 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown.enter.prevent="selectedSkillId = s.id; showSkillModal = false"
           @keydown.space.prevent="selectedSkillId = s.id; showSkillModal = false"
         >
-          <strong>{{ s.name }}</strong>
-          <span v-if="s.description" class="skill-pick-desc">{{ s.description }}</span>
+          <div class="skill-pick-header">
+            <div class="skill-pick-title-wrap">
+              <span class="skill-pick-name" :title="s.name">{{ s.name }}</span>
+              <NTag v-if="!s.is_active" size="tiny" :bordered="false" type="default" class="skill-pick-disabled-tag">禁用</NTag>
+            </div>
+          </div>
+          <p class="skill-pick-desc" :title="s.description ?? undefined">{{ s.description || '暂无描述' }}</p>
+          <div class="skill-pick-tools">
+            <span class="skill-pick-label">工具</span>
+            <template v-if="s.mcp_servers && s.mcp_servers.length">
+              <NTag
+                v-for="t in s.mcp_servers"
+                :key="t"
+                size="tiny"
+                type="info"
+                :bordered="false"
+                class="skill-pick-tool-tag"
+              >{{ t }}</NTag>
+            </template>
+            <span v-else class="skill-pick-tool-muted">无</span>
+          </div>
         </NCard>
       </div>
       <NEmpty v-if="filteredSkills.length === 0" description="没有匹配的技能" style="padding:16px 0" />
@@ -634,21 +656,6 @@ function handleKeydown(e: KeyboardEvent) {
   position: relative;
 }
 
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 14px 20px;
-  margin-bottom: 4px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.chat-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
-.chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
-.chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .chat-messages {
   flex: 1;
@@ -739,7 +746,7 @@ function handleKeydown(e: KeyboardEvent) {
   margin-bottom: 14px;
 }
 .center-panel-subtitle {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--color-text-muted);
   margin-top: 4px;
 }
@@ -833,11 +840,23 @@ function handleKeydown(e: KeyboardEvent) {
 
 .kb-pick-card {
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s, background .2s, transform .15s;
-  border: 1px solid var(--color-border);
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
 }
-.kb-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
-.kb-pick-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; }
+.kb-pick-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.kb-pick-card:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
 .kb-pick-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-pick-inner { display: flex; align-items: flex-start; gap: 10px; }
 .kb-pick-avatar {
@@ -864,26 +883,92 @@ function handleKeydown(e: KeyboardEvent) {
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
 .fallback-hint { margin-top: 8px; font-size: var(--text-base); color: var(--color-text-muted); }
-/* ── Skill picker modal ── */
+/* ── Skill picker modal（与 SkillsView .sk-card 同款卡片，3 栏网格）── */
+/* 卡片 chrome 与 .sk-card 统一（亮/暗 token 驱动） */
 .skill-pick-card {
   cursor: pointer;
-  transition: border-color .2s, box-shadow .2s;
-  border-left: 3px solid transparent;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
 }
-.skill-pick-card:hover { border-color: var(--color-primary); box-shadow: var(--shadow-sm); }
+.skill-pick-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.skill-pick-card:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+/* 选中态：与 .sk-card 的 hover/focus 一致——主色边框 + 主色柔光底 */
 .skill-pick-card.active {
   border-color: var(--color-primary);
-  border-left-color: var(--color-primary);
   background: var(--color-primary-soft);
 }
-.skill-pick-card strong { display: block; font-size: var(--text-sm); margin-bottom: 2px; }
-.skill-pick-desc {
-  display: block;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
+/* 3 栏网格：宽度一致，一行 3 个 */
+.skill-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+.skill-pick-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.skill-pick-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.skill-pick-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.skill-pick-desc {
+  margin: 0 0 8px;
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.4em;
+}
+.skill-pick-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.skill-pick-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.skill-pick-tool-tag {
+  margin-right: 2px;
+}
+.skill-pick-tool-muted {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 /* ── Chat input wrapper with skill selector above ── */
@@ -984,18 +1069,6 @@ function handleKeydown(e: KeyboardEvent) {
 
 /* ── Mobile: header wraps gracefully ── */
 @media (max-width: 767px) {
-  .chat-header {
-    flex-wrap: wrap;
-    padding: 10px 14px;
-    gap: 6px;
-  }
-  .chat-header .kb-header-title h2 {
-    font-size: var(--text-base);
-  }
-  .chat-header-right {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
   .kb-trigger-btn {
     max-width: 120px;
   }

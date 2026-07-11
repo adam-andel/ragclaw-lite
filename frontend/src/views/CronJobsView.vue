@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NModal, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NPagination, NEmpty,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import StatusToggle from '@/components/common/StatusToggle.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, listCronJobRuns,
@@ -248,13 +250,9 @@ function isPaused(job: CronJob) {
 
 <template>
   <div class="page-container">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><Time /></NIcon>
-        <h2>定时任务管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="定时任务管理" :icon="Time">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton type="primary" size="small" @click="openCreate">
@@ -264,8 +262,8 @@ function isPaused(job: CronJob) {
           </template>
           可在对话中用自然语言创建定时任务
         </NTooltip>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && jobs.length === 0" description="暂无定时任务" />
@@ -288,14 +286,10 @@ function isPaused(job: CronJob) {
               <NTag :type="statusType(job.status)" size="tiny" :bordered="false">{{ statusLabel(job.status) }}</NTag>
             </div>
             <div class="cj-card-toggle" @click.stop>
-              <NSwitch
-                size="small"
+              <StatusToggle
                 :value="!isPaused(job)"
                 @update:value="() => handleToggle(job)"
-              >
-                <template #checked>启用</template>
-                <template #unchecked>禁用</template>
-              </NSwitch>
+              />
             </div>
           </div>
 
@@ -443,47 +437,6 @@ function isPaused(job: CronJob) {
 </template>
 
 <style scoped>
-.page-container {
-  padding: var(--space-4);
-  max-width: 1100px;
-  margin: 0 auto;
-}
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dm-header .kb-header-title h2 {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0;
-}
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* Cron job card grid (style reference: SkillsView.vue) */
 .cj-list {
   display: grid;
@@ -492,24 +445,32 @@ function isPaused(job: CronJob) {
 }
 .cj-card {
   cursor: pointer;
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .cj-card:hover {
-  box-shadow: var(--shadow-sm);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
 }
 .cj-card:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -1px;
-  border-radius: var(--radius);
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 .cj-card-disabled {
-  background: #f1f5f9;
+  background: var(--color-card-bg-disabled);
+  --n-color: var(--color-card-bg-disabled);
+  cursor: not-allowed;
 }
 .cj-card-disabled:hover {
+  border-color: var(--color-card-border);
   box-shadow: var(--shadow-sm);
-}
-html.dark .cj-card-disabled {
-  background: #334155;
+  transform: none;
 }
 .cj-card :deep(.n-card__footer) {
   padding-top: 6px;

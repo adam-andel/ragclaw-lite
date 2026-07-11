@@ -8,6 +8,7 @@ import {
   NCheckbox, NTooltip,
 } from 'naive-ui'
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -143,12 +144,6 @@ const uploadTargetKbName = computed(() => {
 })
 
 // KB action modals
-const showRenameKb = ref(false)
-const renameKbId = ref('')
-const renameKbName = ref('')
-const renameKbDesc = ref('')
-const renaming = ref(false)
-
 const showShare = ref(false)
 const shareKbId = ref('')
 const shareUsers = ref<any[]>([])
@@ -825,13 +820,9 @@ async function loadSupportedTypes() {
 </script>
 <template>
   <div class="dm-view">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><DocumentText /></NIcon>
-        <h2>文档管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="文档管理" :icon="DocumentText">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NButton size="small" type="primary" @click="openCreateKb">
           <template #icon><NIcon><Create /></NIcon></template>
           新建知识库
@@ -840,8 +831,8 @@ async function loadSupportedTypes() {
           <template #icon><NIcon><Add /></NIcon></template>
           上传文档
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- KB Form Modal (create + edit share the same modal) -->
     <NModal v-model:show="showKbForm" preset="card"
@@ -851,7 +842,7 @@ async function loadSupportedTypes() {
       <div class="kb-form">
         <NInput v-model:value="kbFormName" placeholder="知识库名称" />
         <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选）：给大模型补充本知识库或团队背景，使其更贴合需求" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -1026,7 +1017,7 @@ async function loadSupportedTypes() {
               @positive-click="handleUnlink(doc)"
             >
               <template #trigger>
-                <NButton size="tiny" type="error" class="doc-unlink-btn" @click.stop>
+                <NButton size="tiny" quaternary type="error" class="doc-unlink-btn" @click.stop>
                   <template #icon><NIcon><Remove /></NIcon></template>
                 </NButton>
               </template>
@@ -1245,17 +1236,6 @@ async function loadSupportedTypes() {
       @select="onKbFilterSelect"
     />
 
-    <!-- Rename KB Modal -->
-    <NModal v-model:show="showRenameKb" preset="card" title="编辑知识库"
-      style="width: 90vw; max-width: 440px"
-    >
-      <div class="kb-form">
-        <NInput v-model:value="renameKbName" placeholder="知识库名称" />
-        <NInput v-model:value="renameKbDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NButton type="primary" :loading="renaming" @click="handleRenameKb" block>保存</NButton>
-      </div>
-    </NModal>
-
     <!-- Share Modal -->
     <NModal v-model:show="showShare" preset="card" title="共享用户"
       style="width: 90vw; max-width: 640px"
@@ -1303,7 +1283,7 @@ async function loadSupportedTypes() {
             </div>
           </div>
           <div class="share-add-more">
-            <NButton dashed block @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
+            <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
               <template #icon><NIcon><component :is="showAddMoreUsers ? Remove : Add" /></NIcon></template>
               添加更多用户
             </NButton>
@@ -1423,29 +1403,6 @@ async function loadSupportedTypes() {
 </template>
 <style scoped>
 .dm-view { height: 100%; overflow-y: auto; }
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
-.dm-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.01em; }
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions { display: flex; align-items: center; gap: 8px; }
 
 /* Create KB Modal */
 
@@ -1462,7 +1419,8 @@ async function loadSupportedTypes() {
 
 .upload-queue { display: flex; flex-direction: column; gap: 8px; }
 .upload-queue-header { display: flex; justify-content: space-between; align-items: center; font-weight: 500; font-size: var(--text-sm); }
-.upload-file-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); }
+.upload-file-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.upload-file-row:hover { border-color: var(--color-primary); box-shadow: var(--shadow); transform: translateY(-1px); }
 .upload-file-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .upload-file-name { font-size: var(--text-sm); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upload-file-size { font-size: var(--text-xs); color: var(--color-text-muted); font-family: 'JetBrains Mono', monospace; }
@@ -1493,9 +1451,25 @@ async function loadSupportedTypes() {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
-.dm-card { cursor: pointer; transition: box-shadow .2s, border-color .2s; }
-.dm-card:hover { box-shadow: var(--shadow-sm); }
-.dm-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -1px; border-radius: var(--radius); }
+.dm-card {
+  cursor: pointer;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border-color: var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.dm-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.dm-card:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
 
 .doc-card-header {
   display: flex;
@@ -1511,9 +1485,42 @@ async function loadSupportedTypes() {
   transition: opacity .15s;
   padding: 0 4px;
   height: 22px;
+  --n-color: transparent;
+  --n-color-hover: transparent;
+  --n-color-pressed: transparent;
+  --n-color-focus: transparent;
 }
 .doc-unlink-btn :deep(.n-icon) {
   font-size: 13px;
+  color: #dc2626;
+}
+:global(html.dark) .doc-unlink-btn :deep(.n-icon) {
+  color: #fca5a5;
+}
+/* 添加/收起用户按钮：复用无背景样式，但用主色（非红色，非破坏性操作） */
+.share-add-more-btn {
+  opacity: 1;
+  margin-left: 0;
+  width: 100%;
+  justify-content: center;
+  --n-text-color: #3b82f6;
+  --n-text-color-hover: #2563eb;
+  --n-text-color-pressed: #2563eb;
+  --n-icon-color: #3b82f6;
+}
+.share-add-more-btn :deep(.n-icon) {
+  font-size: 13px;
+  color: #3b82f6;
+}
+:global(html.dark) .share-add-more-btn,
+:global(html.dark) .share-add-more-btn :deep(.n-icon) {
+  --n-text-color: #60a5fa;
+  --n-text-color-hover: #93c5fd;
+  --n-icon-color: #60a5fa;
+  color: #60a5fa;
+}
+:global(html.dark) .doc-unlink-btn :deep(.n-icon) {
+  color: #f87171;
 }
 .dm-card:hover .doc-unlink-btn { opacity: 1; }
 .doc-card-title-wrap {
@@ -1605,7 +1612,20 @@ async function loadSupportedTypes() {
 /* Chunks */
 .chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
 .chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
-.chunk-card { margin-bottom: 8px; }
+.chunk-card {
+  margin-bottom: 8px;
+  background: var(--color-card-bg);
+  --n-color: var(--color-card-bg);
+  border-color: var(--color-card-border);
+  --n-border-color: var(--color-card-border);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.chunk-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
 .chunk-card:last-of-type { margin-bottom: 0; }
 .chunk-meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .chunk-meta-tokens { font-size: var(--text-xs); color: var(--color-text-muted); }
@@ -1688,12 +1708,17 @@ async function loadSupportedTypes() {
 .share-card {
   position: relative;
   padding: 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-card-border);
   border-radius: var(--radius);
-  background: var(--color-surface);
-  transition: box-shadow .2s, border-color .2s;
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
-.share-card:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary); }
+.share-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
 .share-card:hover .share-card-remove { opacity: 1; }
 .share-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .share-card-remove { opacity: 0; transition: opacity .2s; flex-shrink: 0; }
@@ -1714,12 +1739,14 @@ async function loadSupportedTypes() {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
+  margin-top: 4px;
   max-height: 55vh;
   overflow-y: auto;
 }
-.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; border: 1px solid var(--color-border); border-radius: var(--radius); transition: background .15s; }
-.select-doc-row:hover { background: rgba(59, 130, 246, 0.04); }
-.select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); }
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: background .15s, border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.select-doc-row:hover { background: rgba(59, 130, 246, 0.04); border-color: var(--color-primary); box-shadow: var(--shadow); transform: translateY(-1px); }
+.select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); box-shadow: var(--shadow); }
+.select-doc-row:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
