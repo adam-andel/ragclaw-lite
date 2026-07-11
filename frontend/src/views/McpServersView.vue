@@ -3,12 +3,13 @@ import { ref, onMounted } from 'vue'
 import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
-  NPagination, NEmpty, NSpin,
+  NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listServers, createServer, updateServer, deleteServer, testServer, refreshTools,
 } from '@/api/mcp'
@@ -241,9 +242,7 @@ async function handleRefresh() {
         </NCard>
       </div>
 
-      <div class="mcp-pagination" v-if="total > pageSize">
-        <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
-      </div>
+      <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
     </NSpin>
 
       <!-- Test Result Modal -->
@@ -384,11 +383,5 @@ async function handleRefresh() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.mcp-pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-  padding-bottom: 24px;
 }
 </style>

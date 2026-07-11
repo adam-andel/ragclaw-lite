@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { NCard, NInput, NSelect, NIcon, NEmpty, NPagination } from 'naive-ui'
+import { NCard, NInput, NSelect, NIcon, NEmpty } from 'naive-ui'
 import { Search } from '@vicons/ionicons5'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -151,14 +152,12 @@ function onAfterLeave() {
     </div>
 
     <NEmpty v-if="filtered.length === 0" description="无匹配的知识库" style="padding:16px 0" />
-    <div class="kb-picker-pager" v-if="totalPages > 1">
-      <NPagination
-        :page="page"
-        :page-size="pageSize"
-        :item-count="filtered.length"
-        @update:page="(p: number) => page = p"
-      />
-    </div>
+    <AppPagination
+      :page="page"
+      :page-size="pageSize"
+      :item-count="filtered.length"
+      @update:page="(p: number) => page = p"
+    />
   </AppModal>
 </template>
 
@@ -213,7 +212,6 @@ function onAfterLeave() {
 }
 .kb-picker-chip-soft { color: var(--color-primary); background: var(--color-primary-soft); border-color: transparent; }
 .kb-picker-meta { font-size: 0.7rem; color: var(--color-text-muted); }
-.kb-picker-pager { display: flex; justify-content: center; margin-top: 14px; }
 
 @media (max-width: 640px) {
   .kb-picker-grid { grid-template-columns: repeat(2, 1fr); }

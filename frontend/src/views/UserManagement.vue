@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NPagination } from 'naive-ui'
+import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -177,9 +178,7 @@ function formatTime(t: string) {
       </div>
     </NSpin>
 
-    <div class="um-pagination" v-if="total > pageSize">
-      <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
-    </div>
+    <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
     <AppModal v-model:show="showCreate" title="新建用户" size="detail" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
@@ -390,13 +389,6 @@ function formatTime(t: string) {
   font-family: monospace;
   font-size: 12px;
   word-break: break-all;
-}
-
-.um-pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-  padding-bottom: 24px;
 }
 
 .create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }

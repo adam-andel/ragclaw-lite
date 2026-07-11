@@ -4,12 +4,13 @@ import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
-  NPagination, NEmpty,
+  NEmpty,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, listCronJobRuns,
@@ -317,9 +318,7 @@ function isPaused(job: CronJob) {
         </NCard>
       </div>
 
-      <div class="cj-pagination" v-if="total > pageSize">
-        <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
-      </div>
+      <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
     </NSpin>
 
     <!-- Detail Modal -->
@@ -534,13 +533,6 @@ html.dark .cj-card-desc {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cj-pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-  padding-bottom: 24px;
-}
-
 .empty {
   color: var(--color-text-muted);
   text-align: center;

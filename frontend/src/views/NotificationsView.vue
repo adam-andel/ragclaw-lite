@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
 import {
-  NCard, NDataTable, NTag, NSpace, NButton, NSpin, NPagination, NEmpty,
+  NCard, NDataTable, NTag, NSpace, NButton, NSpin, NEmpty,
   NIcon,
 } from 'naive-ui'
 import { CheckmarkDone } from '@vicons/ionicons5'
 import { useNotificationStore } from '@/stores/notifications'
+import AppPagination from '@/components/common/AppPagination.vue'
 import type { NotificationItem } from '@/types'
 import type { DataTableColumns } from 'naive-ui'
 
@@ -100,17 +101,18 @@ onMounted(load)
         <div v-if="notificationStore.total === 0" class="empty">
           <NEmpty description="暂无通知" />
         </div>
-        <div v-else class="pagination">
-          <NPagination
-            v-model:page="page"
-            v-model:page-size="size"
-            :item-count="notificationStore.total"
-            :page-sizes="[20, 50, 100]"
-            show-size-picker
-            @update:page="load"
-            @update:page-size="load"
-          />
-        </div>
+        <AppPagination
+          v-else
+          :page="page"
+          :page-size="size"
+          :item-count="notificationStore.total"
+          :page-sizes="[20, 50, 100]"
+          show-size-picker
+          :always-show="true"
+          align="end"
+          @update:page="(p: number) => { page = p; load() }"
+          @update:page-size="(s: number) => { size = s; load() }"
+        />
       </NSpin>
     </NCard>
   </div>
@@ -119,10 +121,5 @@ onMounted(load)
 <style scoped>
 .empty {
   padding: 48px 0;
-}
-.pagination {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
 }
 </style>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NPagination, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -530,13 +531,12 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </div>
       </div>
-      <NPagination
-        v-if="convTotalPages > 1"
+      <AppPagination
         v-model:page="convPage"
-        :item-count="conversations.length"
         :page-size="convPageSize"
+        :item-count="conversations.length"
         simple
-        class="conv-pager"
+        align="end"
       />
     </AppModal>
 
@@ -831,12 +831,6 @@ function handleKeydown(e: KeyboardEvent) {
 
 /* Modal scrollable list (shared by "更多对话" and "更多知识库") */
 .picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.conv-pager {
-  display: flex;
-  justify-content: center;
-  margin-top: 12px;
-}
-
 .kb-pick-card {
   cursor: pointer;
   background: var(--color-card-bg);

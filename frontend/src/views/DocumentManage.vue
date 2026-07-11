@@ -10,6 +10,7 @@ import {
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -1048,9 +1049,7 @@ async function loadSupportedTypes() {
       </div>
     </NSpin>
 
-    <div class="dm-pagination" v-if="total > size">
-      <NPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
-    </div>
+    <AppPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
 
     <!-- Chunks Modal -->
     <AppModal v-model:show="showChunks" title="分块预览" size="nested">
@@ -1599,8 +1598,6 @@ async function loadSupportedTypes() {
 .doc-name-clickable { cursor: pointer; }
 .doc-name-clickable:hover { text-decoration: underline; color: var(--color-primary); }
 .doc-name-clickable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
-
-.dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
 
 /* Chunks */
 .chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }

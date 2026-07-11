@@ -3,11 +3,12 @@ import { ref, onMounted } from 'vue'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
-  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem, NPagination,
+  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
@@ -404,9 +405,7 @@ onMounted(() => {
       </div>
     </NSpin>
 
-    <div class="sk-pagination" v-if="total > pageSize">
-      <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
-    </div>
+    <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
     <AppModal v-model:show="showCreateModal" title="在线创建技能" size="detail">
@@ -670,13 +669,6 @@ onMounted(() => {
 }
 .sk-meta-muted {
   color: var(--color-text);
-}
-
-.sk-pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-  padding-bottom: 24px;
 }
 
 /* Detail modal */
