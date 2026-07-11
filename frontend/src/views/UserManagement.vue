@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NPagination } from 'naive-ui'
+import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NPagination } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -181,7 +182,7 @@ function formatTime(t: string) {
     </div>
 
     <!-- Create Modal -->
-    <NModal v-model:show="showCreate" title="新建用户" style="width:70vw; max-width:600px; height:70vh; max-height:460px" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
+    <AppModal v-model:show="showCreate" title="新建用户" size="detail" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
       <div class="create-form">
         <NInput v-model:value="newUser.username" placeholder="用户名" size="large" />
         <NInput v-model:value="newUser.password" type="password" placeholder="密码" size="large" />
@@ -194,14 +195,13 @@ function formatTime(t: string) {
         />
         <NButton type="primary" :loading="creating" @click="createUser" block size="large">创建</NButton>
       </div>
-    </NModal>
+    </AppModal>
 
     <!-- Detail Modal -->
-    <NModal
+    <AppModal
       v-model:show="showDetail"
-      preset="card"
       :title="detailUser?.username || '用户详情'"
-      style="width: 90vw; max-width: 560px"
+      size="detail"
     >
       <NSpin :show="loading">
         <NDescriptions
@@ -273,7 +273,7 @@ function formatTime(t: string) {
           </NPopconfirm>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
   </div>
 </template>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput,
+  NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NPagination, NEmpty,
@@ -9,6 +9,7 @@ import {
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, listCronJobRuns,
@@ -322,7 +323,7 @@ function isPaused(job: CronJob) {
     </NSpin>
 
     <!-- Detail Modal -->
-    <NModal v-model:show="showDetail" title="定时任务详情" preset="card" style="width: 640px">
+    <AppModal v-model:show="showDetail" title="定时任务详情" size="detail">
       <NDescriptions v-if="detailJob" :column="1" label-placement="left" bordered>
         <NDescriptionsItem label="名称">{{ detailJob.name }}</NDescriptionsItem>
         <NDescriptionsItem label="状态">
@@ -377,10 +378,10 @@ function isPaused(job: CronJob) {
           </NPopconfirm>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Create/Edit Modal -->
-    <NModal v-model:show="showModal" :title="editing ? '编辑定时任务' : '新建定时任务'" preset="card" style="width: 640px">
+    <AppModal v-model:show="showModal" :title="editing ? '编辑定时任务' : '新建定时任务'" size="detail">
       <NForm label-placement="left" label-width="100">
         <NFormItem label="任务名称" required>
           <NInput v-model:value="form.name" placeholder="例如：每日晨报" />
@@ -413,7 +414,7 @@ function isPaused(job: CronJob) {
           <NButton type="primary" @click="handleSave">保存</NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Runs Drawer -->
     <NDrawer v-model:show="runsDrawerOpen" width="720" placement="right">

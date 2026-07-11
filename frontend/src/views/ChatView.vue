@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NPagination, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NPagination, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -511,9 +512,7 @@ function handleKeydown(e: KeyboardEvent) {
     </Transition>
 
     <!-- Modal: full conversation list -->
-    <NModal v-model:show="showMoreConv" preset="card" title="所有对话"
-      style="width: 90vw; max-width: 520px"
-    >
+    <AppModal v-model:show="showMoreConv" title="所有对话" size="detail">
       <div class="picker-scroll">
         <div v-for="c in pagedConversations" :key="c.id" class="conv-row"
           role="button" tabindex="0"
@@ -539,7 +538,7 @@ function handleKeydown(e: KeyboardEvent) {
         simple
         class="conv-pager"
       />
-    </NModal>
+    </AppModal>
 
     <!-- Modal: KB picker with search -->
     <KbPickerModal
@@ -552,8 +551,8 @@ function handleKeydown(e: KeyboardEvent) {
       @select="onKbPick"
     />
 
-    <NModal v-model:show="showSkillModal" preset="card" title="选择技能"
-      style="width: 92vw; max-width: 680px"
+    <AppModal v-model:show="showSkillModal" title="选择技能"
+      size="wide"
       @after-leave="skillSearchText = ''"
     >
       <NInput v-model:value="skillSearchText" placeholder="搜索技能名称..." clearable style="margin-bottom:12px" />
@@ -607,7 +606,7 @@ function handleKeydown(e: KeyboardEvent) {
         </NCard>
       </div>
       <NEmpty v-if="filteredSkills.length === 0" description="没有匹配的技能" style="padding:16px 0" />
-    </NModal>
+    </AppModal>
 
     <div v-if="!isReadonly" class="chat-input-wrapper">
       <div class="skill-selector-bar">

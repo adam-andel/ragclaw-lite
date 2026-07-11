@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput,
+  NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NPagination, NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import {
   listServers, createServer, updateServer, deleteServer, testServer, refreshTools,
 } from '@/api/mcp'
@@ -246,11 +247,10 @@ async function handleRefresh() {
     </NSpin>
 
       <!-- Test Result Modal -->
-      <NModal
+      <AppModal
         v-model:show="showTestModal"
-        preset="card"
         :title="`${testServerName} · ${testResult?.ok ? '✅ 连接成功' : '❌ 连接失败'}`"
-        style="width: 520px"
+        size="detail"
       >
         <template v-if="testResult">
           <template v-if="testResult.ok">
@@ -266,10 +266,10 @@ async function handleRefresh() {
             <NText type="error">{{ testResult.error }}</NText>
           </template>
         </template>
-      </NModal>
+      </AppModal>
 
     <!-- Create/Edit Modal -->
-    <NModal v-model:show="showModal" title="MCP 服务" preset="card" style="width:640px">
+    <AppModal v-model:show="showModal" title="MCP 服务" size="detail">
       <NForm :model="form" label-placement="left" label-width="100">
         <NFormItem label="名称" required>
           <NInput v-model:value="form.name" placeholder="如：天气查询" maxlength="200" />
@@ -306,7 +306,7 @@ async function handleRefresh() {
           <NButton type="primary" :disabled="!form.name" @click="handleSave">保存</NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
   </div>
 </template>
 

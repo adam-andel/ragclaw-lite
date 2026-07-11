@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { NModal, NCard, NInput, NSelect, NIcon, NEmpty, NPagination } from 'naive-ui'
+import { NCard, NInput, NSelect, NIcon, NEmpty, NPagination } from 'naive-ui'
 import { Search } from '@vicons/ionicons5'
+import AppModal from '@/components/common/AppModal.vue'
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -85,11 +86,10 @@ function onAfterLeave() {
 </script>
 
 <template>
-  <NModal
+  <AppModal
     :show="show"
-    preset="card"
     :title="title"
-    style="width: 90vw; max-width: 720px"
+    size="wide"
     @update:show="emit('update:show', $event)"
     @after-leave="onAfterLeave"
   >
@@ -159,7 +159,7 @@ function onAfterLeave() {
         @update:page="(p: number) => page = p"
       />
     </div>
-  </NModal>
+  </AppModal>
 </template>
 
 <style scoped>

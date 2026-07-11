@@ -4,11 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPagination, NPopconfirm, useMessage,
-  NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
+  NIcon, NCard, NDescriptions, NDescriptionsItem,
   NCheckbox, NTooltip,
 } from 'naive-ui'
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -835,14 +836,14 @@ async function loadSupportedTypes() {
     </PageHeader>
 
     <!-- KB Form Modal (create + edit share the same modal) -->
-    <NModal v-model:show="showKbForm" preset="card"
+    <AppModal v-model:show="showKbForm"
       :title="kbFormMode === 'create' ? '新建知识库' : '编辑知识库'"
-      style="width: 90vw; max-width: 440px"
+      size="nested"
     >
       <div class="kb-form">
         <NInput v-model:value="kbFormName" placeholder="知识库名称" />
         <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求。注意：每次修改都会使得修改后的第一次对话失去大模型缓存命中。）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -852,12 +853,10 @@ async function loadSupportedTypes() {
           </NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Upload Modal -->
-    <NModal v-model:show="showUploadModal" preset="card" title="上传文件"
-      style="width: 90vw; max-width: 560px"
-    >
+    <AppModal v-model:show="showUploadModal" title="上传文件" size="detail">
       <div class="upload-modal-body">
         <!-- Knowledge base selector -->
         <div class="upload-kb-select">
@@ -918,7 +917,7 @@ async function loadSupportedTypes() {
           </NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- KB Filter -->
     <div class="dm-kb-filter">
@@ -1054,9 +1053,7 @@ async function loadSupportedTypes() {
     </div>
 
     <!-- Chunks Modal -->
-    <NModal v-model:show="showChunks" preset="card" title="分块预览"
-      style="width: 90vw; max-width: 720px"
-    >
+    <AppModal v-model:show="showChunks" title="分块预览" size="nested">
       <div class="chunks-modal">
         <NInput
           v-if="chunks.length > 0"
@@ -1108,11 +1105,11 @@ async function loadSupportedTypes() {
           <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
         </NSpin>
       </div>
-    </NModal>
+    </AppModal>
 
     <!-- Doc KBs Modal -->
-    <NModal v-model:show="showDocKbs" preset="card" title="关联知识库"
-      style="width: 90vw; max-width: 480px"
+    <AppModal v-model:show="showDocKbs" title="关联知识库"
+      size="nested"
       @after-leave="docKbSearchText = ''"
     >
       <NInput
@@ -1156,11 +1153,11 @@ async function loadSupportedTypes() {
         </div>
       </template>
       <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
-    </NModal>
+    </AppModal>
 
     <!-- Document Detail Modal -->
-    <NModal v-model:show="showDetail" preset="card" :title="detailDoc?.filename || '文档详情'"
-      style="width: 90vw; max-width: 560px"
+    <AppModal v-model:show="showDetail" :title="detailDoc?.filename || '文档详情'"
+      size="detail"
       @after-leave="detailDoc = null"
     >
       <div v-if="detailDoc">
@@ -1219,7 +1216,7 @@ async function loadSupportedTypes() {
           </NPopconfirm>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- KB Filter Modal（复用共享组件） -->
     <KbPickerModal
@@ -1237,9 +1234,7 @@ async function loadSupportedTypes() {
     />
 
     <!-- Share Modal -->
-    <NModal v-model:show="showShare" preset="card" title="共享用户"
-      style="width: 90vw; max-width: 640px"
-    >
+    <AppModal v-model:show="showShare" title="共享用户" size="detail">
       <div class="share-form">
         <NSpin :show="shareLoading">
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
@@ -1336,12 +1331,10 @@ async function loadSupportedTypes() {
           </template>
         </NSpin>
       </div>
-    </NModal>
+    </AppModal>
 
     <!-- Select Documents Modal -->
-    <NModal v-model:show="showSelectDocs" preset="card" title="选择文档加入知识库"
-      style="width: 90vw; max-width: 720px"
-    >
+    <AppModal v-model:show="showSelectDocs" title="选择文档加入知识库" size="wide">
       <div class="select-docs-modal">
         <div class="select-docs-filters">
           <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="onAvailableSearch" style="flex:1">
@@ -1398,7 +1391,7 @@ async function loadSupportedTypes() {
           </NSpace>
         </div>
       </div>
-    </NModal>
+    </AppModal>
   </div>
 </template>
 <style scoped>
