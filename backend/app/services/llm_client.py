@@ -1,4 +1,13 @@
-"""LLM client abstraction layer supporting multiple providers."""
+"""LLM client abstraction layer supporting multiple providers.
+
+Provider-aware prompt-caching support:
+  - Anthropic / Aliyun (qwen): ``cache_control`` breakpoint on the system message
+  - Tencent TokenHub: ``prompt_cache_key`` (body) + ``X-Session-ID`` (header)
+  - OpenAI / Ollama: no extra params (OpenAI auto-caches prefixes)
+
+The active platform is resolved via ``config_manager.platform`` (explicit
+``llm_provider`` value, falling back to the ``llm_base_url`` domain).
+"""
 
 import json
 import logging
@@ -10,6 +19,72 @@ from app.services.config_manager import config_manager
 
 logger = logging.getLogger("erag.llm")
 logger.setLevel(logging.INFO)
+
+
+# Provider-side prompt cache accounting. Collected for observability (logged
+# when a cache hit/creation is observed); not yet exposed via the stats API.
+_llm_cache_totals = {
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "calls": 0,
+}
+
+
+def _wrap_system_with_cache(messages: list[dict]) -> list[dict]:
+    """Anthropic / Aliyun explicit cache: mark the system message as a cache breakpoint.
+
+    Converts a string system content into a content-block array carrying
+    ``cache_control: {"type": "ephemeral"}``. Other platforms ignore the extra
+    field, so a single message structure works across all four platforms.
+    """
+    wrapped: list[dict] = []
+    for m in messages:
+        if m.get("role") == "system" and isinstance(m.get("content"), str):
+            wrapped.append({
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": m["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }],
+            })
+        else:
+            wrapped.append(m)
+    return wrapped
+
+
+def _apply_cache_adapter(body: dict, headers: dict, platform: str, conversation_id: str | None) -> None:
+    """Mutate the request body/headers to enable the resolved platform's prompt cache.
+
+    - anthropic / qwen: wrap the system message with a ``cache_control`` breakpoint
+    - tencent: add ``prompt_cache_key`` (conversation-scoped) + ``X-Session-ID`` header
+    - openai / ollama: no changes required
+    """
+    if platform in ("anthropic", "qwen"):
+        body["messages"] = _wrap_system_with_cache(body.get("messages", []))
+    elif platform == "tencent":
+        if conversation_id:
+            body["prompt_cache_key"] = conversation_id
+            headers["X-Session-ID"] = conversation_id
+    # openai / ollama: nothing to add
+
+
+def _record_usage(usage: dict | None) -> None:
+    """Account for provider-side prompt cache tokens (cross-platform, best-effort)."""
+    if not usage:
+        return
+    read = (
+        usage.get("cache_read_input_tokens")
+        or usage.get("prompt_cache_hit_tokens")
+        or usage.get("cached_tokens")
+        or 0
+    )
+    creation = usage.get("cache_creation_input_tokens") or 0
+    _llm_cache_totals["cache_read_tokens"] += read
+    _llm_cache_totals["cache_creation_tokens"] += creation
+    _llm_cache_totals["calls"] += 1
+    if read or creation:
+        logger.info("LLM prompt cache usage: read=%s creation=%s", read, creation)
 
 
 class LLMClient:
@@ -35,6 +110,7 @@ class LLMClient:
         messages: list[dict],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        conversation_id: str | None = None,
     ) -> str:
         """Non-streaming chat completion.
 
@@ -42,6 +118,7 @@ class LLMClient:
             messages: List of {"role": "system"|"user"|"assistant", "content": "..."}
             temperature: Override default temperature
             max_tokens: Override default max tokens
+            conversation_id: Conversation-scoped id (enables Tencent TokenHub cache key)
 
         Returns:
             The full response text
@@ -49,6 +126,7 @@ class LLMClient:
         temp = temperature if temperature is not None else config_manager.temperature
         max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
 
+        platform = config_manager.platform
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -61,17 +139,19 @@ class LLMClient:
             "max_tokens": max_tok,
             "stream": False,
         }
+        _apply_cache_adapter(body, headers, platform, conversation_id)
 
         url = f"{self.base_url}/chat/completions"
 
-        logger.info("chat request: model=%s messages=%d temp=%s max_tokens=%s",
-                    self.model, len(messages), temp, max_tok)
+        logger.info("chat request: model=%s platform=%s messages=%d temp=%s max_tokens=%s",
+                    self.model, platform, len(messages), temp, max_tok)
         response = await self._client.post(url, headers=headers, json=body)
         if response.status_code != 200:
             logger.error("chat error %d: %s", response.status_code, response.text[:1000])
         response.raise_for_status()
 
         data = response.json()
+        _record_usage(data.get("usage"))
         return data["choices"][0]["message"]["content"]
 
     async def chat_stream(
@@ -79,14 +159,18 @@ class LLMClient:
         messages: list[dict],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        conversation_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Streaming chat completion.
 
-        Yields text tokens one at a time.
+        Yields text tokens one at a time. For platforms that support it
+        (openai / anthropic / qwen) a final usage chunk is parsed to account for
+        prompt-cache tokens.
         """
         temp = temperature if temperature is not None else config_manager.temperature
         max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
 
+        platform = config_manager.platform
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -99,6 +183,10 @@ class LLMClient:
             "max_tokens": max_tok,
             "stream": True,
         }
+        # OpenAI-style terminal usage chunk (ignored by platforms that don't support it).
+        if platform in ("openai", "anthropic", "qwen"):
+            body["stream_options"] = {"include_usage": True}
+        _apply_cache_adapter(body, headers, platform, conversation_id)
 
         url = f"{self.base_url}/chat/completions"
 
@@ -111,6 +199,10 @@ class LLMClient:
                         break
                     try:
                         data = json.loads(data_str)
+                        # Terminal usage chunk (e.g. OpenAI): empty choices, usage present.
+                        if data.get("usage") is not None and not data.get("choices"):
+                            _record_usage(data["usage"])
+                            continue
                         delta = data["choices"][0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
@@ -125,6 +217,7 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         tool_choice: str = "auto",
+        conversation_id: str | None = None,
     ) -> dict:
         """Non-streaming chat with tool calling support.
 
@@ -134,6 +227,7 @@ class LLMClient:
             temperature: Override default temperature
             max_tokens: Override default max tokens
             tool_choice: "auto" | "required" | "none" (default "auto")
+            conversation_id: Conversation-scoped id (enables Tencent TokenHub cache key)
 
         Returns:
             dict with:
@@ -145,6 +239,7 @@ class LLMClient:
         temp = temperature if temperature is not None else config_manager.temperature
         max_tok = max_tokens if max_tokens is not None else config_manager.max_tokens
 
+        platform = config_manager.platform
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -159,12 +254,13 @@ class LLMClient:
             "tools": tools,
             "tool_choice": tool_choice,
         }
+        _apply_cache_adapter(body, headers, platform, conversation_id)
 
         url = f"{self.base_url}/chat/completions"
 
         # ── Debug logging: print FULL request body for TokenHub compatibility diagnosis ──
-        logger.info("chat_with_tools request: model=%s tool_choice=%s tools_count=%d messages=%d",
-                    self.model, tool_choice, len(tools), len(messages))
+        logger.info("chat_with_tools request: model=%s platform=%s tool_choice=%s tools_count=%d messages=%d",
+                    self.model, platform, tool_choice, len(tools), len(messages))
         logger.info("chat_with_tools FULL request body: %s",
                     json.dumps(body, ensure_ascii=False))
 
@@ -181,6 +277,8 @@ class LLMClient:
         data = response.json()
         choice = data["choices"][0]
         message = choice.get("message", {})
+
+        _record_usage(data.get("usage"))
 
         return {
             "content": message.get("content", "") or "",

@@ -242,7 +242,7 @@ async def chat_stream(
                     collected_content = ""
                     collected_citations = []
 
-                    async for token in llm_client.chat_stream(messages):
+                    async for token in llm_client.chat_stream(messages, conversation_id=conv_id):
                         collected_content += token
                         enqueue("token", {"content": token})
 

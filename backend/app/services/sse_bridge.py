@@ -81,7 +81,7 @@ async def run_agent_and_stream(state: dict):
     messages = erag_agent_graph.build_generation_messages(state)
     full_answer = ""
     try:
-        async for token in llm_client.chat_stream(messages):
+        async for token in llm_client.chat_stream(messages, conversation_id=state.get("conversation_id")):
             full_answer += token
             yield sse_event("token", token)
 

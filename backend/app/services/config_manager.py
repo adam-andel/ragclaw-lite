@@ -304,6 +304,36 @@ class ConfigManager:
             return self._config.get("llm_provider", "openai")
 
     @property
+    def platform(self) -> str:
+        """Normalized platform key for provider-specific adaptations.
+
+        Explicit ``llm_provider`` value wins; falls back to inferring from the
+        ``llm_base_url`` domain. Returns one of:
+        ``openai`` | ``anthropic`` | ``qwen`` (Aliyun Bailian) | ``tencent``
+        (TokenHub) | ``ollama``.
+        """
+        with self._lock:
+            raw = (self._config.get("llm_provider") or "openai").lower()
+            base = (self._config.get("llm_base_url") or "").lower()
+        explicit = {
+            "anthropic": "anthropic", "claude": "anthropic",
+            "qwen": "qwen", "alibaba": "qwen", "dashscope": "qwen",
+            "tencent": "tencent", "tokenhub": "tencent", "hunyuan": "tencent",
+            "openai": "openai", "ollama": "ollama",
+        }
+        if raw in explicit:
+            return explicit[raw]
+        if "anthropic" in base:
+            return "anthropic"
+        if "dashscope" in base or "aliyun" in base or "qwen" in base:
+            return "qwen"
+        if "tencentcloud" in base or "tokenhub" in base or "hunyuan" in base:
+            return "tencent"
+        if "ollama" in base:
+            return "ollama"
+        return "openai"
+
+    @property
     def embedding_api_key(self) -> str:
         with self._lock:
             return self._config.get("embedding_api_key", "")
