@@ -844,7 +844,7 @@ async function loadSupportedTypes() {
       <div class="kb-form">
         <NInput v-model:value="kbFormName" placeholder="知识库名称" />
         <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求。注意：每次修改都会使得修改后的第一次对话失去大模型缓存命中。）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求。注意：每次修改都会使得修改后的第一次对话LLM缓存命中率大幅下降。）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -912,7 +912,6 @@ async function loadSupportedTypes() {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showUploadModal = false">关闭</NButton>
           <NButton type="primary" :loading="hasActiveUploads" :disabled="pendingCount === 0" @click="startUploads">
             {{ hasActiveUploads ? '上传中…' : pendingCount > 0 ? `开始上传 (${pendingCount})` : '开始上传' }}
           </NButton>
@@ -1100,8 +1099,6 @@ async function loadSupportedTypes() {
               @update:page="chunkPage = $event"
             />
           </div>
-
-          <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
         </NSpin>
       </div>
     </AppModal>
@@ -1205,7 +1202,6 @@ async function loadSupportedTypes() {
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showDetail = false">关闭</NButton>
           <NButton v-if="detailDoc" @click="handleDownload(detailDoc)">下载原件</NButton>
           <NPopconfirm v-if="detailDoc" @positive-click="deleteDetailDoc">
             <template #trigger>
