@@ -3,7 +3,7 @@ import { computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NMenu, NIcon, NButton, NTag, NBadge, NSwitch } from 'naive-ui'
 import {
-  Chatbubbles, FolderOpen, StatsChart,
+  Chatbubbles, DocumentText, StatsChart, Bulb, Flash,
   LogOut, People, Settings, Time,
   Notifications,
 } from '@vicons/ionicons5'
@@ -31,9 +31,9 @@ const menuOptions = computed<MenuOption[]>(() => {
   }
   return [
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
-    { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(FolderOpen) }) },
-    { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
-    { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
+    { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
+    { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
+    { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
     { label: '定时任务', key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
     { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
     ...(auth.isAdmin ? [
