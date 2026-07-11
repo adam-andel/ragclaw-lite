@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { NCard, NButton, NTag, NModal, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NPagination } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -116,19 +117,15 @@ function formatTime(t: string) {
 
 <template>
   <div class="page-container">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><People /></NIcon>
-        <h2>用户管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="用户管理" :icon="People">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NButton type="primary" size="small" @click="showCreate = true">
           <template #icon><NIcon><Add /></NIcon></template>
           新建用户
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && total === 0" description="暂无用户" />
@@ -281,47 +278,6 @@ function formatTime(t: string) {
 </template>
 
 <style scoped>
-.page-container {
-  padding: var(--space-4);
-  max-width: 1100px;
-  margin: 0 auto;
-}
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dm-header .kb-header-title h2 {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0;
-}
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* User card grid */
 .um-list {
   display: grid;

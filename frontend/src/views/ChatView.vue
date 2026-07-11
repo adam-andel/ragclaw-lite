@@ -3,6 +3,7 @@ import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NModal, NSpace, NPagination, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, listConversations } from '@/api/chat'
@@ -358,12 +359,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="chat-view">
-    <div class="chat-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><Chatbubbles /></NIcon>
-        <h2>RAG 对话</h2>
-      </div>
-      <div class="chat-header-right">
+    <PageHeader title="RAG 对话" :icon="Chatbubbles">
+      <template #actions>
         <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
         <NButton size="small" @click="showMoreConv = true">
           <template #icon><NIcon size="16"><List /></NIcon></template>
@@ -373,16 +370,14 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="16"><Add /></NIcon></template>
           新建对话
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" aria-label="对话消息">
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
           <div class="center-panel-head">
-            <div class="center-panel-icon">💬</div>
-            <h3>选择一个对话</h3>
             <p class="center-panel-subtitle">从最近对话继续，或开启新的对话</p>
           </div>
           <div class="conv-list">
@@ -658,21 +653,6 @@ function handleKeydown(e: KeyboardEvent) {
   position: relative;
 }
 
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 14px 20px;
-  margin-bottom: 4px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.chat-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
-.chat-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
-.chat-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .chat-messages {
   flex: 1;
@@ -763,7 +743,7 @@ function handleKeydown(e: KeyboardEvent) {
   margin-bottom: 14px;
 }
 .center-panel-subtitle {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--color-text-muted);
   margin-top: 4px;
 }
@@ -1086,18 +1066,6 @@ function handleKeydown(e: KeyboardEvent) {
 
 /* ── Mobile: header wraps gracefully ── */
 @media (max-width: 767px) {
-  .chat-header {
-    flex-wrap: wrap;
-    padding: 10px 14px;
-    gap: 6px;
-  }
-  .chat-header .kb-header-title h2 {
-    font-size: var(--text-base);
-  }
-  .chat-header-right {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
   .kb-trigger-btn {
     max-width: 120px;
   }

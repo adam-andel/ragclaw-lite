@@ -7,6 +7,7 @@ import {
 import { PersonCircle, ShieldCheckmark, Mail, LockClosed, Create, ImageOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import client from '@/api/client'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 const auth = useAuthStore()
 const message = useMessage()
@@ -134,9 +135,7 @@ const roleColor = computed(() => {
 
 <template>
   <div class="profile-page">
-    <div class="profile-header">
-      <h1 class="page-title">个人信息设置</h1>
-    </div>
+    <PageHeader title="个人信息设置" title-tag="h1" />
 
     <NCard class="profile-card" :bordered="false">
       <!-- Avatar -->
@@ -265,14 +264,6 @@ const roleColor = computed(() => {
 .profile-page {
   max-width: 680px;
   margin: 0 auto;
-}
-.profile-header {
-  margin-bottom: var(--space-6);
-}
-.page-title {
-  font-size: var(--text-2xl);
-  font-weight: 700;
-  color: var(--color-text);
 }
 .profile-card {
   background: var(--color-surface);

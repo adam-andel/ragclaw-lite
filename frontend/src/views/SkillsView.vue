@@ -6,6 +6,7 @@ import {
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem, NPagination,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
@@ -320,13 +321,9 @@ onMounted(() => {
 
 <template>
   <div class="page-container">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><Bulb /></NIcon>
-        <h2>技能管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="技能管理" :icon="Bulb">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NButton size="small" @click="handleSync">
           <template #icon><NIcon><Sync /></NIcon></template>
           同步
@@ -345,8 +342,8 @@ onMounted(() => {
           <template #icon><NIcon><Add /></NIcon></template>
           在线创建
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- Hidden folder inputs -->
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
@@ -557,47 +554,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page-container {
-  padding: var(--space-4);
-  max-width: 1100px;
-  margin: 0 auto;
-}
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dm-header .kb-header-title h2 {
-  font-size: var(--text-xl);
-  font-weight: 700;
-  margin: 0;
-}
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* Skill card grid */
 .sk-list {
   display: grid;

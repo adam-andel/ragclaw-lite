@@ -6,6 +6,7 @@ import {
   NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, type LLMConfig, type SandboxNetworkConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
@@ -206,15 +207,8 @@ async function handleSaveSandbox() {
 <template>
   <div class="settings-layout">
     <div class="settings-sticky-top">
-      <div class="settings-header">
-        <div class="settings-header-title">
-          <NIcon size="22" color="var(--color-primary)"><Settings /></NIcon>
-          <div>
-            <h2>系统设置</h2>
-            <p class="page-subtitle">LLM · 服务器 · 检索调试 · 插件管理 · 仅超级管理员可访问</p>
-          </div>
-        </div>
-        <div class="settings-header-right">
+      <PageHeader title="系统设置" :icon="Settings" subtitle="LLM · 服务器 · 检索调试 · 插件管理 · 仅超级管理员可访问">
+        <template #actions>
           <NButton
             size="small"
             type="primary"
@@ -225,8 +219,8 @@ async function handleSaveSandbox() {
             <template #icon><NIcon><Save /></NIcon></template>
             保存配置
           </NButton>
-        </div>
-      </div>
+        </template>
+      </PageHeader>
 
       <!-- 子导航 -->
       <nav class="settings-subnav">
@@ -566,22 +560,6 @@ async function handleSaveSandbox() {
   width: 100%;
   margin: 0 auto;
 }
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 14px 20px;
-  margin-bottom: 4px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.settings-header-title { display: flex; align-items: center; gap: 10px; }
-.settings-header-title h2 { font-size: var(--text-xl); font-weight: 700; }
-.settings-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.page-subtitle { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
 
 .settings-subnav {
   display: flex;
@@ -629,16 +607,4 @@ async function handleSaveSandbox() {
 .test-ok { background: rgba(34,197,94,0.1); color: #16a34a; }
 .test-fail { background: rgba(239,68,68,0.1); color: #dc2626; }
 
-@media (max-width: 767px) {
-  .settings-header {
-    flex-wrap: wrap;
-    padding: 10px 14px;
-    gap: 10px;
-  }
-  .settings-header-title h2 { font-size: var(--text-base); }
-  .settings-header-right {
-    width: 100%;
-    justify-content: flex-end;
-  }
-}
 </style>

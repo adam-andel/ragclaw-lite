@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { NCard, NTag, NSpin } from 'naive-ui'
 import { getOverview } from '@/api/stats'
+import PageHeader from '@/components/common/PageHeader.vue'
 import type { SystemStats } from '@/types'
 
 const stats = ref<SystemStats | null>(null)
@@ -23,9 +24,7 @@ function formatTokens(cost: number) {
 
 <template>
   <div class="dashboard-view">
-    <div class="dashboard-header">
-      <h2>📊 系统概览</h2>
-    </div>
+    <PageHeader title="📊 系统概览" />
 
     <NSpin :show="loading">
       <div v-if="stats" class="dashboard-body">
@@ -78,7 +77,6 @@ function formatTokens(cost: number) {
 
 <style scoped>
 .dashboard-view { max-width: 1000px; margin: 0 auto; }
-.dashboard-header h2 { font-size: 1.25rem; margin-bottom: 20px; }
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 24px; }
 .stat-card { text-align: center; }
 .stat-value { font-size: 1.8rem; font-weight: 700; color: var(--color-primary); }

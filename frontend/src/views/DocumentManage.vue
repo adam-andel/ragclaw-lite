@@ -8,6 +8,7 @@ import {
   NCheckbox, NTooltip,
 } from 'naive-ui'
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -819,13 +820,9 @@ async function loadSupportedTypes() {
 </script>
 <template>
   <div class="dm-view">
-    <div class="dm-header">
-      <div class="kb-header-title">
-        <NIcon size="22" color="var(--color-primary)"><DocumentText /></NIcon>
-        <h2>文档管理</h2>
-        <span v-if="total > 0" class="kb-header-badge">{{ total }}</span>
-      </div>
-      <div class="dm-header-actions">
+    <PageHeader title="文档管理" :icon="DocumentText">
+      <template #badge v-if="total > 0">{{ total }}</template>
+      <template #actions>
         <NButton size="small" type="primary" @click="openCreateKb">
           <template #icon><NIcon><Create /></NIcon></template>
           新建知识库
@@ -834,8 +831,8 @@ async function loadSupportedTypes() {
           <template #icon><NIcon><Add /></NIcon></template>
           上传文档
         </NButton>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- KB Form Modal (create + edit share the same modal) -->
     <NModal v-model:show="showKbForm" preset="card"
@@ -1406,29 +1403,6 @@ async function loadSupportedTypes() {
 </template>
 <style scoped>
 .dm-view { height: 100%; overflow-y: auto; }
-.dm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary-soft), transparent);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
-  flex-shrink: 0;
-}
-.dm-header .kb-header-title { display: flex; align-items: center; gap: 10px; }
-.dm-header .kb-header-title h2 { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.01em; }
-.dm-header .kb-header-badge {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-primary);
-}
-.dm-header-actions { display: flex; align-items: center; gap: 8px; }
 
 /* Create KB Modal */
 
