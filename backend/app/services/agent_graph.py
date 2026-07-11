@@ -181,7 +181,11 @@ class EragAgentGraph:
             "Do not wrap the JSON in markdown code fences."
         )
 
-        messages = [{"role": "system", "content": system_prompt + final_note + cron_rule}]
+        # final_note is intentionally kept OUT of the system prompt — it lives in
+        # the user message (dynamic region) below. This keeps the cached system
+        # prefix constant regardless of tool execution, so provider-side prompt
+        # caches don't get split into two incompatible groups.
+        messages = [{"role": "system", "content": system_prompt + cron_rule}]
 
         # Conversation history
         history = state.get("conversation_history", [])
@@ -204,6 +208,10 @@ class EragAgentGraph:
             user_parts.append(f"## 参考文档\n{state['rag_context']}")
 
         user_parts.append(f"## 问题\n{state['query']}")
+        # Final-stage constraint stays in the dynamic user region (only varies with
+        # tool execution); keeping it out of the system prefix preserves cache hits.
+        if final_note:
+            user_parts.append(final_note)
         messages.append({"role": "user", "content": "\n\n".join(user_parts)})
 
         return messages
