@@ -72,13 +72,13 @@ const router = createRouter({
       path: '/skills',
       name: 'skills',
       component: () => import('@/views/SkillsView.vue'),
-      meta: { title: '技能管理', requiresAuth: true, staff: true },
+      meta: { title: '技能管理', requiresAuth: true, admin: true },
     },
     {
       path: '/mcp',
       name: 'mcp',
       component: () => import('@/views/McpServersView.vue'),
-      meta: { title: 'MCP 服务', requiresAuth: true, staff: true },
+      meta: { title: 'MCP 服务', requiresAuth: true, admin: true },
     },
     {
       path: '/cron-jobs',
