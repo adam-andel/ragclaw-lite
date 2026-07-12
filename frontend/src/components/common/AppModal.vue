@@ -108,4 +108,12 @@ const modalAttrs = computed(() => {
   min-height: 0;
   overflow-y: auto;
 }
+/* 开合过渡提速：Naive 默认 enter/leave（打开/关闭/点遮罩）时长均 0.2s，会出现明显延迟感。
+   这里统一压短到 0.1s。选择器命中弹窗卡片本身（app-modal 与 n-card 同元素，
+   3 类选择器特异性高于 Naive 运行时 cssr 的 1 类规则，无需 !important 即生效），
+   不波及弹窗内嵌套的 NCard。 */
+.app-modal.n-card.fade-in-scale-up-transition-enter-active,
+.app-modal.n-card.fade-in-scale-up-transition-leave-active {
+  transition-duration: 0.1s;
+}
 </style>
