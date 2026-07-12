@@ -8,7 +8,7 @@ import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, listConversations } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
@@ -35,17 +35,15 @@ function checkReadonly(convUserId?: string | null) {
   }
 }
 
-const allMessages = ref<ChatMsg[]>([])
-const ROUNDS_PER_PAGE = 10
-const loadedRounds = ref(0)
-const totalRounds = computed(() => Math.ceil(allMessages.value.length / 2))
-const hasMoreOlder = computed(() => loadedRounds.value < totalRounds.value)
+const messages = ref<ChatMsg[]>([])
+// 服务端分页：每页 PAGE_SIZE_ROUNDS 轮（一问一答为一轮 = 2 条消息）。
+// 打开对话时加载最新一页（最后一页），向上滚动触顶时再请求上一页并拼接到顶部。
+const PAGE_SIZE_ROUNDS = 10
+const currentPage = ref(1)
+const totalPages = ref(1)
+const totalRounds = ref(0)
 const isLoadingOlder = ref(false)
-// 分页后的可见消息：默认只展示最新的 ROUNDS_PER_PAGE 轮对话，向上滚动触顶时再向前加载更早的轮次
-const messages = computed<ChatMsg[]>(() => {
-  const start = Math.max(0, totalRounds.value - loadedRounds.value) * 2
-  return allMessages.value.slice(start)
-})
+const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
@@ -71,19 +69,42 @@ function onScroll() {
   }
 }
 
-// 向前加载更早的对话：在列表顶部插入上一页（10 轮），并保持当前可视位置不跳动
+// 向前加载更早的对话：向服务端请求上一页，拼接到列表顶部，并补偿滚动位置避免画面跳动
 async function loadOlder() {
-  if (!hasMoreOlder.value || isLoadingOlder.value) return
+  if (!hasMoreOlder.value || isLoadingOlder.value || !conversationId.value) return
   isLoadingOlder.value = true
   const el = messagesContainer.value
   const prevHeight = el ? el.scrollHeight : 0
-  loadedRounds.value = Math.min(totalRounds.value, loadedRounds.value + ROUNDS_PER_PAGE)
-  await nextTick()
-  if (el && el.isConnected) {
-    const added = el.scrollHeight - prevHeight
-    el.scrollTop = el.scrollTop + added
+  const prevPage = currentPage.value - 1
+  try {
+    const data = await getConversationMessages(conversationId.value, prevPage, PAGE_SIZE_ROUNDS)
+    messages.value = [...data.messages, ...messages.value]
+    currentPage.value = data.page
+    totalPages.value = data.total_pages
+    totalRounds.value = data.total_rounds
+  } catch {
+    // 加载失败不改变现有展示
+  } finally {
+    await nextTick()
+    if (el && el.isConnected) {
+      const added = el.scrollHeight - prevHeight
+      el.scrollTop = el.scrollTop + added
+    }
+    isLoadingOlder.value = false
   }
+}
+
+// 加载对话的最新一页（最后一页），并滚动到底部
+async function loadInitialPage(id: string) {
+  const data = await getConversationMessages(id, 'last', PAGE_SIZE_ROUNDS)
+  messages.value = data.messages
+  currentPage.value = data.page
+  totalPages.value = data.total_pages
+  totalRounds.value = data.total_rounds
   isLoadingOlder.value = false
+  isPinnedToBottom.value = true
+  await nextTick()
+  await scrollToBottom()
 }
 
 function scrollToBottomAndPin() {
@@ -206,8 +227,10 @@ watch(() => route.params.id, async (id) => {
     await loadConversation(cid)
   } else if (!cid) {
     // Navigated to /chat without id — new conversation
-    allMessages.value = []
-    loadedRounds.value = 0
+    messages.value = []
+    currentPage.value = 1
+    totalPages.value = 1
+    totalRounds.value = 0
     conversationId.value = undefined
     isReadonly.value = false
     emptyMode.value = 'conv'
@@ -217,10 +240,8 @@ watch(() => route.params.id, async (id) => {
 
 async function loadConversation(id: string) {
   try {
-    const conv = await getConversation(id)
-    allMessages.value = conv.messages || []
-    loadedRounds.value = Math.min(ROUNDS_PER_PAGE, Math.ceil(allMessages.value.length / 2))
-    isLoadingOlder.value = false
+    // 仅获取会话元数据（不含消息），消息由服务端分页接口加载
+    const conv = await getConversation(id, false)
     conversationId.value = id
     // Restore the KB that was used with this conversation
     const savedKbId = convKbMap.value[id]
@@ -233,12 +254,14 @@ async function loadConversation(id: string) {
     } else {
       router.replace(`/chat/${id}`)
     }
-    isPinnedToBottom.value = true
-    await scrollToBottom()
+    // 服务端分页：加载最新一页（最后一页）并滚动到底部
+    await loadInitialPage(id)
   } catch {
-    allMessages.value = []
-    loadedRounds.value = 0
+    messages.value = []
     conversationId.value = undefined
+    currentPage.value = 1
+    totalPages.value = 1
+    totalRounds.value = 0
     router.replace('/chat')
   }
 }
@@ -248,8 +271,10 @@ onMounted(() => {
   window.addEventListener('erag:reset-chat', () => {
     isReadonly.value = false
     conversationId.value = undefined
-    allMessages.value = []
-    loadedRounds.value = 0
+    messages.value = []
+    currentPage.value = 1
+    totalPages.value = 1
+    totalRounds.value = 0
     emptyMode.value = 'conv'
     loadConversations()
   })
@@ -312,7 +337,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   } catch (e: any) {
     if (e?.name !== 'AbortError') {
       // Remove failed user + assistant messages and restore input
-      allMessages.value = allMessages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
+      messages.value = messages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
       inputText.value = query
       nmessage.error(`发送失败: ${e.message}，已恢复输入`)
     }
@@ -335,12 +360,12 @@ async function sendMessage() {
   if (!text || isStreaming.value) return
 
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() }
-  allMessages.value.push(userMsg)
+  messages.value.push(userMsg)
   inputText.value = ''
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
-  allMessages.value.push(assistantMsg)
-  const proxyMsg = allMessages.value[allMessages.value.length - 1]
+  messages.value.push(assistantMsg)
+  const proxyMsg = messages.value[messages.value.length - 1]
   isPinnedToBottom.value = true
   await scrollToBottom()
   isStreaming.value = true
@@ -350,15 +375,15 @@ async function sendMessage() {
 
 async function regenerateAnswer(assistantMsgId: string) {
   if (isStreaming.value) return
-  const idx = allMessages.value.findIndex(m => m.id === assistantMsgId)
+  const idx = messages.value.findIndex(m => m.id === assistantMsgId)
   if (idx < 1) return
-  const userMsg = allMessages.value[idx - 1]
+  const userMsg = messages.value[idx - 1]
   if (userMsg.role !== 'user') return
 
   // replace old assistant message with fresh placeholder
   const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
-  allMessages.value.splice(idx, 1, newAssistant)
-  const proxyMsg = allMessages.value[idx]
+  messages.value.splice(idx, 1, newAssistant)
+  const proxyMsg = messages.value[idx]
   isPinnedToBottom.value = true
   await scrollToBottom()
   isStreaming.value = true
@@ -382,8 +407,10 @@ function cancelQueue() {
 
 function newConversation() {
   conversationId.value = undefined
-  allMessages.value = []
-  loadedRounds.value = 0
+  messages.value = []
+  currentPage.value = 1
+  totalPages.value = 1
+  totalRounds.value = 0
   isReadonly.value = false
   emptyMode.value = 'kb'
   loadConversations()

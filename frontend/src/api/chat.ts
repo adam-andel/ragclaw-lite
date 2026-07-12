@@ -68,8 +68,18 @@ export async function* streamChat(
 export const listConversations = () =>
   fetch('/api/conversations', { headers: authHeaders() }).then(handleResponse).then((r) => r.json()) as Promise<Conversation[]>
 
-export const getConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`, { headers: authHeaders() }).then(handleResponse).then((r) => r.json())
+export const getConversation = (id: string, includeMessages = true) =>
+  fetch(`/api/conversations/${id}?include_messages=${includeMessages}`, { headers: authHeaders() }).then(handleResponse).then((r) => r.json())
+
+// 服务端分页获取对话消息：page 为 1-based（最旧在前），传 'last' 获取最新一页
+export const getConversationMessages = (id: string, page: number | string = 'last', pageSize = 10) => {
+  const qs = new URLSearchParams()
+  qs.set('page', String(page))
+  qs.set('page_size', String(pageSize))
+  return fetch(`/api/conversations/${id}/messages?${qs.toString()}`, { headers: authHeaders() })
+    .then(handleResponse)
+    .then((r) => r.json())
+}
 
 export const deleteConversation = (id: string) =>
   fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)

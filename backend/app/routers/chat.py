@@ -26,6 +26,7 @@ from app.schemas.chat import (
     ChatRequest,
     ConversationResponse,
     ConversationDetail,
+    ConversationMessagesPage,
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
@@ -372,19 +373,109 @@ async def list_conversations(
 
 
 @router.get("/conversations/{conv_id}", response_model=ConversationDetail)
-async def get_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Get a conversation with all messages."""
-    result = await db.execute(
-        select(Conversation).options(selectinload(Conversation.messages))
-        .where(Conversation.id == conv_id)
-    )
+async def get_conversation(
+    conv_id: str,
+    include_messages: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get conversation metadata.
+
+    Pass include_messages=false to skip loading messages (use the paginated
+    /messages endpoint instead) — avoids transferring the entire history.
+    """
+    result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:
         raise HTTPException(404, "Conversation not found")
     # Verify ownership
     if conv.user_id and conv.user_id != current_user.id and current_user.role.value not in ("admin", "moderator"):
         raise HTTPException(403, "无权访问")
-    return conv
+
+    messages_list = []
+    if include_messages:
+        msg_result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conv_id)
+            .order_by(Message.created_at.asc())
+        )
+        messages_list = msg_result.scalars().all()
+
+    return ConversationDetail(
+        id=conv.id,
+        title=conv.title,
+        kb_id=conv.kb_id,
+        user_id=conv.user_id,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        messages=messages_list,
+    )
+
+
+@router.get("/conversations/{conv_id}/messages", response_model=ConversationMessagesPage)
+async def get_conversation_messages(
+    conv_id: str,
+    page: str = "1",
+    page_size: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Server-side paginated messages, paginated by rounds (一问一答为一轮 = 2 条消息).
+
+    page is 1-based, oldest first. Pass page=last to fetch the newest page.
+    Rounds are kept intact at page boundaries so a Q&A pair is never split.
+    """
+    result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value not in ("admin", "moderator"):
+        raise HTTPException(403, "无权访问")
+
+    total_result = await db.execute(
+        select(func.count()).select_from(Message).where(Message.conversation_id == conv_id)
+    )
+    total_messages = total_result.scalar() or 0
+    total_rounds = (total_messages + 1) // 2
+    total_pages = max(1, (total_rounds + page_size - 1) // page_size)
+
+    # Resolve requested page (support "last")
+    if page.strip().lower() == "last":
+        page_num = total_pages
+    else:
+        try:
+            page_num = int(page)
+        except ValueError:
+            page_num = 1
+    if page_num > total_pages:
+        page_num = total_pages
+    if page_num < 1:
+        page_num = 1
+
+    start = (page_num - 1) * page_size * 2
+    end = min(total_messages, page_num * page_size * 2)
+
+    msgs = []
+    if start < end:
+        msg_result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conv_id)
+            .order_by(Message.created_at.asc())
+            .offset(start)
+            .limit(end - start)
+        )
+        msgs = msg_result.scalars().all()
+
+    return ConversationMessagesPage(
+        conversation_id=conv_id,
+        page=page_num,
+        page_size=page_size,
+        total_rounds=total_rounds,
+        total_pages=total_pages,
+        total_messages=total_messages,
+        has_more=page_num > 1,
+        messages=msgs,
+    )
 
 
 @router.delete("/conversations/{conv_id}")

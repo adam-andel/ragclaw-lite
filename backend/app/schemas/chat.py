@@ -57,3 +57,18 @@ class ConversationDetail(BaseModel):
     messages: list[MessageResponse] = []
 
     model_config = {"from_attributes": True}
+
+
+class ConversationMessagesPage(BaseModel):
+    """Server-side paginated messages, paginated by rounds (一问一答为一轮)."""
+
+    conversation_id: str
+    page: int
+    page_size: int
+    total_rounds: int
+    total_pages: int
+    total_messages: int
+    has_more: bool  # 是否还有更早的页（page > 1）
+    messages: list[MessageResponse] = []
+
+    model_config = {"from_attributes": True}
