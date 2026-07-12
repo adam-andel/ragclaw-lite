@@ -5,7 +5,7 @@ import {
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -25,6 +25,15 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '已启用', value: 'active' },
+  { label: '已禁用', value: 'inactive' },
+]
 
 // Create modal
 const showCreateModal = ref(false)
@@ -58,7 +67,11 @@ const detailLoading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const data = await listSkills(page.value, pageSize)
+    const data = await listSkills(
+      page.value, pageSize,
+      search.value || undefined,
+      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+    )
     skills.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -302,6 +315,18 @@ function onPageChange(p: number) {
   load()
 }
 
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
+  load()
+}
+
 function formatTime(t?: string | null) {
   if (!t) return '-'
   return t.slice(0, 16)?.replace('T', ' ') || '-'
@@ -350,6 +375,19 @@ onMounted(() => {
     <!-- Hidden folder inputs -->
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
     <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
+
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" placeholder="搜索技能名称或描述…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        搜索
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
+    </div>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && skills.length === 0" description="暂无技能，请上传或在线创建" />
@@ -554,6 +592,7 @@ onMounted(() => {
 
 <style scoped>
 /* Skill card grid */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .sk-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

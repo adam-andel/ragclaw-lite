@@ -71,14 +71,35 @@ def _apply_tenant_filter(query, current_user: User):
 async def list_cron_jobs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None),
+    is_active: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List cron jobs (tenant-scoped; admin sees all)."""
-    count_q = _apply_tenant_filter(select(func.count()).select_from(CronJob), current_user)
+    """List cron jobs (tenant-scoped; admin sees all).
+
+    Optional `search` filters by job name or description.
+    Optional `is_active` filters by runtime state: active = scheduled/running,
+    inactive = paused/failed.
+    """
+    conditions = []
+    if current_user.role.value != "admin":
+        conditions.append(CronJob.tenant_id == current_user.tenant_id)
+    if search:
+        conditions.append((CronJob.name.ilike(f"%{search}%")) | (CronJob.description.ilike(f"%{search}%")))
+    if is_active is not None:
+        active_statuses = [CronJobStatus.SCHEDULED, CronJobStatus.RUNNING]
+        inactive_statuses = [CronJobStatus.PAUSED, CronJobStatus.FAILED]
+        conditions.append(CronJob.status.in_(active_statuses if is_active else inactive_statuses))
+
+    count_q = select(func.count()).select_from(CronJob)
+    if conditions:
+        count_q = count_q.where(*conditions)
     total = (await db.execute(count_q)).scalar() or 0
 
-    items_q = _apply_tenant_filter(select(CronJob), current_user).order_by(CronJob.created_at.desc())
+    items_q = select(CronJob).order_by(CronJob.created_at.desc())
+    if conditions:
+        items_q = items_q.where(*conditions)
     items_q = items_q.offset((page - 1) * size).limit(size)
     items = (await db.execute(items_q)).scalars().all()
 

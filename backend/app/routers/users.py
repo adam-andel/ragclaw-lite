@@ -18,11 +18,13 @@ async def list_users(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=200),
     search: str | None = None,
+    is_active: bool | None = Query(None),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
     """List users (paginated). ADMIN sees all, MODERATOR sees only USER role.
     Optional `search` filters by username or display_name (case-insensitive).
+    Optional `is_active` filters by account enabled/disabled state.
     Returns `{items, total, page, size}`."""
     conditions = []
     if current_user.role != UserRole.ADMIN:
@@ -30,6 +32,8 @@ async def list_users(
     if search:
         like = f"%{search}%"
         conditions.append(or_(User.username.ilike(like), User.display_name.ilike(like)))
+    if is_active is not None:
+        conditions.append(User.is_active == is_active)
 
     count_q = select(func.count()).select_from(User)
     if conditions:

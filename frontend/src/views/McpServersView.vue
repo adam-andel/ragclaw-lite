@@ -5,7 +5,7 @@ import {
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NEmpty, NSpin,
 } from 'naive-ui'
-import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
+import { Add, Trash, Create, Flash, Refresh, Search } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -25,6 +25,15 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '已启用', value: 'active' },
+  { label: '已禁用', value: 'inactive' },
+]
+
 const showModal = ref(false)
 const editing = ref<MCPServer | null>(null)
 const form = ref<MCPServerCreatePayload & { id?: string }>({
@@ -42,7 +51,11 @@ const testServerName = ref('')
 async function load() {
   loading.value = true
   try {
-    const data = await listServers(page.value, pageSize)
+    const data = await listServers(
+      page.value, pageSize,
+      search.value || undefined,
+      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+    )
     servers.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -54,6 +67,18 @@ async function load() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
   load()
 }
 
@@ -179,6 +204,19 @@ async function handleRefresh() {
         </NButton>
       </template>
     </PageHeader>
+
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" placeholder="搜索服务名称…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        搜索
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
+    </div>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && servers.length === 0" description="暂无 MCP 服务，请注册" />
@@ -311,6 +349,7 @@ async function handleRefresh() {
 
 <style scoped>
 /* MCP card grid (style reference: SkillsView.vue) */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .mcp-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

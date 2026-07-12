@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin } from 'naive-ui'
-import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { Add, Trash, Eye, People, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -32,6 +32,27 @@ const pageSize = 20
 const total = ref(0)
 function onPageChange(p: number) { page.value = p; loadUsers() }
 
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '已启用', value: 'active' },
+  { label: '已禁用', value: 'inactive' },
+]
+
+function onSearch() {
+  page.value = 1
+  loadUsers()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
+  loadUsers()
+}
+
 const showCreate = ref(false)
 const newUser = ref({ username: '', password: '', display_name: '', role: 'user' })
 const creating = ref(false)
@@ -44,14 +65,18 @@ onMounted(loadUsers)
 async function loadUsers() {
   loading.value = true
   try {
-    const r = await client.get('/users', { params: { page: page.value, size: pageSize } })
+    const params: any = { page: page.value, size: pageSize }
+    if (search.value) params.search = search.value
+    if (filterActive.value !== 'all') params.is_active = filterActive.value === 'active'
+    const r = await client.get('/users', { params })
     users.value = r.data.items
     total.value = r.data.total
     // 删除末页最后一条后当前页可能越界，回退到最后一个有效页并重拉
     const totalPages = Math.max(1, Math.ceil(total.value / pageSize))
     if (page.value > totalPages) {
       page.value = totalPages
-      const r2 = await client.get('/users', { params: { page: page.value, size: pageSize } })
+      params.page = page.value
+      const r2 = await client.get('/users', { params })
       users.value = r2.data.items
       total.value = r2.data.total
     }
@@ -128,6 +153,19 @@ function formatTime(t: string) {
         </NButton>
       </template>
     </PageHeader>
+
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" placeholder="搜索用户名或显示名…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        搜索
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
+    </div>
 
     <NSpin :show="loading">
       <NEmpty v-if="!loading && total === 0" description="暂无用户" />
@@ -278,6 +316,7 @@ function formatTime(t: string) {
 
 <style scoped>
 /* User card grid */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .um-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

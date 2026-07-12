@@ -69,12 +69,15 @@ async def create_skill(data: SkillCreate, current_user=Depends(get_current_staff
 
 @router.get("", response_model=SkillListResponse)
 async def list_skills(page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), search: str | None = None,
+                      is_active: bool | None = Query(None),
                       current_user=Depends(get_current_user), db=Depends(get_db)):
     conditions = []
     if current_user.tenant_id:
         conditions.append(Skill.tenant_id == current_user.tenant_id)
     if search:
         conditions.append((Skill.name.ilike(f"%{search}%")) | (Skill.description.ilike(f"%{search}%")))
+    if is_active is not None:
+        conditions.append(Skill.is_active == is_active)
     count_q = select(func.count()).select_from(Skill)
     if conditions:
         count_q = count_q.where(*conditions)

@@ -4,9 +4,9 @@ import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
-  NEmpty,
+  NEmpty, NSelect,
 } from 'naive-ui'
-import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -26,6 +26,15 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: '全部', value: 'all' },
+  { label: '已启用', value: 'active' },
+  { label: '已禁用', value: 'inactive' },
+]
 
 const showModal = ref(false)
 const editing = ref<CronJob | null>(null)
@@ -71,7 +80,11 @@ const redStyle = {
 async function load() {
   loading.value = true
   try {
-    const data = await listCronJobs(page.value, pageSize)
+    const data = await listCronJobs(
+      page.value, pageSize,
+      search.value || undefined,
+      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+    )
     jobs.value = data.items
     total.value = data.total
   } catch (e: any) {
@@ -83,6 +96,18 @@ async function load() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
   load()
 }
 
@@ -267,6 +292,19 @@ function isPaused(job: CronJob) {
       </template>
     </PageHeader>
 
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" placeholder="搜索任务名称或描述…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        搜索
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
+    </div>
+
     <NSpin :show="loading">
       <NEmpty v-if="!loading && jobs.length === 0" description="暂无定时任务" />
       <div class="cj-list" v-if="jobs.length > 0">
@@ -438,6 +476,7 @@ function isPaused(job: CronJob) {
 
 <style scoped>
 /* Cron job card grid (style reference: SkillsView.vue) */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .cj-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -74,6 +74,7 @@ async def list_servers(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
+    is_active: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -83,6 +84,8 @@ async def list_servers(
         conditions.append(MCPServer.tenant_id == current_user.tenant_id)
     if search:
         conditions.append(MCPServer.name.ilike(f"%{search}%"))
+    if is_active is not None:
+        conditions.append(MCPServer.is_active == is_active)
 
     count_q = select(func.count()).select_from(MCPServer)
     if conditions:
