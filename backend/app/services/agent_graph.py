@@ -4,10 +4,11 @@ The graph handles everything up to LLM generation. chat.py reads the final
 state from the graph, then handles streaming LLM generation + SSE output + post-processing.
 
 Graph topology:
-    router ──(cache hit)──→ END
-    router ──(no hit, no skill)──→ retrieval
-    router ──(no hit, skill)───→ skill_loader → retrieval
-    retrieval ──────────→ tool_decision
+    entry ──(cache hit)──→ END
+    entry ──(cache miss)─→ fanout ─┬─→ router (LLM) ──┐
+                                   └─→ retrieval (I/O) ┘  (run in PARALLEL)
+                                   join ──(skill)──→ skill_loader → tool_decision
+                                   join ─(no skill)─→ tool_decision
     tool_decision ─(no tools)─→ build_context → END
     tool_decision ─(tools)───→ tool_executor → tool_decision (loop)
 """
@@ -17,6 +18,9 @@ from langgraph.graph import StateGraph, END
 from app.services.config_manager import config_manager
 from app.services.agent_state import EragAgentState
 from app.services.agent_nodes import (
+    entry_node,
+    fanout_node,
+    join_node,
     skill_router_node,
     skill_loader_node,
     skill_switcher_node,
@@ -28,40 +32,62 @@ from app.services.agent_nodes import (
 
 
 def _build_graph() -> StateGraph:
-    """Construct the ERAG agent state graph."""
+    """Construct the ERAG agent state graph.
+
+    skill_router_node (LLM call) and parallel_retrieval_node (I/O) run in
+    PARALLEL after the cache gate, so retrieval no longer waits for the router's
+    LLM latency. They converge at `join`, which then routes to skill_loader
+    (if a skill was selected) or straight to tool_decision.
+    """
     workflow = StateGraph(EragAgentState)
 
     # Register nodes
+    workflow.add_node("entry", entry_node)
+    workflow.add_node("fanout", fanout_node)
     workflow.add_node("router", skill_router_node)
+    workflow.add_node("retrieval", parallel_retrieval_node)
+    workflow.add_node("join", join_node)
     workflow.add_node("skill_loader", skill_loader_node)
     workflow.add_node("skill_switcher", skill_switcher_node)
-    workflow.add_node("retrieval", parallel_retrieval_node)
     workflow.add_node("tool_decision", tool_decision_node)
     workflow.add_node("tool_executor", tool_executor_node)
     workflow.add_node("build_context", build_context_node)
 
-    # Entry point
-    workflow.set_entry_point("router")
+    # Entry point: cache gate
+    workflow.set_entry_point("entry")
 
-    # Router → END (cache hit) or skill_loader (has skill) or retrieval (no skill)
-    def route_after_router(state: dict) -> str:
-        if state.get("cache_hit"):
-            return "end"
-        if state.get("active_skill"):
-            return "skill_loader"
-        return "retrieval"
+    # entry → END (cache hit) | fanout (cache miss)
+    def route_after_entry(state: dict) -> str:
+        return "end" if state.get("cache_hit") else "fanout"
 
     workflow.add_conditional_edges(
-        "router",
-        route_after_router,
-        {"end": END, "skill_loader": "skill_loader", "retrieval": "retrieval"},
+        "entry",
+        route_after_entry,
+        {"end": END, "fanout": "fanout"},
     )
 
-    # Skill loader → retrieval
-    workflow.add_edge("skill_loader", "retrieval")
+    # fanout → router (LLM) AND retrieval (I/O) — PARALLEL branches
+    workflow.add_edge("fanout", "router")
+    workflow.add_edge("fanout", "retrieval")
 
-    # Retrieval → tool_decision
-    workflow.add_edge("retrieval", "tool_decision")
+    # router → join, retrieval → join (converge)
+    workflow.add_edge("router", "join")
+    workflow.add_edge("retrieval", "join")
+
+    # join → skill_loader (has skill) | tool_decision (no skill)
+    def route_after_join(state: dict) -> str:
+        if state.get("active_skill"):
+            return "skill_loader"
+        return "tool_decision"
+
+    workflow.add_conditional_edges(
+        "join",
+        route_after_join,
+        {"skill_loader": "skill_loader", "tool_decision": "tool_decision"},
+    )
+
+    # Skill loader → tool_decision
+    workflow.add_edge("skill_loader", "tool_decision")
 
     # Tool decision → skill_switcher (meta control) | tool_executor | build_context
     def route_after_tool_decision(state: dict) -> str:

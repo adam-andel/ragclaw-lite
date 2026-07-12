@@ -307,19 +307,55 @@ def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list
 
 # ── Router (Layer 1: name + description only) ──
 
-async def skill_router_node(state: dict) -> dict:
-    """Layer 1 routing — only queries DB index (name + description).
+async def entry_node(state: dict) -> dict:
+    """Cache gate — entry point of the graph.
 
-    Does NOT load SKILL.md full text or tools. That happens in skill_loader_node.
+    Runs first (cheap: KB prompt fetch + cache lookup). On a cache hit it
+    returns early so the graph can END without any LLM call or retrieval.
+    On a miss it records kb_prompt and lets the graph fan out into the skill
+    router (LLM) and retrieval (I/O) which now run in PARALLEL — retrieval no
+    longer waits for the router's LLM call to finish.
     """
     query, kb_id = state["query"], state["kb_id"]
-    skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
+    skill_id = state.get("skill_id")
     kb_prompt = await get_kb_prompt(kb_id)
     if not state.get("skip_cache"):
         cached = answer_cache.get(query, kb_id, skill_id=skill_id or "", kb_prompt=kb_prompt)
         if cached:
-            return {"cache_hit": True, "final_answer": cached.answer, "citations": cached.citations or [], "tool_results": [], "tool_messages": [], "kb_prompt": kb_prompt}
+            return {"cache_hit": True, "final_answer": cached.answer,
+                    "citations": cached.citations or [], "tool_results": [],
+                    "tool_messages": [], "kb_prompt": kb_prompt}
+    return {"cache_hit": False, "kb_prompt": kb_prompt}
 
+
+async def fanout_node(state: dict) -> dict:
+    """No-op pass-through that splits the graph into parallel branches.
+
+    A single conditional edge from `entry` (cache miss) lands here, then this
+    node fans out to both `router` (LLM) and `retrieval` (I/O) at once. Exists
+    only because a LangGraph conditional edge maps one key to one target.
+    """
+    return {}
+
+
+async def join_node(state: dict) -> dict:
+    """No-op pass-through that merges the parallel `router` + `retrieval`
+    branches back into a single stream before skill_loader / tool_decision.
+    """
+    return {}
+
+
+async def skill_router_node(state: dict) -> dict:
+    """Layer 1 routing — only queries DB index (name + description).
+
+    Does NOT load SKILL.md full text or tools. That happens in skill_loader_node.
+    Runs in PARALLEL with parallel_retrieval_node (see _build_graph): the router
+    makes its LLM call while retrieval runs concurrently.
+    """
+    if state.get("cache_hit"):
+        return {}
+    query, kb_id = state["query"], state["kb_id"]
+    skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
     active_skill = None
     if skill_id:
         # User explicitly selected a skill — just fetch the DB index
@@ -332,8 +368,7 @@ async def skill_router_node(state: dict) -> dict:
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
-            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": [],
-            "kb_prompt": kb_prompt}
+            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": []}
 
 
 async def _get_skill_index(skill_id: str) -> dict | None:
