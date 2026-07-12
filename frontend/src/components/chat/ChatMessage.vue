@@ -14,6 +14,8 @@ const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
   queuePosition?: number | null
+  searchKeyword?: string
+  activeMatch?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -72,6 +74,49 @@ const renderedContent = computed(() => {
   html = html.replace(/<hr\s*\/?>\s*/g, '')
 
   return html
+})
+
+// 在已渲染的 HTML 中安全地高亮关键字：仅遍历文本节点，避免破坏标签结构。
+// active=true 时给命中标记加 .active（当前导航项），否则为普通命中。
+function highlightHtml(html: string, keyword: string, active = false): string {
+  const kw = keyword.trim().toLowerCase()
+  if (!kw) return html
+  const tpl = document.createElement('template')
+  tpl.innerHTML = html
+  const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT)
+  const textNodes: Text[] = []
+  let node: Node | null
+  while ((node = walker.nextNode())) {
+    const val = node.nodeValue || ''
+    if (val.toLowerCase().includes(kw)) textNodes.push(node as Text)
+  }
+  for (const textNode of textNodes) {
+    const text = textNode.nodeValue || ''
+    const lower = text.toLowerCase()
+    const frag = document.createDocumentFragment()
+    let last = 0
+    let idx: number
+    while ((idx = lower.indexOf(kw, last)) !== -1) {
+      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)))
+      const mark = document.createElement('mark')
+      mark.className = active ? 'search-hit active' : 'search-hit'
+      mark.textContent = text.slice(idx, idx + kw.length)
+      frag.appendChild(mark)
+      last = idx + kw.length
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)))
+    textNode.parentNode?.replaceChild(frag, textNode)
+  }
+  return tpl.innerHTML
+}
+
+const displayHtml = computed(() => {
+  if (!props.searchKeyword) return renderedContent.value
+  try {
+    return highlightHtml(renderedContent.value, props.searchKeyword, !!props.activeMatch)
+  } catch {
+    return renderedContent.value
+  }
 })
 
 const steps = computed(() => props.message.agentSteps || [])
@@ -196,7 +241,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['message-wrapper', message.role]" :id="'msg-' + message.id">
+  <div :class="['message-wrapper', message.role, { 'active-search-hit': activeMatch }]" :id="'msg-' + message.id">
     <div class="message-avatar">
       {{ message.role === 'user' ? '👤' : '🤖' }}
     </div>
@@ -230,9 +275,9 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <!-- 阶段 2：完成后 — v-html 渲染 Markdown -->
+      <!-- 阶段 2：完成后 — v-html 渲染 Markdown（命中关键字时带高亮） -->
       <template v-else>
-        <div class="message-content" v-html="renderedContent"></div>
+        <div class="message-content" v-html="displayHtml"></div>
       </template>
 
       <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">
@@ -359,6 +404,18 @@ onBeforeUnmount(() => {
   word-break: break-word;
   border-top: 1px solid var(--color-border);
 }
+
+/* 查找命中高亮：普通命中（黄）/ 当前导航项（橙），亮暗模式均可见 */
+mark.search-hit {
+  background: rgba(255, 196, 0, 0.6);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+mark.search-hit.active {
+  background: #ff8c1a;
+  color: #1a1a1a;
+}
 </style>
 
 <style scoped>
@@ -369,6 +426,12 @@ onBeforeUnmount(() => {
   animation: fadeIn 0.3s ease;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 当前导航命中的消息：主色描边强调 */
+.message-wrapper.active-search-hit .message-body {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
 
 .message-col {
   display: flex;

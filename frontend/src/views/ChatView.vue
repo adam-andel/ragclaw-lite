@@ -6,7 +6,7 @@ import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, getConversationMessages, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -114,6 +114,61 @@ function scrollToBottomAndPin() {
 }
 
 const showScrollBottomBtn = computed(() => !isPinnedToBottom.value && messages.value.length > 0)
+
+// ── 查找对话记录：仅对当前已加载的消息做关键字匹配 ──
+const showSearch = ref(false)
+const searchKeyword = ref('')
+const searchMatches = ref<string[]>([])   // 命中的消息 id（按出现顺序）
+const currentMatchIndex = ref(-1)
+const searchInputRef = ref<any>(null)
+const searchKw = computed(() => searchKeyword.value.trim())
+const searchActive = computed(() => showSearch.value && searchKw.value.length > 0)
+const activeMatchId = computed(() =>
+  searchActive.value && currentMatchIndex.value >= 0 ? searchMatches.value[currentMatchIndex.value] : ''
+)
+
+function computeMatches() {
+  const kw = searchKw.value.toLowerCase()
+  if (!kw) {
+    searchMatches.value = []
+    currentMatchIndex.value = -1
+    return
+  }
+  const ids: string[] = []
+  for (const m of messages.value) {
+    if ((m.content || '').toLowerCase().includes(kw)) ids.push(m.id)
+  }
+  searchMatches.value = ids
+  currentMatchIndex.value = ids.length > 0 ? 0 : -1
+}
+
+function searchNext() {
+  if (!searchMatches.value.length) return
+  currentMatchIndex.value = (currentMatchIndex.value + 1) % searchMatches.value.length
+}
+function searchPrev() {
+  if (!searchMatches.value.length) return
+  currentMatchIndex.value = (currentMatchIndex.value - 1 + searchMatches.value.length) % searchMatches.value.length
+}
+function openSearch() {
+  showSearch.value = true
+  nextTick(() => searchInputRef.value?.focus())
+}
+function closeSearch() {
+  showSearch.value = false
+  searchKeyword.value = ''
+  searchMatches.value = []
+  currentMatchIndex.value = -1
+}
+
+watch(searchKeyword, computeMatches)
+watch(activeMatchId, (id) => {
+  if (!id) return
+  nextTick(() => {
+    const el = document.getElementById('msg-' + id)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+})
 const kbs = ref<any[]>([])
 const selectedKbId = ref('')
 const conversations = ref<any[]>([])
@@ -563,13 +618,15 @@ function handleKeydown(e: KeyboardEvent) {
         :message="msg"
         :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
         :queue-position="queuePosition"
+        :search-keyword="searchKw"
+        :active-match="msg.id === activeMatchId"
         @regenerate="regenerateAnswer"
       />
     </div>
 
     <Transition name="scroll-btn">
       <button
-        v-if="showScrollBottomBtn"
+        v-if="showScrollBottomBtn && !showSearch"
         class="scroll-bottom-btn"
         :class="{ streaming: isStreaming }"
         @click="scrollToBottomAndPin"
@@ -578,6 +635,31 @@ function handleKeydown(e: KeyboardEvent) {
       >
         <NIcon size="20"><ChevronDown /></NIcon>
       </button>
+    </Transition>
+
+    <!-- 浮动搜索条：查找已加载的对话记录 -->
+    <Transition name="search-pop">
+      <div v-if="showSearch" class="search-bar">
+        <div class="search-bar-inner">
+          <NInput
+            ref="searchInputRef"
+            v-model:value="searchKeyword"
+            placeholder="查找对话记录…"
+            clearable
+            size="small"
+            class="search-input"
+            @keydown.esc="closeSearch"
+          >
+            <template #prefix><NIcon size="14"><Search /></NIcon></template>
+          </NInput>
+          <span class="search-counter">{{ searchMatches.length ? (currentMatchIndex + 1) + ' / ' + searchMatches.length : '0 / 0' }}</span>
+          <NButton size="small" :disabled="!searchMatches.length" @click="searchPrev">上一个</NButton>
+          <NButton size="small" :disabled="!searchMatches.length" @click="searchNext">下一个</NButton>
+          <NButton size="small" quaternary circle :title="'关闭查找'" aria-label="关闭查找" @click="closeSearch">
+            <template #icon><NIcon size="16"><Close /></NIcon></template>
+          </NButton>
+        </div>
+      </div>
     </Transition>
 
     <!-- Modal: full conversation list -->
@@ -684,6 +766,10 @@ function handleKeydown(e: KeyboardEvent) {
         <NButton size="tiny" ghost class="skill-selector-btn" @click="showSkillModal = true">
           <template #icon><NIcon size="14"><Sparkles /></NIcon></template>
           {{ selectedSkillName }}
+        </NButton>
+        <NButton size="tiny" ghost class="search-trigger-btn" :type="showSearch ? 'primary' : 'default'" @click="showSearch ? closeSearch() : openSearch()">
+          <template #icon><NIcon size="14"><Search /></NIcon></template>
+          查找记录
         </NButton>
       </div>
       <div class="chat-input-area">
@@ -1119,6 +1205,53 @@ function handleKeydown(e: KeyboardEvent) {
   transform: translateY(10px);
 }
 
+/* ── 浮动搜索条（查找对话记录）── */
+.search-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 92px;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.search-bar-inner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 640px;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.search-input {
+  flex: 1;
+  min-width: 0;
+}
+.search-counter {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.search-trigger-btn {
+  font-weight: 700;
+}
+.search-pop-enter-active,
+.search-pop-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.search-pop-enter-from,
+.search-pop-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
 /* ── KB trigger button ── */
 .kb-trigger-btn {
   max-width: 160px;
@@ -1136,6 +1269,18 @@ function handleKeydown(e: KeyboardEvent) {
   .scroll-bottom-btn {
     right: 14px;
     bottom: 78px;
+  }
+  .search-bar {
+    left: 8px;
+    right: 8px;
+    bottom: 84px;
+  }
+  .search-bar-inner {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .search-counter {
+    display: none;
   }
 }
 
