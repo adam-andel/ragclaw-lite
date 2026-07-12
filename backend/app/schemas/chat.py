@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
     skill_id: str | None = None          # 可选：指定 SKILL，None 则自动路由
     conversation_id: str | None = None
     skip_cache: bool = False             # 重新生成时跳过缓存
+    resume_action: str | None = None     # "continue" | "stop" | None(新问题)
 
 
 class CitationSchema(BaseModel):

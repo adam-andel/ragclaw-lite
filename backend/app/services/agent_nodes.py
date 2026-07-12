@@ -667,10 +667,19 @@ async def skill_switcher_node(state: dict) -> dict:
             if not name:
                 _emit(state, "skill_switch_fail", "use_skill：未提供 skill_name。")
                 return _skill_control_return(tc, "use_skill：未提供 skill_name。", stack, state)
-            if switch_count >= MAX_SKILL_SWITCHES:
-                result = f"use_skill：已达技能切换上限（{MAX_SKILL_SWITCHES}），无法加载「{name}」。"
-                _emit(state, "skill_switch_fail", result, skill=name)
-                return _skill_control_return(tc, result, stack, state)
+            quota = state.get("skill_switch_quota", MAX_SKILL_SWITCHES)
+            if switch_count >= quota:
+                # 挂起：等待用户确认（"继续"= 追加额度后重放），而非静默拒绝
+                msg = (f"use_skill：已达技能切换上限（{switch_count}/{quota}），"
+                       f"无法加载「{name}」。请回复「继续」以追加额度后自动重试。")
+                _emit(state, "skill_switch_fail", msg, skill=name)
+                return {
+                    "pending_limit": {
+                        "kind": "skill_switch",
+                        "message": msg,
+                        "deferred_tool_call": tc,
+                    },
+                }
             skill = await get_skill_by_name(db, name, tenant_id)
             if not skill or not skill.is_active:
                 result = f"use_skill：未找到可用技能「{name}」（可先调用 list_skills 查看）。"
@@ -730,6 +739,22 @@ async def skill_switcher_node(state: dict) -> dict:
     result = f"未知元工具：{fname}"
     _emit(state, "skill_switch_fail", result)
     return _skill_control_return(tc, result, stack, state)
+
+
+async def limit_suspend_node(state: dict) -> dict:
+    """挂起出口：pending_limit 已置位，由 chat.py 捕获后存快照、推 need_user_input，图在此正常 END。"""
+    return {}
+
+
+async def resume_replay_node(state: dict) -> dict:
+    """恢复入口：不经 LLM 决策。tool_calls 已由 chat.py 重设为被拒调用（原因A），
+    或留空（原因B，交给 tool_decision 重决策）。
+
+    注意：被拒的 use_skill 对应的 assistant tool_call 消息，在原始那轮已由
+    tool_decision_node 写入 tool_messages（已存进快照），故此处无需再补，
+    skill_switcher 执行成功后会追加对应的 tool 结果，工具对天然完整。
+    """
+    return {}
 
 
 # ── Retrieval ──
@@ -818,9 +843,17 @@ async def tool_decision_node(state: dict) -> dict:
     if not available_tools:
         logger.warning("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
-    if tool_round >= MAX_TOOL_ROUNDS:
-        logger.warning("Tool decision: max rounds reached (round=%d, max=%d)", tool_round, MAX_TOOL_ROUNDS)
-        return {"tool_calls": None}
+    if tool_round >= state.get("tool_round_quota", MAX_TOOL_ROUNDS):
+        quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
+        logger.warning("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
+        # 挂起：轮次耗尽，等待用户确认（恢复后由 LLM 重新决策，因超限时尚未调用 LLM）
+        msg = (f"工具调用轮次已达上限（{tool_round}/{quota}），"
+               f"请回复「继续」以追加轮次后继续。")
+        _emit(state, "tool_round_limit", msg)
+        return {
+            "tool_calls": None,
+            "pending_limit": {"kind": "tool_round", "message": msg, "deferred_tool_call": None},
+        }
 
     # ── Error guard: only stop the tool loop when ALL results are errors
     # AND we've already given the LLM at least one chance to fix (tool_round >= 2).

@@ -18,6 +18,7 @@ from app.models.conversation import Conversation, Message
 from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
+from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
 from app.services.kb_service import get_kb_prompt
 from app.services.llm_semaphore import llm_limiter
 from app.services.cron_parser import try_parse_cron_payload
@@ -65,6 +66,76 @@ async def _save_assistant_message(
         await session.commit()
 
     return assistant_msg
+
+
+# 方案B：手动挂起/恢复状态仓库（纯数据快照，按 conversation_id 关联；多 worker 不共享，按需换 DB）
+pending_by_conv: dict[str, dict] = {}
+
+
+def _snapshot_state(state: dict) -> dict:
+    """保存挂起所需的纯数据快照（emit 等运行期对象不存）。"""
+    return {
+        "query": state.get("query"),
+        "active_skill": state.get("active_skill"),
+        "available_tools": state.get("available_tools"),
+        "rag_context": state.get("rag_context"),
+        "citations": state.get("citations"),
+        "memory_context": state.get("memory_context"),
+        "tool_results": state.get("tool_results"),
+        "tool_messages": state.get("tool_messages"),
+        "skill_stack": state.get("skill_stack"),
+        "loaded_skill_ids": state.get("loaded_skill_ids"),
+        "workspace_id": state.get("workspace_id"),
+        "skill_switch_count": state.get("skill_switch_count"),
+        "tool_round": state.get("tool_round"),
+        "skill_switch_quota": state.get("skill_switch_quota"),
+        "tool_round_quota": state.get("tool_round_quota"),
+        "pending_limit": state.get("pending_limit"),
+    }
+
+
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id) -> dict:
+    """从快照重建 initial_state：历史一概不动，仅充值限额（continue）或置空 tool_calls（stop）。"""
+    pl = pending.get("pending_limit") or {}
+    if mode == "continue":
+        quota_ss = pending["skill_switch_quota"] + MAX_SKILL_SWITCHES
+        quota_tr = pending["tool_round_quota"] + MAX_TOOL_ROUNDS
+        tool_calls = pl.get("deferred_tool_call")
+        resume_action = "continue"
+    else:  # stop
+        quota_ss = pending["skill_switch_quota"]
+        quota_tr = pending["tool_round_quota"]
+        tool_calls = None
+        resume_action = "stop"
+    return {
+        "query": pending.get("query") or request.query,
+        "kb_id": request.kb_id,
+        "skill_id": request.skill_id,
+        "user_id": current_user.id,
+        "tenant_id": current_user.tenant_id,
+        "conversation_history": history,
+        "conversation_id": conv_id,
+        "workspace_id": pending["workspace_id"],
+        "active_skill": pending["active_skill"],
+        "available_tools": pending["available_tools"],
+        "rag_context": pending["rag_context"],
+        "citations": pending["citations"],
+        "memory_context": pending["memory_context"],
+        "tool_calls": tool_calls,
+        "tool_round": pending["tool_round"],
+        "tool_results": pending["tool_results"],
+        "tool_messages": pending["tool_messages"],
+        "cache_hit": False,
+        "final_answer": "",
+        "retrieval_ms": 0,
+        "skip_cache": request.skip_cache,
+        "kb_prompt": kb_prompt,
+        "skill_switch_quota": quota_ss,
+        "tool_round_quota": quota_tr,
+        "pending_limit": None,
+        "resume_action": resume_action,
+        "emit": emit_fn,
+    }
 
 
 @router.post("/chat/stream")
@@ -154,35 +225,47 @@ async def chat_stream(
                 from app.services.llm_client import llm_client
                 from app.services.agent_nodes import _extract_download_links_from_state
 
-                # ── 1. Cache-first check (does not consume a token) ──
-                if settings.cache_enabled and not request.skip_cache:
-                    cached = answer_cache.get(
-                        request.query, request.kb_id, request.skill_id or "", kb_prompt=kb_prompt
-                    )
-                    if cached:
-                        enqueue("token", {"content": cached.answer})
-                        for c in cached.citations or []:
-                            enqueue("citation", {"citation": c})
+                # ── 0. 挂起分诊：本会话是否有待用户确认的限额挂起 ──
+                pending = pending_by_conv.get(conv_id)
+                resume_mode = None
+                if pending is not None:
+                    if request.resume_action == "continue":
+                        resume_mode = "continue"
+                        pending_by_conv.pop(conv_id, None)
+                    elif request.resume_action == "stop":
+                        resume_mode = "stop"
+                        pending_by_conv.pop(conv_id, None)
+                    else:
+                        # 用户发送新问题（非继续/停止）：视为停止，丢弃挂起，按新问题正常回答
+                        pending_by_conv.pop(conv_id, None)
 
-                        assistant_msg = await _save_assistant_message(
-                            conv_id,
-                            cached.answer,
-                            cached.citations or [],
-                            cache_hit=True,
+                if resume_mode is None:
+                    # ── 1. 正常新问题（含缓存）──
+                    if settings.cache_enabled and not request.skip_cache:
+                        cached = answer_cache.get(
+                            request.query, request.kb_id, request.skill_id or "", kb_prompt=kb_prompt
                         )
-                        enqueue("done", {
-                            "conversation_id": conv_id,
-                            "message_id": assistant_msg.id,
-                            "cache_hit": True,
-                            "ttft_ms": 0,
-                            "retrieval_ms": 0,
-                            "llm_ms": 0,
-                        })
-                        return
+                        if cached:
+                            enqueue("token", {"content": cached.answer})
+                            for c in cached.citations or []:
+                                enqueue("citation", {"citation": c})
 
-                # ── 2. Queue for a concurrency token ──
-                async with llm_limiter.acquire(on_queue_position):
-                    # Token acquired: build state and run agent graph.
+                            assistant_msg = await _save_assistant_message(
+                                conv_id,
+                                cached.answer,
+                                cached.citations or [],
+                                cache_hit=True,
+                            )
+                            enqueue("done", {
+                                "conversation_id": conv_id,
+                                "message_id": assistant_msg.id,
+                                "cache_hit": True,
+                                "ttft_ms": 0,
+                                "retrieval_ms": 0,
+                                "llm_ms": 0,
+                            })
+                            return
+
                     initial_state = {
                         "query": request.query,
                         "kb_id": request.kb_id,
@@ -206,10 +289,32 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "skip_cache": request.skip_cache,
                         "kb_prompt": kb_prompt,
+                        "skill_switch_quota": MAX_SKILL_SWITCHES,
+                        "tool_round_quota": MAX_TOOL_ROUNDS,
+                        "pending_limit": None,
+                        "resume_action": None,
                         "emit": emit_agent_step,
                     }
+                else:
+                    # ── 1b. 恢复：从快照重建，历史一概不动，只充值/置空 ──
+                    initial_state = _build_resume_initial_state(
+                        pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id
+                    )
 
+                # ── 2. 跑图 ──
+                async with llm_limiter.acquire(on_queue_position):
+                    # Token acquired: build state and run agent graph.
                     state = await erag_agent_graph.run(initial_state)
+
+                    # ── 2b. 挂起检测：图请求用户确认 ──
+                    if state.get("pending_limit"):
+                        pending_by_conv[conv_id] = _snapshot_state(state)
+                        enqueue("need_user_input", {
+                            "message": state["pending_limit"]["message"],
+                            "conv_id": conv_id,
+                            "kind": state["pending_limit"]["kind"],
+                        })
+                        return
 
                     if state.get("cache_hit"):
                         # Defensive: should not happen because we checked above,

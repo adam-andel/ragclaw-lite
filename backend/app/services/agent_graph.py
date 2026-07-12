@@ -13,7 +13,7 @@ Graph topology:
     tool_decision ─(tools)───→ tool_executor → tool_decision (loop)
 """
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 
 from app.services.config_manager import config_manager
 from app.services.agent_state import EragAgentState
@@ -28,6 +28,8 @@ from app.services.agent_nodes import (
     tool_decision_node,
     tool_executor_node,
     build_context_node,
+    resume_replay_node,
+    limit_suspend_node,
 )
 
 
@@ -53,8 +55,19 @@ def _build_graph() -> StateGraph:
     workflow.add_node("tool_executor", tool_executor_node)
     workflow.add_node("build_context", build_context_node)
 
-    # Entry point: cache gate
-    workflow.set_entry_point("entry")
+    # Entry point: cache gate (normal) | resume_replay (continue) | build_context (stop)
+    def route_entry(state: dict) -> str:
+        action = state.get("resume_action")
+        if action == "continue":
+            return "resume_replay"
+        if action == "stop":
+            return "build_context"
+        return "entry"
+
+    workflow.add_conditional_edges(
+        START, route_entry,
+        {"entry": "entry", "resume_replay": "resume_replay", "build_context": "build_context"},
+    )
 
     # entry → END (cache hit) | fanout (cache miss)
     def route_after_entry(state: dict) -> str:
@@ -91,6 +104,8 @@ def _build_graph() -> StateGraph:
 
     # Tool decision → skill_switcher (meta control) | tool_executor | build_context
     def route_after_tool_decision(state: dict) -> str:
+        if state.get("pending_limit"):
+            return "limit_suspend"
         tool_calls = state.get("tool_calls")
         if tool_calls:
             fname = tool_calls[0].get("function", {}).get("name", "")
@@ -102,14 +117,41 @@ def _build_graph() -> StateGraph:
     workflow.add_conditional_edges(
         "tool_decision",
         route_after_tool_decision,
-        {"skill_switcher": "skill_switcher", "tool_executor": "tool_executor", "build_context": "build_context"},
+        {"skill_switcher": "skill_switcher", "tool_executor": "tool_executor",
+         "build_context": "build_context", "limit_suspend": "limit_suspend"},
     )
 
     # Tool executor → back to tool_decision (for multi-round)
     workflow.add_edge("tool_executor", "tool_decision")
 
-    # Skill switcher → back to tool_decision (re-decide with updated skill/tools)
-    workflow.add_edge("skill_switcher", "tool_decision")
+    # Skill switcher → tool_decision (re-decide) | limit_suspend (挂起)
+    def route_after_skill_switcher(state: dict) -> str:
+        if state.get("pending_limit"):
+            return "limit_suspend"
+        return "tool_decision"
+
+    workflow.add_conditional_edges(
+        "skill_switcher", route_after_skill_switcher,
+        {"tool_decision": "tool_decision", "limit_suspend": "limit_suspend"},
+    )
+
+    # Resume replay → skill_switcher (原因A 重放) | tool_decision (原因B 重决策)
+    def route_resume(state: dict) -> str:
+        if (state.get("pending_limit") or {}).get("kind") == "tool_round":
+            return "tool_decision"
+        return "skill_switcher"
+
+    workflow.add_conditional_edges(
+        "resume_replay", route_resume,
+        {"tool_decision": "tool_decision", "skill_switcher": "skill_switcher"},
+    )
+
+    # Register resume/suspend nodes
+    workflow.add_node("resume_replay", resume_replay_node)
+    workflow.add_node("limit_suspend", limit_suspend_node)
+
+    # Limit suspend → END (挂起出口)
+    workflow.add_edge("limit_suspend", END)
 
     # Build context → END
     workflow.add_edge("build_context", END)
