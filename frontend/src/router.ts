@@ -56,7 +56,7 @@ const router = createRouter({
       path: '/users',
       name: 'users',
       component: () => import('@/views/UserManagement.vue'),
-      meta: { title: '用户管理', requiresAuth: true, admin: true },
+      meta: { title: '用户管理', requiresAuth: true, staff: true },
     },
     {
       path: '/settings',
@@ -72,13 +72,13 @@ const router = createRouter({
       path: '/skills',
       name: 'skills',
       component: () => import('@/views/SkillsView.vue'),
-      meta: { title: '技能管理', requiresAuth: true },
+      meta: { title: '技能管理', requiresAuth: true, staff: true },
     },
     {
       path: '/mcp',
       name: 'mcp',
       component: () => import('@/views/McpServersView.vue'),
-      meta: { title: 'MCP 服务', requiresAuth: true },
+      meta: { title: 'MCP 服务', requiresAuth: true, staff: true },
     },
     {
       path: '/cron-jobs',
@@ -103,6 +103,8 @@ router.beforeEach(async (to, _from, next) => {
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     next('/login')
   } else if (to.meta.admin && !auth.isAdmin) {
+    next('/chat')
+  } else if (to.meta.staff && !auth.isStaff) {
     next('/chat')
   } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications') {
     next('/chat')

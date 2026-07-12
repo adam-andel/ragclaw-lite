@@ -18,7 +18,7 @@ from app.schemas.skill import (
     ResourceListResponse, ResourceFileInfo, ResourceUploadResponse,
     SyncResponse,
 )
-from app.services.auth import get_current_staff, get_current_user
+from app.services.auth import get_current_admin, get_current_user
 from app.services.skill_manager import (
     get_skill_dir, get_skill_md_path, read_skill_md, parse_skill_md,
     create_skill_folder, update_skill_md, delete_skill_folder, replace_skill_folder,
@@ -52,7 +52,7 @@ def _skill_to_response(skill: Skill, include_content: bool = False) -> SkillResp
 
 
 @router.post("", response_model=SkillResponse, status_code=201)
-async def create_skill(data: SkillCreate, current_user=Depends(get_current_staff), db=Depends(get_db)):
+async def create_skill(data: SkillCreate, current_user=Depends(get_current_admin), db=Depends(get_db)):
     folder_name = sanitize_folder_name(data.name)
     skill_dir = get_skill_dir(folder_name)
     if skill_dir.exists():
@@ -99,7 +99,7 @@ async def get_skill(skill_id: str, current_user=Depends(get_current_user), db=De
 
 
 @router.patch("/{skill_id}", response_model=SkillResponse)
-async def update_skill(skill_id: str, data: SkillUpdate, current_user=Depends(get_current_staff), db=Depends(get_db)):
+async def update_skill(skill_id: str, data: SkillUpdate, current_user=Depends(get_current_admin), db=Depends(get_db)):
     skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "Skill not found")
@@ -117,7 +117,7 @@ async def update_skill(skill_id: str, data: SkillUpdate, current_user=Depends(ge
 @router.delete("/{skill_id}")
 async def delete_skill(
     skill_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a skill - removes folder + DB index."""
@@ -141,7 +141,7 @@ async def delete_skill(
 async def upload_folder(
     files: list[UploadFile] = File(...),
     paths: list[str] = Form(...),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a skill folder (multipart with webkitRelativePath)."""
@@ -208,7 +208,7 @@ async def upload_folder(
 @router.post("/upload-zip", response_model=SkillResponse, status_code=201)
 async def upload_zip(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a skill as a ZIP file."""
@@ -291,7 +291,7 @@ async def reupload_folder(
     skill_id: str,
     files: list[UploadFile] = File(...),
     paths: list[str] = Form(...),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace an existing skill folder with new upload."""
@@ -335,7 +335,7 @@ async def reupload_folder(
 async def reupload_zip(
     skill_id: str,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace an existing skill folder with a new ZIP."""
@@ -406,7 +406,7 @@ async def reupload_zip(
 @router.patch("/{skill_id}/toggle", response_model=SkillResponse)
 async def toggle_skill(
     skill_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Toggle the UI-managed is_active flag in DB."""
@@ -448,7 +448,7 @@ async def upload_resource(
     skill_id: str,
     subdir: str = Form(...),
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a resource file to a skill's subdirectory."""
@@ -473,7 +473,7 @@ async def delete_resource(
     skill_id: str,
     subdir: str,
     filename: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a resource file from a skill's subdirectory."""
@@ -496,7 +496,7 @@ async def delete_resource(
 
 @router.post("/sync", response_model=SyncResponse)
 async def sync_skills(
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Sync filesystem skills to DB index."""
