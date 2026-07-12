@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import {
-  NButton, NModal, NForm, NFormItem, NInput, NSwitch,
+  NButton, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
-  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem, NPagination,
+  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
@@ -403,12 +405,10 @@ onMounted(() => {
       </div>
     </NSpin>
 
-    <div class="sk-pagination" v-if="total > pageSize">
-      <NPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
-    </div>
+    <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
-    <NModal v-model:show="showCreateModal" title="在线创建技能" preset="card" style="width:640px">
+    <AppModal v-model:show="showCreateModal" title="在线创建技能" size="detail">
       <NForm :model="createForm" label-placement="left" label-width="100">
         <NFormItem label="名称" required>
           <NInput v-model:value="createForm.name" placeholder="如：IT运维助手" maxlength="200" />
@@ -435,17 +435,17 @@ onMounted(() => {
           <NButton type="primary" :disabled="!createForm.name" @click="handleCreate">创建</NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Edit SKILL.md Modal -->
-    <NModal v-model:show="showEditModal" title="编辑 SKILL.md" preset="card" style="width:80vw;max-width:800px">
+    <AppModal v-model:show="showEditModal" title="编辑 2SKILL.md" size="code">
       <div style="margin-bottom:8px">
         <NText depth="3" style="font-size:12px">
           直接编辑 SKILL.md 全文。YAML front matter 中的 name/description/mcp_servers 会同步到数据库索引，is_active 通过上方开关管理。
         </NText>
       </div>
       <NInput v-model:value="skillMdContent" type="textarea"
-        :autosize="{ minRows: 20, maxRows: 30 }"
+        :autosize="{ minRows: 14, maxRows: 18 }"
         style="font-family: monospace; font-size: 13px"
         placeholder="---\nname: ...\ndescription: ...\nmcp_servers:\n  - ...\n---\n\n# 正文" />
       <template #footer>
@@ -454,14 +454,13 @@ onMounted(() => {
           <NButton type="primary" @click="handleSaveEdit">保存</NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Detail Modal -->
-    <NModal
+    <AppModal
       v-model:show="showDetail"
-      preset="card"
       :title="detailSkill?.name || '技能详情'"
-      style="width: 90vw; max-width: 560px"
+      size="detail"
     >
       <NSpin :show="detailLoading">
         <NDescriptions
@@ -548,7 +547,7 @@ onMounted(() => {
           </NPopconfirm>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
   </div>
 </template>
@@ -670,13 +669,6 @@ onMounted(() => {
 }
 .sk-meta-muted {
   color: var(--color-text);
-}
-
-.sk-pagination {
-  display: flex;
-  justify-content: center;
-  margin-top: 16px;
-  padding-bottom: 24px;
 }
 
 /* Detail modal */

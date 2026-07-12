@@ -3,12 +3,14 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
-  NInput, NSelect, NPagination, NPopconfirm, useMessage,
-  NIcon, NModal, NCard, NDescriptions, NDescriptionsItem,
+  NInput, NSelect, NPopconfirm, useMessage,
+  NIcon, NCard, NDescriptions, NDescriptionsItem,
   NCheckbox, NTooltip,
 } from 'naive-ui'
 import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
+import AppPagination from '@/components/common/AppPagination.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -835,14 +837,14 @@ async function loadSupportedTypes() {
     </PageHeader>
 
     <!-- KB Form Modal (create + edit share the same modal) -->
-    <NModal v-model:show="showKbForm" preset="card"
+    <AppModal v-model:show="showKbForm"
       :title="kbFormMode === 'create' ? '新建知识库' : '编辑知识库'"
-      style="width: 90vw; max-width: 440px"
+      size="nested"
     >
       <div class="kb-form">
         <NInput v-model:value="kbFormName" placeholder="知识库名称" />
         <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求。注意：每次修改都会使得修改后的第一次对话LLM缓存命中率大幅下降。）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -852,12 +854,10 @@ async function loadSupportedTypes() {
           </NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- Upload Modal -->
-    <NModal v-model:show="showUploadModal" preset="card" title="上传文件"
-      style="width: 90vw; max-width: 560px"
-    >
+    <AppModal v-model:show="showUploadModal" title="上传文件" size="detail">
       <div class="upload-modal-body">
         <!-- Knowledge base selector -->
         <div class="upload-kb-select">
@@ -912,13 +912,12 @@ async function loadSupportedTypes() {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showUploadModal = false">关闭</NButton>
           <NButton type="primary" :loading="hasActiveUploads" :disabled="pendingCount === 0" @click="startUploads">
             {{ hasActiveUploads ? '上传中…' : pendingCount > 0 ? `开始上传 (${pendingCount})` : '开始上传' }}
           </NButton>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- KB Filter -->
     <div class="dm-kb-filter">
@@ -1049,14 +1048,10 @@ async function loadSupportedTypes() {
       </div>
     </NSpin>
 
-    <div class="dm-pagination" v-if="total > size">
-      <NPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
-    </div>
+    <AppPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
 
     <!-- Chunks Modal -->
-    <NModal v-model:show="showChunks" preset="card" title="分块预览"
-      style="width: 90vw; max-width: 720px"
-    >
+    <AppModal v-model:show="showChunks" title="分块预览" size="nested">
       <div class="chunks-modal">
         <NInput
           v-if="chunks.length > 0"
@@ -1097,22 +1092,21 @@ async function loadSupportedTypes() {
                 {{ expandedChunks.has(c.id) ? '收起' : '展开' }}
               </NButton>
             </NCard>
-
-            <div v-if="totalChunkPages > 1" class="chunk-pagination">
-              <NButton size="tiny" :disabled="chunkPage <= 1" @click="chunkPage--">上一页</NButton>
-              <span class="chunk-page-indicator">{{ chunkPage }} / {{ totalChunkPages }}</span>
-              <NButton size="tiny" :disabled="chunkPage >= totalChunkPages" @click="chunkPage++">下一页</NButton>
-            </div>
           </div>
-
-          <NButton @click="showChunks = false" block style="margin-top:12px">关闭</NButton>
         </NSpin>
       </div>
-    </NModal>
+      <template v-if="totalChunkPages > 1" #footer>
+        <AppPagination
+          :page="chunkPage"
+          :page-count="totalChunkPages"
+          @update:page="chunkPage = $event"
+        />
+      </template>
+    </AppModal>
 
     <!-- Doc KBs Modal -->
-    <NModal v-model:show="showDocKbs" preset="card" title="关联知识库"
-      style="width: 90vw; max-width: 480px"
+    <AppModal v-model:show="showDocKbs" title="关联知识库"
+      size="nested"
       @after-leave="docKbSearchText = ''"
     >
       <NInput
@@ -1156,11 +1150,11 @@ async function loadSupportedTypes() {
         </div>
       </template>
       <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
-    </NModal>
+    </AppModal>
 
     <!-- Document Detail Modal -->
-    <NModal v-model:show="showDetail" preset="card" :title="detailDoc?.filename || '文档详情'"
-      style="width: 90vw; max-width: 560px"
+    <AppModal v-model:show="showDetail" :title="detailDoc?.filename || '文档详情'"
+      size="detail"
       @after-leave="detailDoc = null"
     >
       <div v-if="detailDoc">
@@ -1209,7 +1203,6 @@ async function loadSupportedTypes() {
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showDetail = false">关闭</NButton>
           <NButton v-if="detailDoc" @click="handleDownload(detailDoc)">下载原件</NButton>
           <NPopconfirm v-if="detailDoc" @positive-click="deleteDetailDoc">
             <template #trigger>
@@ -1219,7 +1212,7 @@ async function loadSupportedTypes() {
           </NPopconfirm>
         </NSpace>
       </template>
-    </NModal>
+    </AppModal>
 
     <!-- KB Filter Modal（复用共享组件） -->
     <KbPickerModal
@@ -1237,9 +1230,7 @@ async function loadSupportedTypes() {
     />
 
     <!-- Share Modal -->
-    <NModal v-model:show="showShare" preset="card" title="共享用户"
-      style="width: 90vw; max-width: 640px"
-    >
+    <AppModal v-model:show="showShare" title="共享用户" size="detail">
       <div class="share-form">
         <NSpin :show="shareLoading">
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
@@ -1273,14 +1264,12 @@ async function loadSupportedTypes() {
                 </div>
               </div>
             </div>
-            <div class="share-pagination" v-if="shareUsers.length > shareAddedPageSize">
-              <NPagination
-                :page="shareAddedPage"
-                :page-size="shareAddedPageSize"
-                :item-count="shareUsers.length"
-                @update:page="shareAddedPage = $event"
-              />
-            </div>
+            <AppPagination
+              :page="shareAddedPage"
+              :page-size="shareAddedPageSize"
+              :item-count="shareUsers.length"
+              @update:page="shareAddedPage = $event"
+            />
           </div>
           <div class="share-add-more">
             <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
@@ -1324,24 +1313,20 @@ async function loadSupportedTypes() {
                   </div>
                 </div>
               </div>
-              <div class="share-pagination" v-if="unaddedUsers.length > shareUserPageSize">
-                <NPagination
-                  :page="shareUserPage"
-                  :page-size="shareUserPageSize"
-                  :item-count="unaddedUsers.length"
-                  @update:page="shareUserPage = $event"
-                />
-              </div>
+              <AppPagination
+                :page="shareUserPage"
+                :page-size="shareUserPageSize"
+                :item-count="unaddedUsers.length"
+                @update:page="shareUserPage = $event"
+              />
             </div>
           </template>
         </NSpin>
       </div>
-    </NModal>
+    </AppModal>
 
     <!-- Select Documents Modal -->
-    <NModal v-model:show="showSelectDocs" preset="card" title="选择文档加入知识库"
-      style="width: 90vw; max-width: 720px"
-    >
+    <AppModal v-model:show="showSelectDocs" title="选择文档加入知识库" size="wide">
       <div class="select-docs-modal">
         <div class="select-docs-filters">
           <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="onAvailableSearch" style="flex:1">
@@ -1374,14 +1359,12 @@ async function loadSupportedTypes() {
               <span class="select-doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
           </div>
-          <div class="select-docs-pagination" v-if="availableTotal > availablePageSize">
-            <NPagination
-              :page="availablePage"
-              :page-size="availablePageSize"
-              :item-count="availableTotal"
-              @update:page="onAvailablePageChange"
-            />
-          </div>
+          <AppPagination
+            :page="availablePage"
+            :page-size="availablePageSize"
+            :item-count="availableTotal"
+            @update:page="onAvailablePageChange"
+          />
         </NSpin>
         <div class="select-docs-actions">
           <div class="select-docs-left">
@@ -1398,7 +1381,7 @@ async function loadSupportedTypes() {
           </NSpace>
         </div>
       </div>
-    </NModal>
+    </AppModal>
   </div>
 </template>
 <style scoped>
@@ -1607,8 +1590,6 @@ async function loadSupportedTypes() {
 .doc-name-clickable:hover { text-decoration: underline; color: var(--color-primary); }
 .doc-name-clickable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
-.dm-pagination { display: flex; justify-content: center; margin-top: 16px; padding-bottom: 24px; }
-
 /* Chunks */
 .chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
 .chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
@@ -1663,23 +1644,6 @@ async function loadSupportedTypes() {
   font-size: var(--text-xs);
 }
 
-.chunk-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
-}
-.chunk-page-indicator {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 4em;
-  text-align: center;
-}
-
 /* KB picker modal (shared) */
 .picker-scroll { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .kb-pick-card {
@@ -1731,7 +1695,6 @@ async function loadSupportedTypes() {
 .share-user-avatar { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--color-border); border-radius: 50%; font-size: 0.9rem; flex-shrink: 0; }
 .share-user-name { font-weight: 500; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-user-sub { font-size: 0.75rem; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-pagination { display: flex; justify-content: center; margin-top: 12px; }
 
 .select-docs-modal { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; }
 .select-docs-filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1748,7 +1711,6 @@ async function loadSupportedTypes() {
 .select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); box-shadow: var(--shadow); }
 .select-doc-row:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
 .select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.select-docs-pagination { display: flex; justify-content: center; margin-top: 12px; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .select-docs-left { display: flex; align-items: center; gap: 12px; }
 .select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }

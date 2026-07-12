@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { NTag, NButton, NIcon, NModal, NSpin } from 'naive-ui'
+import { NTag, NButton, NIcon, NSpin } from 'naive-ui'
 import { Copy, Refresh } from '@vicons/ionicons5'
+import AppModal from '@/components/common/AppModal.vue'
 import type { ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
 import { getDocumentChunk, downloadDocument } from '@/api/documents'
@@ -252,7 +253,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- 全部引用摘要 Modal -->
-      <NModal v-model:show="showCitationModal" preset="card" title="引用来源详情" style="max-width: 720px; max-height: 85vh;">
+      <AppModal v-model:show="showCitationModal" title="引用来源详情" size="wide">
         <NSpin :show="loadingCitationContent">
           <div class="citation-modal-body">
             <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
@@ -278,7 +279,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </NSpin>
-      </NModal>
+      </AppModal>
 
     </div>
     <div v-if="!isStreaming && message.role === 'assistant'" class="message-actions">
