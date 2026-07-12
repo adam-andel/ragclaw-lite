@@ -27,13 +27,16 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 
-// Filters — search + enable/disable (mirrors DocumentManage.vue)
+// Filters — search + status (mirrors DocumentManage.vue)
 const search = ref('')
-const filterActive = ref<'all' | 'active' | 'inactive'>('all')
-const activeOptions = [
-  { label: '全部', value: 'all' },
-  { label: '已启用', value: 'active' },
-  { label: '已禁用', value: 'inactive' },
+const filterStatus = ref<string>('all')
+const statusOptions = [
+  { label: '全部状态', value: 'all' },
+  { label: '已计划', value: 'scheduled' },
+  { label: '执行中', value: 'running' },
+  { label: '已暂停', value: 'paused' },
+  { label: '已完成', value: 'completed' },
+  { label: '已失败', value: 'failed' },
 ]
 
 const showModal = ref(false)
@@ -83,7 +86,7 @@ async function load() {
     const data = await listCronJobs(
       page.value, pageSize,
       search.value || undefined,
-      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+      filterStatus.value === 'all' ? undefined : filterStatus.value,
     )
     jobs.value = data.items
     total.value = data.total
@@ -106,7 +109,7 @@ function onSearch() {
 
 function resetFilters() {
   search.value = ''
-  filterActive.value = 'all'
+  filterStatus.value = 'all'
   page.value = 1
   load()
 }
@@ -301,7 +304,7 @@ function isPaused(job: CronJob) {
         <template #icon><NIcon><Search /></NIcon></template>
         搜索
       </NButton>
-      <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
       <NButton size="small" @click="resetFilters" secondary>重置</NButton>
     </div>
 

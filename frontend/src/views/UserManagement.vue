@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin } from 'naive-ui'
+import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NTooltip } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -32,13 +32,22 @@ const pageSize = 20
 const total = ref(0)
 function onPageChange(p: number) { page.value = p; loadUsers() }
 
-// Filters — search + enable/disable (mirrors DocumentManage.vue)
+// Filters — search + enable/disable + role (mirrors DocumentManage.vue)
 const search = ref('')
 const filterActive = ref<'all' | 'active' | 'inactive'>('all')
 const activeOptions = [
-  { label: '全部', value: 'all' },
+  { label: '全部状态', value: 'all' },
   { label: '已启用', value: 'active' },
   { label: '已禁用', value: 'inactive' },
+]
+// 角色选项：admin 与 moderator 均可见全部角色（moderator 放开"查看所有用户"，
+// 但修改/删除仍受后端 can_manage_user 约束，UI 侧用 canManage 置灰危险操作）
+const filterRole = ref<'all' | 'user' | 'moderator' | 'admin'>('all')
+const roleOptions = [
+  { label: '全部角色', value: 'all' },
+  { label: '普通用户', value: 'user' },
+  { label: '普通管理员', value: 'moderator' },
+  { label: '超级管理员', value: 'admin' },
 ]
 
 function onSearch() {
@@ -49,6 +58,7 @@ function onSearch() {
 function resetFilters() {
   search.value = ''
   filterActive.value = 'all'
+  filterRole.value = 'all'
   page.value = 1
   loadUsers()
 }
@@ -68,6 +78,7 @@ async function loadUsers() {
     const params: any = { page: page.value, size: pageSize }
     if (search.value) params.search = search.value
     if (filterActive.value !== 'all') params.is_active = filterActive.value === 'active'
+    if (filterRole.value !== 'all') params.role = filterRole.value
     const r = await client.get('/users', { params })
     users.value = r.data.items
     total.value = r.data.total
@@ -93,6 +104,11 @@ function roleType(role: string): 'error' | 'warning' | 'info' {
   if (role === 'admin') return 'error'
   if (role === 'moderator') return 'warning'
   return 'info'
+}
+// 当前用户是否可管理目标用户：admin 可管理所有人，moderator 仅可管理普通用户
+// （与后端 can_manage_user 语义一致）。用于禁用/删除按钮的置灰判断。
+function canManage(user: UserRow) {
+  return auth.isAdmin || user.role === 'user'
 }
 
 async function createUser() {
@@ -164,6 +180,7 @@ function formatTime(t: string) {
         搜索
       </NButton>
       <NSelect v-model:value="filterActive" :options="activeOptions" placeholder="状态" size="small" style="width:130px" @update:value="onSearch" />
+      <NSelect v-model:value="filterRole" :options="roleOptions" placeholder="角色" size="small" style="width:130px" @update:value="onSearch" />
       <NButton size="small" @click="resetFilters" secondary>重置</NButton>
     </div>
 
@@ -202,9 +219,20 @@ function formatTime(t: string) {
               </div>
             </div>
             <div class="um-card-toggle" @click.stop>
+              <NTooltip v-if="!canManage(user)" trigger="hover">
+                <template #trigger>
+                  <StatusToggle
+                    :value="user.is_active"
+                    :disabled="!canManage(user)"
+                    @update:value="() => toggleStatus(user)"
+                  />
+                </template>
+                无权限管理该角色
+              </NTooltip>
               <StatusToggle
+                v-else
                 :value="user.is_active"
-                :disabled="user.id === auth.user?.id"
+                :disabled="!canManage(user)"
                 @update:value="() => toggleStatus(user)"
               />
             </div>
@@ -288,7 +316,23 @@ function formatTime(t: string) {
             :options="[{ label: '普通用户', value: 'user' }, { label: '普通管理员', value: 'moderator' }, { label: '超级管理员', value: 'admin' }]"
             @update:value="(r: string) => { if (detailUser) setRole(detailUser, r) }"
           />
-          <NButton size="small" v-if="detailUser" :disabled="detailUser.id === auth.user?.id" @click="toggleStatus(detailUser)" :style="detailUser.is_active
+          <NTooltip v-if="detailUser && !canManage(detailUser)" trigger="hover">
+            <template #trigger>
+              <NButton size="small" :disabled="!canManage(detailUser)" :style="detailUser.is_active
+                ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
+                : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
+                <template #icon>
+                  <NIcon>
+                    <Ban v-if="detailUser.is_active" />
+                    <CheckmarkCircle v-else />
+                  </NIcon>
+                </template>
+                {{ detailUser.is_active ? '禁用' : '启用' }}
+              </NButton>
+            </template>
+            无权限管理该角色
+          </NTooltip>
+          <NButton v-else-if="detailUser" size="small" :disabled="!canManage(detailUser)" @click="toggleStatus(detailUser)" :style="detailUser.is_active
             ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
             : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
             <template #icon>
@@ -299,9 +343,23 @@ function formatTime(t: string) {
             </template>
             {{ detailUser.is_active ? '禁用' : '启用' }}
           </NButton>
-          <NPopconfirm v-if="detailUser" @positive-click="deleteUser(detailUser.id)">
+          <NTooltip v-if="detailUser && !canManage(detailUser)" trigger="hover">
             <template #trigger>
-              <NButton size="small" :disabled="detailUser.id === auth.user?.id" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+              <NPopconfirm @positive-click="deleteUser(detailUser.id)">
+                <template #trigger>
+                  <NButton size="small" :disabled="!canManage(detailUser)" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                    <template #icon><NIcon><Trash /></NIcon></template>
+                    删除
+                  </NButton>
+                </template>
+                确定删除该用户？
+              </NPopconfirm>
+            </template>
+            无权限管理该角色
+          </NTooltip>
+          <NPopconfirm v-else-if="detailUser" @positive-click="deleteUser(detailUser.id)">
+            <template #trigger>
+              <NButton size="small" :disabled="!canManage(detailUser)" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                 <template #icon><NIcon><Trash /></NIcon></template>
                 删除
               </NButton>

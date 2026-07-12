@@ -29,7 +29,7 @@ const pageSize = 20
 const search = ref('')
 const filterActive = ref<'all' | 'active' | 'inactive'>('all')
 const activeOptions = [
-  { label: '全部', value: 'all' },
+  { label: '全部状态', value: 'all' },
   { label: '已启用', value: 'active' },
   { label: '已禁用', value: 'inactive' },
 ]

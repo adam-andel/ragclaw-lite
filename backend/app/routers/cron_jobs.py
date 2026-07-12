@@ -72,25 +72,27 @@ async def list_cron_jobs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
-    is_active: bool | None = Query(None),
+    status: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List cron jobs (tenant-scoped; admin sees all).
 
     Optional `search` filters by job name or description.
-    Optional `is_active` filters by runtime state: active = scheduled/running,
-    inactive = paused/failed.
+    Optional `status` filters by exact runtime state
+    (scheduled / running / paused / failed / completed).
     """
     conditions = []
     if current_user.role.value != "admin":
         conditions.append(CronJob.tenant_id == current_user.tenant_id)
     if search:
         conditions.append((CronJob.name.ilike(f"%{search}%")) | (CronJob.description.ilike(f"%{search}%")))
-    if is_active is not None:
-        active_statuses = [CronJobStatus.SCHEDULED, CronJobStatus.RUNNING]
-        inactive_statuses = [CronJobStatus.PAUSED, CronJobStatus.FAILED]
-        conditions.append(CronJob.status.in_(active_statuses if is_active else inactive_statuses))
+    if status is not None:
+        try:
+            status_val = CronJobStatus(status)
+        except ValueError:
+            raise HTTPException(400, f"无效的定时任务状态: {status}")
+        conditions.append(CronJob.status == status_val)
 
     count_q = select(func.count()).select_from(CronJob)
     if conditions:
