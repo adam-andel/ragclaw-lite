@@ -33,6 +33,9 @@ const menuOptions = computed<MenuOption[]>(() => {
     { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
     ...(auth.isAdmin ? [
+      { label: '仪表盘', key: '/dashboard', icon: () => h(NIcon, null, { default: () => h(StatsChart) }) },
+    ] : []),
+    ...(auth.isAdmin ? [
       { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
       { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
     ] : []),

@@ -343,10 +343,10 @@ async def list_conversations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List conversations: filter by user_id. Admin can view any user via param."""
+    """List conversations: filter by user_id. Only super admin can view any user via param."""
     user_id_filter = request.query_params.get("user_id") or current_user.id
-    # Only admin can view other users' conversations
-    if user_id_filter != current_user.id and current_user.role.value not in ("admin", "moderator"):
+    # Only super admin can view other users' conversations
+    if user_id_filter != current_user.id and current_user.role.value != "admin":
         user_id_filter = current_user.id
     result = await db.execute(
         select(Conversation)
@@ -389,7 +389,7 @@ async def get_conversation(
     if not conv:
         raise HTTPException(404, "Conversation not found")
     # Verify ownership
-    if conv.user_id and conv.user_id != current_user.id and current_user.role.value not in ("admin", "moderator"):
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
         raise HTTPException(403, "无权访问")
 
     messages_list = []
@@ -429,7 +429,7 @@ async def get_conversation_messages(
     conv = result.scalar_one_or_none()
     if not conv:
         raise HTTPException(404, "Conversation not found")
-    if conv.user_id and conv.user_id != current_user.id and current_user.role.value not in ("admin", "moderator"):
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
         raise HTTPException(403, "无权访问")
 
     total_result = await db.execute(

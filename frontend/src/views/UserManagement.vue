@@ -304,7 +304,7 @@ function formatTime(t: string) {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton size="small" v-if="detailUser" @click="viewConversations(detailUser.id)">
+          <NButton size="small" v-if="detailUser && auth.isAdmin" @click="viewConversations(detailUser.id)">
             <template #icon><NIcon><Eye /></NIcon></template>
             查看对话
           </NButton>
