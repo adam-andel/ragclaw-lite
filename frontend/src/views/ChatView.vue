@@ -35,7 +35,17 @@ function checkReadonly(convUserId?: string | null) {
   }
 }
 
-const messages = ref<ChatMsg[]>([])
+const allMessages = ref<ChatMsg[]>([])
+const ROUNDS_PER_PAGE = 10
+const loadedRounds = ref(0)
+const totalRounds = computed(() => Math.ceil(allMessages.value.length / 2))
+const hasMoreOlder = computed(() => loadedRounds.value < totalRounds.value)
+const isLoadingOlder = ref(false)
+// 分页后的可见消息：默认只展示最新的 ROUNDS_PER_PAGE 轮对话，向上滚动触顶时再向前加载更早的轮次
+const messages = computed<ChatMsg[]>(() => {
+  const start = Math.max(0, totalRounds.value - loadedRounds.value) * 2
+  return allMessages.value.slice(start)
+})
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
@@ -55,6 +65,25 @@ function onScroll() {
   if (!el) return
   const threshold = 60
   isPinnedToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  // 向上滚动触顶 → 自动加载更早的对话（上一页）
+  if (el.scrollTop <= 48 && hasMoreOlder.value && !isLoadingOlder.value) {
+    loadOlder()
+  }
+}
+
+// 向前加载更早的对话：在列表顶部插入上一页（10 轮），并保持当前可视位置不跳动
+async function loadOlder() {
+  if (!hasMoreOlder.value || isLoadingOlder.value) return
+  isLoadingOlder.value = true
+  const el = messagesContainer.value
+  const prevHeight = el ? el.scrollHeight : 0
+  loadedRounds.value = Math.min(totalRounds.value, loadedRounds.value + ROUNDS_PER_PAGE)
+  await nextTick()
+  if (el && el.isConnected) {
+    const added = el.scrollHeight - prevHeight
+    el.scrollTop = el.scrollTop + added
+  }
+  isLoadingOlder.value = false
 }
 
 function scrollToBottomAndPin() {
@@ -177,7 +206,8 @@ watch(() => route.params.id, async (id) => {
     await loadConversation(cid)
   } else if (!cid) {
     // Navigated to /chat without id — new conversation
-    messages.value = []
+    allMessages.value = []
+    loadedRounds.value = 0
     conversationId.value = undefined
     isReadonly.value = false
     emptyMode.value = 'conv'
@@ -188,7 +218,9 @@ watch(() => route.params.id, async (id) => {
 async function loadConversation(id: string) {
   try {
     const conv = await getConversation(id)
-    messages.value = conv.messages || []
+    allMessages.value = conv.messages || []
+    loadedRounds.value = Math.min(ROUNDS_PER_PAGE, Math.ceil(allMessages.value.length / 2))
+    isLoadingOlder.value = false
     conversationId.value = id
     // Restore the KB that was used with this conversation
     const savedKbId = convKbMap.value[id]
@@ -204,7 +236,8 @@ async function loadConversation(id: string) {
     isPinnedToBottom.value = true
     await scrollToBottom()
   } catch {
-    messages.value = []
+    allMessages.value = []
+    loadedRounds.value = 0
     conversationId.value = undefined
     router.replace('/chat')
   }
@@ -215,7 +248,8 @@ onMounted(() => {
   window.addEventListener('erag:reset-chat', () => {
     isReadonly.value = false
     conversationId.value = undefined
-    messages.value = []
+    allMessages.value = []
+    loadedRounds.value = 0
     emptyMode.value = 'conv'
     loadConversations()
   })
@@ -278,7 +312,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   } catch (e: any) {
     if (e?.name !== 'AbortError') {
       // Remove failed user + assistant messages and restore input
-      messages.value = messages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
+      allMessages.value = allMessages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
       inputText.value = query
       nmessage.error(`发送失败: ${e.message}，已恢复输入`)
     }
@@ -301,12 +335,12 @@ async function sendMessage() {
   if (!text || isStreaming.value) return
 
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() }
-  messages.value.push(userMsg)
+  allMessages.value.push(userMsg)
   inputText.value = ''
 
   const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
-  messages.value.push(assistantMsg)
-  const proxyMsg = messages.value[messages.value.length - 1]
+  allMessages.value.push(assistantMsg)
+  const proxyMsg = allMessages.value[allMessages.value.length - 1]
   isPinnedToBottom.value = true
   await scrollToBottom()
   isStreaming.value = true
@@ -316,15 +350,15 @@ async function sendMessage() {
 
 async function regenerateAnswer(assistantMsgId: string) {
   if (isStreaming.value) return
-  const idx = messages.value.findIndex(m => m.id === assistantMsgId)
+  const idx = allMessages.value.findIndex(m => m.id === assistantMsgId)
   if (idx < 1) return
-  const userMsg = messages.value[idx - 1]
+  const userMsg = allMessages.value[idx - 1]
   if (userMsg.role !== 'user') return
 
   // replace old assistant message with fresh placeholder
   const newAssistant: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
-  messages.value.splice(idx, 1, newAssistant)
-  const proxyMsg = messages.value[idx]
+  allMessages.value.splice(idx, 1, newAssistant)
+  const proxyMsg = allMessages.value[idx]
   isPinnedToBottom.value = true
   await scrollToBottom()
   isStreaming.value = true
@@ -348,7 +382,8 @@ function cancelQueue() {
 
 function newConversation() {
   conversationId.value = undefined
-  messages.value = []
+  allMessages.value = []
+  loadedRounds.value = 0
   isReadonly.value = false
   emptyMode.value = 'kb'
   loadConversations()
@@ -488,6 +523,12 @@ function handleKeydown(e: KeyboardEvent) {
         <div class="empty-icon">🔍</div>
         <h3>对话为空</h3>
         <p>输入问题开始对话</p>
+      </div>
+      <!-- 分页提示：向上滚动到顶时自动加载更早的对话 -->
+      <div v-if="totalRounds > 0" class="history-sentinel" aria-live="polite">
+        <span v-if="isLoadingOlder" class="history-sentinel-spinner" aria-hidden="true"></span>
+        <span v-if="isLoadingOlder">正在加载更早的对话…</span>
+        <span v-else-if="!hasMoreOlder" class="history-sentinel-done">已显示全部对话（共 {{ totalRounds }} 轮）</span>
       </div>
       <ChatMessage
         v-for="msg in messages"
@@ -1069,5 +1110,32 @@ function handleKeydown(e: KeyboardEvent) {
     right: 14px;
     bottom: 78px;
   }
+}
+
+/* ── 对话分页提示（顶部加载更早 / 已到顶）── */
+.history-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 8px;
+  margin: 2px 0 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+.history-sentinel-done {
+  opacity: 0.75;
+}
+.history-sentinel-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: history-sentinel-spin 0.7s linear infinite;
+}
+@keyframes history-sentinel-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
