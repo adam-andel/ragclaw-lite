@@ -70,6 +70,7 @@ _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
 _max_nproc: int = DEFAULT_MAX_NPROC
 _max_concurrent: int = DEFAULT_MAX_CONCURRENT
 _keep_minutes: int = DEFAULT_KEEP_MINUTES
+_keep_file: str = "/tmp/repl_keep_minutes.json"  # persisted file-retention (survives restart)
 _public_url: str = ""
 _enable_shell: bool = False
 _enable_shell_local: bool = False
@@ -206,6 +207,30 @@ def _load_policy_file() -> None:
                         _network_mode, len(_allow_domains))
     except Exception as e:
         logger.warning("policy_load_failed %s", e)
+
+
+def _set_keep_minutes(mins: int) -> None:
+    """Apply a new file-retention duration at runtime (hot-reload, no restart)."""
+    global _keep_minutes
+    _keep_minutes = max(1, int(mins))
+    try:
+        with open(_keep_file, "w", encoding="utf-8") as f:
+            json.dump({"keep_minutes": _keep_minutes}, f)
+    except Exception:
+        pass
+
+
+def _load_keep_file() -> None:
+    """Load persisted retention from disk (survives container restart)."""
+    global _keep_minutes
+    try:
+        if os.path.exists(_keep_file):
+            with open(_keep_file, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            _keep_minutes = max(1, int(d.get("keep_minutes", _keep_minutes)))
+            logger.info("keep_minutes_loaded_from_file mins=%d", _keep_minutes)
+    except Exception as e:
+        logger.warning("keep_minutes_load_failed %s", e)
 
 
 def _py_build_guard(per_call_dir: str) -> str:
@@ -890,6 +915,9 @@ class MCPHandler(BaseHTTPRequestHandler):
         if self.path == "/policy":
             self._handle_policy_update(body)
             return
+        if self.path == "/keep-minutes":
+            self._handle_keep_update(body)
+            return
         self.send_error(404)
 
     def _handle_policy_update(self, body: dict):
@@ -907,6 +935,16 @@ class MCPHandler(BaseHTTPRequestHandler):
         _set_network_policy(mode, domains, methods)
         logger.info("policy_updated mode=%s domains=%d", mode, len(domains))
         self._json_response(200, {"status": "ok", "policy": _build_policy()})
+
+    def _handle_keep_update(self, body: dict):
+        """Hot-reload file-retention duration (called by backend /api/config/sandbox-network)."""
+        mins = body.get("keep_minutes")
+        if not isinstance(mins, int) or mins < 1:
+            self._json_response(400, {"error": "keep_minutes must be a positive integer (minutes)"})
+            return
+        _set_keep_minutes(mins)
+        logger.info("keep_minutes_updated mins=%d", _keep_minutes)
+        self._json_response(200, {"status": "ok", "keep_minutes": _keep_minutes})
 
     def log_message(self, _fmt, *args):
         logger.info("http %s", args[0])
@@ -975,6 +1013,8 @@ if __name__ == "__main__":
     # Load persisted policy file (survives container restart) — overrides CLI if present
     _load_policy_file()
     _keep_minutes = int(os.environ.get("REPL_KEEP_MINUTES", args.keep_minutes))
+    # Load persisted retention (if any) so a prior config survives restart.
+    _load_keep_file()
     _max_memory_mb = int(os.environ.get("REPL_MAX_MEMORY_MB", args.max_memory_mb))
     _max_nproc = int(os.environ.get("REPL_MAX_NPROC", args.max_nproc))
     _max_concurrent = int(os.environ.get("REPL_MAX_CONCURRENT", args.max_concurrent))

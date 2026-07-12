@@ -63,11 +63,33 @@ const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
+// Generated-file retention presets (minutes). "custom" reveals a minutes input.
+const keepOptions = [
+  { label: '1 小时', value: 60 },
+  { label: '1 天', value: 1440 },
+  { label: '1 周', value: 10080 },
+  { label: '1 个月', value: 43200 },
+  { label: '自定义', value: 'custom' },
+]
+
 const sandboxConfig = ref<SandboxNetworkConfig>({
   sandbox_network_mode: 'deny',
   sandbox_allow_domains: '',
   sandbox_allow_methods: '',
+  mcp_file_keep_minutes: keepOptions[1].value as number,
 })
+
+const keepPreset = ref<string>('60')
+const keepCustomMinutes = ref<number>(60)
+
+function formatKeep(min: number): string {
+  if (!min) return '未设置'
+  if (min % 43200 === 0) return `${min / 43200} 个月`
+  if (min % 10080 === 0) return `${min / 10080} 周`
+  if (min % 1440 === 0) return `${min / 1440} 天`
+  if (min % 60 === 0) return `${min / 60} 小时`
+  return `${min} 分钟`
+}
 const savingSandbox = ref(false)
 
 let observer: IntersectionObserver | null = null
@@ -82,6 +104,10 @@ onMounted(async () => {
 
   try {
     sandboxConfig.value = await getSandboxNetwork()
+    const v = sandboxConfig.value.mcp_file_keep_minutes ?? 60
+    const preset = keepOptions.find((o) => o.value !== 'custom' && o.value === v)
+    keepPreset.value = preset ? String(v) : 'custom'
+    keepCustomMinutes.value = v
   } catch (e: any) {
     message.error(e.message || '加载沙盒网络配置失败')
   }
@@ -207,10 +233,12 @@ async function handleTest() {
 async function handleSaveSandbox() {
   savingSandbox.value = true
   try {
+    const keepMins = keepPreset.value === 'custom' ? keepCustomMinutes.value : Number(keepPreset.value)
     const res = await updateSandboxNetwork({
       sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
       sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
       sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
+      mcp_file_keep_minutes: keepMins,
     })
     sandboxConfig.value = res.config
     if (res.mcp_pushed) {
@@ -550,7 +578,7 @@ async function handleSaveSandbox() {
 
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="sandbox-network">
-        <h3 class="section-title">沙盒网络策略（REPL 代码执行环境）</h3>
+        <h3 class="section-title">沙盒 / REPL 执行环境（网络策略 &amp; 文件保留）</h3>
         <p class="muted" style="margin: 0 0 16px;font-size: 13px">
           控制 LLM 生成的代码在沙盒中能否访问外部网络。默认 <b>deny</b>（完全禁止，最安全）。
           选择 <b>allowlist</b> 后可填写允许访问的域名（逗号或换行分隔），Python 代码仅能访问白名单域名，
@@ -568,6 +596,26 @@ async function handleSaveSandbox() {
               placeholder="api.github.com, raw.githubusercontent.com"
             />
           </NFormItem>
+
+          <NDivider />
+
+          <NFormItem label="生成文件保留时长">
+            <NSpace vertical :size="8" style="width: 100%">
+              <NSelect v-model:value="keepPreset" :options="keepOptions" style="max-width: 240px" />
+              <NInputNumber
+                v-if="keepPreset === 'custom'"
+                v-model:value="keepCustomMinutes"
+                :min="1" :max="525600" :step="60"
+                placeholder="自定义分钟数"
+              >
+                <template #suffix>分钟</template>
+              </NInputNumber>
+              <span class="muted" style="font-size: 12px">
+                当前保留：{{ formatKeep(sandboxConfig.mcp_file_keep_minutes) }}（MCP 重启后仍生效）
+              </span>
+            </NSpace>
+          </NFormItem>
+
           <NFormItem>
             <NSpace align="center">
               <NButton type="primary" :loading="savingSandbox" @click="handleSaveSandbox">保存沙盒网络策略</NButton>

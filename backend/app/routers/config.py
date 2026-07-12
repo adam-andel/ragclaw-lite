@@ -134,6 +134,7 @@ class SandboxNetworkUpdate(BaseModel):
     sandbox_network_mode: str | None = None   # deny | allow | allowlist
     sandbox_allow_domains: str | None = None  # comma-separated
     sandbox_allow_methods: str | None = None  # comma-separated (reserved)
+    mcp_file_keep_minutes: int | None = None  # generated-file retention (minutes)
 
     @field_validator("sandbox_network_mode")
     @classmethod
@@ -150,6 +151,7 @@ async def get_sandbox_network(current_user=Depends(get_current_admin)):
         "sandbox_network_mode": config_manager.sandbox_network_mode,
         "sandbox_allow_domains": config_manager.sandbox_allow_domains,
         "sandbox_allow_methods": config_manager.sandbox_allow_methods,
+        "mcp_file_keep_minutes": config_manager.mcp_file_keep_minutes,
     }
 
 
@@ -161,21 +163,24 @@ async def update_sandbox_network(
     """更新沙盒网络策略，保存后立即热加载到 MCP REPL 服务（无需重启）。"""
     patch = {
         k: v for k, v in data.model_dump(exclude_none=True).items()
-        if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods"}
+        if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods", "mcp_file_keep_minutes"}
     }
     if not patch:
         raise HTTPException(status_code=400, detail="没有提供任何可更新的字段")
     await config_manager.update(patch)
-    pushed = await _push_mcp_policy()
+    pushed_policy = await _push_mcp_policy()
+    pushed_keep = await _push_mcp_keep_minutes() if "mcp_file_keep_minutes" in patch else True
+    mcp_pushed = pushed_policy and pushed_keep
     return {
-        "message": "沙盒网络策略已更新，立即生效"
-        + ("" if pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        "message": "沙盒策略已更新，立即生效"
+        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
         "config": {
             "sandbox_network_mode": config_manager.sandbox_network_mode,
             "sandbox_allow_domains": config_manager.sandbox_allow_domains,
             "sandbox_allow_methods": config_manager.sandbox_allow_methods,
+            "mcp_file_keep_minutes": config_manager.mcp_file_keep_minutes,
         },
-        "mcp_pushed": pushed,
+        "mcp_pushed": mcp_pushed,
     }
 
 
@@ -203,4 +208,25 @@ async def _push_mcp_policy() -> bool:
                 logger.warning("push policy to %s -> HTTP %d", url, resp.status_code)
         except Exception as e:
             logger.warning("push policy to %s failed: %s", url, e)
+    return False
+
+
+async def _push_mcp_keep_minutes() -> bool:
+    """Best-effort: hot-reload generated-file retention into the MCP REPL container.
+
+    The MCP server exposes PUT /keep-minutes on its internal Docker-network URL.
+    Falls back to localhost for local (non-Docker) deployments.
+    """
+    payload = {"keep_minutes": config_manager.mcp_file_keep_minutes}
+    urls = [settings.mcp_repl_internal_url, "http://127.0.0.1:9200"]
+    for url in urls:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.put(url.rstrip("/") + "/keep-minutes", json=payload)
+                if resp.status_code == 200:
+                    logger.info("pushed keep_minutes to %s ok", url)
+                    return True
+                logger.warning("push keep_minutes to %s -> HTTP %d", url, resp.status_code)
+        except Exception as e:
+            logger.warning("push keep_minutes to %s failed: %s", url, e)
     return False

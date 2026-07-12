@@ -187,6 +187,8 @@ class ConfigManager:
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
+            # REPL MCP generated-file retention (minutes); pushed to MCP container
+            "mcp_file_keep_minutes": 1440,
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -208,6 +210,7 @@ class ConfigManager:
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
+            "mcp_file_keep_minutes": 60,
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -375,6 +378,11 @@ class ConfigManager:
             return self._config.get("sandbox_allow_methods", "")
 
     @property
+    def mcp_file_keep_minutes(self) -> int:
+        with self._lock:
+            return int(self._config.get("mcp_file_keep_minutes", 60))
+
+    @property
     def system_prompt(self) -> str:
         """Effective system prompt, selected by prompt_language:
         'en' -> llm_system_prompt_en, otherwise -> llm_system_prompt (Chinese default)."""
@@ -412,6 +420,7 @@ class ConfigManager:
             "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
+            "mcp_file_keep_minutes",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 
