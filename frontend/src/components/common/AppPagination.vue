@@ -44,7 +44,10 @@ const props = withDefaults(
   }>(),
   {
     pageSize: 20,
-    itemCount: 0,
+    // 必须是 undefined 而非 0。Naive 的 NPagination 在 itemCount !== undefined 时
+    // 优先用 itemCount 推导页数（mergedPageCountRef），0 会被当成“真实总数 0 → 1 页”，
+    // 从而忽略调用方单独传入的 :page-count。默认 undefined 时才会走 pageCount 分支。
+    itemCount: undefined,
     pageSlot: 7,
     simple: false,
     showSizePicker: false,
@@ -64,7 +67,7 @@ const shouldShow = computed(() =>
   props.alwaysShow ||
   (props.pageCount != null
     ? props.pageCount > 1
-    : props.itemCount > props.pageSize),
+    : (props.itemCount ?? 0) > props.pageSize),
 )
 </script>
 

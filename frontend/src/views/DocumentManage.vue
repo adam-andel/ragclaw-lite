@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -113,8 +113,9 @@ function saveUploadItems() {
   try { localStorage.setItem(UPLOAD_STORAGE_KEY, JSON.stringify(toStore)) } catch { /* quota */ }
 }
 
-// Chunks modal
-const showChunks = ref(false)
+// Chunks preview (shown inline inside the Document Detail Modal)
+const showDetailChunks = ref(false)
+const chunkPreviewTitle = ref<HTMLElement | null>(null)
 const chunks = ref<ChunkItem[]>([])
 const chunksLoading = ref(false)
 const chunksPerPage = 10
@@ -702,13 +703,15 @@ async function openChunks(docId: string) {
   chunkSearch.value = ''
   chunkPage.value = 1
   expandedChunks.value = new Set()
-  showChunks.value = true
+  showDetailChunks.value = true
   try {
     const res = await getDocumentChunks(docId)
     chunks.value = res.data
+    await nextTick()
+    chunkPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch {
     message.error(t('documents.loadChunksFailed'))
-    showChunks.value = false
+    showDetailChunks.value = false
   } finally {
     chunksLoading.value = false
   }
@@ -1055,60 +1058,6 @@ async function loadSupportedTypes() {
 
     <AppPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
 
-    <!-- Chunks Modal -->
-    <AppModal v-model:show="showChunks" :title="t('documents.chunkPreview')" size="nested">
-      <div class="chunks-modal">
-        <NInput
-          v-if="chunks.length > 0"
-          v-model:value="chunkSearch"
-          :placeholder="t('documents.searchChunkContent')"
-          size="small"
-          clearable
-          @update:value="chunkPage = 1"
-          style="margin-bottom:12px"
-        >
-          <template #prefix><NIcon size="15"><Search /></NIcon></template>
-        </NInput>
-
-        <NSpin :show="chunksLoading">
-          <NEmpty v-if="!chunksLoading && chunks.length === 0" :description="t('documents.noChunkData')" />
-          <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" :description="t('documents.noMatchingChunks')" />
-
-          <div v-if="filteredChunks.length > 0">
-            <div class="chunk-count">{{ t('documents.chunkTotal', { count: filteredChunks.length }) }}</div>
-            <NCard v-for="c in paginatedChunks" :key="c.id" size="small" class="chunk-card">
-              <div class="chunk-meta">
-                <NTag size="tiny">#{{ c.chunk_index }}</NTag>
-                <NTag size="tiny" v-if="c.heading">{{ c.heading }}</NTag>
-                <span class="chunk-meta-tokens">{{ c.token_count }} tokens</span>
-              </div>
-              <div
-                :class="['chunk-content', { expanded: expandedChunks.has(c.id) }]"
-                @click="toggleChunkExpand(c.id)"
-                role="button"
-                tabindex="0"
-                :aria-expanded="expandedChunks.has(c.id)"
-                @keydown.enter.prevent="toggleChunkExpand(c.id)"
-                @keydown.space.prevent="toggleChunkExpand(c.id)"
-              >
-                <p>{{ c.content }}</p>
-              </div>
-              <NButton text size="tiny" class="chunk-expand-btn" @click="toggleChunkExpand(c.id)">
-                {{ expandedChunks.has(c.id) ? t('common.collapse') : t('common.expand') }}
-              </NButton>
-            </NCard>
-          </div>
-        </NSpin>
-      </div>
-      <template v-if="totalChunkPages > 1" #footer>
-        <AppPagination
-          :page="chunkPage"
-          :page-count="totalChunkPages"
-          @update:page="chunkPage = $event"
-        />
-      </template>
-    </AppModal>
-
     <!-- Doc KBs Modal -->
     <AppModal v-model:show="showDocKbs" :title="t('documents.linkKb')"
       size="nested"
@@ -1160,7 +1109,7 @@ async function loadSupportedTypes() {
     <!-- Document Detail Modal -->
     <AppModal v-model:show="showDetail" :title="detailDoc?.filename || t('documents.docDetail')"
       size="detail"
-      @after-leave="detailDoc = null"
+      @after-leave="detailDoc = null; showDetailChunks = false"
     >
       <div v-if="detailDoc">
         <NDescriptions bordered :column="1" size="small" label-placement="left" label-style="width: 120px">
@@ -1205,6 +1154,62 @@ async function loadSupportedTypes() {
           <NDescriptionsItem v-if="detailDoc.updated_at" :label="t('common.updatedAt')">{{ formatDateTime(detailDoc.updated_at) }}</NDescriptionsItem>
           <NDescriptionsItem :label="t('documents.docId')">{{ detailDoc.id }}</NDescriptionsItem>
         </NDescriptions>
+
+        <!-- Chunk preview: revealed inline when the chunk count link is clicked -->
+        <div v-if="showDetailChunks" class="detail-chunks">
+          <h3 ref="chunkPreviewTitle" class="chunk-preview-title">{{ t('documents.chunkPreview') }}</h3>
+          <div class="chunks-modal">
+            <NInput
+              v-if="chunks.length > 0"
+              v-model:value="chunkSearch"
+              :placeholder="t('documents.searchChunkContent')"
+              size="small"
+              clearable
+              @update:value="chunkPage = 1"
+              style="margin-bottom:12px"
+            >
+              <template #prefix><NIcon size="15"><Search /></NIcon></template>
+            </NInput>
+
+            <NSpin :show="chunksLoading">
+              <NEmpty v-if="!chunksLoading && chunks.length === 0" :description="t('documents.noChunkData')" />
+              <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" :description="t('documents.noMatchingChunks')" />
+
+              <div v-if="filteredChunks.length > 0">
+                <div class="chunk-count">{{ t('documents.chunkTotal', { count: filteredChunks.length }) }}</div>
+                <NCard v-for="c in paginatedChunks" :key="c.id" size="small" class="chunk-card">
+                  <div class="chunk-meta">
+                    <NTag size="tiny">#{{ c.chunk_index }}</NTag>
+                    <NTag size="tiny" v-if="c.heading">{{ c.heading }}</NTag>
+                    <span class="chunk-meta-tokens">{{ c.token_count }} tokens</span>
+                  </div>
+                  <div
+                    :class="['chunk-content', { expanded: expandedChunks.has(c.id) }]"
+                    @click="toggleChunkExpand(c.id)"
+                    role="button"
+                    tabindex="0"
+                    :aria-expanded="expandedChunks.has(c.id)"
+                    @keydown.enter.prevent="toggleChunkExpand(c.id)"
+                    @keydown.space.prevent="toggleChunkExpand(c.id)"
+                  >
+                    <p>{{ c.content }}</p>
+                  </div>
+                  <NButton text size="tiny" class="chunk-expand-btn" @click="toggleChunkExpand(c.id)">
+                    {{ expandedChunks.has(c.id) ? t('common.collapse') : t('common.expand') }}
+                  </NButton>
+                </NCard>
+              </div>
+            </NSpin>
+            <AppPagination
+              v-if="totalChunkPages > 1"
+              :page="chunkPage"
+              :page-size="chunksPerPage"
+              :item-count="filteredChunks.length"
+              @update:page="chunkPage = $event"
+              style="margin-top:12px"
+            />
+          </div>
+        </div>
       </div>
       <template #footer>
         <NSpace justify="end">
@@ -1596,6 +1601,17 @@ async function loadSupportedTypes() {
 .doc-name-clickable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
 /* Chunks */
+.detail-chunks {
+  margin-top: var(--space-6, 24px);
+  padding-top: var(--space-4, 16px);
+  border-top: 1px solid var(--color-border, #eee);
+}
+.chunk-preview-title {
+  margin: 0 0 var(--space-3, 12px);
+  font-size: var(--text-base, 15px);
+  font-weight: 600;
+  color: var(--color-text, #1f2937);
+}
 .chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
 .chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
 .chunk-card {
