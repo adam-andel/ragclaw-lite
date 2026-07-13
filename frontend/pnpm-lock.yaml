@@ -29,6 +29,9 @@ importers:
       vue:
         specifier: ^3.5.13
         version: 3.5.35(typescript@5.7.2)
+      vue-i18n:
+        specifier: ^9.14.5
+        version: 9.14.5(vue@3.5.35(typescript@5.7.2))
       vue-router:
         specifier: ^4.5.0
         version: 4.6.4(vue@3.5.35(typescript@5.7.2))
@@ -36,6 +39,9 @@ importers:
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
+      '@types/node':
+        specifier: ^22
+        version: 22.20.1
       '@unocss/preset-uno':
         specifier: ^0.65.0
         version: 0.65.0
@@ -44,16 +50,16 @@ importers:
         version: 0.65.0
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
-        version: 5.2.1(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
+        version: 5.2.1(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
       typescript:
         specifier: ~5.7.0
         version: 5.7.2
       unocss:
         specifier: ^0.65.0
-        version: 0.65.0(postcss@8.5.15)(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
+        version: 0.65.0(postcss@8.5.15)(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
       vite:
         specifier: ^6.0.0
-        version: 6.4.3(jiti@1.21.6)(tsx@4.22.4)
+        version: 6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4)
       vue-tsc:
         specifier: ^2.2.0
         version: 2.2.0(typescript@5.7.2)
@@ -550,6 +556,18 @@ packages:
   '@iconify/utils@2.1.33':
     resolution: {integrity: sha512-jP9h6v/g0BIZx0p7XGJJVtkVnydtbgTgt9mVNcGDYwaa7UhdHdI9dvoq+gKj9sijMSJKxUPEG2JyjsgXjxL7Kw==}
 
+  '@intlify/core-base@9.14.5':
+    resolution: {integrity: sha512-5ah5FqZG4pOoHjkvs8mjtv+gPKYU0zCISaYNjBNNqYiaITxW8ZtVih3GS/oTOqN8d9/mDLyrjD46GBApNxmlsA==}
+    engines: {node: '>= 16'}
+
+  '@intlify/message-compiler@9.14.5':
+    resolution: {integrity: sha512-IHzgEu61/YIpQV5Pc3aRWScDcnFKWvQA9kigcINcCBXN8mbW+vk9SK+lDxA6STzKQsVJxUPg9ACC52pKKo3SVQ==}
+    engines: {node: '>= 16'}
+
+  '@intlify/shared@9.14.5':
+    resolution: {integrity: sha512-9gB+E53BYuAEMhbCAxVgG38EZrk59sxBtv3jSizNL2hEWlgjBjAw1AwpLHtNaeda12pe6W20OGEa0TwuMSRbyQ==}
+    engines: {node: '>= 16'}
+
   '@jridgewell/gen-mapping@0.3.5':
     resolution: {integrity: sha512-IzL8ZoEDIBRWEzlCcRhOaCupYyN5gdIK+Q6fbFdPDg6HqX6jpkItn7DFIpW9LQzXG6Df9sA7+OKnq0qlz/GaQg==}
     engines: {node: '>=6.0.0'}
@@ -744,6 +762,9 @@ packages:
 
   '@types/mdurl@2.0.0':
     resolution: {integrity: sha512-RGdgjQUZba5p6QEFAVx2OGb8rQDL/cPRG7GiedRzMcJ1tYnUANBncjbSB1NRGwbvjcPeikRABz2nshyPk1bhWg==}
+
+  '@types/node@22.20.1':
+    resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
   '@unocss/astro@0.65.0':
     resolution: {integrity: sha512-JyQJBZqX++Hi1fBFJK7OrO37qbBLn+ff72sx2WRKYc5BYn9cbUj4DdfUuyEbqZErfoshykVafBmuQU8AWLR47w==}
@@ -1363,6 +1384,9 @@ packages:
   unconfig@0.5.5:
     resolution: {integrity: sha512-VQZ5PT9HDX+qag0XdgQi8tJepPhXiR/yVOkn707gJDKo31lGjRilPREiQJ9Z6zd/Ugpv6ZvO5VxVIcatldYcNQ==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   unocss@0.65.0:
     resolution: {integrity: sha512-mTL0n7GsGvsprpw6XAZ2FX0oWWbe2KJuG1cUqlH+cScF64/k3NyciqdMYycKjwqAgtp8W4Ptf7tdG1aquqmNNw==}
     engines: {node: '>=14'}
@@ -1443,6 +1467,13 @@ packages:
     resolution: {integrity: sha512-JdgRRUVrN0Y2GosA0M68DEbKlXMqJ7FQgsK8CjQD2vxvNSqAU6PZEpi4cfcTVtfM2GVOMjHo7GKKLbXxOBqDqA==}
     peerDependencies:
       vue: ^3.4.37
+
+  vue-i18n@9.14.5:
+    resolution: {integrity: sha512-0jQ9Em3ymWngyiIkj0+c/k7WgaPO+TNzjKSNq9BvBQaKJECqn9cd9fL4tkDhB5G1QBskGl9YxxbDAhgbFtpe2g==}
+    engines: {node: '>= 16'}
+    deprecated: v9 and v10 no longer supported. please migrate to v11. about maintenance status, see https://vue-i18n.intlify.dev/guide/maintenance.html
+    peerDependencies:
+      vue: ^3.0.0
 
   vue-router@4.6.4:
     resolution: {integrity: sha512-Hz9q5sa33Yhduglwz6g9skT8OBPii+4bFn88w6J+J4MfEo4KRRpmiNG/hHHkdbRFlLBOqxN8y8gf2Fb0MTUgVg==}
@@ -1741,6 +1772,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@intlify/core-base@9.14.5':
+    dependencies:
+      '@intlify/message-compiler': 9.14.5
+      '@intlify/shared': 9.14.5
+
+  '@intlify/message-compiler@9.14.5':
+    dependencies:
+      '@intlify/shared': 9.14.5
+      source-map-js: 1.2.1
+
+  '@intlify/shared@9.14.5': {}
+
   '@jridgewell/gen-mapping@0.3.5':
     dependencies:
       '@jridgewell/set-array': 1.2.1
@@ -1866,13 +1909,17 @@ snapshots:
 
   '@types/mdurl@2.0.0': {}
 
-  '@unocss/astro@0.65.0(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
+  '@types/node@22.20.1':
+    dependencies:
+      undici-types: 6.21.0
+
+  '@unocss/astro@0.65.0(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
     dependencies:
       '@unocss/core': 0.65.0
       '@unocss/reset': 0.65.0
-      '@unocss/vite': 0.65.0(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
+      '@unocss/vite': 0.65.0(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
     optionalDependencies:
-      vite: 6.4.3(jiti@1.21.6)(tsx@4.22.4)
+      vite: 6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4)
     transitivePeerDependencies:
       - rollup
       - supports-color
@@ -2001,7 +2048,7 @@ snapshots:
     dependencies:
       '@unocss/core': 0.65.0
 
-  '@unocss/vite@0.65.0(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
+  '@unocss/vite@0.65.0(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@rollup/pluginutils': 5.4.0(rollup@4.61.1)
@@ -2011,7 +2058,7 @@ snapshots:
       chokidar: 3.6.0
       magic-string: 0.30.21
       tinyglobby: 0.2.17
-      vite: 6.4.3(jiti@1.21.6)(tsx@4.22.4)
+      vite: 6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4)
     transitivePeerDependencies:
       - rollup
       - supports-color
@@ -2019,9 +2066,9 @@ snapshots:
 
   '@vicons/ionicons5@0.12.0': {}
 
-  '@vitejs/plugin-vue@5.2.1(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
+  '@vitejs/plugin-vue@5.2.1(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))':
     dependencies:
-      vite: 6.4.3(jiti@1.21.6)(tsx@4.22.4)
+      vite: 6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4)
       vue: 3.5.35(typescript@5.7.2)
 
   '@volar/language-core@2.4.28':
@@ -2662,9 +2709,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  unocss@0.65.0(postcss@8.5.15)(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2)):
+  undici-types@6.21.0: {}
+
+  unocss@0.65.0(postcss@8.5.15)(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2)):
     dependencies:
-      '@unocss/astro': 0.65.0(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
+      '@unocss/astro': 0.65.0(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
       '@unocss/cli': 0.65.0(rollup@4.61.1)
       '@unocss/core': 0.65.0
       '@unocss/postcss': 0.65.0(postcss@8.5.15)
@@ -2680,9 +2729,9 @@ snapshots:
       '@unocss/transformer-compile-class': 0.65.0
       '@unocss/transformer-directives': 0.65.0
       '@unocss/transformer-variant-group': 0.65.0
-      '@unocss/vite': 0.65.0(rollup@4.61.1)(vite@6.4.3(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
+      '@unocss/vite': 0.65.0(rollup@4.61.1)(vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4))(vue@3.5.35(typescript@5.7.2))
     optionalDependencies:
-      vite: 6.4.3(jiti@1.21.6)(tsx@4.22.4)
+      vite: 6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4)
     transitivePeerDependencies:
       - postcss
       - rollup
@@ -2694,7 +2743,7 @@ snapshots:
       evtd: 0.2.4
       vue: 3.5.35(typescript@5.7.2)
 
-  vite@6.4.3(jiti@1.21.6)(tsx@4.22.4):
+  vite@6.4.3(@types/node@22.20.1)(jiti@1.21.6)(tsx@4.22.4):
     dependencies:
       esbuild: 0.25.0
       fdir: 6.5.0(picomatch@4.0.4)
@@ -2703,6 +2752,7 @@ snapshots:
       rollup: 4.61.1
       tinyglobby: 0.2.17
     optionalDependencies:
+      '@types/node': 22.20.1
       fsevents: 2.3.3
       jiti: 1.21.6
       tsx: 4.22.4
@@ -2720,6 +2770,13 @@ snapshots:
 
   vue-flow-layout@0.1.1(vue@3.5.35(typescript@5.7.2)):
     dependencies:
+      vue: 3.5.35(typescript@5.7.2)
+
+  vue-i18n@9.14.5(vue@3.5.35(typescript@5.7.2)):
+    dependencies:
+      '@intlify/core-base': 9.14.5
+      '@intlify/shared': 9.14.5
+      '@vue/devtools-api': 6.6.4
       vue: 3.5.35(typescript@5.7.2)
 
   vue-router@4.6.4(vue@3.5.35(typescript@5.7.2)):

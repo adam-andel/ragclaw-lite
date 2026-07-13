@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -18,6 +19,7 @@ import { listServers } from '@/api/mcp'
 import type { Skill, SkillCreatePayload, MCPServer } from '@/types'
 
 const message = useMessage()
+const { t } = useI18n()
 
 // ── Data ──
 const skills = ref<Skill[]>([])
@@ -25,6 +27,15 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: t('skills.statusAll'), value: 'all' },
+  { label: t('common.enabled'), value: 'active' },
+  { label: t('common.disabled'), value: 'inactive' },
+]
 
 // Create modal
 const showCreateModal = ref(false)
@@ -58,11 +69,15 @@ const detailLoading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const data = await listSkills(page.value, pageSize)
+    const data = await listSkills(
+      page.value, pageSize,
+      search.value || undefined,
+      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+    )
     skills.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || '加载失败')
+    message.error(e.message || t('skills.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -90,11 +105,11 @@ function openCreate() {
 async function handleCreate() {
   try {
     await createSkill(createForm.value)
-    message.success('技能已创建')
+    message.success(t('skills.created'))
     showCreateModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || '创建失败')
+    message.error(e.message || t('skills.createFailed'))
   }
 }
 
@@ -107,7 +122,7 @@ async function openEdit(skill: Skill) {
     skillMdContent.value = full.skill_md_content || ''
     showEditModal.value = true
   } catch (e: any) {
-    message.error(e.message || '加载技能详情失败')
+    message.error(e.message || t('skills.loadDetailFailed'))
   }
 }
 
@@ -115,11 +130,11 @@ async function handleSaveEdit() {
   if (!editingSkill.value) return
   try {
     await updateSkill(editingSkill.value.id, { content: skillMdContent.value })
-    message.success('SKILL.md 已保存')
+    message.success(t('skills.skillMdSaved'))
     showEditModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || '保存失败')
+    message.error(e.message || t('skills.saveFailed'))
   }
 }
 
@@ -131,7 +146,7 @@ async function openDetail(skill: Skill) {
   try {
     detailSkill.value = await getSkill(skill.id)
   } catch (e: any) {
-    message.error(e.message || '加载技能详情失败')
+    message.error(e.message || t('skills.loadDetailFailed'))
     detailSkill.value = skill
   } finally {
     detailLoading.value = false
@@ -143,11 +158,11 @@ async function openDetail(skill: Skill) {
 async function handleDelete(skill: Skill) {
   try {
     await deleteSkill(skill.id)
-    message.success('技能已删除')
+    message.success(t('skills.deleted'))
     if (detailSkill.value?.id === skill.id) showDetail.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || '删除失败')
+    message.error(e.message || t('skills.deleteFailed'))
   }
 }
 
@@ -168,7 +183,7 @@ function handleFolderChange(e: Event) {
   // Validate: must contain SKILL.md
   const hasSkillMd = paths.some(p => p.toUpperCase().endsWith('SKILL.MD'))
   if (!hasSkillMd) {
-    message.error('上传的文件夹必须包含 SKILL.md')
+    message.error(t('skills.folderMustContainSkillMd'))
     input.value = ''
     return
   }
@@ -181,10 +196,10 @@ async function doFolderUpload(files: File[], paths: string[]) {
   loading.value = true
   try {
     await uploadFolder(files, paths)
-    message.success('技能文件夹上传成功')
+    message.success(t('skills.folderUploadSuccess'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '上传失败')
+    message.error(e.message || t('skills.uploadFailed'))
   } finally {
     loading.value = false
   }
@@ -195,16 +210,16 @@ async function doFolderUpload(files: File[], paths: string[]) {
 async function handleZipUpload(options: any) {
   const file = options.file.file
   if (!file.name.toLowerCase().endsWith('.zip')) {
-    message.error('请上传 .zip 文件')
+    message.error(t('skills.pleaseUploadZip'))
     return
   }
   loading.value = true
   try {
     await uploadZip(file)
-    message.success('ZIP 上传成功')
+    message.success(t('skills.zipUploadSuccess'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '上传失败')
+    message.error(e.message || t('skills.uploadFailed'))
   } finally {
     loading.value = false
   }
@@ -226,7 +241,7 @@ function handleReuploadFolderChange(e: Event) {
 
   const hasSkillMd = paths.some(p => p.toUpperCase().endsWith('SKILL.MD'))
   if (!hasSkillMd) {
-    message.error('上传的文件夹必须包含 SKILL.md')
+    message.error(t('skills.folderMustContainSkillMd'))
     input.value = ''
     return
   }
@@ -240,10 +255,10 @@ async function doReuploadFolder(files: File[], paths: string[]) {
   loading.value = true
   try {
     await reuploadFolder(reuploadSkillId.value, files, paths)
-    message.success('技能文件夹已重新上传并替换')
+    message.success(t('skills.folderReuploaded'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '重新上传失败')
+    message.error(e.message || t('skills.reuploadFailed'))
   } finally {
     loading.value = false
   }
@@ -252,16 +267,16 @@ async function doReuploadFolder(files: File[], paths: string[]) {
 async function handleReuploadZip(skillId: string, options: any) {
   const file = options.file.file
   if (!file.name.toLowerCase().endsWith('.zip')) {
-    message.error('请上传 .zip 文件')
+    message.error(t('skills.pleaseUploadZip'))
     return
   }
   loading.value = true
   try {
     await reuploadZip(skillId, file)
-    message.success('技能 ZIP 已重新上传并替换')
+    message.success(t('skills.zipReuploaded'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '重新上传失败')
+    message.error(e.message || t('skills.reuploadFailed'))
   } finally {
     loading.value = false
   }
@@ -272,13 +287,13 @@ async function handleReuploadZip(skillId: string, options: any) {
 async function handleToggle(skill: Skill) {
   try {
     await toggleSkill(skill.id)
-    message.success(skill.is_active ? '技能已禁用' : '技能已启用')
+    message.success(skill.is_active ? t('skills.skillDisabled') : t('skills.skillEnabled'))
     if (detailSkill.value?.id === skill.id) {
       detailSkill.value = { ...detailSkill.value, is_active: !detailSkill.value.is_active }
     }
     await load()
   } catch (e: any) {
-    message.error(e.message || '操作失败')
+    message.error(e.message || t('skills.operationFailed'))
   }
 }
 
@@ -288,10 +303,10 @@ async function handleSync() {
   loading.value = true
   try {
     const result = await syncSkills()
-    message.success(`同步完成：新增 ${result.added}，更新 ${result.updated}，停用 ${result.deactivated}`)
+    message.success(t('skills.syncComplete', { added: result.added, updated: result.updated, deactivated: result.deactivated }))
     await load()
   } catch (e: any) {
-    message.error(e.message || '同步失败')
+    message.error(e.message || t('skills.syncFailed'))
   } finally {
     loading.value = false
   }
@@ -299,6 +314,18 @@ async function handleSync() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
   load()
 }
 
@@ -323,26 +350,26 @@ onMounted(() => {
 
 <template>
   <div class="page-container">
-    <PageHeader title="技能管理" :icon="Bulb">
+    <PageHeader :title="t('skills.title')" :icon="Bulb">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
         <NButton size="small" @click="handleSync">
           <template #icon><NIcon><Sync /></NIcon></template>
-          同步
+          {{ t('skills.sync') }}
         </NButton>
         <NButton size="small" @click="triggerFolderUpload">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
-          上传文件夹
+          {{ t('skills.uploadFolder') }}
         </NButton>
         <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
           <NButton size="small">
             <template #icon><NIcon><CloudUpload /></NIcon></template>
-            上传ZIP
+            {{ t('skills.uploadZip') }}
           </NButton>
         </NUpload>
         <NButton size="small" type="primary" @click="openCreate">
           <template #icon><NIcon><Add /></NIcon></template>
-          在线创建
+          {{ t('skills.createOnline') }}
         </NButton>
       </template>
     </PageHeader>
@@ -351,8 +378,21 @@ onMounted(() => {
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
     <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
 
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" :placeholder="t('skills.searchPlaceholder')" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" :placeholder="t('common.status')" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
+    </div>
+
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && skills.length === 0" description="暂无技能，请上传或在线创建" />
+      <NEmpty v-if="!loading && skills.length === 0" :description="t('skills.empty')" />
       <div class="sk-list" v-if="skills.length > 0">
         <NCard
           v-for="skill in skills"
@@ -369,7 +409,7 @@ onMounted(() => {
           <div class="sk-card-header">
             <div class="sk-card-title-wrap">
               <span class="sk-name" :title="skill.name">{{ skill.name }}</span>
-              <NTag v-if="!skill.is_active" size="tiny" :bordered="false" type="default" class="sk-disabled-tag">禁用</NTag>
+              <NTag v-if="!skill.is_active" size="tiny" :bordered="false" type="default" class="sk-disabled-tag">{{ t('common.disabled') }}</NTag>
             </div>
             <div class="sk-card-toggle" @click.stop>
               <StatusToggle
@@ -379,10 +419,10 @@ onMounted(() => {
             </div>
           </div>
 
-          <p class="sk-card-desc" :title="skill.description ?? undefined">{{ skill.description || '暂无描述' }}</p>
+          <p class="sk-card-desc" :title="skill.description ?? undefined">{{ skill.description || t('skills.noDescription') }}</p>
 
           <div class="sk-card-mcp">
-            <span class="sk-card-label">MCP服务</span>
+            <span class="sk-card-label">{{ t('skills.mcpService') }}</span>
             <template v-if="skill.mcp_servers && skill.mcp_servers.length">
               <NTag
                 v-for="s in skill.mcp_servers"
@@ -393,13 +433,13 @@ onMounted(() => {
                 class="sk-mcp-tag"
               >{{ s }}</NTag>
             </template>
-            <span v-else class="sk-meta-muted">无</span>
+            <span v-else class="sk-meta-muted">{{ t('skills.none') }}</span>
           </div>
 
           <div class="sk-card-meta">
             <span class="sk-meta-muted">📁 {{ skill.folder_name }}</span>
             <span class="sk-meta-sep">·</span>
-            <span class="sk-meta-muted">更新 {{ formatTime(skill.updated_at) }}</span>
+            <span class="sk-meta-muted">{{ t('skills.updated') }} {{ formatTime(skill.updated_at) }}</span>
           </div>
         </NCard>
       </div>
@@ -408,50 +448,50 @@ onMounted(() => {
     <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
-    <AppModal v-model:show="showCreateModal" title="在线创建技能" size="detail">
+    <AppModal v-model:show="showCreateModal" :title="t('skills.createModalTitle')" size="detail">
       <NForm :model="createForm" label-placement="left" label-width="100">
-        <NFormItem label="名称" required>
-          <NInput v-model:value="createForm.name" placeholder="如：IT运维助手" maxlength="200" />
+        <NFormItem :label="t('common.name')" required>
+          <NInput v-model:value="createForm.name" :placeholder="t('skills.namePlaceholder')" maxlength="200" />
         </NFormItem>
-        <NFormItem label="描述">
+        <NFormItem :label="t('skills.description')">
           <NInput v-model:value="createForm.description" type="textarea"
-            placeholder="≤250字符，给LLM路由看的技能描述" rows="2" maxlength="250" />
+            :placeholder="t('skills.descriptionPlaceholder')" rows="2" maxlength="250" />
         </NFormItem>
-        <NFormItem label="MCP服务">
+        <NFormItem :label="t('skills.mcpService')">
           <NSelect v-model:value="createForm.mcp_servers" :options="serverOptions" multiple
-            placeholder="选择该技能可用的MCP服务（可选）" />
+            :placeholder="t('skills.mcpServicePlaceholder')" />
         </NFormItem>
-        <NFormItem label="SKILL正文">
+        <NFormItem :label="t('skills.skillBody')">
           <NInput v-model:value="createForm.body" type="textarea"
-            placeholder="SKILL.md 的 Markdown 正文（front matter 自动生成）" rows="8" />
+            :placeholder="t('skills.skillBodyPlaceholder')" rows="8" />
         </NFormItem>
-        <NFormItem label="启用">
+        <NFormItem :label="t('common.enable')">
           <NSwitch v-model:value="createForm.is_active" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showCreateModal = false">取消</NButton>
-          <NButton type="primary" :disabled="!createForm.name" @click="handleCreate">创建</NButton>
+          <NButton @click="showCreateModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" :disabled="!createForm.name" @click="handleCreate">{{ t('common.create') }}</NButton>
         </NSpace>
       </template>
     </AppModal>
 
     <!-- Edit SKILL.md Modal -->
-    <AppModal v-model:show="showEditModal" title="编辑 2SKILL.md" size="code">
+    <AppModal v-model:show="showEditModal" :title="t('skills.editSkillMd')" size="code">
       <div style="margin-bottom:8px">
         <NText depth="3" style="font-size:12px">
-          直接编辑 SKILL.md 全文。YAML front matter 中的 name/description/mcp_servers 会同步到数据库索引，is_active 通过上方开关管理。
+          {{ t('skills.editSkillMdHint') }}
         </NText>
       </div>
       <NInput v-model:value="skillMdContent" type="textarea"
         :autosize="{ minRows: 14, maxRows: 18 }"
         style="font-family: monospace; font-size: 13px"
-        placeholder="---\nname: ...\ndescription: ...\nmcp_servers:\n  - ...\n---\n\n# 正文" />
+        :placeholder="t('skills.skillBodyTemplate')" />
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showEditModal = false">取消</NButton>
-          <NButton type="primary" @click="handleSaveEdit">保存</NButton>
+          <NButton @click="showEditModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="handleSaveEdit">{{ t('common.save') }}</NButton>
         </NSpace>
       </template>
     </AppModal>
@@ -459,7 +499,7 @@ onMounted(() => {
     <!-- Detail Modal -->
     <AppModal
       v-model:show="showDetail"
-      :title="detailSkill?.name || '技能详情'"
+      :title="detailSkill?.name || t('skills.detailTitle')"
       size="detail"
     >
       <NSpin :show="detailLoading">
@@ -471,31 +511,31 @@ onMounted(() => {
           label-placement="left"
           label-style="width: 110px"
         >
-          <NDescriptionsItem label="名称">
+          <NDescriptionsItem :label="t('common.name')">
             <span class="sk-detail-name">{{ detailSkill.name }}</span>
-            <NTag v-if="!detailSkill.is_active" size="tiny" :bordered="false" type="default" style="margin-left:8px">禁用</NTag>
+            <NTag v-if="!detailSkill.is_active" size="tiny" :bordered="false" type="default" style="margin-left:8px">{{ t('common.disabled') }}</NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem label="描述">
+          <NDescriptionsItem :label="t('skills.description')">
             <span v-if="detailSkill.description">{{ detailSkill.description }}</span>
-            <span v-else class="sk-meta-muted">暂无描述</span>
+            <span v-else class="sk-meta-muted">{{ t('skills.noDescription') }}</span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="文件夹">{{ detailSkill.folder_name }}</NDescriptionsItem>
-          <NDescriptionsItem label="MCP服务">
+          <NDescriptionsItem :label="t('skills.folder')">{{ detailSkill.folder_name }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('skills.mcpService')">
             <template v-if="detailSkill.mcp_servers && detailSkill.mcp_servers.length">
               <NSpace :size="6">
                 <NTag v-for="s in detailSkill.mcp_servers" :key="s" size="tiny" type="info" :bordered="false">{{ s }}</NTag>
               </NSpace>
             </template>
-            <span v-else class="sk-meta-muted">无</span>
+            <span v-else class="sk-meta-muted">{{ t('skills.none') }}</span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="状态">
+          <NDescriptionsItem :label="t('common.status')">
             <NTag :type="detailSkill.is_active ? 'success' : 'default'" size="small">
-              {{ detailSkill.is_active ? '已启用' : '已禁用' }}
+              {{ detailSkill.is_active ? t('common.enabled') : t('common.disabled') }}
             </NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem label="创建时间">{{ formatTime(detailSkill.created_at) }}</NDescriptionsItem>
-          <NDescriptionsItem label="更新时间">{{ formatTime(detailSkill.updated_at) }}</NDescriptionsItem>
-          <NDescriptionsItem label="技能 ID">
+          <NDescriptionsItem :label="t('common.createdAt')">{{ formatTime(detailSkill.created_at) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('common.updatedAt')">{{ formatTime(detailSkill.updated_at) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('skills.skillId')">
             <span class="sk-id">{{ detailSkill.id }}</span>
           </NDescriptionsItem>
         </NDescriptions>
@@ -505,24 +545,24 @@ onMounted(() => {
         <NSpace justify="end">
           <NButton size="small" v-if="detailSkill" @click="openEdit(detailSkill)">
             <template #icon><NIcon size="16"><Create /></NIcon></template>
-            编辑
+            {{ t('common.edit') }}
           </NButton>
           <NButton size="small" v-if="detailSkill" @click="triggerReuploadFolder(detailSkill.id)">
             <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
-            重新上传
+            {{ t('skills.reupload') }}
           </NButton>
           <NPopover v-if="detailSkill" trigger="click" placement="top-end" show-arrow>
             <template #trigger>
               <NButton size="small">
                 <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
-                重新上传ZIP
+                {{ t('skills.reuploadZip') }}
               </NButton>
             </template>
             <NUpload
               :show-file-list="false"
               :custom-request="(o: any) => handleReuploadZip(detailSkill!.id, o)"
             >
-              <NButton size="small">选择 ZIP 文件</NButton>
+              <NButton size="small">{{ t('skills.selectZipFile') }}</NButton>
             </NUpload>
           </NPopover>
           <NButton size="small" v-if="detailSkill" @click="handleToggle(detailSkill)" :style="detailSkill.is_active
@@ -534,16 +574,16 @@ onMounted(() => {
                 <CheckmarkCircle v-else />
               </NIcon>
             </template>
-            {{ detailSkill.is_active ? '禁用' : '启用' }}
+            {{ detailSkill.is_active ? t('common.disable') : t('common.enable') }}
           </NButton>
           <NPopconfirm v-if="detailSkill" @positive-click="handleDelete(detailSkill)">
             <template #trigger>
               <NButton size="small" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                 <template #icon><NIcon size="16"><Trash /></NIcon></template>
-                删除
+                {{ t('common.delete') }}
               </NButton>
             </template>
-            确认删除此技能？文件夹和DB记录都会被删除。
+            {{ t('skills.confirmDeleteSkill') }}
           </NPopconfirm>
         </NSpace>
       </template>
@@ -554,6 +594,7 @@ onMounted(() => {
 
 <style scoped>
 /* Skill card grid */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .sk-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

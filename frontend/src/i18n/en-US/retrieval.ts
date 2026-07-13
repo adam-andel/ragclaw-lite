@@ -1,0 +1,18 @@
+export default {
+  placeholder: 'Enter a query, e.g.: microservice communication, GR-809 model specs...',
+  search: 'Search',
+  vectorWeight: 'Vector Weight',
+  bm25Weight: 'BM25 Weight',
+  topK: 'Top K',
+  threshold: 'Threshold',
+  empty: 'Enter a query and click Search',
+  resultSummary: 'Recalled {n} results',
+  fusionHint: '(Vector Top-{v} + BM25 Top-{b} → RRF fusion → Top-{r})',
+  scoreFusion: 'Fusion',
+  scoreVector: 'Vector',
+  scoreBm25: 'BM25',
+  page: 'Page {n}',
+  barVector: 'Vector',
+  barBm25: 'BM25',
+  barFusion: 'Fusion',
+}

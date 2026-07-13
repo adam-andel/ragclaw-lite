@@ -7,8 +7,8 @@ import type {
   CronJobRunListResponse,
 } from '@/types'
 
-export const listCronJobs = (page = 1, size = 20) =>
-  client.get<CronJobListResponse>('/cron-jobs', { params: { page, size } }).then(r => r.data)
+export const listCronJobs = (page = 1, size = 20, search?: string, status?: string) =>
+  client.get<CronJobListResponse>('/cron-jobs', { params: { page, size, search, status } }).then(r => r.data)
 
 export const getCronJob = (id: string) =>
   client.get<CronJob>(`/cron-jobs/${id}`).then(r => r.data)

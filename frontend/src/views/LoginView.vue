@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { NInput, NButton, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
 const message = useMessage()
+const { t } = useI18n()
 
 const username = ref('')
 const password = ref('')
@@ -17,11 +19,11 @@ async function handleLogin() {
   if (loading.value) return
   // Error prevention: validate before hitting the network
   if (!username.value.trim()) {
-    message.warning('请输入用户名')
+    message.warning(t('login.enterUsername'))
     return
   }
   if (!password.value) {
-    message.warning('请输入密码')
+    message.warning(t('login.enterPassword'))
     await nextTick()
     passwordInput.value?.focus()
     return
@@ -29,11 +31,11 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.login(username.value.trim(), password.value)
-    message.success('登录成功，正在进入…')
+    message.success(t('login.loginSuccess'))
     router.push('/chat')
   } catch (e: any) {
     // Visibility of system status: surface the server/network error to the user
-    message.error(e?.message || '登录失败，请稍后重试')
+    message.error(e?.message || t('login.loginFailed'))
   } finally {
     loading.value = false
   }
@@ -49,12 +51,12 @@ async function handleLogin() {
         <div class="brand-blob brand-blob-2" />
         <div class="brand-content">
           <div class="brand-logo">🔍 ERAG</div>
-          <h2 class="brand-title">企业级 RAG 知识中台</h2>
-          <p class="brand-subtitle">把私有知识变成可问答、可溯源的智能资产</p>
+          <h2 class="brand-title">{{ t('login.brandTitle') }}</h2>
+          <p class="brand-subtitle">{{ t('login.brandSubtitle') }}</p>
           <ul class="brand-features">
-            <li><span class="dot" />混合检索：向量语义 + BM25 关键词加权融合</li>
-            <li><span class="dot" />私有化部署，数据不出域，全程本地化</li>
-            <li><span class="dot" />多角色权限管理，按知识库细粒度授权</li>
+            <li><span class="dot" />{{ t('login.featureHybrid') }}</li>
+            <li><span class="dot" />{{ t('login.featurePrivate') }}</li>
+            <li><span class="dot" />{{ t('login.featureRoles') }}</li>
           </ul>
         </div>
         <p class="brand-footer">EnterpriseRAG · Lite</p>
@@ -63,16 +65,16 @@ async function handleLogin() {
       <!-- Form panel -->
       <section class="form-panel">
         <div class="login-header">
-          <h1 class="login-title">欢迎回来</h1>
-          <p class="login-subtitle">登录以继续使用 ERAG</p>
+          <h1 class="login-title">{{ t('login.welcomeBack') }}</h1>
+          <p class="login-subtitle">{{ t('login.welcomeSubtitle') }}</p>
         </div>
 
         <form class="login-form" @submit.prevent="handleLogin" novalidate>
           <div class="field">
-            <label for="login-username" class="field-label">用户名</label>
+            <label for="login-username" class="field-label">{{ t('login.username') }}</label>
             <NInput
               v-model:value="username"
-              placeholder="请输入用户名"
+              :placeholder="t('login.usernamePlaceholder')"
               size="large"
               :input-props="{
                 id: 'login-username',
@@ -85,13 +87,13 @@ async function handleLogin() {
           </div>
 
           <div class="field">
-            <label for="login-password" class="field-label">密码</label>
+            <label for="login-password" class="field-label">{{ t('login.password') }}</label>
             <NInput
               ref="passwordInput"
               v-model:value="password"
               type="password"
               show-password-on="click"
-              placeholder="请输入密码"
+              :placeholder="t('login.passwordPlaceholder')"
               size="large"
               :input-props="{ id: 'login-password', autocomplete: 'current-password' }"
             />
@@ -105,16 +107,16 @@ async function handleLogin() {
             :loading="loading"
             :disabled="loading"
           >
-            {{ loading ? '登录中…' : '登 录' }}
+            {{ loading ? t('login.loggingIn') : t('login.login') }}
           </NButton>
         </form>
 
         <p class="login-hint">
           <span class="hint-icon" aria-hidden="true">🔒</span>
-          还没有账号？请联系管理员创建。
+          {{ t('login.noAccountHint') }}
         </p>
 
-        <p class="login-copy">© ERAG · 企业级 RAG 知识中台</p>
+        <p class="login-copy">© ERAG · {{ t('login.brandTitle') }}</p>
       </section>
     </div>
   </div>

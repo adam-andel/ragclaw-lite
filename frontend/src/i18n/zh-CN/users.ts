@@ -1,0 +1,23 @@
+export default {
+  pageTitle: '用户管理',
+  createUser: '新建用户',
+  searchPlaceholder: '搜索用户名或显示名…',
+  empty: '暂无用户',
+  normal: '正常',
+  noPermissionRole: '无权限管理该角色',
+  role: '角色',
+  username: '用户名',
+  password: '密码',
+  displayNameOptional: '显示名称（可选）',
+  displayName: '显示名',
+  email: '邮箱',
+  tenantId: '租户 ID',
+  userId: '用户 ID',
+  detailTitle: '用户详情',
+  viewConversations: '查看对话',
+  confirmDeleteUser: '确定删除该用户？',
+  filter: {
+    allStatus: '全部状态',
+    allRoles: '全部角色',
+  },
+}

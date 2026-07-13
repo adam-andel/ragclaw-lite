@@ -16,7 +16,7 @@ from app.schemas.mcp import (
     MCPServerCreate, MCPServerUpdate,
     MCPServerResponse, MCPServerListResponse,
 )
-from app.services.auth import get_current_staff, get_current_user
+from app.services.auth import get_current_admin, get_current_user
 
 router = APIRouter(prefix="/api/mcp", tags=["MCP Servers"])
 
@@ -46,7 +46,7 @@ def _server_to_response(s: MCPServer) -> MCPServerResponse:
 @router.post("/servers", response_model=MCPServerResponse, status_code=201)
 async def create_server(
     data: MCPServerCreate,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Register a new MCP server."""
@@ -74,6 +74,7 @@ async def list_servers(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
+    is_active: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -83,6 +84,8 @@ async def list_servers(
         conditions.append(MCPServer.tenant_id == current_user.tenant_id)
     if search:
         conditions.append(MCPServer.name.ilike(f"%{search}%"))
+    if is_active is not None:
+        conditions.append(MCPServer.is_active == is_active)
 
     count_q = select(func.count()).select_from(MCPServer)
     if conditions:
@@ -118,7 +121,7 @@ async def get_server(
 async def update_server(
     server_id: str,
     data: MCPServerUpdate,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an MCP server configuration."""
@@ -151,7 +154,7 @@ async def update_server(
 @router.delete("/servers/{server_id}")
 async def delete_server(
     server_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an MCP server registration."""
@@ -165,7 +168,7 @@ async def delete_server(
 
 @router.post("/servers/refresh-tools")
 async def refresh_tools(
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
 ):
     """Manually refresh the in-memory tool registry from all active MCP servers."""
     from app.services.tool_registry import tool_registry
@@ -178,7 +181,7 @@ async def refresh_tools(
 @router.post("/servers/{server_id}/test")
 async def test_server(
     server_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Test MCP server connection and list available tools."""

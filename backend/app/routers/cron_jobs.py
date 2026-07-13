@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.cron_job import CronJob, CronJobRun, CronJobStatus
-from app.services.auth import get_current_user, get_current_staff
+from app.services.auth import get_current_user
 from app.services.cron_parser import compute_next_run
 from app.services.cron_agent_runner import execute_and_record_cron_job
 from app.schemas.cron_job import (
@@ -61,24 +61,44 @@ def _cron_job_run_response(run: CronJobRun) -> CronJobRunResponse:
     )
 
 
-def _apply_tenant_filter(query, current_user: User):
-    if current_user.role.value == "admin":
-        return query
-    return query.where(CronJob.tenant_id == current_user.tenant_id)
-
-
 @router.get("", response_model=CronJobListResponse)
 async def list_cron_jobs(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None),
+    status: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List cron jobs (tenant-scoped; admin sees all)."""
-    count_q = _apply_tenant_filter(select(func.count()).select_from(CronJob), current_user)
+    """List cron jobs.
+
+    Admin sees all jobs; other roles see only their own jobs
+    (where CronJob.user_id == current_user.id).
+
+    Optional `search` filters by job name or description.
+    Optional `status` filters by exact runtime state
+    (scheduled / running / paused / failed / completed).
+    """
+    conditions = []
+    if current_user.role.value != "admin":
+        conditions.append(CronJob.user_id == current_user.id)
+    if search:
+        conditions.append((CronJob.name.ilike(f"%{search}%")) | (CronJob.description.ilike(f"%{search}%")))
+    if status is not None:
+        try:
+            status_val = CronJobStatus(status)
+        except ValueError:
+            raise HTTPException(400, f"无效的定时任务状态: {status}")
+        conditions.append(CronJob.status == status_val)
+
+    count_q = select(func.count()).select_from(CronJob)
+    if conditions:
+        count_q = count_q.where(*conditions)
     total = (await db.execute(count_q)).scalar() or 0
 
-    items_q = _apply_tenant_filter(select(CronJob), current_user).order_by(CronJob.created_at.desc())
+    items_q = select(CronJob).order_by(CronJob.created_at.desc())
+    if conditions:
+        items_q = items_q.where(*conditions)
     items_q = items_q.offset((page - 1) * size).limit(size)
     items = (await db.execute(items_q)).scalars().all()
 
@@ -129,7 +149,7 @@ async def get_cron_job(
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
     return _cron_job_response(job)
 
@@ -138,14 +158,14 @@ async def get_cron_job(
 async def update_cron_job(
     job_id: str,
     data: CronJobUpdate,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
 
     if data.name is not None:
@@ -182,14 +202,14 @@ async def update_cron_job(
 @router.delete("/{job_id}")
 async def delete_cron_job(
     job_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a cron job and its run logs."""
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
 
     await db.execute(delete(CronJobRun).where(CronJobRun.cron_job_id == job_id))
@@ -201,14 +221,14 @@ async def delete_cron_job(
 @router.post("/{job_id}/toggle", response_model=CronJobResponse)
 async def toggle_cron_job(
     job_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Pause or resume a cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
 
     if job.status == CronJobStatus.SCHEDULED:
@@ -230,7 +250,7 @@ async def toggle_cron_job(
 @router.post("/{job_id}/run-now")
 async def run_cron_job_now(
     job_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger a cron job immediately, outside its normal schedule.
@@ -242,7 +262,7 @@ async def run_cron_job_now(
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
 
     if job.status == CronJobStatus.RUNNING:
@@ -269,7 +289,7 @@ async def list_cron_job_runs(
     job = await db.get(CronJob, job_id)
     if not job:
         raise HTTPException(404, "定时任务不存在")
-    if current_user.role.value != "admin" and job.tenant_id != current_user.tenant_id:
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
         raise HTTPException(403, "无权访问")
 
     total = (

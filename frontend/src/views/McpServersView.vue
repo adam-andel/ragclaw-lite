@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NEmpty, NSpin,
 } from 'naive-ui'
-import { Add, Trash, Create, Flash, Refresh } from '@vicons/ionicons5'
+import { Add, Trash, Create, Flash, Refresh, Search } from '@vicons/ionicons5'
+import { useI18n } from 'vue-i18n'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -16,6 +17,7 @@ import {
 import type { MCPServer, MCPServerCreatePayload } from '@/types'
 
 const message = useMessage()
+const { t } = useI18n()
 
 // ── Data ──
 
@@ -24,6 +26,15 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+
+// Filters — search + enable/disable (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: t('mcp.allStatus'), value: 'all' },
+  { label: t('common.enabled'), value: 'active' },
+  { label: t('common.disabled'), value: 'inactive' },
+]
 
 const showModal = ref(false)
 const editing = ref<MCPServer | null>(null)
@@ -36,17 +47,24 @@ const testingId = ref('')
 const testResult = ref<{ ok?: boolean; message?: string; error?: string; tools?: any[] } | null>(null)
 const showTestModal = ref(false)
 const testServerName = ref('')
+const testModalTitle = computed(() =>
+  `${testServerName.value} · ${testResult.value?.ok ? '✅ ' + t('mcp.connectionSuccess') : '❌ ' + t('mcp.connectionFailed')}`
+)
 
 // ── Load ──
 
 async function load() {
   loading.value = true
   try {
-    const data = await listServers(page.value, pageSize)
+    const data = await listServers(
+      page.value, pageSize,
+      search.value || undefined,
+      filterActive.value === 'all' ? undefined : filterActive.value === 'active',
+    )
     servers.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || '加载失败')
+    message.error(e.message || t('mcp.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -54,6 +72,18 @@ async function load() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  page.value = 1
   load()
 }
 
@@ -95,7 +125,7 @@ async function handleSave() {
         timeout_seconds: form.value.timeout_seconds,
         is_active: form.value.is_active,
       })
-      message.success('MCP 服务已更新')
+      message.success(t('mcp.updated'))
     } else {
       await createServer({
         name: form.value.name, transport_type: form.value.transport_type,
@@ -106,22 +136,22 @@ async function handleSave() {
         timeout_seconds: form.value.timeout_seconds,
         is_active: form.value.is_active,
       })
-      message.success('MCP 服务已创建')
+      message.success(t('mcp.created'))
     }
     showModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || '保存失败')
+    message.error(e.message || t('mcp.saveFailed'))
   }
 }
 
 async function handleDelete(server: MCPServer) {
   try {
     await deleteServer(server.id)
-    message.success('MCP 服务已删除')
+    message.success(t('mcp.deleted'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '删除失败')
+    message.error(e.message || t('mcp.deleteFailed'))
   }
 }
 
@@ -130,10 +160,10 @@ async function handleDelete(server: MCPServer) {
 async function handleToggle(server: MCPServer) {
   try {
     await updateServer(server.id, { is_active: !server.is_active })
-    message.success(server.is_active ? 'MCP 服务已禁用' : 'MCP 服务已启用')
+    message.success(server.is_active ? t('mcp.serverDisabled') : t('mcp.serverEnabled'))
     await load()
   } catch (e: any) {
-    message.error(e.message || '操作失败')
+    message.error(e.message || t('mcp.operationFailed'))
   }
 }
 
@@ -147,7 +177,7 @@ async function handleTest(server: MCPServer) {
     const result = await testServer(server.id)
     testResult.value = result
   } catch (e: any) {
-    testResult.value = { ok: false, error: e.message || '测试请求失败' }
+    testResult.value = { ok: false, error: e.message || t('mcp.testRequestFailed') }
   } finally {
     testingId.value = ''
     showTestModal.value = true
@@ -157,31 +187,44 @@ async function handleTest(server: MCPServer) {
 async function handleRefresh() {
   try {
     const result = await refreshTools()
-    message.success(`工具刷新完成：${result.servers} 个服务，${result.total_tools} 个工具`)
+    message.success(t('mcp.refreshComplete', { servers: result.servers, tools: result.total_tools }))
   } catch (e: any) {
-    message.error(e.message || '刷新失败')
+    message.error(e.message || t('mcp.refreshFailed'))
   }
 }
 </script>
 
 <template>
   <div class="page-container">
-    <PageHeader title="MCP 服务管理" :icon="Flash">
+    <PageHeader :title="t('mcp.pageTitle')" :icon="Flash">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
         <NButton size="small" @click="handleRefresh">
           <template #icon><NIcon><Refresh /></NIcon></template>
-          刷新工具
+          {{ t('mcp.refreshTools') }}
         </NButton>
         <NButton size="small" type="primary" @click="openCreate">
           <template #icon><NIcon><Add /></NIcon></template>
-          注册服务
+          {{ t('mcp.registerServer') }}
         </NButton>
       </template>
     </PageHeader>
 
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" :placeholder="t('mcp.searchPlaceholder')" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" :placeholder="t('common.status')" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
+    </div>
+
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && servers.length === 0" description="暂无 MCP 服务，请注册" />
+      <NEmpty v-if="!loading && servers.length === 0" :description="t('mcp.empty')" />
       <div class="mcp-list" v-if="servers.length > 0">
         <NCard
           v-for="server in servers"
@@ -193,7 +236,7 @@ async function handleRefresh() {
           <div class="mcp-card-header">
             <div class="mcp-card-title-wrap">
               <span class="mcp-name" :title="server.name">{{ server.name }}</span>
-              <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">禁用</NTag>
+              <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">{{ t('common.disabled') }}</NTag>
             </div>
             <div class="mcp-card-toggle" @click.stop>
               <StatusToggle
@@ -204,17 +247,17 @@ async function handleRefresh() {
           </div>
 
           <div class="mcp-card-row">
-            <span class="mcp-card-label">传输</span>
+            <span class="mcp-card-label">{{ t('mcp.transport') }}</span>
             <NTag :type="server.transport_type === 'http' ? 'info' : 'warning'" size="tiny" :bordered="false">{{ server.transport_type }}</NTag>
           </div>
 
           <div class="mcp-card-row">
-            <span class="mcp-card-label">地址</span>
+            <span class="mcp-card-label">{{ t('mcp.address') }}</span>
             <span class="mcp-meta" :title="(server.endpoint || server.command) ?? undefined">{{ server.endpoint || server.command || '—' }}</span>
           </div>
 
           <div class="mcp-card-row">
-            <span class="mcp-card-label">超时</span>
+            <span class="mcp-card-label">{{ t('mcp.timeout') }}</span>
             <span class="mcp-meta">{{ server.timeout_seconds }}s</span>
           </div>
 
@@ -222,20 +265,20 @@ async function handleRefresh() {
             <NSpace justify="end">
               <NButton size="small" @click="openEdit(server)">
                 <template #icon><NIcon><Create /></NIcon></template>
-                编辑
+                {{ t('common.edit') }}
               </NButton>
               <NButton size="small" :loading="testingId === server.id" @click="handleTest(server)">
                 <template #icon><NIcon><Flash /></NIcon></template>
-                测试
+                {{ t('mcp.test') }}
               </NButton>
               <NPopconfirm @positive-click="handleDelete(server)">
                 <template #trigger>
                   <NButton size="small" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                     <template #icon><NIcon><Trash /></NIcon></template>
-                    删除
+                    {{ t('common.delete') }}
                   </NButton>
                 </template>
-                确认删除此 MCP 服务？
+                {{ t('mcp.confirmDelete') }}
               </NPopconfirm>
             </NSpace>
           </template>
@@ -248,7 +291,7 @@ async function handleRefresh() {
       <!-- Test Result Modal -->
       <AppModal
         v-model:show="showTestModal"
-        :title="`${testServerName} · ${testResult?.ok ? '✅ 连接成功' : '❌ 连接失败'}`"
+        :title="testModalTitle"
         size="detail"
       >
         <template v-if="testResult">
@@ -268,41 +311,41 @@ async function handleRefresh() {
       </AppModal>
 
     <!-- Create/Edit Modal -->
-    <AppModal v-model:show="showModal" title="MCP 服务" size="detail">
+    <AppModal v-model:show="showModal" :title="t('mcp.modalTitle')" size="detail">
       <NForm :model="form" label-placement="left" label-width="100">
-        <NFormItem label="名称" required>
-          <NInput v-model:value="form.name" placeholder="如：天气查询" maxlength="200" />
+        <NFormItem :label="t('common.name')" required>
+          <NInput v-model:value="form.name" :placeholder="t('mcp.namePlaceholder')" maxlength="200" />
         </NFormItem>
-        <NFormItem label="传输方式" required>
+        <NFormItem :label="t('mcp.transportType')" required>
           <NSelect v-model:value="form.transport_type" :options="[{ label: 'HTTP', value: 'http' }, { label: 'stdio', value: 'stdio' }]" />
         </NFormItem>
         <template v-if="form.transport_type === 'http'">
-          <NFormItem label="Endpoint" required>
+          <NFormItem :label="t('mcp.endpoint')" required>
             <NInput v-model:value="form.endpoint" placeholder="https://example.com/mcp" maxlength="500" />
           </NFormItem>
         </template>
         <template v-else>
-          <NFormItem label="命令" required>
-            <NInput v-model:value="form.command" placeholder="如：npx -y @modelcontextprotocol/server-weather" maxlength="500" />
+          <NFormItem :label="t('mcp.command')" required>
+            <NInput v-model:value="form.command" :placeholder="t('mcp.commandPlaceholder')" maxlength="500" />
           </NFormItem>
-          <NFormItem label="参数 (JSON)">
-            <NInput v-model:value="form.args_json" placeholder='如：["--port", "9999"]' />
+          <NFormItem :label="t('mcp.argsJson')">
+            <NInput v-model:value="form.args_json" :placeholder="t('mcp.argsPlaceholder')" />
           </NFormItem>
-          <NFormItem label="环境变量 (JSON)">
-            <NInput v-model:value="form.env_json" placeholder='如：{"API_KEY": "xxx"}' />
+          <NFormItem :label="t('mcp.envJson')">
+            <NInput v-model:value="form.env_json" :placeholder="t('mcp.envPlaceholder')" />
           </NFormItem>
         </template>
-        <NFormItem label="超时(秒)">
+        <NFormItem :label="t('mcp.timeoutSeconds')">
           <NInputNumber v-model:value="form.timeout_seconds" :min="1" :max="300" />
         </NFormItem>
-        <NFormItem label="启用">
+        <NFormItem :label="t('common.enable')">
           <NSwitch v-model:value="form.is_active" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showModal = false">取消</NButton>
-          <NButton type="primary" :disabled="!form.name" @click="handleSave">保存</NButton>
+          <NButton @click="showModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" :disabled="!form.name" @click="handleSave">{{ t('common.save') }}</NButton>
         </NSpace>
       </template>
     </AppModal>
@@ -311,6 +354,7 @@ async function handleRefresh() {
 
 <style scoped>
 /* MCP card grid (style reference: SkillsView.vue) */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .mcp-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

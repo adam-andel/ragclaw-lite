@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, h } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { NMenu, NIcon, NButton, NTag, NBadge, NSwitch } from 'naive-ui'
+import { NMenu, NIcon, NButton, NTag, NBadge, NSwitch, NSelect } from 'naive-ui'
 import {
   Chatbubbles, DocumentText, StatsChart, Bulb, Flash,
   LogOut, People, Settings, Time,
@@ -11,12 +12,17 @@ import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
 import { useTheme } from '@/composables/useTheme'
+import { useLocale } from '@/i18n/useLocale'
+import { SUPPORTED_LOCALES } from '@/i18n'
+import type { AppLocale } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const notificationStore = useNotificationStore()
 const { isDark, setDark } = useTheme()
+const { t } = useI18n()
+const { currentLocale, setLocale } = useLocale()
 
 const userAvatar = computed(() => auth.user?.avatar_url || '')
 const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
@@ -26,18 +32,20 @@ const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
 const menuOptions = computed<MenuOption[]>(() => {
   if (!auth.isStaff) {
     return [
-      { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+      { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     ]
   }
   return [
-    { label: '对话', key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
-    { label: '文档管理', key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
-    { label: '技能管理', key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
-    { label: 'MCP 服务', key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
-    { label: '定时任务', key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
-    { label: '用户管理', key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
+    { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+    { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
     ...(auth.isAdmin ? [
-      { label: '系统设置', key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
+      { label: t('nav.skills'), key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
+      { label: t('nav.mcp'), key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
+    ] : []),
+    { label: t('nav.cron'), key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
+    { label: t('nav.users'), key: '/users', icon: () => h(NIcon, null, { default: () => h(People) }) },
+    ...(auth.isAdmin ? [
+      { label: t('nav.settings'), key: '/settings', icon: () => h(NIcon, null, { default: () => h(Settings) }) },
     ] : []),
   ]
 })
@@ -84,7 +92,7 @@ function goToNotifications() {
     <div class="sidebar-footer">
       <div class="notification-entry" role="button" tabindex="0" @click="goToNotifications" @keydown.enter="goToNotifications">
         <NIcon size="18"><Notifications /></NIcon>
-        <span class="notification-label">通知</span>
+        <span class="notification-label">{{ t('nav.notifications') }}</span>
         <NBadge
           v-if="notificationStore.unreadCount > 0"
           :value="notificationStore.unreadCount"
@@ -94,8 +102,19 @@ function goToNotifications() {
       </div>
 
       <div class="theme-row">
-        <span class="theme-label">深色模式</span>
+        <span class="theme-label">{{ t('nav.darkMode') }}</span>
         <NSwitch :value="isDark" @update:value="setDark" size="small" />
+      </div>
+
+      <div class="theme-row">
+        <span class="theme-label">{{ t('nav.language') }}</span>
+        <NSelect
+          :value="currentLocale"
+          :options="SUPPORTED_LOCALES"
+          size="small"
+          style="width: 112px"
+          @update:value="(v: AppLocale) => setLocale(v)"
+        />
       </div>
       
       <div class="user-row">
@@ -108,7 +127,7 @@ function goToNotifications() {
               <div class="user-name">{{ auth.user?.display_name || auth.user?.username }}</div>
               <div class="user-role">
                 <NTag size="tiny" :type="auth.isAdmin ? 'error' : auth.isStaff ? 'warning' : 'info'">
-                  {{ auth.isAdmin ? '超级管理员' : auth.isStaff ? '普通管理员' : '用户' }}
+                  {{ auth.isAdmin ? t('common.role.superAdmin') : auth.isStaff ? t('common.role.admin') : t('common.role.user') }}
                 </NTag>
               </div>
             </div>
@@ -132,7 +151,7 @@ function goToNotifications() {
         </div>
         <NButton text size="tiny" @click="auth.logout">
           <NIcon><LogOut /></NIcon>
-          退出
+          {{ t('nav.logout') }}
         </NButton>
       </div>
     </div>

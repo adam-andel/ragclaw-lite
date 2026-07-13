@@ -1,0 +1,16 @@
+export default {
+  chat: 'Chat',
+  documents: 'Documents',
+  dashboard: 'Dashboard',
+  skills: 'Skills',
+  mcp: 'MCP Services',
+  cron: 'Scheduled Tasks',
+  users: 'User Management',
+  settings: 'Settings',
+  notifications: 'Notifications',
+  notificationCenter: 'Notifications',
+  profile: 'Profile',
+  darkMode: 'Dark Mode',
+  logout: 'Logout',
+  language: 'Language',
+}

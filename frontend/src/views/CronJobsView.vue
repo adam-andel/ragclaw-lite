@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
-  NEmpty,
+  NEmpty, NSelect,
 } from 'naive-ui'
-import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -18,6 +19,7 @@ import {
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
 
 const message = useMessage()
+const { t } = useI18n()
 
 // ── Data ──
 
@@ -26,6 +28,18 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+
+// Filters — search + status (mirrors DocumentManage.vue)
+const search = ref('')
+const filterStatus = ref<string>('all')
+const statusOptions = [
+  { label: t('cron.status.all'), value: 'all' },
+  { label: t('cron.status.scheduled'), value: 'scheduled' },
+  { label: t('cron.status.running'), value: 'running' },
+  { label: t('cron.status.paused'), value: 'paused' },
+  { label: t('cron.status.completed'), value: 'completed' },
+  { label: t('cron.status.failed'), value: 'failed' },
+]
 
 const showModal = ref(false)
 const editing = ref<CronJob | null>(null)
@@ -71,11 +85,15 @@ const redStyle = {
 async function load() {
   loading.value = true
   try {
-    const data = await listCronJobs(page.value, pageSize)
+    const data = await listCronJobs(
+      page.value, pageSize,
+      search.value || undefined,
+      filterStatus.value === 'all' ? undefined : filterStatus.value,
+    )
     jobs.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || '加载失败')
+    message.error(e.message || t('cron.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -83,6 +101,18 @@ async function load() {
 
 function onPageChange(p: number) {
   page.value = p
+  load()
+}
+
+function onSearch() {
+  page.value = 1
+  load()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterStatus.value = 'all'
+  page.value = 1
   load()
 }
 
@@ -142,41 +172,41 @@ async function handleSave() {
     }
     if (editing.value) {
       await updateCronJob(editing.value.id, payload)
-      message.success('定时任务已更新')
+      message.success(t('cron.updated'))
     } else {
       await createCronJob(payload)
-      message.success('定时任务已创建')
+      message.success(t('cron.created'))
     }
     showModal.value = false
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || '保存失败')
+    message.error(e.message || t('cron.saveFailed'))
   }
 }
 
 async function handleDelete(job: CronJob) {
   try {
     await deleteCronJob(job.id)
-    message.success('定时任务已删除')
+    message.success(t('cron.deleted'))
     if (detailJob.value?.id === job.id) {
       showDetail.value = false
       detailJob.value = null
     }
     await load()
   } catch (e: any) {
-    message.error(e.message || '删除失败')
+    message.error(e.message || t('cron.deleteFailed'))
   }
 }
 
 async function handleToggle(job: CronJob) {
   try {
     await toggleCronJob(job.id)
-    message.success('状态已切换')
+    message.success(t('cron.statusSwitched'))
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || '切换失败')
+    message.error(e.message || t('cron.switchFailed'))
   }
 }
 
@@ -184,11 +214,11 @@ async function handleRunNow(job: CronJob) {
   runningId.value = job.id
   try {
     const res = await runCronJobNow(job.id)
-    message.success(res.result ? `执行完成：${res.result.slice(0, 100)}` : '执行完成')
+    message.success(res.result ? t('cron.execCompleteWith', { result: res.result.slice(0, 100) }) : t('cron.execComplete'))
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || '执行失败')
+    message.error(e.message || t('cron.execFailed'))
   } finally {
     runningId.value = ''
   }
@@ -207,7 +237,7 @@ async function openRuns(job: CronJob) {
     const data = await listCronJobRuns(job.id, 1, 50)
     runs.value = data.items
   } catch (e: any) {
-    message.error(e.message || '加载日志失败')
+    message.error(e.message || t('cron.loadLogFailed'))
   } finally {
     runsLoading.value = false
   }
@@ -236,11 +266,11 @@ function statusType(status: string) {
 
 function statusLabel(status: string) {
   const map: Record<string, string> = {
-    scheduled: '已计划',
-    running: '执行中',
-    paused: '已暂停',
-    completed: '已完成',
-    failed: '失败',
+    scheduled: t('cron.status.scheduled'),
+    running: t('cron.status.running'),
+    paused: t('cron.status.paused'),
+    completed: t('cron.status.completed'),
+    failed: t('cron.statusLabel.failed'),
   }
   return map[status] || status
 }
@@ -252,23 +282,36 @@ function isPaused(job: CronJob) {
 
 <template>
   <div class="page-container">
-    <PageHeader title="定时任务管理" :icon="Time">
+    <PageHeader :title="t('cron.title')" :icon="Time">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton type="primary" size="small" @click="openCreate">
               <template #icon><NIcon size="14"><Add /></NIcon></template>
-              新建定时任务
+              {{ t('cron.createNewJob') }}
             </NButton>
           </template>
-          可在对话中用自然语言创建定时任务
+          {{ t('cron.nlCreateHint') }}
         </NTooltip>
       </template>
     </PageHeader>
 
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" :placeholder="t('cron.searchPlaceholder')" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
+      </NButton>
+      <NSelect v-model:value="filterStatus" :options="statusOptions" :placeholder="t('common.status')" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
+    </div>
+
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && jobs.length === 0" description="暂无定时任务" />
+      <NEmpty v-if="!loading && jobs.length === 0" :description="t('cron.empty')" />
       <div class="cj-list" v-if="jobs.length > 0">
         <NCard
           v-for="job in jobs"
@@ -298,12 +341,12 @@ function isPaused(job: CronJob) {
           <div class="cj-card-desc" v-if="job.description">{{ job.description }}</div>
 
           <div class="cj-card-row">
-            <span class="cj-card-label">执行次数</span>
+            <span class="cj-card-label">{{ t('cron.runCount') }}</span>
             <span class="cj-meta">{{ job.run_count }}</span>
           </div>
 
           <div class="cj-card-row">
-            <span class="cj-card-label">下次执行</span>
+            <span class="cj-card-label">{{ t('cron.nextRun') }}</span>
             <span class="cj-meta">{{ formatTime(job.next_run_at) }}</span>
           </div>
 
@@ -311,7 +354,7 @@ function isPaused(job: CronJob) {
             <NSpace justify="end">
               <NButton size="small" :loading="runningId === job.id" @click.stop="handleRunNow(job)">
                 <template #icon><NIcon><Play /></NIcon></template>
-                立即执行
+                {{ t('cron.runNow') }}
               </NButton>
             </NSpace>
           </template>
@@ -322,40 +365,40 @@ function isPaused(job: CronJob) {
     </NSpin>
 
     <!-- Detail Modal -->
-    <AppModal v-model:show="showDetail" title="定时任务详情" size="detail">
+    <AppModal v-model:show="showDetail" :title="t('cron.detailTitle')" size="detail">
       <NDescriptions v-if="detailJob" :column="1" label-placement="left" bordered>
-        <NDescriptionsItem label="名称">{{ detailJob.name }}</NDescriptionsItem>
-        <NDescriptionsItem label="状态">
+        <NDescriptionsItem :label="t('common.name')">{{ detailJob.name }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('common.status')">
           <NTag :type="statusType(detailJob.status)" size="tiny" :bordered="false">{{ statusLabel(detailJob.status) }}</NTag>
         </NDescriptionsItem>
-        <NDescriptionsItem label="描述">{{ detailJob.description || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.description')">{{ detailJob.description || '—' }}</NDescriptionsItem>
         <NDescriptionsItem label="Crontab">{{ detailJob.cron_expr }}</NDescriptionsItem>
-        <NDescriptionsItem label="时区">{{ detailJob.timezone }}</NDescriptionsItem>
-        <NDescriptionsItem label="最大执行次数">{{ detailJob.max_runs ?? '无限' }}</NDescriptionsItem>
-        <NDescriptionsItem label="执行次数">{{ detailJob.run_count }}</NDescriptionsItem>
-        <NDescriptionsItem label="任务内容">{{ detailJob.task_content }}</NDescriptionsItem>
-        <NDescriptionsItem label="知识库 ID">{{ detailJob.kb_id || '—' }}</NDescriptionsItem>
-        <NDescriptionsItem label="技能 ID">{{ detailJob.skill_id || '—' }}</NDescriptionsItem>
-        <NDescriptionsItem label="下次执行">{{ formatTime(detailJob.next_run_at) }}</NDescriptionsItem>
-        <NDescriptionsItem label="最后执行">{{ formatTime(detailJob.last_run_at) }}</NDescriptionsItem>
-        <NDescriptionsItem label="创建时间">{{ formatTime(detailJob.created_at) }}</NDescriptionsItem>
-        <NDescriptionsItem label="更新时间">{{ formatTime(detailJob.updated_at) }}</NDescriptionsItem>
-        <NDescriptionsItem label="任务 ID">{{ detailJob.id }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.timezone')">{{ detailJob.timezone }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.maxRuns')">{{ detailJob.max_runs ?? t('cron.unlimited') }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.runCount')">{{ detailJob.run_count }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.taskContent')">{{ detailJob.task_content }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.kbId')">{{ detailJob.kb_id || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.skillId')">{{ detailJob.skill_id || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.nextRun')">{{ formatTime(detailJob.next_run_at) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.lastRun')">{{ formatTime(detailJob.last_run_at) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('common.createdAt')">{{ formatTime(detailJob.created_at) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('common.updatedAt')">{{ formatTime(detailJob.updated_at) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.jobId')">{{ detailJob.id }}</NDescriptionsItem>
       </NDescriptions>
 
       <template #footer>
         <NSpace justify="end">
           <NButton size="small" v-if="detailJob" @click="openEdit(detailJob)">
             <template #icon><NIcon><Create /></NIcon></template>
-            编辑
+            {{ t('common.edit') }}
           </NButton>
           <NButton size="small" v-if="detailJob" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
             <template #icon><NIcon><Play /></NIcon></template>
-            立即执行
+            {{ t('cron.runNow') }}
           </NButton>
           <NButton size="small" v-if="detailJob" @click="openRuns(detailJob)">
             <template #icon><NIcon><Time /></NIcon></template>
-            日志
+            {{ t('cron.logs') }}
           </NButton>
           <NButton size="small" v-if="detailJob" @click="handleToggle(detailJob)" :style="isPaused(detailJob) ? greenStyle : yellowStyle">
             <template #icon>
@@ -364,62 +407,62 @@ function isPaused(job: CronJob) {
                 <Ban v-else />
               </NIcon>
             </template>
-            {{ isPaused(detailJob) ? '启用' : '暂停' }}
+            {{ isPaused(detailJob) ? t('common.enable') : t('cron.pause') }}
           </NButton>
           <NPopconfirm v-if="detailJob" @positive-click="handleDelete(detailJob)">
             <template #trigger>
               <NButton size="small" :style="redStyle">
                 <template #icon><NIcon><Trash /></NIcon></template>
-                删除
+                {{ t('common.delete') }}
               </NButton>
             </template>
-            确定删除该定时任务？
+            {{ t('cron.confirmDelete') }}
           </NPopconfirm>
         </NSpace>
       </template>
     </AppModal>
 
     <!-- Create/Edit Modal -->
-    <AppModal v-model:show="showModal" :title="editing ? '编辑定时任务' : '新建定时任务'" size="detail">
+    <AppModal v-model:show="showModal" :title="editing ? t('cron.editJobTitle') : t('cron.createJobTitle')" size="detail">
       <NForm label-placement="left" label-width="100">
-        <NFormItem label="任务名称" required>
-          <NInput v-model:value="form.name" placeholder="例如：每日晨报" />
+        <NFormItem :label="t('cron.jobName')" required>
+          <NInput v-model:value="form.name" :placeholder="t('cron.jobNamePlaceholder')" />
         </NFormItem>
-        <NFormItem label="描述">
-          <NInput v-model:value="form.description" type="textarea" placeholder="可选描述" />
+        <NFormItem :label="t('cron.description')">
+          <NInput v-model:value="form.description" type="textarea" :placeholder="t('cron.descriptionPlaceholder')" />
         </NFormItem>
         <NFormItem label="Crontab" required>
-          <NInput v-model:value="form.cron_expr" placeholder="例如：0 9 * * *" />
+          <NInput v-model:value="form.cron_expr" :placeholder="t('cron.cronExprPlaceholder')" />
         </NFormItem>
-        <NFormItem label="时区">
+        <NFormItem :label="t('cron.timezone')">
           <NInput v-model:value="form.timezone" placeholder="UTC" disabled />
         </NFormItem>
-        <NFormItem label="最大执行次数">
-          <NInputNumber v-model:value="form.max_runs" :min="1" :show-button="false" placeholder="留空表示无限次" style="width: 100%" />
+        <NFormItem :label="t('cron.maxRuns')">
+          <NInputNumber v-model:value="form.max_runs" :min="1" :show-button="false" :placeholder="t('cron.maxRunsPlaceholder')" style="width: 100%" />
         </NFormItem>
-        <NFormItem label="任务内容" required>
-          <NInput v-model:value="form.task_content" type="textarea" :rows="4" placeholder="用自然语言描述要执行的任务，例如：总结昨日上传的文档并生成 CSV 报表" />
+        <NFormItem :label="t('cron.taskContent')" required>
+          <NInput v-model:value="form.task_content" type="textarea" :rows="4" :placeholder="t('cron.taskContentPlaceholder')" />
         </NFormItem>
-        <NFormItem label="知识库 ID">
-          <NInput v-model:value="form.kb_id" placeholder="可选" />
+        <NFormItem :label="t('cron.kbId')">
+          <NInput v-model:value="form.kb_id" :placeholder="t('cron.optional')" />
         </NFormItem>
-        <NFormItem label="技能 ID">
-          <NInput v-model:value="form.skill_id" placeholder="可选" />
+        <NFormItem :label="t('cron.skillId')">
+          <NInput v-model:value="form.skill_id" :placeholder="t('cron.optional')" />
         </NFormItem>
       </NForm>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showModal = false">取消</NButton>
-          <NButton type="primary" @click="handleSave">保存</NButton>
+          <NButton @click="showModal = false">{{ t('common.cancel') }}</NButton>
+          <NButton type="primary" @click="handleSave">{{ t('common.save') }}</NButton>
         </NSpace>
       </template>
     </AppModal>
 
     <!-- Runs Drawer -->
     <NDrawer v-model:show="runsDrawerOpen" width="720" placement="right">
-      <NDrawerContent title="执行日志" closable>
+      <NDrawerContent :title="t('cron.execLog')" closable>
         <NSpin :show="runsLoading">
-          <div v-if="runs.length === 0" class="empty">暂无执行记录</div>
+          <div v-if="runs.length === 0" class="empty">{{ t('cron.noRunRecords') }}</div>
           <div v-else class="run-list">
             <NCard v-for="run in runs" :key="run.id" size="small" style="margin-bottom: 12px">
               <div class="run-meta">
@@ -427,7 +470,7 @@ function isPaused(job: CronJob) {
                 <span class="run-time">{{ run.started_at }}</span>
               </div>
               <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
-              <div v-if="run.error" class="run-error">错误：{{ run.error }}</div>
+              <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>
             </NCard>
           </div>
         </NSpin>
@@ -438,6 +481,7 @@ function isPaused(job: CronJob) {
 
 <style scoped>
 /* Cron job card grid (style reference: SkillsView.vue) */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .cj-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NInput, NButton, NIcon, NSlider, NSpace, NTag, NCard, NEmpty, NSpin } from 'naive-ui'
 import { Search } from '@vicons/ionicons5'
 import { search } from '@/api/retrieval'
 import type { SearchResult } from '@/types'
+
+const { t } = useI18n()
 
 const query = ref('')
 const results = ref<SearchResult[]>([])
@@ -46,43 +49,43 @@ function getScoreColor(score: number): string {
     <div class="search-bar">
       <NInput
         v-model:value="query"
-        placeholder="输入查询，如：微服务间通信方式、GR-809 型号规格..."
+        :placeholder="t('retrieval.placeholder')"
         size="large"
         @keydown.enter="doSearch"
       />
       <NButton type="primary" size="large" @click="doSearch" :loading="searching">
         <template #icon><NIcon><Search /></NIcon></template>
-        检索
+        {{ t('retrieval.search') }}
       </NButton>
     </div>
 
     <!-- Params -->
     <NSpace class="params-bar" align="center">
-      <span class="param-label">向量权重</span>
+      <span class="param-label">{{ t('retrieval.vectorWeight') }}</span>
       <NSlider v-model:value="vectorWeight" :min="0" :max="1" :step="0.05" style="width:150px" />
       <NTag size="small">{{ (vectorWeight * 100).toFixed(0) }}%</NTag>
 
-      <span class="param-label">BM25 权重</span>
+      <span class="param-label">{{ t('retrieval.bm25Weight') }}</span>
       <NSlider v-model:value="bm25Weight" :min="0" :max="1" :step="0.05" style="width:150px" />
       <NTag size="small">{{ (bm25Weight * 100).toFixed(0) }}%</NTag>
 
-      <span class="param-label">返回数量</span>
+      <span class="param-label">{{ t('retrieval.topK') }}</span>
       <NSlider v-model:value="topK" :min="3" :max="30" :step="1" style="width:120px" />
       <NTag size="small">{{ topK }}</NTag>
 
-      <span class="param-label">阈值</span>
+      <span class="param-label">{{ t('retrieval.threshold') }}</span>
       <NSlider v-model:value="threshold" :min="0" :max="1" :step="0.05" style="width:120px" />
       <NTag size="small">{{ threshold }}</NTag>
     </NSpace>
 
     <!-- Results -->
     <NSpin :show="searching">
-      <NEmpty v-if="results.length === 0 && !searching" description="输入查询后点击检索" />
+      <NEmpty v-if="results.length === 0 && !searching" :description="t('retrieval.empty')" />
       <div v-else class="results-list">
         <div class="results-summary">
-          共召回 {{ results.length }} 条结果
+          {{ t('retrieval.resultSummary', { n: results.length }) }}
           <span class="text-xs text-gray-400 ml-2">
-            (向量Top-{{ 20 }}+BM25Top-{{ 20 }}→RRF融合→Top-{{ results.length }})
+            {{ t('retrieval.fusionHint', { v: 20, b: 20, r: results.length }) }}
           </span>
         </div>
 
@@ -91,39 +94,39 @@ function getScoreColor(score: number): string {
             <NTag type="primary" size="small">#{{ i + 1 }}</NTag>
             <NSpace size="small">
               <NTag :type="getScoreColor(r.fusion_score) as any" size="small">
-                融合 {{ (r.fusion_score * 100).toFixed(1) }}%
+                {{ t('retrieval.scoreFusion') }} {{ (r.fusion_score * 100).toFixed(1) }}%
               </NTag>
               <NTag :type="getScoreColor(r.vector_score) as any" size="small">
-                向量 {{ (r.vector_score * 100).toFixed(1) }}%
+                {{ t('retrieval.scoreVector') }} {{ (r.vector_score * 100).toFixed(1) }}%
               </NTag>
               <NTag :type="getScoreColor(r.bm25_score) as any" size="small">
-                BM25 {{ (r.bm25_score * 100).toFixed(1) }}%
+                {{ t('retrieval.scoreBm25') }} {{ (r.bm25_score * 100).toFixed(1) }}%
               </NTag>
             </NSpace>
           </div>
           <div class="result-source">
             📄 <strong>{{ r.doc_name }}</strong>
             <span v-if="r.heading">· {{ r.heading }}</span>
-            <span v-if="r.page">· 第{{ r.page }}页</span>
+            <span v-if="r.page">· {{ t('retrieval.page', { n: r.page }) }}</span>
           </div>
           <p class="result-content">{{ r.content.slice(0, 400) }}{{ r.content.length > 400 ? '...' : '' }}</p>
 
           <!-- Score bars -->
           <div class="score-bars">
             <div class="score-bar">
-              <span class="bar-label">向量</span>
+              <span class="bar-label">{{ t('retrieval.barVector') }}</span>
               <div class="bar-track">
                 <div class="bar-fill vector" :style="{ width: (r.vector_score * 100) + '%' }" />
               </div>
             </div>
             <div class="score-bar">
-              <span class="bar-label">BM25</span>
+              <span class="bar-label">{{ t('retrieval.barBm25') }}</span>
               <div class="bar-track">
                 <div class="bar-fill bm25" :style="{ width: (r.bm25_score * 100) + '%' }" />
               </div>
             </div>
             <div class="score-bar">
-              <span class="bar-label">融合</span>
+              <span class="bar-label">{{ t('retrieval.barFusion') }}</span>
               <div class="bar-track">
                 <div class="bar-fill fusion" :style="{ width: (r.fusion_score * 100) + '%' }" />
               </div>

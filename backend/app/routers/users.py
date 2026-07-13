@@ -18,18 +18,28 @@ async def list_users(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=200),
     search: str | None = None,
+    is_active: bool | None = Query(None),
+    role: str | None = Query(None),
     current_user: User = Depends(get_current_staff),
     db: AsyncSession = Depends(get_db),
 ):
-    """List users (paginated). ADMIN sees all, MODERATOR sees only USER role.
+    """List users (paginated). ADMIN and MODERATOR can both see all users
+    (including admin/moderator roles). Modifying/deleting remains restricted by
+    can_manage_user + update_user/delete_user role boundaries.
     Optional `search` filters by username or display_name (case-insensitive).
+    Optional `is_active` filters by account enabled/disabled state.
+    Optional `role` filters by role (admin/moderator/user).
     Returns `{items, total, page, size}`."""
     conditions = []
-    if current_user.role != UserRole.ADMIN:
-        conditions.append(User.role == UserRole.USER)
     if search:
         like = f"%{search}%"
         conditions.append(or_(User.username.ilike(like), User.display_name.ilike(like)))
+    if is_active is not None:
+        conditions.append(User.is_active == is_active)
+    if role:
+        if role not in (r.value for r in UserRole):
+            raise HTTPException(400, "Invalid role")
+        conditions.append(User.role == UserRole(role))
 
     count_q = select(func.count()).select_from(User)
     if conditions:

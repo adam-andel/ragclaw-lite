@@ -5,8 +5,8 @@ import type {
   ResourceListResponse, ResourceUploadResponse, SyncResponse,
 } from '@/types'
 
-export const listSkills = (page = 1, size = 20, search?: string) =>
-  client.get<SkillListResponse>('/skills', { params: { page, size, search } }).then(r => r.data)
+export const listSkills = (page = 1, size = 20, search?: string, isActive?: boolean) =>
+  client.get<SkillListResponse>('/skills', { params: { page, size, search, is_active: isActive } }).then(r => r.data)
 
 export const getSkill = (id: string) =>
   client.get<Skill>(`/skills/${id}`).then(r => r.data)

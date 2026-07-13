@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   NCard, NButton, NSwitch, NTag, NSpace, NSpin, NEmpty,
   NIcon, NInput, useMessage, NGrid, NGridItem, NText, NTooltip,
@@ -10,6 +11,7 @@ import {
 } from '@/api/plugins'
 import type { PluginInfo } from '@/types'
 
+const { t } = useI18n()
 const message = useMessage()
 
 const plugins = ref<PluginInfo[]>([])
@@ -28,13 +30,13 @@ const categoryColors: Record<string, string> = {
 }
 
 const categoryLabels: Record<string, string> = {
-  office: '办公文档',
-  data: '数据',
-  web: '网页',
-  email: '邮件',
-  ebook: '电子书',
-  text: '文本',
-  notebook: '笔记本',
+  office: 'plugins.category.office',
+  data: 'plugins.category.data',
+  web: 'plugins.category.web',
+  email: 'plugins.category.email',
+  ebook: 'plugins.category.ebook',
+  text: 'plugins.category.text',
+  notebook: 'plugins.category.notebook',
 }
 
 async function load() {
@@ -43,7 +45,7 @@ async function load() {
     const data = await listPlugins()
     plugins.value = data.items
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || '加载插件列表失败')
+    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -54,16 +56,16 @@ async function handleToggle(name: string, enabled: boolean) {
   try {
     if (enabled) {
       await enablePlugin(name)
-      message.success('插件已启用')
+      message.success(t('plugins.msg.enabled'))
     } else {
       const reason = disableReason.value[name]?.trim()
       await disablePlugin(name, reason || undefined)
-      message.success('插件已禁用')
+      message.success(t('plugins.msg.disabled'))
       disableReason.value[name] = ''
     }
     await load()
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || '操作失败')
+    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.opFailed'))
   } finally {
     toggling.value = null
   }
@@ -72,10 +74,10 @@ async function handleToggle(name: string, enabled: boolean) {
 async function handleRefreshCache() {
   try {
     await refreshPluginCache()
-    message.success('缓存已刷新')
+    message.success(t('plugins.msg.refreshSuccess'))
     await load()
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || '刷新失败')
+    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.refreshFailed'))
   }
 }
 
@@ -83,9 +85,9 @@ function formatExts(exts: string[]): string {
   return exts.map(e => `.${e}`).join(' / ')
 }
 
-function formatTime(t: string | null): string {
-  if (!t) return '-'
-  return t.slice(0, 16).replace('T', ' ')
+function formatTime(tm: string | null): string {
+  if (!tm) return '-'
+  return tm.slice(0, 16).replace('T', ' ')
 }
 
 const enabledCount = computed(() => plugins.value.filter(p => p.enabled).length)
@@ -98,19 +100,19 @@ onMounted(load)
     <div class="section-header">
       <div class="section-title">
         <NIcon size="20" color="var(--color-primary)"><ExtensionPuzzle /></NIcon>
-        <h3>插件管理</h3>
+        <h3>{{ t('plugins.title') }}</h3>
         <NTag v-if="!loading" size="small" type="info">
-          {{ enabledCount }}/{{ plugins.length }} 启用
+          {{ t('plugins.enabledTag', { enabled: enabledCount, total: plugins.length }) }}
         </NTag>
       </div>
       <NButton size="small" secondary @click="handleRefreshCache">
         <template #icon><NIcon><Refresh /></NIcon></template>
-        刷新缓存
+        {{ t('plugins.refreshCache') }}
       </NButton>
     </div>
 
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && plugins.length === 0" description="暂无插件" />
+      <NEmpty v-if="!loading && plugins.length === 0" :description="t('plugins.empty')" />
       <NGrid v-else :cols="2" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
         <NGridItem
           v-for="plugin in plugins"
@@ -123,7 +125,7 @@ onMounted(load)
                 <NSpace align="center" :size="8">
                   <NText strong>{{ plugin.display_name }}</NText>
                   <NTag size="tiny" :type="(categoryColors[plugin.category] || 'default') as any">
-                    {{ categoryLabels[plugin.category] || plugin.category }}
+                    {{ categoryLabels[plugin.category] ? t(categoryLabels[plugin.category]) : plugin.category }}
                   </NTag>
                   <NText depth="3" style="font-size:12px">v{{ plugin.version }}</NText>
                 </NSpace>
@@ -138,24 +140,24 @@ onMounted(load)
             <div class="plugin-body">
               <p class="plugin-desc">{{ plugin.description }}</p>
               <div class="plugin-exts">
-                <NText depth="3" style="font-size:12px">支持格式：</NText>
+                <NText depth="3" style="font-size:12px">{{ t('plugins.supportFormats') }}</NText>
                 <NText code style="font-size:12px">{{ formatExts(plugin.extensions) }}</NText>
               </div>
 
               <div v-if="!plugin.enabled" class="plugin-disabled-info">
                 <NSpace :size="12" align="center">
-                  <NTag size="tiny" type="error">已禁用</NTag>
+                  <NTag size="tiny" type="error">{{ t('common.disabled') }}</NTag>
                   <NText depth="3" style="font-size:12px">
-                    禁用人：{{ plugin.disabled_by ? plugin.disabled_by.slice(0, 8) : '-' }} · {{ formatTime(plugin.disabled_at) }}
+                    {{ t('plugins.disabledBy') }}{{ plugin.disabled_by ? plugin.disabled_by.slice(0, 8) : '-' }} · {{ formatTime(plugin.disabled_at) }}
                   </NText>
                 </NSpace>
-                <p v-if="plugin.reason" class="plugin-reason">原因：{{ plugin.reason }}</p>
+                <p v-if="plugin.reason" class="plugin-reason">{{ t('plugins.reason') }}{{ plugin.reason }}</p>
 
                 <div class="disable-reason-input">
                   <NInput
                     v-model:value="disableReason[plugin.name]"
                     size="tiny"
-                    placeholder="修改禁用原因（可选，启用后清除）"
+                    :placeholder="t('plugins.disabledReasonPlaceholder')"
                     :disabled="toggling === plugin.name"
                   />
                 </div>
@@ -167,11 +169,11 @@ onMounted(load)
                     <NInput
                       v-model:value="disableReason[plugin.name]"
                       size="tiny"
-                      placeholder="禁用原因（可选）"
+                      :placeholder="t('plugins.disableReasonPlaceholder')"
                       :disabled="toggling === plugin.name"
                     />
                   </template>
-                  关闭开关时将提交此原因
+                  {{ t('plugins.disableReasonTooltip') }}
                 </NTooltip>
               </div>
             </div>

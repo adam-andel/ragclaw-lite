@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin } from 'naive-ui'
-import { Add, Trash, Eye, People, Ban, CheckmarkCircle } from '@vicons/ionicons5'
+import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NTooltip } from 'naive-ui'
+import { Add, Trash, Eye, People, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import { useI18n } from 'vue-i18n'
+import { formatDateTime } from '@/i18n/format'
 import client from '@/api/client'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -24,6 +26,7 @@ interface UserRow {
 
 const auth = useAuthStore()
 const router = useRouter()
+const { t } = useI18n()
 const users = ref<UserRow[]>([])
 const loading = ref(false)
 // ── 服务端分页：仅拉取当前页，total 由后端返回 ──
@@ -31,6 +34,37 @@ const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 function onPageChange(p: number) { page.value = p; loadUsers() }
+
+// Filters — search + enable/disable + role (mirrors DocumentManage.vue)
+const search = ref('')
+const filterActive = ref<'all' | 'active' | 'inactive'>('all')
+const activeOptions = [
+  { label: t('users.filter.allStatus'), value: 'all' },
+  { label: t('common.enabled'), value: 'active' },
+  { label: t('common.disabled'), value: 'inactive' },
+]
+// 角色选项：admin 与 moderator 均可见全部角色（moderator 放开"查看所有用户"，
+// 但修改/删除仍受后端 can_manage_user 约束，UI 侧用 canManage 置灰危险操作）
+const filterRole = ref<'all' | 'user' | 'moderator' | 'admin'>('all')
+const roleOptions = [
+  { label: t('users.filter.allRoles'), value: 'all' },
+  { label: t('common.role.regular'), value: 'user' },
+  { label: t('common.role.admin'), value: 'moderator' },
+  { label: t('common.role.superAdmin'), value: 'admin' },
+]
+
+function onSearch() {
+  page.value = 1
+  loadUsers()
+}
+
+function resetFilters() {
+  search.value = ''
+  filterActive.value = 'all'
+  filterRole.value = 'all'
+  page.value = 1
+  loadUsers()
+}
 
 const showCreate = ref(false)
 const newUser = ref({ username: '', password: '', display_name: '', role: 'user' })
@@ -44,14 +78,19 @@ onMounted(loadUsers)
 async function loadUsers() {
   loading.value = true
   try {
-    const r = await client.get('/users', { params: { page: page.value, size: pageSize } })
+    const params: any = { page: page.value, size: pageSize }
+    if (search.value) params.search = search.value
+    if (filterActive.value !== 'all') params.is_active = filterActive.value === 'active'
+    if (filterRole.value !== 'all') params.role = filterRole.value
+    const r = await client.get('/users', { params })
     users.value = r.data.items
     total.value = r.data.total
     // 删除末页最后一条后当前页可能越界，回退到最后一个有效页并重拉
     const totalPages = Math.max(1, Math.ceil(total.value / pageSize))
     if (page.value > totalPages) {
       page.value = totalPages
-      const r2 = await client.get('/users', { params: { page: page.value, size: pageSize } })
+      params.page = page.value
+      const r2 = await client.get('/users', { params })
       users.value = r2.data.items
       total.value = r2.data.total
     }
@@ -60,14 +99,19 @@ async function loadUsers() {
 }
 
 function roleLabel(role: string) {
-  if (role === 'admin') return '超级管理员'
-  if (role === 'moderator') return '普通管理员'
-  return '用户'
+  if (role === 'admin') return t('common.role.superAdmin')
+  if (role === 'moderator') return t('common.role.admin')
+  return t('common.role.user')
 }
 function roleType(role: string): 'error' | 'warning' | 'info' {
   if (role === 'admin') return 'error'
   if (role === 'moderator') return 'warning'
   return 'info'
+}
+// 当前用户是否可管理目标用户：admin 可管理所有人，moderator 仅可管理普通用户
+// （与后端 can_manage_user 语义一致）。用于禁用/删除按钮的置灰判断。
+function canManage(user: UserRow) {
+  return auth.isAdmin || user.role === 'user'
 }
 
 async function createUser() {
@@ -112,25 +156,39 @@ function openDetail(user: UserRow) {
   showDetail.value = true
 }
 
-function formatTime(t: string) {
-  return new Date(t).toLocaleString('zh-CN')
+function formatTime(value: string) {
+  return formatDateTime(value)
 }
 </script>
 
 <template>
   <div class="page-container">
-    <PageHeader title="用户管理" :icon="People">
+    <PageHeader :title="t('users.pageTitle')" :icon="People">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
         <NButton type="primary" size="small" @click="showCreate = true">
           <template #icon><NIcon><Add /></NIcon></template>
-          新建用户
+          {{ t('users.createUser') }}
         </NButton>
       </template>
     </PageHeader>
 
+    <!-- Filters -->
+    <div class="dm-filters">
+      <NInput v-model:value="search" :placeholder="t('users.searchPlaceholder')" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
+      </NButton>
+      <NSelect v-model:value="filterActive" :options="activeOptions" :placeholder="t('common.status')" size="small" style="width:130px" @update:value="onSearch" />
+      <NSelect v-model:value="filterRole" :options="roleOptions" :placeholder="t('users.role')" size="small" style="width:130px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
+    </div>
+
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && total === 0" description="暂无用户" />
+      <NEmpty v-if="!loading && total === 0" :description="t('users.empty')" />
       <div class="um-list" v-if="users.length > 0">
         <NCard
           v-for="user in users"
@@ -159,20 +217,31 @@ function formatTime(t: string) {
               <div class="um-card-info-bottom">
                 <NTag size="small" :type="roleType(user.role)" :bordered="false">{{ roleLabel(user.role) }}</NTag>
                 <NTag size="small" :type="user.is_active ? 'success' : 'default'" :bordered="false">
-                  {{ user.is_active ? '正常' : '已禁用' }}
+                  {{ user.is_active ? t('users.normal') : t('common.disabled') }}
                 </NTag>
               </div>
             </div>
             <div class="um-card-toggle" @click.stop>
+              <NTooltip v-if="!canManage(user)" trigger="hover">
+                <template #trigger>
+                  <StatusToggle
+                    :value="user.is_active"
+                    :disabled="!canManage(user)"
+                    @update:value="() => toggleStatus(user)"
+                  />
+                </template>
+                {{ t('users.noPermissionRole') }}
+              </NTooltip>
               <StatusToggle
+                v-else
                 :value="user.is_active"
-                :disabled="user.id === auth.user?.id"
+                :disabled="!canManage(user)"
                 @update:value="() => toggleStatus(user)"
               />
             </div>
           </div>
           <div class="um-card-meta">
-            <span class="um-meta-muted">创建时间 {{ formatTime(user.created_at) }}</span>
+            <span class="um-meta-muted">{{ t('common.createdAt') }} {{ formatTime(user.created_at) }}</span>
           </div>
         </NCard>
       </div>
@@ -181,25 +250,25 @@ function formatTime(t: string) {
     <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
-    <AppModal v-model:show="showCreate" title="新建用户" size="detail" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
+    <AppModal v-model:show="showCreate" :title="t('users.createUser')" size="detail" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
       <div class="create-form">
-        <NInput v-model:value="newUser.username" placeholder="用户名" size="large" />
-        <NInput v-model:value="newUser.password" type="password" placeholder="密码" size="large" />
-        <NInput v-model:value="newUser.display_name" placeholder="显示名称（可选）" size="large" />
+        <NInput v-model:value="newUser.username" :placeholder="t('users.username')" size="large" />
+        <NInput v-model:value="newUser.password" type="password" :placeholder="t('users.password')" size="large" />
+        <NInput v-model:value="newUser.display_name" :placeholder="t('users.displayNameOptional')" size="large" />
         <NSelect
           v-model:value="newUser.role"
-          :options="auth.isAdmin ? [{ label: '普通用户', value: 'user' }, { label: '普通管理员', value: 'moderator' }, { label: '超级管理员', value: 'admin' }] : [{ label: '普通用户', value: 'user' }]"
-          placeholder="角色"
+          :options="auth.isAdmin ? [{ label: t('common.role.regular'), value: 'user' }, { label: t('common.role.admin'), value: 'moderator' }, { label: t('common.role.superAdmin'), value: 'admin' }] : [{ label: t('common.role.regular'), value: 'user' }]"
+          :placeholder="t('users.role')"
           size="large"
         />
-        <NButton type="primary" :loading="creating" @click="createUser" block size="large">创建</NButton>
+        <NButton type="primary" :loading="creating" @click="createUser" block size="large">{{ t('common.create') }}</NButton>
       </div>
     </AppModal>
 
     <!-- Detail Modal -->
     <AppModal
       v-model:show="showDetail"
-      :title="detailUser?.username || '用户详情'"
+      :title="detailUser?.username || t('users.detailTitle')"
       size="detail"
     >
       <NSpin :show="loading">
@@ -211,26 +280,26 @@ function formatTime(t: string) {
           label-placement="left"
           label-style="width: 110px"
         >
-          <NDescriptionsItem label="用户名">{{ detailUser.username }}</NDescriptionsItem>
-          <NDescriptionsItem label="显示名">{{ detailUser.display_name || '—' }}</NDescriptionsItem>
-          <NDescriptionsItem label="邮箱">
+          <NDescriptionsItem :label="t('users.username')">{{ detailUser.username }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('users.displayName')">{{ detailUser.display_name || '—' }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('users.email')">
             <span v-if="detailUser.email">{{ detailUser.email }}</span>
             <span v-else class="um-meta-muted">—</span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="角色">
+          <NDescriptionsItem :label="t('users.role')">
             <NTag :type="roleType(detailUser.role)" size="small">{{ roleLabel(detailUser.role) }}</NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem label="状态">
+          <NDescriptionsItem :label="t('common.status')">
             <NTag :type="detailUser.is_active ? 'success' : 'default'" size="small">
-              {{ detailUser.is_active ? '正常' : '已禁用' }}
+              {{ detailUser.is_active ? t('users.normal') : t('common.disabled') }}
             </NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem label="创建时间">{{ formatTime(detailUser.created_at) }}</NDescriptionsItem>
-          <NDescriptionsItem label="租户 ID">
+          <NDescriptionsItem :label="t('common.createdAt')">{{ formatTime(detailUser.created_at) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('users.tenantId')">
             <span v-if="detailUser.tenant_id" class="um-id">{{ detailUser.tenant_id }}</span>
             <span v-else class="um-meta-muted">—</span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="用户 ID">
+          <NDescriptionsItem :label="t('users.userId')">
             <span class="um-id">{{ detailUser.id }}</span>
           </NDescriptionsItem>
         </NDescriptions>
@@ -238,19 +307,35 @@ function formatTime(t: string) {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton size="small" v-if="detailUser" @click="viewConversations(detailUser.id)">
+          <NButton size="small" v-if="detailUser && auth.isAdmin" @click="viewConversations(detailUser.id)">
             <template #icon><NIcon><Eye /></NIcon></template>
-            查看对话
+            {{ t('users.viewConversations') }}
           </NButton>
           <NSelect
             v-if="detailUser && auth.isAdmin"
             size="small"
             style="width: 140px"
             :value="detailUser.role"
-            :options="[{ label: '普通用户', value: 'user' }, { label: '普通管理员', value: 'moderator' }, { label: '超级管理员', value: 'admin' }]"
+            :options="[{ label: t('common.role.regular'), value: 'user' }, { label: t('common.role.admin'), value: 'moderator' }, { label: t('common.role.superAdmin'), value: 'admin' }]"
             @update:value="(r: string) => { if (detailUser) setRole(detailUser, r) }"
           />
-          <NButton size="small" v-if="detailUser" :disabled="detailUser.id === auth.user?.id" @click="toggleStatus(detailUser)" :style="detailUser.is_active
+          <NTooltip v-if="detailUser && !canManage(detailUser)" trigger="hover">
+            <template #trigger>
+              <NButton size="small" :disabled="!canManage(detailUser)" :style="detailUser.is_active
+                ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
+                : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
+                <template #icon>
+                  <NIcon>
+                    <Ban v-if="detailUser.is_active" />
+                    <CheckmarkCircle v-else />
+                  </NIcon>
+                </template>
+                {{ detailUser.is_active ? t('common.disable') : t('common.enable') }}
+              </NButton>
+            </template>
+            {{ t('users.noPermissionRole') }}
+          </NTooltip>
+          <NButton v-else-if="detailUser" size="small" :disabled="!canManage(detailUser)" @click="toggleStatus(detailUser)" :style="detailUser.is_active
             ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
             : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
             <template #icon>
@@ -259,16 +344,30 @@ function formatTime(t: string) {
                 <CheckmarkCircle v-else />
               </NIcon>
             </template>
-            {{ detailUser.is_active ? '禁用' : '启用' }}
+            {{ detailUser.is_active ? t('common.disable') : t('common.enable') }}
           </NButton>
-          <NPopconfirm v-if="detailUser" @positive-click="deleteUser(detailUser.id)">
+          <NTooltip v-if="detailUser && !canManage(detailUser)" trigger="hover">
             <template #trigger>
-              <NButton size="small" :disabled="detailUser.id === auth.user?.id" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+              <NPopconfirm @positive-click="deleteUser(detailUser.id)">
+                <template #trigger>
+                  <NButton size="small" :disabled="!canManage(detailUser)" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                    <template #icon><NIcon><Trash /></NIcon></template>
+                    {{ t('common.delete') }}
+                  </NButton>
+                </template>
+                {{ t('users.confirmDeleteUser') }}
+              </NPopconfirm>
+            </template>
+            {{ t('users.noPermissionRole') }}
+          </NTooltip>
+          <NPopconfirm v-else-if="detailUser" @positive-click="deleteUser(detailUser.id)">
+            <template #trigger>
+              <NButton size="small" :disabled="!canManage(detailUser)" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                 <template #icon><NIcon><Trash /></NIcon></template>
-                删除
+                {{ t('common.delete') }}
               </NButton>
             </template>
-            确定删除该用户？
+            {{ t('users.confirmDeleteUser') }}
           </NPopconfirm>
         </NSpace>
       </template>
@@ -278,6 +377,7 @@ function formatTime(t: string) {
 
 <style scoped>
 /* User card grid */
+.dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .um-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
