@@ -1,0 +1,16 @@
+export default {
+  chat: '对话',
+  documents: '文档管理',
+  dashboard: '仪表盘',
+  skills: '技能管理',
+  mcp: 'MCP 服务',
+  cron: '定时任务',
+  users: '用户管理',
+  settings: '系统设置',
+  notifications: '通知',
+  notificationCenter: '通知中心',
+  profile: '个人信息',
+  darkMode: '深色模式',
+  logout: '退出',
+  language: '语言',
+}

@@ -1,6 +1,7 @@
 import axios from 'axios'
 import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
+import { i18n } from '@/i18n'
 
 const client = axios.create({
   baseURL: '/api',
@@ -19,9 +20,9 @@ client.interceptors.response.use(
         router.push('/login')
       }
       // Preserve server detail, or fallback to generic message
-      return Promise.reject(new Error(detail || '登录已过期，请重新登录'))
+      return Promise.reject(new Error(detail || i18n.global.t('errors.loginExpired')))
     }
-    const msg = detail || err.message || '网络错误'
+    const msg = detail || err.message || i18n.global.t('errors.networkError')
     console.error('[API Error]', msg)
     return Promise.reject(new Error(msg))
   },

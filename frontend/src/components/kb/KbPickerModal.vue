@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NCard, NInput, NSelect, NIcon, NEmpty } from 'naive-ui'
 import { Search } from '@vicons/ionicons5'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   show: boolean
@@ -22,7 +25,7 @@ const props = withDefaults(defineProps<{
   searchPlaceholder?: string
 }>(), {
   selectedId: null,
-  title: '选择知识库',
+  title: '',
   showAll: false,
   allLabel: '全部',
   allMeta: '',
@@ -38,14 +41,18 @@ const emit = defineEmits<{
   (e: 'select', id: string | null): void
 }>()
 
+// Resolve the title in setup scope: defineProps/withDefaults defaults cannot
+// reference the locally-declared `t`, because the macro is hoisted out of setup.
+const resolvedTitle = computed(() => props.title || t('kb.selectTitle'))
+
 const search = ref('')
 const sortBy = ref<'recent' | 'doc_count'>('recent')
 const page = ref(1)
 
-const sortOptions = [
-  { label: '最近更新', value: 'recent' },
-  { label: '文档数量', value: 'doc_count' },
-]
+const sortOptions = computed(() => [
+  { label: t('kb.sort.recentUpdate'), value: 'recent' },
+  { label: t('kb.sort.docCount'), value: 'doc_count' },
+])
 
 const filtered = computed(() => {
   let list = props.kbs
@@ -89,7 +96,7 @@ function onAfterLeave() {
 <template>
   <AppModal
     :show="show"
-    :title="title"
+    :title="resolvedTitle"
     size="wide"
     @update:show="emit('update:show', $event)"
     @after-leave="onAfterLeave"
@@ -118,7 +125,7 @@ function onAfterLeave() {
           <div class="kb-picker-body">
             <strong class="kb-picker-name">{{ allLabel }}</strong>
             <div class="kb-picker-stats">
-              <span class="kb-picker-chip kb-picker-chip-soft">共 {{ allCount }} 个知识库</span>
+              <span class="kb-picker-chip kb-picker-chip-soft">{{ t('kb.totalCount', { count: allCount }) }}</span>
             </div>
             <span v-if="allMeta" class="kb-picker-meta">{{ allMeta }}</span>
           </div>
@@ -143,15 +150,15 @@ function onAfterLeave() {
             <strong class="kb-picker-name">{{ kb.name }}</strong>
             <span v-if="kb.description" class="kb-picker-desc">{{ kb.description }}</span>
             <div class="kb-picker-stats">
-              <span class="kb-picker-chip">{{ kb.doc_count }} 文档</span>
-              <span class="kb-picker-chip">{{ kb.vector_count }} 分片</span>
+              <span class="kb-picker-chip">{{ kb.doc_count }} {{ t('kb.docUnit') }}</span>
+              <span class="kb-picker-chip">{{ kb.vector_count }} {{ t('kb.chunkUnit') }}</span>
             </div>
           </div>
         </div>
       </NCard>
     </div>
 
-    <NEmpty v-if="filtered.length === 0" description="无匹配的知识库" style="padding:16px 0" />
+    <NEmpty v-if="filtered.length === 0" :description="t('kb.noMatch')" style="padding:16px 0" />
     <AppPagination
       :page="page"
       :page-size="pageSize"

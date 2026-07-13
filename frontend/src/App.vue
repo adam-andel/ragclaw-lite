@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted, computed } from 'vue'
-import { NMessageProvider, NConfigProvider, darkTheme } from 'naive-ui'
+import { NMessageProvider, NConfigProvider, darkTheme, zhCN, enUS, dateZhCN, dateEnUS } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import { currentLocale } from '@/i18n/useLocale'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoginView from '@/views/LoginView.vue'
 
@@ -11,6 +12,11 @@ const auth = useAuthStore()
 
 const { isDark } = useTheme()
 const theme = computed(() => (isDark.value ? darkTheme : undefined))
+
+// Naive UI built-in component text (pagination, empty states, date pickers…)
+// follows the active UI language automatically.
+const naiveLocale = computed(() => (currentLocale.value === 'zh-CN' ? zhCN : enUS))
+const naiveDateLocale = computed(() => (currentLocale.value === 'zh-CN' ? dateZhCN : dateEnUS))
 
 const lightThemeOverrides: GlobalThemeOverrides = {
   common: {
@@ -59,7 +65,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <NConfigProvider :theme="theme" :theme-overrides="themeOverrides">
+  <NConfigProvider :theme="theme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <NMessageProvider>
       <LoginView v-if="!auth.isLoggedIn" />
       <AppLayout v-else />

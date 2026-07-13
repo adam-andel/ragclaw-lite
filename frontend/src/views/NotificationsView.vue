@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   NCard, NDataTable, NTag, NSpace, NButton, NSpin, NEmpty,
   NIcon,
@@ -10,6 +11,7 @@ import AppPagination from '@/components/common/AppPagination.vue'
 import type { NotificationItem } from '@/types'
 import type { DataTableColumns } from 'naive-ui'
 
+const { t } = useI18n()
 const notificationStore = useNotificationStore()
 const page = ref(1)
 const size = ref(20)
@@ -17,17 +19,17 @@ const unreadOnly = ref(false)
 
 const columns: DataTableColumns<NotificationItem> = [
   {
-    title: '类型',
+    title: t('common.type'),
     key: 'type',
     width: 120,
     render: (row: NotificationItem) => h(
       NTag,
       { type: row.type === 'cron_job' ? 'success' : 'default', size: 'small' },
-      { default: () => row.type === 'cron_job' ? '定时任务' : '系统' },
+      { default: () => row.type === 'cron_job' ? t('notifications.type.cron') : t('notifications.type.system') },
     ),
   },
   {
-    title: '标题',
+    title: t('notifications.title'),
     key: 'title',
     ellipsis: { tooltip: true },
     render: (row: NotificationItem) => h(
@@ -37,17 +39,17 @@ const columns: DataTableColumns<NotificationItem> = [
     ),
   },
   {
-    title: '内容',
+    title: t('notifications.content'),
     key: 'content',
     ellipsis: { tooltip: true },
   },
   {
-    title: '时间',
+    title: t('common.time'),
     key: 'created_at',
     width: 170,
   },
   {
-    title: '操作',
+    title: t('common.action'),
     key: 'actions',
     width: 120,
     render: (row: NotificationItem) =>
@@ -55,9 +57,9 @@ const columns: DataTableColumns<NotificationItem> = [
         default: () => [
           !row.read
             ? h(NButton, { size: 'tiny', onClick: () => notificationStore.markAsRead(row.id) }, {
-                default: () => '标记已读',
+                default: () => t('notifications.markRead'),
               })
-            : h(NTag, { type: 'default', size: 'small' }, { default: () => '已读' }),
+            : h(NTag, { type: 'default', size: 'small' }, { default: () => t('notifications.read') }),
         ],
       }),
   },
@@ -78,15 +80,15 @@ onMounted(load)
 
 <template>
   <div>
-    <NCard title="通知中心">
+    <NCard :title="t('notifications.center')">
       <template #header-extra>
         <NSpace>
           <NButton size="small" @click="toggleUnreadOnly">
-            {{ unreadOnly ? '显示全部' : '仅未读' }}
+            {{ unreadOnly ? t('notifications.showAll') : t('notifications.unreadOnly') }}
           </NButton>
           <NButton size="small" type="primary" :disabled="!notificationStore.hasUnread" @click="notificationStore.markAllRead">
             <template #icon><NIcon><CheckmarkDone /></NIcon></template>
-            全部已读
+            {{ t('notifications.markAllRead') }}
           </NButton>
         </NSpace>
       </template>
@@ -99,7 +101,7 @@ onMounted(load)
           striped
         />
         <div v-if="notificationStore.total === 0" class="empty">
-          <NEmpty description="暂无通知" />
+          <NEmpty :description="t('notifications.empty')" />
         </div>
         <AppPagination
           v-else

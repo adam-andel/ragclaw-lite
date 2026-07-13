@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
@@ -21,7 +22,9 @@ import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
+import { formatDateTime, formatDate } from '@/i18n/format'
 
+const { t } = useI18n()
 const message = useMessage()
 const auth = useAuthStore()
 const route = useRoute()
@@ -96,7 +99,7 @@ function loadUploadItems() {
       if (now - item.timestamp > UPLOAD_TTL_MS) return false
       if (item.status === 'uploading') {
         item.status = 'cancelled'
-        item.error = '页面关闭导致上传中断'
+        item.error = t('documents.uploadInterruptedByClose')
       }
       return item.status !== 'success'
     })
@@ -141,8 +144,8 @@ function onKbFilterSelect(kbId: string | null) {
 }
 
 const uploadTargetKbName = computed(() => {
-  if (!uploadTargetKb.value) return '不关联'
-  return allKbs.value.find(k => k.id === uploadTargetKb.value)?.name || '不关联'
+  if (!uploadTargetKb.value) return t('documents.notLinked')
+  return allKbs.value.find(k => k.id === uploadTargetKb.value)?.name || t('documents.notLinked')
 })
 
 // KB action modals
@@ -257,7 +260,7 @@ async function loadDocs() {
     docs.value = res.data.items
     total.value = res.data.total
   } catch (e: any) {
-    message.error('加载文档失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.loadDocsFailed') + (e?.response?.data?.detail || e.message))
   } finally {
     loading.value = false
   }
@@ -310,20 +313,19 @@ async function handleKbSubmit() {
         description: kbFormDesc.value.trim() || undefined,
         prompt: kbFormPrompt.value.trim() || undefined,
       })
-      message.success('知识库创建成功')
+      message.success(t('documents.kbCreated'))
     } else {
       await updateKnowledgeBase(kbFormId.value, {
         name: kbFormName.value,
         description: kbFormDesc.value || undefined,
         prompt: kbFormPrompt.value || undefined,
       })
-      message.success('知识库已更新')
+      message.success(t('documents.kbUpdated'))
     }
     await loadKBs()
     showKbForm.value = false
   } catch (e: any) {
-    const verb = kbFormMode.value === 'create' ? '创建' : '更新'
-    message.error(verb + '失败：' + (e?.response?.data?.detail || e.message))
+    message.error((kbFormMode.value === 'create' ? t('documents.kbCreateFailed') : t('documents.kbUpdateFailed')) + (e?.response?.data?.detail || e.message))
   } finally {
     kbFormSaving.value = false
   }
@@ -336,9 +338,9 @@ async function handleDeleteKb(id: string) {
       selectKb(null)
     }
     await loadKBs()
-    message.success('知识库已删除')
+    message.success(t('documents.kbDeleted'))
   } catch (e: any) {
-    message.error('删除失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.kbDeleteFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -397,9 +399,9 @@ async function addKbUser(uid: string) {
     shareAddUser.value = ''
     shareAddedPage.value = 1
     shareUserPage.value = 1
-    message.success('已添加共享用户')
+    message.success(t('documents.shareUserAdded'))
   } catch (e: any) {
-    message.error('添加失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.addShareUserFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -409,9 +411,9 @@ async function removeKbUser(uid: string) {
     const r = await client.get(`/kb/${shareKbId.value}/users`)
     shareUsers.value = r.data
     shareAddedPage.value = 1
-    message.success('已移除共享用户')
+    message.success(t('documents.shareUserRemoved'))
   } catch (e: any) {
-    message.error('移除失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.removeShareUserFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -436,7 +438,7 @@ async function loadAvailableDocs(kbId?: string) {
     availableDocs.value = res.data.items
     availableTotal.value = res.data.total
   } catch (e: any) {
-    message.error('加载文档失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.loadDocsFailed') + (e?.response?.data?.detail || e.message))
   } finally {
     loadingAvailableDocs.value = false
   }
@@ -475,12 +477,15 @@ async function handleSelectDocs() {
   linkingDocs.value = true
   try {
     const res = await addDocumentsToKB(filterKbId.value, selectedDocIds.value)
-    message.success(`已添加 ${res.data.added} 个文档${res.data.skipped > 0 ? '，跳过 ' + res.data.skipped + ' 个' : ''}`)
+    message.success(
+      t('documents.docsAdded', { added: res.data.added }) +
+      (res.data.skipped > 0 ? t('documents.docsSkipped', { skipped: res.data.skipped }) : '')
+    )
     showSelectDocs.value = false
     await loadKBs()
     await loadDocs()
   } catch (e: any) {
-    message.error('添加失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.linkDocsFailed') + (e?.response?.data?.detail || e.message))
   } finally {
     linkingDocs.value = false
   }
@@ -541,7 +546,7 @@ function addFiles(fileList: FileList) {
   for (let i = 0; i < fileList.length; i++) {
     const f = fileList[i]
     if (f.size > maxSize) {
-      message.warning(`文件过大：${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB)`)
+      message.warning(t('documents.fileTooLarge', { name: f.name, size: (f.size / 1024 / 1024).toFixed(1) }))
       continue
     }
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -602,7 +607,7 @@ async function startUploads() {
     }
   }
   uploadRunning.value = false
-  message.success('上传完成')
+  message.success(t('documents.uploadComplete'))
   setTimeout(() => {
     uploadItems.value = uploadItems.value.filter(i => i.status !== 'success')
     saveUploadItems()
@@ -635,9 +640,9 @@ async function handleDelete(id: string) {
     await deleteDocument(id)
     docs.value = docs.value.filter(d => d.id !== id)
     total.value -= 1
-    message.success('文档已删除')
+    message.success(t('documents.docDeleted'))
   } catch (e: any) {
-    message.error('删除失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.docDeleteFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -646,14 +651,14 @@ async function handleUnlink(doc: DocumentItem) {
   const kbId = filterKbId.value
   try {
     await removeDocumentFromKB(kbId, doc.id)
-    message.success(`已解除与「${filterKbName.value}」的关联`)
+    message.success(t('documents.unlinkedFromKb', { kb: filterKbName.value }))
     docs.value = docs.value.filter(d => d.id !== doc.id)
     total.value -= 1
     if (detailDoc.value && detailDoc.value.id === doc.id) {
       detailDoc.value = { ...detailDoc.value, kb_ids: detailDoc.value.kb_ids.filter(id => id !== kbId) }
     }
   } catch (e: any) {
-    message.error('解除关联失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.unlinkFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -663,7 +668,7 @@ async function handleUnlinkDocKb(kbId: string) {
   const kb = allKbs.value.find(k => k.id === kbId)
   try {
     await removeDocumentFromKB(kbId, docId)
-    message.success(`已解除与「${kb?.name || '知识库'}」的关联`)
+    message.success(t('documents.unlinkedFromKb', { kb: kb?.name || t('documents.knowledgeBase') }))
     detailDoc.value = { ...detailDoc.value, kb_ids: detailDoc.value.kb_ids.filter(id => id !== kbId) }
     selectedDocKbIds.value = selectedDocKbIds.value.filter(id => id !== kbId)
     if (filterKbId.value === kbId) {
@@ -671,7 +676,7 @@ async function handleUnlinkDocKb(kbId: string) {
       total.value -= 1
     }
   } catch (e: any) {
-    message.error('解除关联失败：' + (e?.response?.data?.detail || e.message))
+    message.error(t('documents.unlinkFailed') + (e?.response?.data?.detail || e.message))
   }
 }
 
@@ -688,7 +693,7 @@ async function handleDownload(doc: DocumentItem) {
     document.body.removeChild(a)
     window.URL.revokeObjectURL(url)
   } catch (e: any) {
-    message.error('下载失败：' + (e?.message || '未知错误'))
+    message.error(t('documents.downloadFailed') + (e?.message || t('documents.unknownError')))
   }
 }
 
@@ -702,7 +707,7 @@ async function openChunks(docId: string) {
     const res = await getDocumentChunks(docId)
     chunks.value = res.data
   } catch {
-    message.error('加载分块失败')
+    message.error(t('documents.loadChunksFailed'))
     showChunks.value = false
   } finally {
     chunksLoading.value = false
@@ -717,9 +722,9 @@ const statusColors: Record<string, string> = {
   embedding: 'info', completed: 'success', failed: 'error',
 }
 const statusLabels: Record<string, string> = {
-  pending: '等待中', uploaded: '已上传',
-  parsing: '解析中', chunking: '分块中',
-  embedding: '向量化中', completed: '已完成', failed: '失败',
+  pending: t('documents.status.waiting'), uploaded: t('documents.status.uploaded'),
+  parsing: t('documents.status.parsing'), chunking: t('documents.status.chunking'),
+  embedding: t('documents.status.embedding'), completed: t('documents.status.completed'), failed: t('documents.status.failed'),
 }
 
 // File type → icon + color (covers all 14 supported formats)
@@ -748,7 +753,7 @@ function getFileTypeConfig(ext: string) {
 }
 
 const typeOptions = computed(() => {
-  const opts: { label: string; value: string }[] = [{ label: '全部类型', value: 'all' }]
+  const opts: { label: string; value: string }[] = [{ label: t('documents.allTypes'), value: 'all' }]
   for (const ext of supportedExts.value) {
     const label = getFileTypeConfig(ext).label
     // Avoid duplicate labels for multi-ext parsers (e.g. md + markdown)
@@ -762,25 +767,25 @@ const typeOptions = computed(() => {
 // Build the upload-zone hint text from the live supported-extensions list,
 // so disabling a plugin via /admin/plugins immediately reflects here.
 const supportedFormatsHint = computed(() => {
-  if (supportedExts.value.length === 0) return '加载支持格式中…，单文件最大 50MB'
+  if (supportedExts.value.length === 0) return t('documents.loadingFormats')
   const labels = Array.from(new Set(
     supportedExts.value.map(ext => getFileTypeConfig(ext).label)
   ))
-  return `支持 ${labels.join('、')}，单文件最大 50MB`
+  return t('documents.supportedFormats', { formats: labels.join('、') })
 })
 
 const statusOptions = [
-  { label: '全部状态', value: 'all' },
-  { label: '已完成', value: 'completed' }, { label: '处理中', value: 'pending' },
-  { label: '等待中', value: 'pending' }, { label: '失败', value: 'failed' },
-  { label: '未关联', value: 'unlinked' },
+  { label: t('documents.allStatus'), value: 'all' },
+  { label: t('documents.status.completed'), value: 'completed' }, { label: t('documents.status.processing'), value: 'pending' },
+  { label: t('documents.status.waiting'), value: 'pending' }, { label: t('documents.status.failed'), value: 'failed' },
+  { label: t('documents.unlinked'), value: 'unlinked' },
 ]
 
 const availableStatusOptions = [
-  { label: '全部状态', value: '' },
-  { label: '已完成', value: 'completed' },
-  { label: '处理中', value: 'pending' },
-  { label: '失败', value: 'failed' },
+  { label: t('documents.allStatus'), value: '' },
+  { label: t('documents.status.completed'), value: 'completed' },
+  { label: t('documents.status.processing'), value: 'pending' },
+  { label: t('documents.status.failed'), value: 'failed' },
 ]
 
 const processingStatuses = ['pending', 'parsing', 'chunking', 'embedding']
@@ -822,48 +827,48 @@ async function loadSupportedTypes() {
 </script>
 <template>
   <div class="dm-view">
-    <PageHeader title="文档管理" :icon="DocumentText">
+    <PageHeader :title="t('nav.documents')" :icon="DocumentText">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
         <NButton size="small" type="primary" @click="openCreateKb">
           <template #icon><NIcon><Create /></NIcon></template>
-          新建知识库
+          {{ t('documents.newKb') }}
         </NButton>
         <NButton size="small" type="primary" @click="openUploadModal">
           <template #icon><NIcon><Add /></NIcon></template>
-          上传文档
+          {{ t('documents.uploadDoc') }}
         </NButton>
       </template>
     </PageHeader>
 
     <!-- KB Form Modal (create + edit share the same modal) -->
     <AppModal v-model:show="showKbForm"
-      :title="kbFormMode === 'create' ? '新建知识库' : '编辑知识库'"
+      :title="kbFormMode === 'create' ? t('documents.newKb') : t('documents.editKb')"
       size="nested"
     >
       <div class="kb-form">
-        <NInput v-model:value="kbFormName" placeholder="知识库名称" />
-        <NInput v-model:value="kbFormDesc" placeholder="描述（可选）" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
-        <NInput v-model:value="kbFormPrompt" placeholder="提示词（可选，让大模型更了解本知识库或团队需求。注意：每次修改都会使得修改后的第一次对话LLM缓存命中率大幅下降。）" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
+        <NInput v-model:value="kbFormName" :placeholder="t('documents.kbNamePlaceholder')" />
+        <NInput v-model:value="kbFormDesc" :placeholder="t('documents.descOptional')" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+        <NInput v-model:value="kbFormPrompt" :placeholder="t('documents.promptHint')" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" />
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton @click="showKbForm = false">取消</NButton>
+          <NButton @click="showKbForm = false">{{ t('common.cancel') }}</NButton>
           <NButton type="primary" :loading="kbFormSaving" :disabled="!kbFormName.trim()" @click="handleKbSubmit">
-            {{ kbFormMode === 'create' ? '创建' : '保存' }}
+            {{ kbFormMode === 'create' ? t('documents.create') : t('common.save') }}
           </NButton>
         </NSpace>
       </template>
     </AppModal>
 
     <!-- Upload Modal -->
-    <AppModal v-model:show="showUploadModal" title="上传文件" size="detail">
+    <AppModal v-model:show="showUploadModal" :title="t('documents.uploadFile')" size="detail">
       <div class="upload-modal-body">
         <!-- Knowledge base selector -->
         <div class="upload-kb-select">
-          <span class="upload-kb-label">关联知识库</span>
+          <span class="upload-kb-label">{{ t('documents.linkKb') }}</span>
           <span class="upload-kb-value">{{ uploadTargetKbName }}</span>
-          <NButton size="small" @click="openKbFilter('upload')">切换</NButton>
+          <NButton size="small" @click="openKbFilter('upload')">{{ t('common.switch') }}</NButton>
         </div>
 
         <!-- Drop zone -->
@@ -873,7 +878,7 @@ async function loadSupportedTypes() {
         >
           <div class="upload-zone-content">
             <NIcon size="36" color="var(--color-primary)"><CloudUpload /></NIcon>
-            <p>点击或拖拽文件到此处上传</p>
+            <p>{{ t('documents.dragDropHint') }}</p>
             <span class="upload-hint">{{ supportedFormatsHint }}</span>
           </div>
         </div>
@@ -881,21 +886,21 @@ async function loadSupportedTypes() {
         <!-- Per-file queue -->
         <div v-if="uploadItems.length > 0" class="upload-queue">
           <div class="upload-queue-header">
-            <span>{{ uploadItems.length }} 个文件</span>
-            <NButton size="small" @click="clearUploadItems" :disabled="hasActiveUploads">清空已完成</NButton>
+            <span>{{ t('documents.fileCount', { count: uploadItems.length }) }}</span>
+            <NButton size="small" @click="clearUploadItems" :disabled="hasActiveUploads">{{ t('documents.clearCompleted') }}</NButton>
           </div>
           <div v-for="item in uploadItems" :key="item.id" class="upload-file-row">
             <div class="upload-file-info">
               <span class="upload-file-name">📄 {{ item.name }}</span>
               <span class="upload-file-size">{{ formatSize(item.size) }}</span>
               <NTag :type="item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : item.status === 'cancelled' ? 'warning' : item.status === 'uploading' ? 'info' : 'default'" size="tiny" :bordered="false">
-                {{ item.status === 'pending' ? '等待' : item.status === 'uploading' ? '上传中' : item.status === 'success' ? '完成' : item.status === 'error' ? '失败' : '已取消' }}
+                {{ item.status === 'pending' ? t('documents.upload.waiting') : item.status === 'uploading' ? t('documents.upload.uploading') : item.status === 'success' ? t('documents.upload.complete') : item.status === 'error' ? t('documents.upload.failed') : t('documents.upload.cancelled') }}
               </NTag>
               <NButton
                 v-if="item.status === 'pending' || item.status === 'uploading'"
                 size="tiny" text type="error"
                 @click="cancelUpload(item.id)"
-              >取消</NButton>
+              >{{ t('common.cancel') }}</NButton>
             </div>
             <NProgress
               v-if="item.status === 'uploading'"
@@ -913,7 +918,7 @@ async function loadSupportedTypes() {
       <template #footer>
         <NSpace justify="end">
           <NButton type="primary" :loading="hasActiveUploads" :disabled="pendingCount === 0" @click="startUploads">
-            {{ hasActiveUploads ? '上传中…' : pendingCount > 0 ? `开始上传 (${pendingCount})` : '开始上传' }}
+            {{ hasActiveUploads ? t('documents.uploading') : pendingCount > 0 ? t('documents.startUploadCount', { count: pendingCount }) : t('documents.startUpload') }}
           </NButton>
         </NSpace>
       </template>
@@ -921,39 +926,39 @@ async function loadSupportedTypes() {
 
     <!-- KB Filter -->
     <div class="dm-kb-filter">
-      <span class="dm-kb-label">当前知识库</span>
+      <span class="dm-kb-label">{{ t('documents.currentKb') }}</span>
       <div class="dm-kb-panel">
         <div class="dm-kb-top">
           <NButton secondary :style="{ fontWeight: 700 }" @click="openKbFilter('filter')">
             <template #icon><NIcon><DocumentText /></NIcon></template>
-            {{ filterKbId ? filterKbName : '全部' }}
+            {{ filterKbId ? filterKbName : t('common.all') }}
           </NButton>
           <span v-if="filterKbDesc" class="dm-kb-desc">{{ filterKbDesc }}</span>
         </div>
         <div v-if="selectedKb" class="dm-kb-bottom">
-          <span class="dm-kb-count">📄 {{ selectedKb.doc_count }} 文档</span>
-          <span class="dm-kb-count">🧬 {{ selectedKb.vector_count }} 分片</span>
+          <span class="dm-kb-count">📄 {{ t('documents.kbDocMeta', { count: selectedKb.doc_count }) }}</span>
+          <span class="dm-kb-count">🧬 {{ t('documents.kbVectorMeta', { count: selectedKb.vector_count }) }}</span>
           <NSpace class="dm-kb-actions" size="small">
             <NButton size="small" @click="openRenameKb(selectedKb); blurActive()">
               <template #icon><NIcon size="14"><Create /></NIcon></template>
-              编辑知识库
+              {{ t('documents.editKb') }}
             </NButton>
             <NButton size="small" @click="goToChat(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
-              发起对话
+              {{ t('documents.startChat') }}
             </NButton>
             <NTooltip trigger="hover">
               <template #trigger>
                 <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
                   <template #icon><NIcon size="14"><People /></NIcon></template>
-                  共享用户
+                  {{ t('documents.shareUsers') }}
                 </NButton>
               </template>
-              选择可以使用这个知识库的用户
+              {{ t('documents.shareUsersTooltip') }}
             </NTooltip>
             <NButton size="small" @click="openSelectDocs(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Search /></NIcon></template>
-              添加文档
+              {{ t('documents.addDocs') }}
             </NButton>
             <NPopconfirm @positive-click="handleDeleteKb(selectedKb.id)">
               <template #trigger>
@@ -961,13 +966,13 @@ async function loadSupportedTypes() {
                   <template #trigger>
                     <NButton size="small" class="dm-danger-btn" @click="blurActive()" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                       <template #icon><NIcon size="14"><Trash /></NIcon></template>
-                      删除
+                      {{ t('common.delete') }}
                     </NButton>
                   </template>
-                  删除知识库不会删除关联文档
+                  {{ t('documents.deleteKbTooltip') }}
                 </NTooltip>
               </template>
-              确定删除「{{ selectedKb.name }}」？文档不会被删除，仅解除关联。
+              {{ t('documents.confirmDeleteKb', { kb: selectedKb.name }) }}
             </NPopconfirm>
           </NSpace>
         </div>
@@ -976,21 +981,21 @@ async function loadSupportedTypes() {
 
     <!-- Filters -->
     <div class="dm-filters">
-      <NInput v-model:value="search" placeholder="搜索文件名…" clearable size="small" @keyup.enter="onSearch" style="flex:1">
+      <NInput v-model:value="search" :placeholder="t('common.searchFilename')" clearable size="small" @keyup.enter="onSearch" style="flex:1">
         <template #prefix><NIcon><Search /></NIcon></template>
       </NInput>
       <NButton size="small" type="primary" @click="onSearch">
         <template #icon><NIcon><Search /></NIcon></template>
-        搜索
+        {{ t('common.search') }}
       </NButton>
-      <NSelect v-model:value="filterStatus" :options="statusOptions" placeholder="状态" size="small" style="width:120px" @update:value="onSearch" />
-      <NSelect v-model:value="filterType" :options="typeOptions" placeholder="类型" size="small" style="width:120px" @update:value="onSearch" />
-      <NButton size="small" @click="resetFilters" secondary>重置</NButton>
+      <NSelect v-model:value="filterStatus" :options="statusOptions" :placeholder="t('common.status')" size="small" style="width:120px" @update:value="onSearch" />
+      <NSelect v-model:value="filterType" :options="typeOptions" :placeholder="t('common.type')" size="small" style="width:120px" @update:value="onSearch" />
+      <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
     </div>
 
     <!-- Doc List -->
     <NSpin :show="loading">
-      <NEmpty v-if="!loading && docs.length === 0" description="暂无文档，请上传" />
+      <NEmpty v-if="!loading && docs.length === 0" :description="t('documents.noDocsUpload')" />
       <div class="dm-list" v-if="docs.length > 0">
         <NCard
           v-for="doc in docs"
@@ -1020,17 +1025,17 @@ async function loadSupportedTypes() {
                   <template #icon><NIcon><Remove /></NIcon></template>
                 </NButton>
               </template>
-              确定解除该文档与「{{ filterKbName }}」的关联？
+              {{ t('documents.confirmUnlinkDoc', { kb: filterKbName }) }}
             </NPopconfirm>
           </div>
           <div class="doc-card-meta">
-            <span>{{ doc.chunk_count }} 分块</span>
+            <span>{{ t('documents.chunkCount', { count: doc.chunk_count }) }}</span>
             <span class="doc-meta-sep">·</span>
-            <span>关联{{ doc.kb_ids.length }} 个知识库</span>
+            <span>{{ t('documents.linkedKbs', { count: doc.kb_ids.length }) }}</span>
             <span class="doc-meta-sep">·</span>
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
-            <span class="doc-meta-muted">{{ new Date(doc.created_at).toLocaleDateString('zh-CN') }}</span>
+            <span class="doc-meta-muted">{{ formatDate(doc.created_at) }}</span>
           </div>
           <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress
@@ -1051,12 +1056,12 @@ async function loadSupportedTypes() {
     <AppPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
 
     <!-- Chunks Modal -->
-    <AppModal v-model:show="showChunks" title="分块预览" size="nested">
+    <AppModal v-model:show="showChunks" :title="t('documents.chunkPreview')" size="nested">
       <div class="chunks-modal">
         <NInput
           v-if="chunks.length > 0"
           v-model:value="chunkSearch"
-          placeholder="搜索分块内容…"
+          :placeholder="t('documents.searchChunkContent')"
           size="small"
           clearable
           @update:value="chunkPage = 1"
@@ -1066,11 +1071,11 @@ async function loadSupportedTypes() {
         </NInput>
 
         <NSpin :show="chunksLoading">
-          <NEmpty v-if="!chunksLoading && chunks.length === 0" description="暂无分块数据" />
-          <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" description="无匹配的分块" />
+          <NEmpty v-if="!chunksLoading && chunks.length === 0" :description="t('documents.noChunkData')" />
+          <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" :description="t('documents.noMatchingChunks')" />
 
           <div v-if="filteredChunks.length > 0">
-            <div class="chunk-count">共 {{ filteredChunks.length }} 个分块</div>
+            <div class="chunk-count">{{ t('documents.chunkTotal', { count: filteredChunks.length }) }}</div>
             <NCard v-for="c in paginatedChunks" :key="c.id" size="small" class="chunk-card">
               <div class="chunk-meta">
                 <NTag size="tiny">#{{ c.chunk_index }}</NTag>
@@ -1089,7 +1094,7 @@ async function loadSupportedTypes() {
                 <p>{{ c.content }}</p>
               </div>
               <NButton text size="tiny" class="chunk-expand-btn" @click="toggleChunkExpand(c.id)">
-                {{ expandedChunks.has(c.id) ? '收起' : '展开' }}
+                {{ expandedChunks.has(c.id) ? t('common.collapse') : t('common.expand') }}
               </NButton>
             </NCard>
           </div>
@@ -1105,14 +1110,14 @@ async function loadSupportedTypes() {
     </AppModal>
 
     <!-- Doc KBs Modal -->
-    <AppModal v-model:show="showDocKbs" title="关联知识库"
+    <AppModal v-model:show="showDocKbs" :title="t('documents.linkKb')"
       size="nested"
       @after-leave="docKbSearchText = ''"
     >
       <NInput
         v-if="allKbs.length > 0"
         v-model:value="docKbSearchText"
-        placeholder="搜索知识库名称..."
+        :placeholder="t('documents.searchKbName')"
         clearable
         style="margin-bottom:12px"
       >
@@ -1135,7 +1140,7 @@ async function loadSupportedTypes() {
               <div class="kb-pick-info">
                 <strong>{{ kb.name }}</strong>
                 <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-                <span class="kb-pick-meta">{{ kb.doc_count }} 文档 · {{ kb.vector_count }} 向量</span>
+                <span class="kb-pick-meta">{{ t('documents.countMeta', { docs: kb.doc_count, vectors: kb.vector_count }) }}</span>
               </div>
               <NPopconfirm @positive-click="handleUnlinkDocKb(kb.id)">
                 <template #trigger>
@@ -1143,36 +1148,36 @@ async function loadSupportedTypes() {
                     <template #icon><NIcon><Remove /></NIcon></template>
                   </NButton>
                 </template>
-                确定解除该文档与「{{ kb.name }}」的关联？
+                {{ t('documents.confirmUnlinkDoc', { kb: kb.name }) }}
               </NPopconfirm>
             </div>
           </NCard>
         </div>
       </template>
-      <NEmpty v-else description="没有匹配的知识库" style="padding:16px 0" />
+      <NEmpty v-else :description="t('documents.noMatchingKb')" style="padding:16px 0" />
     </AppModal>
 
     <!-- Document Detail Modal -->
-    <AppModal v-model:show="showDetail" :title="detailDoc?.filename || '文档详情'"
+    <AppModal v-model:show="showDetail" :title="detailDoc?.filename || t('documents.docDetail')"
       size="detail"
       @after-leave="detailDoc = null"
     >
       <div v-if="detailDoc">
         <NDescriptions bordered :column="1" size="small" label-placement="left" label-style="width: 120px">
-          <NDescriptionsItem label="文件名">{{ detailDoc.filename }}</NDescriptionsItem>
-          <NDescriptionsItem label="文件类型">
+          <NDescriptionsItem :label="t('documents.fileName')">{{ detailDoc.filename }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('documents.fileType')">
             {{ getFileTypeConfig(detailDoc.file_type).label }} ({{ detailDoc.file_type }})
           </NDescriptionsItem>
-          <NDescriptionsItem label="文件大小">{{ formatSize(detailDoc.file_size) }}</NDescriptionsItem>
-          <NDescriptionsItem label="状态">
+          <NDescriptionsItem :label="t('documents.fileSize')">{{ formatSize(detailDoc.file_size) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('common.status')">
             <NTag :type="statusColors[detailDoc.status] as any" size="small">
               {{ statusLabels[detailDoc.status] || detailDoc.status }}
             </NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem v-if="detailDoc.status === 'failed' && detailDoc.error_message" label="错误信息">
+          <NDescriptionsItem v-if="detailDoc.status === 'failed' && detailDoc.error_message" :label="t('documents.errorMessage')">
             {{ detailDoc.error_message }}
           </NDescriptionsItem>
-          <NDescriptionsItem label="分块数">
+          <NDescriptionsItem :label="t('documents.chunkNumber')">
             <span
               v-if="detailDoc.chunk_count > 0"
               class="doc-kb-link"
@@ -1181,10 +1186,10 @@ async function loadSupportedTypes() {
               tabindex="0"
               @keydown.enter.prevent="openChunks(detailDoc.id)"
               @keydown.space.prevent="openChunks(detailDoc.id)"
-            >{{ detailDoc.chunk_count }} 分块</span>
+            >{{ t('documents.chunkCount', { count: detailDoc.chunk_count }) }}</span>
             <span v-else>0</span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="关联知识库">
+          <NDescriptionsItem :label="t('documents.linkedKbsLabel')">
             <span
               :class="detailDoc.kb_ids.length > 0 ? 'doc-kb-link' : 'doc-meta-muted'"
               @click="openDocKbs(detailDoc.kb_ids)"
@@ -1193,22 +1198,22 @@ async function loadSupportedTypes() {
               @keydown.enter.prevent="openDocKbs(detailDoc.kb_ids)"
               @keydown.space.prevent="openDocKbs(detailDoc.kb_ids)"
             >
-              {{ detailDoc.kb_ids.length > 0 ? `关联${detailDoc.kb_ids.length} 个知识库` : '未关联知识库' }}
+              {{ detailDoc.kb_ids.length > 0 ? t('documents.linkedKbs', { count: detailDoc.kb_ids.length }) : t('documents.notLinkedKb') }}
             </span>
           </NDescriptionsItem>
-          <NDescriptionsItem label="创建时间">{{ new Date(detailDoc.created_at).toLocaleString('zh-CN') }}</NDescriptionsItem>
-          <NDescriptionsItem v-if="detailDoc.updated_at" label="更新时间">{{ new Date(detailDoc.updated_at).toLocaleString('zh-CN') }}</NDescriptionsItem>
-          <NDescriptionsItem label="文档 ID">{{ detailDoc.id }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('common.createdAt')">{{ formatDateTime(detailDoc.created_at) }}</NDescriptionsItem>
+          <NDescriptionsItem v-if="detailDoc.updated_at" :label="t('common.updatedAt')">{{ formatDateTime(detailDoc.updated_at) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('documents.docId')">{{ detailDoc.id }}</NDescriptionsItem>
         </NDescriptions>
       </div>
       <template #footer>
         <NSpace justify="end">
-          <NButton v-if="detailDoc" @click="handleDownload(detailDoc)">下载原件</NButton>
+          <NButton v-if="detailDoc" @click="handleDownload(detailDoc)">{{ t('documents.downloadOriginal') }}</NButton>
           <NPopconfirm v-if="detailDoc" @positive-click="deleteDetailDoc">
             <template #trigger>
-              <NButton type="error">删除</NButton>
+              <NButton type="error">{{ t('common.delete') }}</NButton>
             </template>
-            确定删除文档「{{ detailDoc.filename }}」？将从所有知识库中移除。
+            {{ t('documents.confirmDeleteDoc', { filename: detailDoc.filename }) }}
           </NPopconfirm>
         </NSpace>
       </template>
@@ -1220,8 +1225,8 @@ async function loadSupportedTypes() {
       :kbs="allKbs"
       :selected-id="kbFilterMode === 'upload' ? uploadTargetKb : filterKbId"
       :show-all="true"
-      :all-label="kbFilterMode === 'upload' ? '不关联' : '全部'"
-      :all-meta="kbFilterMode === 'upload' ? '不上传至知识库' : '显示所有文档'"
+      :all-label="kbFilterMode === 'upload' ? t('documents.notLinked') : t('common.all')"
+      :all-meta="kbFilterMode === 'upload' ? t('documents.dontUploadToKb') : t('documents.showAllDocs')"
       :all-active="kbFilterMode === 'upload' ? uploadTargetKb === null : filterKbId === null"
       :all-count="allKbs.length"
       :sortable="true"
@@ -1230,11 +1235,11 @@ async function loadSupportedTypes() {
     />
 
     <!-- Share Modal -->
-    <AppModal v-model:show="showShare" title="共享用户" size="detail">
+    <AppModal v-model:show="showShare" :title="t('documents.shareUsers')" size="detail">
       <div class="share-form">
         <NSpin :show="shareLoading">
           <div v-if="!shareLoading && shareUsers.length === 0" class="share-empty">
-            <NEmpty description="暂无共享用户" />
+            <NEmpty :description="t('documents.noSharedUsers')" />
           </div>
           <div v-if="shareUsers.length > 0">
             <div class="share-list">
@@ -1244,7 +1249,7 @@ async function loadSupportedTypes() {
                     <span class="share-user-avatar">👤</span>
                     <div class="share-user-title">
                       <div class="share-user-name">{{ u.display_name || u.username }}</div>
-                      <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+                      <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? t('common.role.adminShort') : t('common.role.regular') }}</div>
                     </div>
                   </div>
                   <NPopconfirm @positive-click="removeKbUser(u.id)">
@@ -1259,7 +1264,7 @@ async function loadSupportedTypes() {
                         <template #icon><NIcon size="16"><Close /></NIcon></template>
                       </NButton>
                     </template>
-                    确定取消共享给此用户吗
+                    {{ t('documents.confirmUnshareUser') }}
                   </NPopconfirm>
                 </div>
               </div>
@@ -1274,21 +1279,21 @@ async function loadSupportedTypes() {
           <div class="share-add-more">
             <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
               <template #icon><NIcon><component :is="showAddMoreUsers ? Remove : Add" /></NIcon></template>
-              添加更多用户
+              {{ t('documents.addMoreUsers') }}
             </NButton>
           </div>
           <template v-if="showAddMoreUsers">
             <div class="share-add-row">
-              <NInput v-model:value="shareUserSearch" placeholder="搜索用户…" clearable @keyup.enter="searchShareUsers" style="flex:1">
+              <NInput v-model:value="shareUserSearch" :placeholder="t('documents.searchUser')" clearable @keyup.enter="searchShareUsers" style="flex:1">
                 <template #prefix><NIcon><Search /></NIcon></template>
               </NInput>
               <NButton type="primary" @click="searchShareUsers">
                 <template #icon><NIcon><Search /></NIcon></template>
-                搜索
+                {{ t('common.search') }}
               </NButton>
             </div>
             <div v-if="unaddedUsers.length === 0" class="share-empty">
-              <NEmpty description="暂无可添加的用户" />
+              <NEmpty :description="t('documents.noUsersToAdd')" />
             </div>
             <div v-if="unaddedUsers.length > 0">
               <div class="share-list share-unadded-list">
@@ -1307,7 +1312,7 @@ async function loadSupportedTypes() {
                       <span class="share-user-avatar">👤</span>
                       <div class="share-user-title">
                         <div class="share-user-name">{{ u.display_name || u.username }}</div>
-                        <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? '管理员' : '普通用户' }}</div>
+                        <div class="share-user-sub">{{ u.username }} · {{ u.role === 'admin' ? t('common.role.adminShort') : t('common.role.regular') }}</div>
                       </div>
                     </div>
                   </div>
@@ -1326,26 +1331,26 @@ async function loadSupportedTypes() {
     </AppModal>
 
     <!-- Select Documents Modal -->
-    <AppModal v-model:show="showSelectDocs" title="选择文档加入知识库" size="wide">
+    <AppModal v-model:show="showSelectDocs" :title="t('documents.selectDocsToAdd')" size="wide">
       <div class="select-docs-modal">
         <div class="select-docs-filters">
-          <NInput v-model:value="availableSearch" placeholder="搜索文件名…" clearable @keyup.enter="onAvailableSearch" style="flex:1">
+          <NInput v-model:value="availableSearch" :placeholder="t('common.searchFilename')" clearable @keyup.enter="onAvailableSearch" style="flex:1">
             <template #prefix><NIcon><Search /></NIcon></template>
           </NInput>
           <NButton type="primary" @click="onAvailableSearch">
             <template #icon><NIcon><Search /></NIcon></template>
-            搜索
+            {{ t('common.search') }}
           </NButton>
-          <NSelect v-model:value="availableStatus" :options="availableStatusOptions" placeholder="状态" style="width:110px" @update:value="onAvailableStatusChange" />
-          <NSelect v-model:value="availableType" :options="typeOptions" placeholder="类型" style="width:110px" @update:value="onAvailableTypeChange" />
-          <NButton @click="resetAvailableFilters" secondary>重置</NButton>
+          <NSelect v-model:value="availableStatus" :options="availableStatusOptions" :placeholder="t('common.status')" style="width:110px" @update:value="onAvailableStatusChange" />
+          <NSelect v-model:value="availableType" :options="typeOptions" :placeholder="t('common.type')" style="width:110px" @update:value="onAvailableTypeChange" />
+          <NButton @click="resetAvailableFilters" secondary>{{ t('common.reset') }}</NButton>
         </div>
         <NSpin :show="loadingAvailableDocs">
           <div v-if="!loadingAvailableDocs && availableDocs.length === 0" class="select-docs-empty">
-            <NEmpty description="还没有可添加的已完成文档" />
+            <NEmpty :description="t('documents.noAvailableDocs')" />
             <NButton type="primary" dashed @click="showSelectDocs = false; router.push('/documents')">
               <template #icon><NIcon><Add /></NIcon></template>
-              前往文档管理页上传文档
+              {{ t('documents.goToUploadDocs') }}
             </NButton>
           </div>
           <div class="select-docs-list" v-if="availableDocs.length > 0">
@@ -1368,15 +1373,15 @@ async function loadSupportedTypes() {
         </NSpin>
         <div class="select-docs-actions">
           <div class="select-docs-left">
-            <span class="select-docs-count">已选 {{ selectedDocIds.length }}{{ availableTotal ? ' / 共 ' + availableTotal + ' 个文档' : '' }}</span>
+            <span class="select-docs-count">{{ t('documents.selectedPrefix') }}{{ selectedDocIds.length }}{{ availableTotal ? t('documents.totalDocsSuffix', { count: availableTotal }) : '' }}</span>
             <NButton text size="tiny" type="primary" @click="openUploadFromSelectDocs">
-              上传更多文档 →
+              {{ t('documents.uploadMoreDocs') }} →
             </NButton>
           </div>
           <NSpace>
-            <NButton @click="showSelectDocs = false">取消</NButton>
+            <NButton @click="showSelectDocs = false">{{ t('common.cancel') }}</NButton>
             <NButton type="primary" :disabled="selectedDocIds.length === 0" :loading="linkingDocs" @click="handleSelectDocs">
-              加入知识库
+              {{ t('documents.addToKb') }}
             </NButton>
           </NSpace>
         </div>

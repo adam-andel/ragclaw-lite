@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { currentLocale } from '@/i18n/useLocale'
 import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -17,6 +19,7 @@ import type { ChatMessage as ChatMsg, Skill } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const auth = useAuthStore()
 const nmessage = useMessage()
 
@@ -201,15 +204,15 @@ const filteredSkills = computed(() =>
   )
 )
 const selectedSkillName = computed(() => {
-  if (!selectedSkillId.value) return '自动选择技能'
-  return skills.value.find(s => s.id === selectedSkillId.value)?.name || '自动选择技能'
+  if (!selectedSkillId.value) return t('chat.autoSelectSkill')
+  return skills.value.find(s => s.id === selectedSkillId.value)?.name || t('chat.autoSelectSkill')
 })
 
 
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
 const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
-const currentKbName = computed(() => selectedKb.value?.name || '选择知识库')
+const currentKbName = computed(() => selectedKb.value?.name || t('chat.selectKb'))
 
 function selectAndClose(convId: string) {
   emptyMode.value = ''
@@ -371,7 +374,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         if (!proxyMsg.agentSteps) proxyMsg.agentSteps = []
         proxyMsg.agentSteps.push(event)
       } else if (event.type === 'error') {
-        streamedText = '❌ 错误: ' + event.message
+        streamedText = t('chat.streamError', { msg: event.message })
         break
       } else if (event.type === 'done') {
         proxyMsg.content = streamedText
@@ -394,7 +397,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
       // Remove failed user + assistant messages and restore input
       messages.value = messages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
       inputText.value = query
-      nmessage.error(`发送失败: ${e.message}，已恢复输入`)
+      nmessage.error(t('chat.sendFailed', { msg: e.message }))
     }
   } finally {
     isStreaming.value = false
@@ -481,26 +484,26 @@ function handleKeydown(e: KeyboardEvent) {
 
 <template>
   <div class="chat-view">
-    <PageHeader title="RAG 对话" :icon="Chatbubbles">
+    <PageHeader :title="t('chat.title')" :icon="Chatbubbles">
       <template #actions>
-        <NTag v-if="isReadonly" type="info">📖 只读模式 — 查看用户对话</NTag>
+        <NTag v-if="isReadonly" type="info">{{ t('chat.readonlyMode') }}</NTag>
         <NButton size="small" @click="showMoreConv = true">
           <template #icon><NIcon size="16"><List /></NIcon></template>
-          对话历史
+          {{ t('chat.history') }}
         </NButton>
         <NButton v-if="!isReadonly" size="small" type="primary" @click="newConversation">
           <template #icon><NIcon size="16"><Add /></NIcon></template>
-          新建对话
+          {{ t('chat.newConversation') }}
         </NButton>
       </template>
     </PageHeader>
 
-    <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" aria-label="对话消息">
+    <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" :aria-label="t('chat.ariaMessages')">
       <!-- Centered panel: conversation list preview -->
       <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
         <div class="center-panel-box">
           <div class="center-panel-head">
-            <p class="center-panel-subtitle">从最近对话继续，或开启新的对话</p>
+            <p class="center-panel-subtitle">{{ t('chat.continueOrStart') }}</p>
           </div>
           <div class="conv-list">
             <div v-for="c in convPreview" :key="c.id" class="conv-row"
@@ -511,20 +514,20 @@ function handleKeydown(e: KeyboardEvent) {
             >
               <div class="conv-row-avatar">💬</div>
               <div class="conv-row-body">
-                <div class="conv-row-title">{{ c.title || '新对话' }}</div>
+                <div class="conv-row-title">{{ c.title || t('chat.untitledConversation') }}</div>
                 <div class="conv-row-meta">
-                  <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
-                  <span v-if="c.message_count" class="conv-row-count">{{ c.message_count }} 条消息</span>
+                  <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
+                  <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
                 </div>
               </div>
             </div>
           </div>
           <NButton v-if="convHasMore" text size="small" type="primary" class="conv-more-btn" @click="showMoreConv = true">
-            更多对话 ({{ conversations.length }}) →
+            {{ t('chat.moreConversations', { count: conversations.length }) }}
           </NButton>
-          <NEmpty v-if="conversations.length === 0" description="暂无对话记录" style="padding:8px 0" />
+          <NEmpty v-if="conversations.length === 0" :description="t('chat.noConversations')" style="padding:8px 0" />
           <div class="conv-fallback">
-            或者<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 3px;height:auto;vertical-align:baseline;font-size:inherit">新建对话</NButton>
+            {{ t('chat.or') }}<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 3px;height:auto;vertical-align:baseline;font-size:inherit">{{ t('chat.newConversation') }}</NButton>
           </div>
         </div>
       </div>
@@ -533,7 +536,7 @@ function handleKeydown(e: KeyboardEvent) {
       <div v-else-if="showPicker && emptyMode === 'kb'" class="center-panel">
         <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' }">
           <div class="empty-icon">🧠</div>
-          <h3>新建对话 — 选择知识库</h3>
+          <h3>{{ t('chat.newConversationPickKb') }}</h3>
           <div class="center-panel-list">
             <NCard v-for="kb in kbPreview" :key="kb.id" size="small" class="kb-pick-card"
               :class="{ active: kb.id === selectedKbId }"
@@ -548,29 +551,29 @@ function handleKeydown(e: KeyboardEvent) {
                   <strong class="kb-pick-name">{{ kb.name }}</strong>
                   <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
                   <div class="kb-pick-stats">
-                    <span class="kb-pick-chip">{{ kb.doc_count }} 文档</span>
-                    <span class="kb-pick-chip">{{ kb.vector_count }} 分片</span>
+                    <span class="kb-pick-chip">{{ t('chat.docCount', { count: kb.doc_count }) }}</span>
+                    <span class="kb-pick-chip">{{ t('chat.chunkCount', { count: kb.vector_count }) }}</span>
                   </div>
                 </div>
               </div>
             </NCard>
           </div>
           <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
-            更多知识库 ({{ kbs.length }})
+            {{ t('chat.moreKbs', { count: kbs.length }) }}
           </NButton>
           <div v-if="kbs.length === 0" class="picker-empty">
-            <NEmpty description="还没有知识库" style="padding:8px 0" />
+            <NEmpty :description="t('chat.noKbs')" style="padding:8px 0" />
             <NButton type="primary" dashed size="small" @click="router.push('/documents')">
-              前往创建知识库
+              {{ t('chat.goCreateKb') }}
             </NButton>
           </div>
           <div class="center-panel-actions">
             <div class="picker-footer-hint">
-              已选：<strong>{{ selectedKbId ? (kbs.find(k => k.id === selectedKbId)?.name ?? '...') : '未选择' }}</strong>
+              {{ t('chat.selectedPrefix') }}<strong>{{ selectedKbId ? (kbs.find(k => k.id === selectedKbId)?.name ?? '...') : t('chat.notSelected') }}</strong>
             </div>
             <NSpace>
-              <NButton v-if="conversations.length > 0" @click="emptyMode = 'conv'">← 返回</NButton>
-              <NButton type="primary" @click="emptyMode = ''" :disabled="!selectedKbId">开始对话</NButton>
+              <NButton v-if="conversations.length > 0" @click="emptyMode = 'conv'">{{ t('chat.back') }}</NButton>
+              <NButton type="primary" @click="emptyMode = ''" :disabled="!selectedKbId">{{ t('chat.startChat') }}</NButton>
             </NSpace>
           </div>
         </div>
@@ -582,9 +585,9 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="empty-icon">🧠</div>
           <h3>{{ selectedKb.name }}</h3>
           <p v-if="selectedKb.description">{{ selectedKb.description }}</p>
-          <p v-else>在下方输入问题开始对话</p>
+          <p v-else>{{ t('chat.inputQuestionToStart') }}</p>
           <div class="center-panel-actions" style="margin-top:12px; gap:4px; justify-content:center">
-            <NButton size="small" @click="emptyMode = 'kb'">更换知识库</NButton>
+            <NButton size="small" @click="emptyMode = 'kb'">{{ t('chat.changeKb') }}</NButton>
           </div>
         </template>
       </div>
@@ -592,25 +595,25 @@ function handleKeydown(e: KeyboardEvent) {
       <!-- Fallback empty: no conversation, picker not yet opened -->
       <div v-else-if="messages.length === 0 && !conversationId" class="empty-state">
         <div class="empty-icon">💬</div>
-        <h3>开始对话</h3>
-        <p>选择一个已有对话继续，或开始新的对话</p>
+        <h3>{{ t('chat.startChat') }}</h3>
+        <p>{{ t('chat.selectOrStart') }}</p>
         <NButton type="primary" size="small" @click="emptyMode = 'conv'" style="margin-top:8px">
-          选择对话
+          {{ t('chat.selectConversation') }}
         </NButton>
-        <p class="fallback-hint">或者<NButton text size="tiny" type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline">新建对话</NButton></p>
+        <p class="fallback-hint">{{ t('chat.or') }}<NButton text size="tiny" type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline">{{ t('chat.newConversation') }}</NButton></p>
       </div>
 
       <!-- Edge case: conversation loaded but no messages -->
       <div v-else-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">🔍</div>
-        <h3>对话为空</h3>
-        <p>输入问题开始对话</p>
+        <h3>{{ t('chat.emptyConversation') }}</h3>
+        <p>{{ t('chat.inputToStart') }}</p>
       </div>
       <!-- 分页提示：向上滚动到顶时自动加载更早的对话 -->
       <div v-if="totalRounds > 0" class="history-sentinel" aria-live="polite">
         <span v-if="isLoadingOlder" class="history-sentinel-spinner" aria-hidden="true"></span>
-        <span v-if="isLoadingOlder">正在加载更早的对话…</span>
-        <span v-else-if="!hasMoreOlder" class="history-sentinel-done">已显示全部对话（共 {{ totalRounds }} 轮）</span>
+        <span v-if="isLoadingOlder">{{ t('chat.loadingOlder') }}</span>
+        <span v-else-if="!hasMoreOlder" class="history-sentinel-done">{{ t('chat.allShown', { count: totalRounds }) }}</span>
       </div>
       <ChatMessage
         v-for="msg in messages"
@@ -630,8 +633,8 @@ function handleKeydown(e: KeyboardEvent) {
         class="scroll-bottom-btn"
         :class="{ streaming: isStreaming }"
         @click="scrollToBottomAndPin"
-        title="回到底部"
-        aria-label="回到底部"
+        :title="t('chat.scrollToBottom')"
+        :aria-label="t('chat.scrollToBottom')"
       >
         <NIcon size="20"><ChevronDown /></NIcon>
       </button>
@@ -644,7 +647,7 @@ function handleKeydown(e: KeyboardEvent) {
           <NInput
             ref="searchInputRef"
             v-model:value="searchKeyword"
-            placeholder="查找对话记录…"
+            :placeholder="t('chat.searchPlaceholder')"
             clearable
             size="small"
             class="search-input"
@@ -653,9 +656,9 @@ function handleKeydown(e: KeyboardEvent) {
             <template #prefix><NIcon size="14"><Search /></NIcon></template>
           </NInput>
           <span class="search-counter">{{ searchMatches.length ? (currentMatchIndex + 1) + ' / ' + searchMatches.length : '0 / 0' }}</span>
-          <NButton size="small" :disabled="!searchMatches.length" @click="searchPrev">上一个</NButton>
-          <NButton size="small" :disabled="!searchMatches.length" @click="searchNext">下一个</NButton>
-          <NButton size="small" quaternary circle :title="'关闭查找'" aria-label="关闭查找" @click="closeSearch">
+          <NButton size="small" :disabled="!searchMatches.length" @click="searchPrev">{{ t('chat.prev') }}</NButton>
+          <NButton size="small" :disabled="!searchMatches.length" @click="searchNext">{{ t('chat.next') }}</NButton>
+          <NButton size="small" quaternary circle :title="t('chat.closeSearch')" :aria-label="t('chat.closeSearch')" @click="closeSearch">
             <template #icon><NIcon size="16"><Close /></NIcon></template>
           </NButton>
         </div>
@@ -663,7 +666,7 @@ function handleKeydown(e: KeyboardEvent) {
     </Transition>
 
     <!-- Modal: full conversation list -->
-    <AppModal v-model:show="showMoreConv" title="所有对话" size="detail">
+    <AppModal v-model:show="showMoreConv" :title="t('chat.allConversations')" size="detail">
       <div class="picker-scroll">
         <div v-for="c in pagedConversations" :key="c.id" class="conv-row"
           role="button" tabindex="0"
@@ -673,10 +676,10 @@ function handleKeydown(e: KeyboardEvent) {
         >
           <div class="conv-row-avatar">💬</div>
           <div class="conv-row-body">
-            <div class="conv-row-title">{{ c.title || '新对话' }}</div>
+            <div class="conv-row-title">{{ c.title || t('chat.untitledConversation') }}</div>
             <div class="conv-row-meta">
-              <span>{{ new Date(c.updated_at).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }}</span>
-              <span v-if="c.message_count" class="conv-row-count">{{ c.message_count }} 条消息</span>
+              <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
+              <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
             </div>
           </div>
         </div>
@@ -701,11 +704,11 @@ function handleKeydown(e: KeyboardEvent) {
       @select="onKbPick"
     />
 
-    <AppModal v-model:show="showSkillModal" title="选择技能"
+    <AppModal v-model:show="showSkillModal" :title="t('chat.selectSkill')"
       size="wide"
       @after-leave="skillSearchText = ''"
     >
-      <NInput v-model:value="skillSearchText" placeholder="搜索技能名称..." clearable style="margin-bottom:12px" />
+      <NInput v-model:value="skillSearchText" :placeholder="t('chat.searchSkillPlaceholder')" clearable style="margin-bottom:12px" />
       <div class="skill-pick-grid">
         <NCard size="small" class="skill-pick-card"
           :class="{ active: !selectedSkillId }"
@@ -716,13 +719,13 @@ function handleKeydown(e: KeyboardEvent) {
         >
           <div class="skill-pick-header">
             <div class="skill-pick-title-wrap">
-              <span class="skill-pick-name">自动选择技能</span>
+              <span class="skill-pick-name">{{ t('chat.autoSelectSkill') }}</span>
             </div>
           </div>
-          <p class="skill-pick-desc">根据问题自动路由最合适的技能</p>
+          <p class="skill-pick-desc">{{ t('chat.autoSelectSkillDesc') }}</p>
           <div class="skill-pick-tools">
-            <span class="skill-pick-label">工具</span>
-            <span class="skill-pick-tool-muted">自动</span>
+            <span class="skill-pick-label">{{ t('chat.tools') }}</span>
+            <span class="skill-pick-tool-muted">{{ t('chat.auto') }}</span>
           </div>
         </NCard>
         <NCard v-for="s in filteredSkills" :key="s.id" size="small" class="skill-pick-card"
@@ -735,12 +738,12 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="skill-pick-header">
             <div class="skill-pick-title-wrap">
               <span class="skill-pick-name" :title="s.name">{{ s.name }}</span>
-              <NTag v-if="!s.is_active" size="tiny" :bordered="false" type="default" class="skill-pick-disabled-tag">禁用</NTag>
+              <NTag v-if="!s.is_active" size="tiny" :bordered="false" type="default" class="skill-pick-disabled-tag">{{ t('common.disabled') }}</NTag>
             </div>
           </div>
-          <p class="skill-pick-desc" :title="s.description ?? undefined">{{ s.description || '暂无描述' }}</p>
+          <p class="skill-pick-desc" :title="s.description ?? undefined">{{ s.description || t('chat.noDescription') }}</p>
           <div class="skill-pick-tools">
-            <span class="skill-pick-label">工具</span>
+            <span class="skill-pick-label">{{ t('chat.tools') }}</span>
             <template v-if="s.mcp_servers && s.mcp_servers.length">
               <NTag
                 v-for="t in s.mcp_servers"
@@ -751,11 +754,11 @@ function handleKeydown(e: KeyboardEvent) {
                 class="skill-pick-tool-tag"
               >{{ t }}</NTag>
             </template>
-            <span v-else class="skill-pick-tool-muted">无</span>
+            <span v-else class="skill-pick-tool-muted">{{ t('chat.none') }}</span>
           </div>
         </NCard>
       </div>
-      <NEmpty v-if="filteredSkills.length === 0" description="没有匹配的技能" style="padding:16px 0" />
+      <NEmpty v-if="filteredSkills.length === 0" :description="t('chat.noMatchingSkill')" style="padding:16px 0" />
     </AppModal>
 
     <div v-if="!isReadonly" class="chat-input-wrapper">
@@ -769,14 +772,14 @@ function handleKeydown(e: KeyboardEvent) {
         </NButton>
         <NButton size="tiny" ghost class="search-trigger-btn" :type="showSearch ? 'primary' : 'default'" @click="showSearch ? closeSearch() : openSearch()">
           <template #icon><NIcon size="14"><Search /></NIcon></template>
-          查找记录
+          {{ t('chat.findRecords') }}
         </NButton>
       </div>
       <div class="chat-input-area">
         <NInput
           v-model:value="inputText"
           type="textarea"
-          :placeholder="auth.llmConfigured ? '输入问题... (Enter 发送)' : '请先前往系统设置页面配置API KEY'"
+          :placeholder="auth.llmConfigured ? t('chat.inputPlaceholder') : t('chat.configApiKey')"
           :autosize="{ minRows: 1, maxRows: 4 }"
           :disabled="isStreaming || !auth.llmConfigured"
           @keydown="handleKeydown"
@@ -785,11 +788,11 @@ function handleKeydown(e: KeyboardEvent) {
         />
         <NButton v-if="queuePosition != null && queuePosition > 0" type="warning" @click="cancelQueue">
           <template #icon><NIcon><StopCircle /></NIcon></template>
-          取消排队
+          {{ t('chat.cancelQueue') }}
         </NButton>
         <NButton v-else-if="isStreaming" type="warning" @click="stopStream">
           <template #icon><NIcon><StopCircle /></NIcon></template>
-          停止
+          {{ t('chat.stop') }}
         </NButton>
         <NButton v-else type="primary" :disabled="!inputText.trim()" @click="sendMessage">
           <template #icon><NIcon><Send /></NIcon></template>

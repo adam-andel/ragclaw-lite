@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NSwitch } from 'naive-ui'
+import { useI18n } from 'vue-i18n'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     value: boolean
     disabled?: boolean
@@ -14,10 +16,17 @@ withDefaults(
     disabled: false,
     loading: false,
     size: 'small',
-    checkedText: '启用',
-    uncheckedText: '禁用',
+    checkedText: '',
+    uncheckedText: '',
   },
 )
+
+const { t } = useI18n()
+
+// Resolve display labels in setup scope (defineProps defaults cannot reference
+// locally-declared variables like `t`, because the macro is hoisted out of setup).
+const resolvedCheckedText = computed(() => props.checkedText || t('common.enable'))
+const resolvedUncheckedText = computed(() => props.uncheckedText || t('common.disable'))
 
 const emit = defineEmits<{
   (e: 'update:value', value: boolean): void
@@ -33,8 +42,8 @@ const emit = defineEmits<{
       :size="size"
       @update:value="(v: boolean) => emit('update:value', v)"
     >
-      <template #checked>{{ checkedText }}</template>
-      <template #unchecked>{{ uncheckedText }}</template>
+      <template #checked>{{ resolvedCheckedText }}</template>
+      <template #unchecked>{{ resolvedUncheckedText }}</template>
     </NSwitch>
   </div>
 </template>

@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { i18n } from '@/i18n'
 
 /** Shared markdown-it instance — mirrors the config used by ChatMessage.vue. */
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -43,7 +44,7 @@ export function renderStreamingHtml(raw: string): string {
       // Still streaming — keep the block open
       html +=
         `<details class="think-block" open>` +
-        `<summary>💭 思考过程</summary>` +
+        `<summary>${i18n.global.t('errors.thinking')}</summary>` +
         `<div class="think-content">${escapeHtml(remaining)}</div>` +
         `</details>`
       break

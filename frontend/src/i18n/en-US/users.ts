@@ -1,0 +1,23 @@
+export default {
+  pageTitle: 'User Management',
+  createUser: 'Create User',
+  searchPlaceholder: 'Search username or display name…',
+  empty: 'No users',
+  normal: 'Normal',
+  noPermissionRole: 'No permission to manage this role',
+  role: 'Role',
+  username: 'Username',
+  password: 'Password',
+  displayNameOptional: 'Display name (optional)',
+  displayName: 'Display name',
+  email: 'Email',
+  tenantId: 'Tenant ID',
+  userId: 'User ID',
+  detailTitle: 'User Details',
+  viewConversations: 'View Conversations',
+  confirmDeleteUser: 'Delete this user?',
+  filter: {
+    allStatus: 'All Statuses',
+    allRoles: 'All Roles',
+  },
+}

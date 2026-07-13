@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
   NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip, NSwitch,
@@ -10,15 +11,16 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, type LLMConfig, type SandboxNetworkConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
+const { t } = useI18n()
 const message = useMessage()
 const route = useRoute()
 
-const providerOptions = [
+const providerOptions = computed(() => [
   { label: 'OpenAI', value: 'openai' },
-  { label: 'Qwen (通义千问)', value: 'qwen' },
-  { label: 'Ollama (本地)', value: 'ollama' },
-  { label: '自定义', value: 'custom' },
-]
+  { label: t('settings.providerQwen'), value: 'qwen' },
+  { label: t('settings.providerOllama'), value: 'ollama' },
+  { label: t('settings.providerCustom'), value: 'custom' },
+])
 
 const urlDefaults: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
@@ -28,18 +30,18 @@ const urlDefaults: Record<string, string> = {
 }
 
 const sections = [
-  { id: 'llm', label: 'LLM' },
-  { id: 'server', label: '服务器' },
-  { id: 'system-prompt', label: '系统提示词' },
-  { id: 'sandbox-network', label: '沙盒网络' },
-  { id: 'plugins', label: '插件管理' },
+  { id: 'llm', label: 'settings.nav.llm' },
+  { id: 'server', label: 'settings.nav.server' },
+  { id: 'system-prompt', label: 'settings.nav.systemPrompt' },
+  { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
+  { id: 'plugins', label: 'settings.nav.plugins' },
 ]
 
-const networkModeOptions = [
-  { label: 'deny（默认，禁止所有网络访问）', value: 'deny' },
-  { label: 'allow（全放开，仅调试用）', value: 'allow' },
-  { label: 'allowlist（仅允许白名单域名）', value: 'allowlist' },
-]
+const networkModeOptions = computed(() => [
+  { label: t('settings.networkDeny'), value: 'deny' },
+  { label: t('settings.networkAllow'), value: 'allow' },
+  { label: t('settings.networkAllowlist'), value: 'allowlist' },
+])
 
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
@@ -64,31 +66,31 @@ const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
 // Generated-file retention presets (minutes). "custom" reveals a minutes input.
-const keepOptions = [
-  { label: '1 小时', value: 60 },
-  { label: '1 天', value: 1440 },
-  { label: '1 周', value: 10080 },
-  { label: '1 个月', value: 43200 },
-  { label: '自定义', value: 'custom' },
-]
+const keepOptions = computed(() => [
+  { label: t('settings.keep1h'), value: 60 },
+  { label: t('settings.keep1d'), value: 1440 },
+  { label: t('settings.keep1w'), value: 10080 },
+  { label: t('settings.keep1m'), value: 43200 },
+  { label: t('settings.keepCustom'), value: 'custom' },
+])
 
 const sandboxConfig = ref<SandboxNetworkConfig>({
   sandbox_network_mode: 'deny',
   sandbox_allow_domains: '',
   sandbox_allow_methods: '',
-  mcp_file_keep_minutes: keepOptions[1].value as number,
+  mcp_file_keep_minutes: keepOptions.value[1].value as number,
 })
 
 const keepPreset = ref<string>('60')
 const keepCustomMinutes = ref<number>(60)
 
 function formatKeep(min: number): string {
-  if (!min) return '未设置'
-  if (min % 43200 === 0) return `${min / 43200} 个月`
-  if (min % 10080 === 0) return `${min / 10080} 周`
-  if (min % 1440 === 0) return `${min / 1440} 天`
-  if (min % 60 === 0) return `${min / 60} 小时`
-  return `${min} 分钟`
+  if (!min) return t('settings.keepUnset')
+  if (min % 43200 === 0) return t('settings.keepMonths', { n: min / 43200 })
+  if (min % 10080 === 0) return t('settings.keepWeeks', { n: min / 10080 })
+  if (min % 1440 === 0) return t('settings.keepDays', { n: min / 1440 })
+  if (min % 60 === 0) return t('settings.keepHours', { n: min / 60 })
+  return t('settings.keepMinutes', { n: min })
 }
 const savingSandbox = ref(false)
 
@@ -99,17 +101,17 @@ onMounted(async () => {
   try {
     config.value = await getLLMConfig()
   } catch (e: any) {
-    message.error(e.message || '加载配置失败')
+    message.error(e.message || t('settings.msg.loadConfigFailed'))
   }
 
   try {
     sandboxConfig.value = await getSandboxNetwork()
     const v = sandboxConfig.value.mcp_file_keep_minutes ?? 60
-    const preset = keepOptions.find((o) => o.value !== 'custom' && o.value === v)
+    const preset = keepOptions.value.find((o) => o.value !== 'custom' && o.value === v)
     keepPreset.value = preset ? String(v) : 'custom'
     keepCustomMinutes.value = v
   } catch (e: any) {
-    message.error(e.message || '加载沙盒网络配置失败')
+    message.error(e.message || t('settings.msg.loadSandboxFailed'))
   }
 
   if (route.hash) {
@@ -207,9 +209,9 @@ async function handleSave() {
     config.value = res.config
     apiKeyInput.value = ''
     testResult.value = null
-    message.success('配置已保存，立即生效')
+    message.success(t('settings.msg.configSaved'))
   } catch (e: any) {
-    message.error(e.message || '保存失败')
+    message.error(e.message || t('settings.msg.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -221,10 +223,10 @@ async function handleTest() {
   try {
     const res = await testLLMConnection()
     testResult.value = res.ok
-      ? { ok: true, text: `✅ 连接成功 — 模型: ${res.model}，回复: "${res.reply}"` }
-      : { ok: false, text: `❌ 连接失败: ${res.error}` }
+      ? { ok: true, text: t('settings.test.success', { model: res.model, reply: res.reply }) }
+      : { ok: false, text: t('settings.test.failed', { error: res.error }) }
   } catch (e: any) {
-    testResult.value = { ok: false, text: `❌ 请求异常: ${e.message}` }
+    testResult.value = { ok: false, text: t('settings.test.error', { message: e.message }) }
   } finally {
     testing.value = false
   }
@@ -242,12 +244,12 @@ async function handleSaveSandbox() {
     })
     sandboxConfig.value = res.config
     if (res.mcp_pushed) {
-      message.success('沙盒网络策略已保存并热加载，立即生效')
+      message.success(t('settings.msg.sandboxSavedHot'))
     } else {
-      message.warning('已保存（MCP 热加载未成功，重启 MCP 容器后生效）')
+      message.warning(t('settings.msg.sandboxSavedRestart'))
     }
   } catch (e: any) {
-    message.error(e.message || '保存失败')
+    message.error(e.message || t('settings.msg.saveFailed'))
   } finally {
     savingSandbox.value = false
   }
@@ -257,7 +259,7 @@ async function handleSaveSandbox() {
 <template>
   <div class="settings-layout">
     <div class="settings-sticky-top">
-      <PageHeader title="系统设置" :icon="Settings" subtitle="LLM · 服务器 · 检索调试 · 插件管理 · 仅超级管理员可访问">
+      <PageHeader :title="t('settings.title')" :icon="Settings" :subtitle="t('settings.subtitle')">
         <template #actions>
           <NButton
             size="small"
@@ -267,7 +269,7 @@ async function handleSaveSandbox() {
             @click="handleSave"
           >
             <template #icon><NIcon><Save /></NIcon></template>
-            保存配置
+            {{ t('settings.saveConfig') }}
           </NButton>
         </template>
       </PageHeader>
@@ -280,7 +282,7 @@ async function handleSaveSandbox() {
         :class="['subnav-link', { active: activeSection === s.id }]"
         @click.prevent="scrollTo(s.id)"
       >
-        {{ s.label }}
+        {{ t(s.label) }}
       </a>
     </nav>
   </div>
@@ -290,12 +292,12 @@ async function handleSaveSandbox() {
     <NAlert
       v-if="!config.is_configured"
       type="warning"
-      title="尚未配置 LLM API Key"
+      :title="t('settings.alertTitle')"
       :bordered="false"
       style="margin-bottom: 16px"
     >
       <template #icon><NIcon :component="AlertCircle" /></template>
-      请先录入 LLM 服务商的 API Key，否则系统无法进行对话。录入后立即生效，无需重启。
+      {{ t('settings.alertDesc') }}
     </NAlert>
 
     <NCard :bordered="false" class="settings-card">
@@ -307,12 +309,12 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                Embedding 模型
+                {{ t('settings.embeddingModel') }}
                 <NTooltip trigger="hover" :width="260">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  默认使用本地Embedding模型。
+                  {{ t('settings.embeddingModelTip') }}
                 </NTooltip>
               </span>
             </template>
@@ -321,7 +323,7 @@ async function handleSaveSandbox() {
             </NInput>
           </NFormItem>
           <!-- Provider -->
-          <NFormItem label="LLM 提供商">
+          <NFormItem :label="t('settings.providerLabel')">
             <NSelect
               v-model:value="config.llm_provider"
               :options="providerOptions"
@@ -335,7 +337,7 @@ async function handleSaveSandbox() {
               v-model:value="apiKeyInput"
               type="password"
               show-password-on="click"
-              :placeholder="config.is_configured ? (config.api_key_source === 'env' ? `当前: ${config.llm_api_key}（来自 .env 文件，留空不修改）` : `当前: ${config.llm_api_key}（留空不修改）`) : '请输入 API Key（首次录入）'"
+              :placeholder="config.is_configured ? (config.api_key_source === 'env' ? t('settings.apiKey.currentEnv', { key: config.llm_api_key }) : t('settings.apiKey.current', { key: config.llm_api_key })) : t('settings.apiKey.placeholder')"
               maxlength="512"
               @input="clearTest"
             >
@@ -351,7 +353,7 @@ async function handleSaveSandbox() {
           </NFormItem>
 
           <!-- Model -->
-          <NFormItem label="模型名称">
+          <NFormItem :label="t('settings.modelName')">
             <NInput v-model:value="config.llm_model" placeholder="gpt-4o-mini" @input="clearTest">
               <template #prefix><NIcon :component="Settings" /></template>
             </NInput>
@@ -366,9 +368,7 @@ async function handleSaveSandbox() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  控制 LLM 输出的随机性与创造性。范围 0~2。<br/>
-                  <b>0</b> = 最确定，每次回答一致；<b>2</b> = 最随机。<br/>
-                  RAG 场景建议 <b>0.1~0.5</b>，让 LLM 严格遵循检索文档，减少自由发挥。
+                  <span v-html="t('settings.tip.temperature')" />
                 </NTooltip>
               </span>
             </template>
@@ -387,9 +387,7 @@ async function handleSaveSandbox() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  LLM 单次输出的最大 token 数（≈ 中文字数 × 1.5~2）。<br/>
-                  设太小回答会被截断，设太大浪费额度。<br/>
-                  RAG 场景 <b>1024~4096</b> 通常足够，该值同时限制最终回答长度。
+                  <span v-html="t('settings.tip.maxTokens')" />
                 </NTooltip>
               </span>
             </template>
@@ -405,10 +403,8 @@ async function handleSaveSandbox() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                    Agent 在「工具决策」环节单次输出的最大 token 数，<b>独立于上面的 Max Tokens</b>。<br/>
-                    工具调用的参数（代码 / 文档 / 查询结果）可能很大，设太小会导致参数 JSON 被截断、工具调用失败。<br/>
-                    默认 <b>8192</b>，比普通回答更宽松；除非模型上下文极小，一般无需调小。
-                  </NTooltip>
+                  <span v-html="t('settings.tip.agentMaxTokens')" />
+                </NTooltip>
               </span>
             </template>
             <NInputNumber v-model:value="config.agent_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
@@ -418,14 +414,12 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                最大并发数
+                {{ t('settings.maxConcurrency') }}
                 <NTooltip trigger="hover" :width="300">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  同时向 LLM API 发送请求的会话数上限，超过后进入排队。<br/>
-                  建议按服务商账户等级设置，OpenAI Tier 1 通常设为 3~5。<br/>
-                  <b>修改后立即生效</b>，不会强行中断已在处理的请求。
+                  <span v-html="t('settings.tip.maxConcurrency')" />
                 </NTooltip>
               </span>
             </template>
@@ -436,20 +430,18 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                缓存有效期
+                {{ t('settings.cacheTtl') }}
                 <NTooltip trigger="hover" :width="300">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  相同问题的回答缓存有效时间（秒）。<br/>
-                  默认 3600 秒（60 分钟）。设为 0 可完全禁用缓存。<br/>
-                  <b>修改后立即生效</b>，不影响已缓存的条目（按各自创建时间判定过期）。
+                  <span v-html="t('settings.tip.cacheTtl')" />
                 </NTooltip>
               </span>
             </template>
             <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest" />
             <span class="muted" style="margin-left:8px;font-size:12px">
-              {{ config.cache_ttl_seconds === 0 ? '已禁用' : (config.cache_ttl_seconds + ' 秒 ≈ ' + Math.round(config.cache_ttl_seconds / 60) + ' 分钟') }}
+              {{ config.cache_ttl_seconds === 0 ? t('common.disabled') : t('settings.cacheSecondsApprox', { seconds: config.cache_ttl_seconds, minutes: Math.round(config.cache_ttl_seconds / 60) }) }}
             </span>
           </NFormItem>
 
@@ -463,7 +455,7 @@ async function handleSaveSandbox() {
                 @click="handleTest"
               >
                 <template #icon><NIcon><Flash /></NIcon></template>
-                测试连接
+                {{ t('settings.testConnection') }}
               </NButton>
               <div v-if="testResult" :class="['test-result', testResult.ok ? 'test-ok' : 'test-fail']">
                 <NIcon :component="testResult.ok ? CheckmarkCircle : AlertCircle" size="16" />
@@ -481,14 +473,12 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                监听地址
+                {{ t('settings.listenHost') }}
                 <NTooltip trigger="hover" :width="260">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  服务器绑定的 IP 地址。<br/>
-                  <b>0.0.0.0</b> = 接受所有网络接口的连接。<br/>
-                  <b>修改后需重启服务生效</b>。
+                  <span v-html="t('settings.listenHostTip')" />
                 </NTooltip>
               </span>
             </template>
@@ -500,13 +490,12 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                监听端口
+                {{ t('settings.listenPort') }}
                 <NTooltip trigger="hover" :width="260">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  服务器监听的 TCP 端口，范围 1~65535。<br/>
-                  <b>修改后需重启服务生效</b>。
+                  <span v-html="t('settings.listenPortTip')" />
                 </NTooltip>
               </span>
             </template>
@@ -521,13 +510,12 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                LLM 系统提示词
+                {{ t('settings.systemPrompt') }}
                 <NTooltip trigger="hover" :width="300">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  用于 RAG 和 Agent 默认回复的系统提示词。<br/>
-                  修改后立即生效，无需重启。
+                  <span v-html="t('settings.systemPromptTip')" />
                 </NTooltip>
               </span>
             </template>
@@ -535,7 +523,7 @@ async function handleSaveSandbox() {
               v-model:value="systemPromptModel"
               type="textarea"
               :rows="10"
-              placeholder="请输入系统提示词..."
+              :placeholder="t('settings.systemPrompt')"
               @input="clearTest"
             />
           </NFormItem>
@@ -543,15 +531,13 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                Agent 提示词语言
+                {{ t('settings.agentPromptLang') }}
                 <NTooltip trigger="hover" :width="320">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                    控制 Agent Graph 内部提示词（意图路由 + 工具强制 JSON）使用的语言。<br/>
-                    默认 <b>中文</b>；切到 <b>English</b> 可对比英文主导模型（GPT / Claude / DeepSeek 等）的指令遵循率。<br/>
-                    修改后立即生效，无需重启，便于 A/B 对比。
-                  </NTooltip>
+                  <span v-html="t('settings.agentPromptLangTip')" />
+                </NTooltip>
               </span>
             </template>
             <NSpace align="center">
@@ -561,7 +547,7 @@ async function handleSaveSandbox() {
                 unchecked-value="zh"
               />
               <span class="muted" style="font-size: 13px">
-                {{ config.prompt_language === 'en' ? 'English（英文）' : '中文（默认）' }}
+                {{ config.prompt_language === 'en' ? t('settings.promptLang.en') : t('settings.promptLang.zh') }}
               </span>
             </NSpace>
           </NFormItem>
@@ -578,17 +564,13 @@ async function handleSaveSandbox() {
 
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="sandbox-network">
-        <h3 class="section-title">沙盒 / REPL 执行环境（网络策略 &amp; 文件保留）</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px">
-          控制 LLM 生成的代码在沙盒中能否访问外部网络。默认 <b>deny</b>（完全禁止，最安全）。
-          选择 <b>allowlist</b> 后可填写允许访问的域名（逗号或换行分隔），Python 代码仅能访问白名单域名，
-          且直连 IP 会被拦截（防 DNS 重绑）。修改后通过 MCP 服务热加载，<b>立即生效，无需重启</b>。
-        </p>
+        <h3 class="section-title">{{ t('settings.sandboxTitle') }}</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.sandboxDesc')" />
         <NForm label-placement="left" label-width="140">
-          <NFormItem label="网络策略模式">
+          <NFormItem :label="t('settings.networkMode')">
             <NSelect v-model:value="sandboxConfig.sandbox_network_mode" :options="networkModeOptions" />
           </NFormItem>
-          <NFormItem v-if="sandboxConfig.sandbox_network_mode === 'allowlist'" label="允许域名">
+          <NFormItem v-if="sandboxConfig.sandbox_network_mode === 'allowlist'" :label="t('settings.allowDomains')">
             <NInput
               v-model:value="sandboxConfig.sandbox_allow_domains"
               type="textarea"
@@ -599,30 +581,30 @@ async function handleSaveSandbox() {
 
           <NDivider />
 
-          <NFormItem label="生成文件保留时长">
+          <NFormItem :label="t('settings.fileRetention')">
             <NSpace vertical :size="8" style="width: 100%">
               <NSelect v-model:value="keepPreset" :options="keepOptions" style="max-width: 240px" />
               <NInputNumber
                 v-if="keepPreset === 'custom'"
                 v-model:value="keepCustomMinutes"
                 :min="1" :max="525600" :step="60"
-                placeholder="自定义分钟数"
+                :placeholder="t('settings.customMinutesPlaceholder')"
               >
-                <template #suffix>分钟</template>
+                <template #suffix>{{ t('settings.minutes') }}</template>
               </NInputNumber>
               <span class="muted" style="font-size: 12px">
-                当前保留：{{ formatKeep(sandboxConfig.mcp_file_keep_minutes) }}（MCP 重启后仍生效）
+                {{ t('settings.currentRetention', { keep: formatKeep(sandboxConfig.mcp_file_keep_minutes) }) }}
               </span>
             </NSpace>
           </NFormItem>
 
           <NFormItem>
             <NSpace align="center">
-              <NButton type="primary" :loading="savingSandbox" @click="handleSaveSandbox">保存沙盒网络策略</NButton>
+              <NButton type="primary" :loading="savingSandbox" @click="handleSaveSandbox">{{ t('settings.saveSandbox') }}</NButton>
               <span class="muted" style="font-size: 12px">
-                当前：{{ sandboxConfig.sandbox_network_mode }}
+                {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
                 <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
-                  （{{ sandboxConfig.sandbox_allow_domains || '未配置域名' }}）
+                  （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
                 </template>
               </span>
             </NSpace>

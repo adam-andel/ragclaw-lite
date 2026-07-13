@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import MarkdownIt from 'markdown-it'
 import { NTag, NButton, NIcon, NSpin } from 'naive-ui'
 import { Copy, Refresh } from '@vicons/ionicons5'
+import { currentLocale } from '@/i18n/useLocale'
 import AppModal from '@/components/common/AppModal.vue'
 import type { ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
@@ -24,17 +26,21 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 
+const { t } = useI18n()
+
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 function formatTime(iso: string) {
   // Backend stores UTC naive datetimes; treat as UTC and convert to local time.
   const normalized = /[A-Z]|\+[0-9]{2}:[0-9]{2}$|-[0-9]{2}:[0-9]{2}$/.test(iso) ? iso : iso + 'Z'
   const d = new Date(normalized)
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hour = String(d.getHours()).padStart(2, '0')
-  const minute = String(d.getMinutes()).padStart(2, '0')
-  return `${month}月${day}日 ${hour}:${minute}`
+  if (isNaN(d.getTime())) return '-'
+  return new Intl.DateTimeFormat(currentLocale.value, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d)
 }
 
 const renderedContent = computed(() => {
@@ -63,7 +69,7 @@ const renderedContent = computed(() => {
     // Build collapsible think block
     html +=
       `<details class="think-block">` +
-      `<summary>💭 思考过程</summary>` +
+      `<summary>${t('chat.thinkingProcess')}</summary>` +
       `<div class="think-content">${escapeHtml(remaining.slice(0, endIdx))}</div>` +
       `</details>`
     remaining = remaining.slice(endIdx + '</think>'.length)
@@ -162,7 +168,7 @@ async function openAllCitations() {
       props.message.citations.map(async (c) => {
         const key = `${c.doc_id}-${c.chunk_index}`
         if (c.chunk_index == null) {
-          citationFullContent.value[key] = '该历史引用缺少分块索引，无法加载完整内容'
+          citationFullContent.value[key] = t('chat.citationMissingChunk')
           return
         }
         try {
@@ -185,7 +191,7 @@ function getCitationContent(c: ChatMessage['citations'][number]) {
   if (citationFullContent.value[key] != null) {
     return citationFullContent.value[key]
   }
-  return '加载失败，无法获取完整内容'
+  return t('chat.citationLoadFailed')
 }
 
 async function handleDownload(docId: string, filename: string) {
@@ -248,13 +254,13 @@ onBeforeUnmount(() => {
     <div class="message-col">
     <div class="message-body">
       <div class="message-meta">
-        <span class="role-label">{{ message.role === 'user' ? '你' : 'ERAG' }}</span>
+        <span class="role-label">{{ message.role === 'user' ? t('chat.you') : 'ERAG' }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
 
       <!-- 处理过程时间线 -->
       <details v-if="steps.length" class="agent-steps" :open="isStreaming">
-        <summary>🤖 处理过程（{{ steps.length }}）</summary>
+        <summary>{{ t('chat.processSteps', { count: steps.length }) }}</summary>
         <ul class="agent-step-list">
           <li v-for="(s, i) in steps" :key="i" :class="'step-' + s.stage">
             <span class="step-msg">{{ s.message }}</span>
@@ -268,9 +274,9 @@ onBeforeUnmount(() => {
           <span ref="streamEl" :id="'stream-' + message.id"></span>
           <span v-show="!hasStreamedContent" class="thinking-placeholder">
             <template v-if="queuePosition != null && queuePosition > 0">
-              排队中，前面还有 {{ queuePosition }} 人
+              {{ t('chat.queued', { count: queuePosition }) }}
             </template>
-            <template v-else>思考中……</template>
+            <template v-else>{{ t('chat.thinking') }}</template>
           </span>
         </div>
       </template>
@@ -281,7 +287,7 @@ onBeforeUnmount(() => {
       </template>
 
       <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">
-        ⏱ TTFT {{ (message as any)._ttft || (message as any).ttft_ms || 0 }}ms &nbsp;|&nbsp; 🔍 检索 {{ (message as any)._retrieval || (message as any).retrieval_ms || 0 }}ms &nbsp;|&nbsp; 🧠 LLM {{ (message as any)._llm || (message as any).llm_ms || 0 }}ms
+        ⏱ TTFT {{ (message as any)._ttft || (message as any).ttft_ms || 0 }}ms &nbsp;|&nbsp; 🔍 {{ t('chat.retrieval') }} {{ (message as any)._retrieval || (message as any).retrieval_ms || 0 }}ms &nbsp;|&nbsp; 🧠 LLM {{ (message as any)._llm || (message as any).llm_ms || 0 }}ms
       </div>
 
       <div v-if="message.citations.length > 0 && !isStreaming" class="citations">
@@ -293,12 +299,12 @@ onBeforeUnmount(() => {
           @keydown.enter.prevent="openAllCitations"
           @keydown.space.prevent="openAllCitations"
         >
-          引用来源 · {{ message.citations.length }}
+          {{ t('chat.citationSource', { count: message.citations.length }) }}
         </div>
       </div>
 
       <!-- 全部引用摘要 Modal -->
-      <AppModal v-model:show="showCitationModal" title="引用来源详情" size="wide">
+      <AppModal v-model:show="showCitationModal" :title="t('chat.citationDetail')" size="wide">
         <NSpin :show="loadingCitationContent">
           <div class="citation-modal-body">
             <div v-for="(c, i) in message.citations" :key="i" class="citation-item">
@@ -306,7 +312,7 @@ onBeforeUnmount(() => {
                 <NTag size="small" type="info" :bordered="false">{{ i + 1 }}</NTag>
                 <span
                   class="citation-item-name citation-item-download"
-                  :title="`下载 ${c.doc_name}`"
+                  :title="t('chat.downloadX', { name: c.doc_name })"
                   @click.stop="handleDownload(c.doc_id, c.doc_name)"
                   role="button"
                   tabindex="0"
@@ -318,7 +324,7 @@ onBeforeUnmount(() => {
               <div class="citation-item-meta">
                 <span v-if="c.heading">📂 {{ c.heading }}</span>
                 <span v-if="c.chunk_index != null">Chunk #{{ c.chunk_index }}</span>
-                <span v-if="c.page != null && c.page > 0">第{{ c.page }}页</span>
+                <span v-if="c.page != null && c.page > 0">{{ t('chat.pageX', { page: c.page }) }}</span>
               </div>
               <pre class="citation-item-snippet">{{ getCitationContent(c) }}</pre>
             </div>
@@ -331,25 +337,25 @@ onBeforeUnmount(() => {
       <div class="copy-btn-wrapper">
         <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
           <template #icon><NIcon><Copy /></NIcon></template>
-          复制
+          {{ t('common.copy') }}
         </NButton>
         <Transition name="copy-tip-fade">
-          <span v-if="copied" class="copy-tip">已复制</span>
+          <span v-if="copied" class="copy-tip">{{ t('common.copied') }}</span>
         </Transition>
       </div>
       <NButton text size="tiny" @click="regenerate(message)" class="msg-action-btn">
         <template #icon><NIcon><Refresh /></NIcon></template>
-        重新生成
+        {{ t('chat.regenerate') }}
       </NButton>
     </div>
     <div v-if="!isStreaming && message.role === 'user'" class="message-actions">
       <div class="copy-btn-wrapper">
         <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
           <template #icon><NIcon><Copy /></NIcon></template>
-          复制
+          {{ t('common.copy') }}
         </NButton>
         <Transition name="copy-tip-fade">
-          <span v-if="copied" class="copy-tip">已复制</span>
+          <span v-if="copied" class="copy-tip">{{ t('common.copied') }}</span>
         </Transition>
       </div>
     </div>

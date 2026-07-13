@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, h } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NAvatar, NIcon,
   NCard, NText, useMessage,
@@ -11,6 +12,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 
 const auth = useAuthStore()
 const message = useMessage()
+const { t } = useI18n()
 
 // ── Avatar ──
 const avatarEmojis = ['👤', '😎', '🦊', '🐱', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐙', '🦄', '🐳', '🦋', '🌸', '🔥']
@@ -40,12 +42,12 @@ async function handleAvatarUpload(e: Event) {
   if (!file) return
 
   if (!file.type.startsWith('image/')) {
-    message.error('请上传图片文件')
+    message.error(t('profile.uploadImageError'))
     target.value = ''
     return
   }
   if (file.size > MAX_AVATAR_SIZE) {
-    message.error(`图片大小不能超过 ${MAX_AVATAR_SIZE / 1024 / 1024}MB`)
+    message.error(t('profile.imageTooLarge', { size: MAX_AVATAR_SIZE / 1024 / 1024 }))
     target.value = ''
     return
   }
@@ -56,10 +58,10 @@ async function handleAvatarUpload(e: Event) {
     formData.append('file', file)
     const res = await client.post('/auth/me/avatar', formData)
     auth.user = res.data
-    message.success('头像已更新')
+    message.success(t('profile.avatarUpdated'))
     showAvatarPicker.value = false
   } catch (e: any) {
-    message.error(e.message || '上传失败')
+    message.error(e.message || t('profile.uploadFailed'))
   } finally {
     uploading.value = false
     target.value = ''
@@ -71,9 +73,9 @@ async function removeCustomAvatar() {
   try {
     const res = await client.delete('/auth/me/avatar')
     auth.user = res.data
-    message.success('已重置为默认头像')
+    message.success(t('profile.avatarReset'))
   } catch (e: any) {
-    message.error(e.message || '重置失败')
+    message.error(e.message || t('profile.resetFailed'))
   } finally {
     uploading.value = false
   }
@@ -91,7 +93,7 @@ const saving = ref(false)
 
 async function handleSave() {
   if (form.value.password && form.value.password !== form.value.passwordConfirm) {
-    message.error('两次输入的密码不一致')
+    message.error(t('profile.passwordMismatch'))
     return
   }
   saving.value = true
@@ -105,11 +107,11 @@ async function handleSave() {
     }
     const res = await client.put('/auth/me', payload)
     auth.user = res.data
-    message.success('个人信息已更新')
+    message.success(t('profile.profileUpdated'))
     form.value.password = ''
     form.value.passwordConfirm = ''
   } catch (e: any) {
-    message.error(e.message || '更新失败')
+    message.error(e.message || t('profile.updateFailed'))
   } finally {
     saving.value = false
   }
@@ -118,9 +120,9 @@ async function handleSave() {
 // ── Role label ──
 const roleLabel = computed(() => {
   switch (auth.user?.role) {
-    case 'admin': return '超级管理员'
-    case 'moderator': return '普通管理员'
-    default: return '普通用户'
+    case 'admin': return t('common.role.superAdmin')
+    case 'moderator': return t('common.role.admin')
+    default: return t('common.role.regular')
   }
 })
 
@@ -135,7 +137,7 @@ const roleColor = computed(() => {
 
 <template>
   <div class="profile-page">
-    <PageHeader title="个人信息设置" title-tag="h1" />
+    <PageHeader :title="t('profile.title')" title-tag="h1" />
 
     <NCard class="profile-card" :bordered="false">
       <!-- Avatar -->
@@ -154,7 +156,7 @@ const roleColor = computed(() => {
           </NAvatar>
           <div class="avatar-edit-hint">
             <NIcon size="14"><Create /></NIcon>
-            <span>更换头像aaa</span>
+            <span>{{ t('profile.changeAvatar') }}</span>
           </div>
         </div>
         <div v-if="showAvatarPicker" class="avatar-picker">
@@ -164,20 +166,20 @@ const roleColor = computed(() => {
             :class="['avatar-emoji-btn', { active: selectedAvatar === emoji && !auth.user?.avatar_url }]"
             @click="selectAvatar(emoji)"
           >{{ emoji }}</button>
-          <button class="avatar-upload-btn" title="上传自定义头像" :disabled="uploading" @click="triggerUpload">
+          <button class="avatar-upload-btn" :title="t('profile.uploadAvatarTitle')" :disabled="uploading" @click="triggerUpload">
             <NIcon size="18"><ImageOutline /></NIcon>
           </button>
-          <button v-if="auth.user?.avatar_url" class="avatar-reset-btn" :disabled="uploading" @click="removeCustomAvatar">重置</button>
+          <button v-if="auth.user?.avatar_url" class="avatar-reset-btn" :disabled="uploading" @click="removeCustomAvatar">{{ t('common.reset') }}</button>
         </div>
       </div>
 
       <!-- Form -->
       <NForm label-placement="left" label-width="100" :style="{ maxWidth: '480px' }">
-        <NFormItem label="用户名">
+        <NFormItem :label="t('profile.username')">
           <NInput
             :value="auth.user?.username"
             disabled
-            placeholder="用户名不可修改"
+            :placeholder="t('profile.usernameReadOnly')"
           >
             <template #prefix>
               <NIcon :component="PersonCircle" />
@@ -185,17 +187,17 @@ const roleColor = computed(() => {
           </NInput>
         </NFormItem>
 
-        <NFormItem label="角色">
+        <NFormItem :label="t('profile.role')">
           <div class="role-display" :style="{ color: roleColor }">
             <NIcon :component="ShieldCheckmark" :size="16" />
             <span>{{ roleLabel }}</span>
           </div>
         </NFormItem>
 
-        <NFormItem label="显示名">
+        <NFormItem :label="t('profile.displayName')">
           <NInput
             v-model:value="form.display_name"
-            placeholder="输入显示名称"
+            :placeholder="t('profile.displayNamePlaceholder')"
             maxlength="200"
           >
             <template #prefix>
@@ -204,10 +206,10 @@ const roleColor = computed(() => {
           </NInput>
         </NFormItem>
 
-        <NFormItem label="邮箱">
+        <NFormItem :label="t('profile.email')">
           <NInput
             v-model:value="form.email"
-            placeholder="输入邮箱地址"
+            :placeholder="t('profile.emailPlaceholder')"
             :input-props="{ type: 'email' }"
             clearable
           >
@@ -217,11 +219,11 @@ const roleColor = computed(() => {
           </NInput>
         </NFormItem>
 
-        <NFormItem label="新密码">
+        <NFormItem :label="t('profile.newPassword')">
           <NInput
             v-model:value="form.password"
             type="password"
-            placeholder="留空则不修改密码"
+            :placeholder="t('profile.newPasswordPlaceholder')"
             show-password-on="click"
             minlength="4"
           >
@@ -231,11 +233,11 @@ const roleColor = computed(() => {
           </NInput>
         </NFormItem>
 
-        <NFormItem v-if="form.password" label="确认密码">
+        <NFormItem v-if="form.password" :label="t('profile.confirmPassword')">
           <NInput
             v-model:value="form.passwordConfirm"
             type="password"
-            placeholder="再次输入新密码"
+            :placeholder="t('profile.confirmPasswordPlaceholder')"
             show-password-on="click"
             minlength="4"
           >
@@ -252,7 +254,7 @@ const roleColor = computed(() => {
             :disabled="!form.display_name.trim()"
             @click="handleSave"
           >
-            保存修改
+            {{ t('profile.saveChanges') }}
           </NButton>
         </NFormItem>
       </NForm>

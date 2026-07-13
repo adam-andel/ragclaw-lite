@@ -1,4 +1,5 @@
 import type { Conversation, SSEEvent } from '@/types'
+import { i18n } from '@/i18n'
 
 export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('token')
@@ -9,7 +10,7 @@ function handleResponse(r: Response) {
   if (r.status === 401) {
     localStorage.removeItem('token')
     window.location.href = '/login'
-    throw new Error('登录已过期')
+    throw new Error(i18n.global.t('errors.loginExpiredShort'))
   }
   return r
 }

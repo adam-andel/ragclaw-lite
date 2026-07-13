@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { NCard, NTag, NSpin } from 'naive-ui'
 import { getOverview } from '@/api/stats'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { formatDateTime } from '@/i18n/format'
 import type { SystemStats } from '@/types'
 
+const { t } = useI18n()
 const stats = ref<SystemStats | null>(null)
 const loading = ref(true)
 
@@ -24,7 +27,7 @@ function formatTokens(cost: number) {
 
 <template>
   <div class="dashboard-view">
-    <PageHeader title="📊 系统概览" />
+    <PageHeader :title="t('dashboard.overview')" />
 
     <NSpin :show="loading">
       <div v-if="stats" class="dashboard-body">
@@ -32,42 +35,42 @@ function formatTokens(cost: number) {
         <div class="stat-cards">
           <NCard size="small" class="stat-card">
             <div class="stat-value">{{ stats.document_count }}</div>
-            <div class="stat-label">📄 文档总数</div>
+            <div class="stat-label">{{ t('dashboard.docTotal') }}</div>
           </NCard>
           <NCard size="small" class="stat-card">
             <div class="stat-value">{{ stats.chunk_count.toLocaleString() }}</div>
-            <div class="stat-label">🧩 分块总数</div>
+            <div class="stat-label">{{ t('dashboard.chunkTotal') }}</div>
           </NCard>
           <NCard size="small" class="stat-card">
             <div class="stat-value">{{ stats.conversation_count }}</div>
-            <div class="stat-label">💬 对话次数</div>
+            <div class="stat-label">{{ t('dashboard.conversationCount') }}</div>
           </NCard>
           <NCard size="small" class="stat-card">
             <div class="stat-value">{{ formatTokens(stats.today_token_cost) }}</div>
-            <div class="stat-label">💰 今日 Token 消耗</div>
+            <div class="stat-label">{{ t('dashboard.todayTokenCost') }}</div>
           </NCard>
           <NCard size="small" class="stat-card">
             <div class="stat-value">{{ (stats.cache_hit_rate * 100).toFixed(1) }}%</div>
-            <div class="stat-label">⚡ 缓存命中率</div>
+            <div class="stat-label">{{ t('dashboard.cacheHitRate') }}</div>
           </NCard>
         </div>
 
         <!-- Hot Questions -->
-        <NCard title="🔥 热门问题 Top 5" size="small" class="section-card">
-          <div v-if="stats.hot_questions.length === 0" class="empty-text">暂无数据</div>
+        <NCard :title="t('dashboard.hotQuestions')" size="small" class="section-card">
+          <div v-if="stats.hot_questions.length === 0" class="empty-text">{{ t('common.noData') }}</div>
           <div v-for="(hq, i) in stats.hot_questions" :key="i" class="hot-item">
             <span class="hot-index">{{ i + 1 }}.</span>
             <span class="hot-question">{{ hq.question }}</span>
-            <NTag size="tiny">{{ hq.count }} 次</NTag>
+            <NTag size="tiny">{{ t('dashboard.times', { count: hq.count }) }}</NTag>
           </div>
         </NCard>
 
         <!-- Recent Conversations -->
-        <NCard title="📋 最近对话" size="small" class="section-card">
-          <div v-if="stats.recent_conversations.length === 0" class="empty-text">暂无对话</div>
+        <NCard :title="t('dashboard.recentConversations')" size="small" class="section-card">
+          <div v-if="stats.recent_conversations.length === 0" class="empty-text">{{ t('dashboard.noConversations') }}</div>
           <div v-for="conv in stats.recent_conversations" :key="conv.id" class="recent-item">
             <span>{{ conv.title }}</span>
-            <span class="recent-time">{{ new Date(conv.updated_at).toLocaleString('zh-CN') }}</span>
+            <span class="recent-time">{{ formatDateTime(conv.updated_at) }}</span>
           </div>
         </NCard>
       </div>
