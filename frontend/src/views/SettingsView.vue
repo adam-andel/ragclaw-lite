@@ -9,7 +9,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
 const { t } = useI18n()
@@ -106,6 +106,39 @@ const embeddingOptions = ref<EmbeddingModelOption[]>([])
 const selectedModel = ref<string>('')
 const switching = ref(false)
 const embeddingPollTimer = ref<number | null>(null)
+
+// ── Re-index (after embedding-model switch) ──
+const reindexStatus = ref<ReindexStatus>({
+  status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0,
+})
+const reindexing = ref(false)
+const reindexPollTimer = ref<number | null>(null)
+
+async function loadReindexStatus() {
+  try {
+    reindexStatus.value = await getReindexStatus()
+    reindexing.value = reindexStatus.value.status === 'running'
+  } catch (e: any) {
+    // non-fatal
+  }
+}
+
+function stopReindexPolling() {
+  if (reindexPollTimer.value !== null) {
+    clearInterval(reindexPollTimer.value)
+    reindexPollTimer.value = null
+  }
+}
+
+function startReindexPolling() {
+  if (reindexPollTimer.value !== null) return
+  reindexPollTimer.value = window.setInterval(async () => {
+    await loadReindexStatus()
+    if (reindexStatus.value.status === 'completed' || reindexStatus.value.status === 'failed') {
+      stopReindexPolling()
+    }
+  }, 2000)
+}
 
 const embeddingSelectOptions = computed(() =>
   embeddingOptions.value.map((o) => ({ label: o.label, value: o.id })),
@@ -204,7 +237,7 @@ async function handleSwitchEmbedding() {
   }
 }
 
-async function onSwitched(res: { model: string; installed: boolean; cleared_vectors: boolean }) {
+async function onSwitched(res: { model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
   config.value.embedding_model = res.model
   await loadEmbeddingStatus()
   if (!res.installed) {
@@ -213,6 +246,28 @@ async function onSwitched(res: { model: string; installed: boolean; cleared_vect
     message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
   } else {
     message.success(t('settings.embeddingModelMgmt.switched'))
+  }
+  if (res.cleared_vectors) {
+    await loadReindexStatus()
+    if (res.reindex_started) startReindexPolling()
+    else message.info(t('settings.embeddingModelMgmt.reindexPendingDownload'))
+  }
+}
+
+async function handleReindex() {
+  try {
+    const res = await startReindex()
+    if (res.started) {
+      await loadReindexStatus()
+      startReindexPolling()
+      message.info(t('settings.embeddingModelMgmt.reindexStarted'))
+    } else if (res.reason === 'already_running') {
+      await loadReindexStatus()
+      startReindexPolling()
+      message.warning(t('settings.embeddingModelMgmt.reindexRunning'))
+    }
+  } catch (e: any) {
+    message.error(e.response?.data?.detail ?? e.message ?? t('settings.saveFailed'))
   }
 }
 
@@ -237,6 +292,8 @@ onMounted(async () => {
   }
 
   await loadEmbeddingStatus()
+  await loadReindexStatus()
+  if (reindexing.value) startReindexPolling()
 
   if (route.hash) {
     const id = route.hash.slice(1)
@@ -263,6 +320,7 @@ onMounted(async () => {
 onUnmounted(() => {
   observer?.disconnect()
   stopEmbeddingPolling()
+  stopReindexPolling()
 })
 
 function clearTest() { testResult.value = null }
@@ -696,6 +754,47 @@ async function handleSaveSandbox() {
                 </template>
               </span>
             </NSpace>
+          </NFormItem>
+
+          <NFormItem :show-feedback="false">
+            <NSpace align="center">
+              <NButton
+                type="warning"
+                secondary
+                :loading="reindexing"
+                :disabled="!embeddingStatus.installed || reindexing"
+                @click="handleReindex"
+              >
+                <template #icon><NIcon><Flash /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
+              </NButton>
+              <span class="muted" style="font-size: 12px">
+                {{ t('settings.embeddingModelMgmt.reindexHint') }}
+              </span>
+            </NSpace>
+          </NFormItem>
+
+          <NFormItem v-if="reindexStatus.status !== 'idle'" :show-feedback="false">
+            <NAlert
+              :type="reindexStatus.status === 'failed' ? 'error' : (reindexStatus.status === 'completed' ? 'success' : 'warning')"
+              :bordered="false"
+              :title="t('settings.embeddingModelMgmt.reindexTitle')"
+            >
+              <div style="font-size: 13px">
+                {{ reindexStatus.message || reindexStatus.error }}
+              </div>
+              <NProgress
+                v-if="reindexStatus.status === 'running'"
+                type="line"
+                :percentage="reindexStatus.progress"
+                :show-indicator="true"
+                :processing="true"
+                style="margin-top: 8px; max-width: 360px"
+              />
+              <div v-if="reindexStatus.status === 'running'" class="muted" style="font-size: 12px; margin-top: 4px">
+                {{ reindexStatus.current }} / {{ reindexStatus.total }}
+              </div>
+            </NAlert>
           </NFormItem>
         </section>
 

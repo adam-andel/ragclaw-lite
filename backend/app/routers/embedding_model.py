@@ -121,9 +121,22 @@ async def switch_embedding_model(
         except Exception:
             pass
 
+    # When the dimension changed we wiped every collection. Rebuild them against
+    # the new model — immediately if it's already installed, otherwise queue it
+    # so the download worker starts it on completion.
+    from app.services.reindex_service import reindex_service
+    reindex_started = False
+    if conflict and body.force:
+        if installed:
+            reindex_service.start()
+            reindex_started = True
+        else:
+            model_manager.set_pending_reindex()
+
     return {
         "switched": True,
         "model": target,
         "installed": installed,
         "cleared_vectors": bool(conflict and body.force),
+        "reindex_started": reindex_started,
     }

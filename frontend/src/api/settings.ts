@@ -112,9 +112,30 @@ export interface SwitchEmbeddingResult {
   model: string
   installed: boolean
   cleared_vectors: boolean
+  reindex_started: boolean
 }
 
 export async function switchEmbeddingModel(model: string, force = false): Promise<SwitchEmbeddingResult> {
   const res = await client.post('/embedding-model/switch', { model, force })
+  return res.data
+}
+
+// ── Re-index all documents against the active embedding model ──
+export interface ReindexStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  error: string
+  current: number
+  total: number
+}
+
+export async function getReindexStatus(): Promise<ReindexStatus> {
+  const res = await client.get('/documents/reindex/status')
+  return res.data
+}
+
+export async function startReindex(): Promise<{ started: boolean; reason?: string }> {
+  const res = await client.post('/documents/reindex')
   return res.data
 }

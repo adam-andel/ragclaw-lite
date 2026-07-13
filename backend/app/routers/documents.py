@@ -405,3 +405,32 @@ async def trigger_process_all(
     import asyncio
     asyncio.create_task(process_pending_documents())
     return {"status": "started"}
+
+
+# ---- Re-index all documents against the current embedding model ----
+
+@router.post("/reindex")
+async def reindex_all_documents(
+    current_user: User = Depends(get_current_staff),
+):
+    """Re-embed every completed document with the active model and rebuild KB indexes.
+
+    Used after an embedding-model switch (different dimension) or to repair stale
+    vectors. Requires the target model to be installed.
+    """
+    from app.services.model_manager import model_manager
+    from app.services.reindex_service import reindex_service
+    if not model_manager.is_installed():
+        raise HTTPException(400, "Embedding 模型尚未安装，无法重新向量化")
+    if reindex_service.is_running():
+        return {"started": False, "reason": "already_running"}
+    return reindex_service.start()
+
+
+@router.get("/reindex/status")
+async def reindex_status(
+    current_user: User = Depends(get_current_staff),
+):
+    """Return progress of the background re-index job."""
+    from app.services.reindex_service import reindex_service
+    return reindex_service.get_state()
