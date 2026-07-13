@@ -10,7 +10,7 @@ import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, listConversations } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
@@ -326,6 +326,18 @@ async function loadConversation(id: string) {
     }
     // 服务端分页：加载最新一页（最后一页）并滚动到底部
     await loadInitialPage(id)
+    // 刷新后恢复挂起态：若存在待用户确认的限额挂起，重建内联气泡并隐藏那条提示消息
+    const pending = await getPendingLimit(id)
+    if (pending && pending.message_id) {
+      pendingLimit.value = {
+        message: pending.message,
+        convId: pending.conversation_id,
+        kind: pending.kind,
+        messageId: pending.message_id,
+      }
+      const pm = messages.value.find(m => m.id === pending.message_id)
+      if (pm) pm._pending = true
+    }
   } catch {
     messages.value = []
     conversationId.value = undefined

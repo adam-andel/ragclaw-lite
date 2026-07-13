@@ -85,3 +85,10 @@ export const getConversationMessages = (id: string, page: number | string = 'las
 
 export const deleteConversation = (id: string) =>
   fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)
+
+// 刷新后恢复挂起态：返回该对话待用户确认的限额挂起（或 null）
+export const getPendingLimit = (id: string) =>
+  fetch(`/api/conversations/${id}/pending`, { headers: authHeaders() })
+    .then(handleResponse)
+    .then((r) => r.json())
+    .catch(() => null)

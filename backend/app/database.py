@@ -101,6 +101,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('message_status', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "pending_limit_states" not in applied:
+        _migrate_pending_limit_states(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('pending_limit_states', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -537,6 +542,20 @@ def _migrate_message_status(raw):
         print("[migrate] message_status: added status column to messages")
     else:
         print("[migrate] message_status: column already exists, skipping")
+
+
+def _migrate_pending_limit_states(raw):
+    """Create pending_limit_states table for durable Human-in-the-Loop pauses."""
+    print("[migrate] Running pending_limit_states...")
+    raw.execute("""
+        CREATE TABLE IF NOT EXISTS pending_limit_states (
+            conversation_id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            created_at DATETIME
+        )
+    """)
+    print("[migrate] pending_limit_states done")
 
 
 def _migrate_system_settings(raw):

@@ -74,3 +74,14 @@ class ConversationMessagesPage(BaseModel):
     messages: list[MessageResponse] = []
 
     model_config = {"from_attributes": True}
+
+
+class PendingLimitResponse(BaseModel):
+    """A durable Human-in-the-Loop pause waiting for the user (survives refresh)."""
+
+    conversation_id: str
+    message_id: str
+    message: str
+    kind: str
+
+    model_config = {"from_attributes": True}

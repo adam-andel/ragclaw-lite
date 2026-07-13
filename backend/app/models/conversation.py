@@ -51,3 +51,19 @@ class Message(Base):
     @citations.setter
     def citations(self, value: list[dict]):
         self.citations_json = json.dumps(value, ensure_ascii=False)
+
+
+class PendingLimitState(Base):
+    """Persisted snapshot for an in-flight Human-in-the-Loop pause (限额挂起).
+
+    Replaces the previous in-memory ``pending_by_conv`` dict so a suspended turn
+    survives page refresh / process restart and can be resumed or stopped.
+    One row per conversation (the most recent pause wins).
+    """
+
+    __tablename__ = "pending_limit_states"
+
+    conversation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(36))
+    snapshot_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

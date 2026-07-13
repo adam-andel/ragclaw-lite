@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db, async_session
 from app.models.user import User
-from app.models.conversation import Conversation, Message
+from app.models.conversation import Conversation, Message, PendingLimitState
 from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
@@ -28,6 +28,7 @@ from app.schemas.chat import (
     ConversationResponse,
     ConversationDetail,
     ConversationMessagesPage,
+    PendingLimitResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
@@ -91,8 +92,48 @@ async def _save_assistant_message(
     return assistant_msg
 
 
-# 方案B：手动挂起/恢复状态仓库（纯数据快照，按 conversation_id 关联；多 worker 不共享，按需换 DB）
-pending_by_conv: dict[str, dict] = {}
+# ── 挂起快照持久化（DB）──
+# 把 Human-in-the-Loop 的纯数据快照落库，刷新 / 进程重启后仍可恢复。
+# 这些助手复用调用方的 session，便于测试时用被覆盖的测试 session。
+
+async def _save_pending_state(session, conv_id: str, message_id: str, snap: dict) -> None:
+    """Persist a pending-limit snapshot to DB (upsert by conversation_id)."""
+    snap_json = json.dumps(snap, ensure_ascii=False, default=str)
+    row = await session.get(PendingLimitState, conv_id)
+    if row:
+        row.message_id = message_id
+        row.snapshot_json = snap_json
+    else:
+        session.add(PendingLimitState(
+            conversation_id=conv_id,
+            message_id=message_id,
+            snapshot_json=snap_json,
+            created_at=datetime.utcnow(),
+        ))
+    await session.commit()
+
+
+async def _load_pending_state(session, conv_id: str) -> dict | None:
+    """Load a persisted pending-limit snapshot, or None if none pending."""
+    row = await session.get(PendingLimitState, conv_id)
+    if not row:
+        return None
+    snap = json.loads(row.snapshot_json)
+    snap["pending_msg_id"] = row.message_id
+    return snap
+
+
+async def _clear_pending_state(session, conv_id: str) -> None:
+    """Delete a persisted pending-limit snapshot for a conversation."""
+    row = await session.get(PendingLimitState, conv_id)
+    if row:
+        await session.delete(row)
+        await session.commit()
+
+
+# 方案B：手动挂起/恢复状态仓库。
+# 持久化到 DB（pending_limit_states 表），刷新 / 重启后仍可恢复，支持多 worker。
+# 仅在内存中保留瞬时运行期对象（由 _snapshot_state 剔除），快照本体落库。
 
 
 def _snapshot_state(state: dict) -> dict:
@@ -248,21 +289,21 @@ async def chat_stream(
                 from app.services.llm_client import llm_client
                 from app.services.agent_nodes import _extract_download_links_from_state
 
-                # ── 0. 挂起分诊：本会话是否有待用户确认的限额挂起 ──
-                pending = pending_by_conv.get(conv_id)
+                # ── 0. 挂起分诊：本会话是否有待用户确认的限额挂起（持久化快照）──
+                pending = await _load_pending_state(db, conv_id)
                 resume_mode = None
                 pending_msg_id = None
                 if pending is not None:
                     pending_msg_id = pending.get("pending_msg_id")
                     if request.resume_action == "continue":
                         resume_mode = "continue"
-                        pending_by_conv.pop(conv_id, None)
+                        await _clear_pending_state(db, conv_id)
                     elif request.resume_action == "stop":
                         resume_mode = "stop"
-                        pending_by_conv.pop(conv_id, None)
+                        await _clear_pending_state(db, conv_id)
                     else:
                         # 用户发送新问题（非继续/停止）：视为停止，丢弃挂起，按新问题正常回答
-                        pending_by_conv.pop(conv_id, None)
+                        await _clear_pending_state(db, conv_id)
 
                 if resume_mode is None:
                     # ── 1. 正常新问题（含缓存）──
@@ -366,7 +407,7 @@ async def chat_stream(
                         )
                         snap = _snapshot_state(state)
                         snap["pending_msg_id"] = pending_msg.id
-                        pending_by_conv[conv_id] = snap
+                        await _save_pending_state(db, conv_id, pending_msg.id, snap)
                         enqueue("need_user_input", {
                             "message": state["pending_limit"]["message"],
                             "conv_id": conv_id,
@@ -643,6 +684,36 @@ async def get_conversation_messages(
     )
 
 
+@router.get("/conversations/{conv_id}/pending", response_model=PendingLimitResponse | None)
+async def get_pending_limit(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the durable pending-limit pause for a conversation, or null.
+
+    Used by the frontend after a page refresh to restore the inline resume
+    bubble (the agent snapshot itself lives in the DB, not in the client).
+    """
+    result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
+        raise HTTPException(403, "无权访问")
+
+    pending = await _load_pending_state(db, conv_id)
+    if not pending:
+        return None
+    pl = pending.get("pending_limit") or {}
+    return PendingLimitResponse(
+        conversation_id=conv_id,
+        message_id=pending.get("pending_msg_id") or "",
+        message=pl.get("message", ""),
+        kind=pl.get("kind", ""),
+    )
+
+
 @router.delete("/conversations/{conv_id}")
 async def delete_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Delete a conversation. Only the owner (or admin) can delete."""
@@ -656,6 +727,8 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
     # Admin can only delete their own conversations
     if conv.user_id and conv.user_id != current_user.id:
         raise HTTPException(403, "管理员只能删除自己的对话")
+    # Drop any persisted pending-limit snapshot for this conversation.
+    await _clear_pending_state(db, conv_id)
     await db.delete(conv)
     await db.commit()
     return {"status": "deleted"}
