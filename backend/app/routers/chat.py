@@ -12,7 +12,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db, async_session
+from app.database import get_db
+import app.database as db_mod
 from app.models.user import User
 from app.models.conversation import Conversation, Message, PendingLimitState
 from app.models.document import Document, Chunk
@@ -57,7 +58,7 @@ async def _save_assistant_message(
     ``status`` persists a message state (e.g. ``"stopped"`` for a manually
     terminated turn) so the frontend can re-apply localized notes after reload.
     """
-    async with async_session() as session:
+    async with db_mod.async_session() as session:
         if msg_id:
             existing = await session.get(Message, msg_id)
             if existing:
