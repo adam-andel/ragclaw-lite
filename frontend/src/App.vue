@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, computed } from 'vue'
-import { NMessageProvider, NConfigProvider, darkTheme, zhCN, enUS, dateZhCN, dateEnUS } from 'naive-ui'
+import { NMessageProvider, NDialogProvider, NConfigProvider, darkTheme, zhCN, enUS, dateZhCN, dateEnUS } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
@@ -67,8 +67,10 @@ onMounted(async () => {
 <template>
   <NConfigProvider :theme="theme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
     <NMessageProvider>
-      <LoginView v-if="!auth.isLoggedIn" />
-      <AppLayout v-else />
+      <NDialogProvider>
+        <LoginView v-if="!auth.isLoggedIn" />
+        <AppLayout v-else />
+      </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>
