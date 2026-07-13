@@ -7,6 +7,8 @@ import {
   markAllNotificationsAsRead,
 } from '@/api/notifications'
 import type { NotificationItem } from '@/types'
+import router from '@/router'
+import { useBrowserNotification } from '@/composables/useBrowserNotification'
 
 export const useNotificationStore = defineStore('notifications', () => {
   const unreadCount = ref(0)
@@ -18,6 +20,10 @@ export const useNotificationStore = defineStore('notifications', () => {
 
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let hideToastTimer: ReturnType<typeof setTimeout> | null = null
+
+  // 浏览器桌面通知：仅当用户已授权时发送；lastNotifiedId 用于种子与去重
+  const { notify: notifyBrowser } = useBrowserNotification()
+  let lastNotifiedId: string | null = null
 
   const hasUnread = computed(() => unreadCount.value > 0)
 
@@ -101,10 +107,37 @@ export const useNotificationStore = defineStore('notifications', () => {
       try {
         const data = await listNotifications(1, 1, true)
         if (data.items.length > 0) {
-          showToast(data.items[0])
+          const item = data.items[0]
+          showToast(item)
+          fireBrowserNotification(item)
         }
       } catch (e) {
         console.error('[Notifications] poll latest unread failed', e)
+      }
+    }
+  }
+
+  // 新未读到达时，若用户“事先”已授权则推送浏览器桌面通知。
+  // 不在轮询里请求权限：权限申请必须由用户手势触发（见通知中心页面按钮）。
+  function fireBrowserNotification(item: NotificationItem) {
+    // 首次轮询仅作种子，避免对页面加载前已存在的未读旧通知弹浏览器通知
+    if (lastNotifiedId === null) {
+      lastNotifiedId = item.id
+      return
+    }
+    if (item.id === lastNotifiedId) return
+    lastNotifiedId = item.id
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+    const instance = notifyBrowser(item.title, {
+      body: item.content || '',
+      tag: `erag-notify-${item.id}`,
+    })
+    if (instance) {
+      instance.onclick = () => {
+        window.focus()
+        const target = item.link || '/notifications'
+        router.push(target).catch(() => {})
+        instance.close()
       }
     }
   }

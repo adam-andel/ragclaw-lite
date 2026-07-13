@@ -8,11 +8,13 @@ import {
 import { CheckmarkDone } from '@vicons/ionicons5'
 import { useNotificationStore } from '@/stores/notifications'
 import AppPagination from '@/components/common/AppPagination.vue'
+import { useBrowserNotification } from '@/composables/useBrowserNotification'
 import type { NotificationItem } from '@/types'
 import type { DataTableColumns } from 'naive-ui'
 
 const { t } = useI18n()
 const notificationStore = useNotificationStore()
+const { permission, requestPermission, supported } = useBrowserNotification()
 const page = ref(1)
 const size = ref(20)
 const unreadOnly = ref(false)
@@ -83,6 +85,23 @@ onMounted(load)
     <NCard :title="t('notifications.center')">
       <template #header-extra>
         <NSpace>
+          <NTag v-if="permission === 'granted'" type="success" size="small" :bordered="false">
+            {{ t('notifications.desktop.on') }}
+          </NTag>
+          <NButton
+            v-else-if="permission === 'default' && supported"
+            size="small"
+            @click="requestPermission"
+          >
+            {{ t('notifications.desktop.enable') }}
+          </NButton>
+          <NTag v-else-if="permission === 'denied'" type="warning" size="small" :bordered="false">
+            {{ t('notifications.desktop.blocked') }}
+          </NTag>
+          <NTag v-else type="default" size="small" :bordered="false">
+            {{ t('notifications.desktop.unsupported') }}
+          </NTag>
+
           <NButton size="small" @click="toggleUnreadOnly">
             {{ unreadOnly ? t('notifications.showAll') : t('notifications.unreadOnly') }}
           </NButton>

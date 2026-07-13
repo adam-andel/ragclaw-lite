@@ -12,4 +12,10 @@ export default {
     cron: 'Scheduled Task',
     system: 'System',
   },
+  desktop: {
+    enable: 'Enable desktop notifications',
+    on: 'Desktop notifications on',
+    blocked: 'Notifications blocked in browser',
+    unsupported: 'Desktop notifications unsupported',
+  },
 }
