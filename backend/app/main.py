@@ -104,7 +104,8 @@ async def lifespan(app: FastAPI):
     try:
         import asyncio
         from app.services.model_manager import model_manager
-        if model_manager.is_installed():
+        from app.services.config_manager import config_manager
+        if model_manager.is_installed(config_manager.embedding_model):
             from app.services.embedder import embedder_service
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, embedder_service.embed, ["warmup"])

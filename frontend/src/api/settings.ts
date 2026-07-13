@@ -73,6 +73,13 @@ export async function updateSandboxNetwork(data: Partial<SandboxNetworkConfig>):
 }
 
 // ── Embedding model (on-demand download) ──
+export interface EmbeddingModelOption {
+  id: string
+  label: string
+  dimension: number
+  size: string
+}
+
 export interface EmbeddingModelStatus {
   status: 'idle' | 'downloading' | 'completed' | 'failed'
   progress: number
@@ -80,6 +87,9 @@ export interface EmbeddingModelStatus {
   error: string
   model: string
   installed: boolean
+  configured_model: string
+  installed_models: string[]
+  options: EmbeddingModelOption[]
 }
 
 export async function getEmbeddingModelStatus(): Promise<EmbeddingModelStatus> {
@@ -87,12 +97,24 @@ export async function getEmbeddingModelStatus(): Promise<EmbeddingModelStatus> {
   return res.data
 }
 
-export async function downloadEmbeddingModel(): Promise<{ started: boolean; reason?: string; model: string }> {
-  const res = await client.post('/embedding-model/download')
+export async function downloadEmbeddingModel(model?: string): Promise<{ started: boolean; reason?: string; model: string }> {
+  const res = await client.post('/embedding-model/download', model ? { model } : {})
   return res.data
 }
 
-export async function deleteEmbeddingModel(): Promise<{ deleted: boolean; model: string }> {
-  const res = await client.delete('/embedding-model')
+export async function deleteEmbeddingModel(model?: string): Promise<{ deleted: boolean; model: string }> {
+  const res = await client.delete('/embedding-model', { data: model ? { model } : {} })
+  return res.data
+}
+
+export interface SwitchEmbeddingResult {
+  switched: boolean
+  model: string
+  installed: boolean
+  cleared_vectors: boolean
+}
+
+export async function switchEmbeddingModel(model: string, force = false): Promise<SwitchEmbeddingResult> {
+  const res = await client.post('/embedding-model/switch', { model, force })
   return res.data
 }

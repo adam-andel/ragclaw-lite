@@ -48,6 +48,42 @@ class EmbeddingModelManager:
         except Exception:
             return False
 
+    def list_installed_models(self) -> list[str]:
+        """Return ids of every model currently cached in HF_HOME."""
+        cache_dir = self._hf_home()
+        if not cache_dir.exists():
+            return []
+        result = []
+        for child in cache_dir.iterdir():
+            if child.is_dir() and child.name.startswith("models--"):
+                # models--BAAI--bge-small-zh-v1.5 -> BAAI/bge-small-zh-v1.5
+                repo = child.name[len("models--"):].replace("--", "/", 1)
+                result.append(repo)
+        return result
+
+    def model_dimension(self, model_name: str) -> int | None:
+        """Best-effort vector dimension for a model.
+
+        Uses the curated registry first, then falls back to reading
+        ``hidden_size`` from the cached ``config.json``. Returns None if unknown
+        (e.g. not in the registry and not yet downloaded).
+        """
+        from app.services.embedding_models import known_dimension
+        dim = known_dimension(model_name)
+        if dim:
+            return dim
+        try:
+            import json
+            from huggingface_hub import try_to_load_from_cache
+            cfg_path = try_to_load_from_cache(model_name, "config.json")
+            if cfg_path:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                return int(cfg.get("hidden_size", 0)) or None
+        except Exception:
+            pass
+        return None
+
     def get_state(self) -> dict:
         with self._lock:
             return {

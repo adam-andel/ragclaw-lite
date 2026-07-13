@@ -4,16 +4,17 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip, NSwitch,
+  NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip, NSwitch,
   NProgress, NTag,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server, Download } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const route = useRoute()
 
 const providerOptions = computed(() => [
@@ -99,12 +100,23 @@ const savingSandbox = ref(false)
 // ── Embedding model (on-demand download) ──
 const embeddingStatus = ref<EmbeddingModelStatus>({
   status: 'idle', progress: 0, message: '', error: '', model: '', installed: false,
+  configured_model: '', installed_models: [], options: [],
 })
+const embeddingOptions = ref<EmbeddingModelOption[]>([])
+const selectedModel = ref<string>('')
+const switching = ref(false)
 const embeddingPollTimer = ref<number | null>(null)
+
+const embeddingSelectOptions = computed(() =>
+  embeddingOptions.value.map((o) => ({ label: o.label, value: o.id })),
+)
 
 async function loadEmbeddingStatus() {
   try {
-    embeddingStatus.value = await getEmbeddingModelStatus()
+    const s = await getEmbeddingModelStatus()
+    embeddingStatus.value = s
+    embeddingOptions.value = s.options || []
+    if (s.configured_model) selectedModel.value = s.configured_model
   } catch (e: any) {
     // non-fatal; section just stays in its last known state
   }
@@ -154,6 +166,53 @@ async function handleDeleteEmbedding() {
     message.success(t('settings.embeddingModelMgmt.deleted'))
   } catch (e: any) {
     message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
+async function handleSwitchEmbedding() {
+  const target = selectedModel.value
+  if (!target || target === embeddingStatus.value.configured_model) return
+  switching.value = true
+  try {
+    const res = await switchEmbeddingModel(target, false)
+    await onSwitched(res)
+  } catch (e: any) {
+    const resp = e?.response
+    if (resp?.status === 409) {
+      const d = resp.data?.detail ?? {}
+      const confirmed = await dialog.warning({
+        title: t('settings.embeddingModelMgmt.conflictTitle'),
+        content: t('settings.embeddingModelMgmt.conflictConfirm', {
+          existing: d.existing_dim, neu: d.new_dim, count: d.vector_count,
+        }),
+        positiveText: t('settings.embeddingModelMgmt.conflictOk'),
+        negativeText: t('common.cancel'),
+      })
+      if (confirmed) {
+        try {
+          const res = await switchEmbeddingModel(target, true)
+          await onSwitched(res)
+        } catch (e2: any) {
+          message.error(e2?.response?.data?.detail ?? e2?.message ?? t('settings.saveFailed'))
+        }
+      }
+    } else {
+      message.error(resp?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
+    }
+  } finally {
+    switching.value = false
+  }
+}
+
+async function onSwitched(res: { model: string; installed: boolean; cleared_vectors: boolean }) {
+  config.value.embedding_model = res.model
+  await loadEmbeddingStatus()
+  if (!res.installed) {
+    message.warning(t('settings.embeddingModelMgmt.switchedNotInstalled'))
+  } else if (res.cleared_vectors) {
+    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
+  } else {
+    message.success(t('settings.embeddingModelMgmt.switched'))
   }
 }
 
@@ -371,23 +430,6 @@ async function handleSaveSandbox() {
 
         <!-- LLM -->
         <section id="llm">
-          <!-- Embedding Model -->
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.embeddingModel') }}
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  {{ t('settings.embeddingModelTip') }}
-                </NTooltip>
-              </span>
-            </template>
-            <NInput v-model:value="config.embedding_model" placeholder="BAAI/bge-small-zh-v1.5" @input="clearTest" disabled>
-              <template #prefix><NIcon :component="HardwareChip" /></template>
-            </NInput>
-          </NFormItem>
           <!-- Provider -->
           <NFormItem :label="t('settings.providerLabel')">
             <NSelect
@@ -539,8 +581,8 @@ async function handleSaveSandbox() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                {{ t('settings.embeddingModelMgmt.name') }}
-                <NTooltip trigger="hover" :width="260">
+                {{ t('settings.embeddingModelMgmt.select') }}
+                <NTooltip trigger="hover" :width="280">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
@@ -548,9 +590,46 @@ async function handleSaveSandbox() {
                 </NTooltip>
               </span>
             </template>
-            <NInput :value="embeddingStatus.model || config.embedding_model" disabled>
-              <template #prefix><NIcon :component="HardwareChip" /></template>
-            </NInput>
+            <NSelect
+              v-model:value="selectedModel"
+              :options="embeddingSelectOptions"
+              :placeholder="t('settings.embeddingModelMgmt.selectPlaceholder')"
+              :disabled="embeddingStatus.status === 'downloading'"
+            />
+          </NFormItem>
+
+          <NFormItem :show-feedback="false">
+            <NSpace align="center">
+              <NButton
+                type="primary"
+                secondary
+                :loading="switching"
+                :disabled="!selectedModel || selectedModel === embeddingStatus.configured_model || embeddingStatus.status === 'downloading'"
+                @click="handleSwitchEmbedding"
+              >
+                {{ t('settings.embeddingModelMgmt.apply') }}
+              </NButton>
+              <span class="muted" style="font-size: 12px">
+                {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
+              </span>
+            </NSpace>
+          </NFormItem>
+
+          <NFormItem
+            v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
+            :label="t('settings.embeddingModelMgmt.installedList')"
+          >
+            <NSpace :size="8">
+              <NTag
+                v-for="m in embeddingStatus.installed_models"
+                :key="m"
+                :type="m === embeddingStatus.configured_model ? 'success' : 'default'"
+                :bordered="false"
+                round
+              >
+                {{ m }}
+              </NTag>
+            </NSpace>
           </NFormItem>
 
           <NFormItem :label="t('settings.embeddingModelMgmt.status')">
@@ -590,6 +669,7 @@ async function handleSaveSandbox() {
               <NButton
                 v-if="!embeddingStatus.installed && embeddingStatus.status !== 'downloading'"
                 type="primary"
+                :disabled="selectedModel !== embeddingStatus.configured_model"
                 @click="handleDownloadEmbedding"
               >
                 <template #icon><NIcon><Download /></NIcon></template>
@@ -599,6 +679,7 @@ async function handleSaveSandbox() {
                 v-if="embeddingStatus.installed"
                 type="error"
                 secondary
+                :disabled="selectedModel !== embeddingStatus.configured_model"
                 @click="handleDeleteEmbedding"
               >
                 {{ t('settings.embeddingModelMgmt.delete') }}

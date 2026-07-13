@@ -27,6 +27,39 @@ class VectorStore:
     def _collection_name(self, kb_id: str) -> str:
         return f"kb_{kb_id}"
 
+    def total_vector_count(self) -> int:
+        """Total number of vectors across all collections (0 if none / error)."""
+        try:
+            client = self._ensure_client()
+            total = 0
+            for col in client.list_collections():
+                try:
+                    total += col.count()
+                except Exception:
+                    pass
+            return total
+        except Exception:
+            return 0
+
+    def clear_all(self) -> int:
+        """Delete every collection (e.g. when the embedding dimension changes).
+
+        Returns the number of collections removed. Callers should warn the user
+        that all indexed knowledge must be re-uploaded / rebuilt afterwards.
+        """
+        try:
+            client = self._ensure_client()
+            count = 0
+            for col in client.list_collections():
+                try:
+                    client.delete_collection(col.name)
+                    count += 1
+                except Exception:
+                    pass
+            return count
+        except Exception:
+            return 0
+
     def get_or_create_collection(self, kb_id: str):
         client = self._ensure_client()
         return client.get_or_create_collection(
