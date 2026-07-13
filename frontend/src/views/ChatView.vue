@@ -660,6 +660,23 @@ function handleKeydown(e: KeyboardEvent) {
         :active-match="msg.id === activeMatchId"
         @regenerate="regenerateAnswer"
       />
+
+      <!-- 挂起提示内联气泡（命中上限时，融入消息流） -->
+      <div v-if="pendingLimit" :key="pendingLimit.convId + ':' + pendingLimit.message" class="resume-inline-bubble" role="alert">
+        <div class="resume-bubble-icon">⏸️</div>
+        <div class="resume-bubble-body">
+          <div class="resume-bubble-msg">{{ pendingLimit.message }}</div>
+          <div class="resume-bubble-actions">
+            <NButton type="primary" :loading="isStreaming" @click="continueResume">
+              {{ t('chat.continueResume') }}
+            </NButton>
+            <NButton :disabled="isStreaming" @click="stopResume">
+              {{ t('chat.stopResume') }}
+            </NButton>
+          </div>
+          <div class="resume-bubble-hint">{{ t('chat.resumeHint') }}</div>
+        </div>
+      </div>
     </div>
 
     <Transition name="scroll-btn">
@@ -809,18 +826,6 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><Search /></NIcon></template>
           {{ t('chat.findRecords') }}
         </NButton>
-      </div>
-      <div v-if="pendingLimit" class="resume-banner" role="alert">
-        <div class="resume-banner-msg">{{ pendingLimit.message }}</div>
-        <NSpace align="center">
-          <NButton type="primary" :loading="isStreaming" @click="continueResume">
-            {{ t('chat.continueResume') }}
-          </NButton>
-          <NButton :disabled="isStreaming" @click="stopResume">
-            {{ t('chat.stopResume') }}
-          </NButton>
-        </NSpace>
-        <div class="resume-banner-hint">{{ t('chat.resumeHint') }}</div>
       </div>
       <div class="chat-input-area">
         <NInput
@@ -1200,26 +1205,72 @@ function handleKeydown(e: KeyboardEvent) {
   flex-shrink: 0;
 }
 
-/* ── 挂起提示横幅（命中上限时）── */
-.resume-banner {
+/* ── 挂起提示内联气泡（命中上限时，融入消息流）── */
+.resume-inline-bubble {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0 var(--space-3) var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-card-bg);
-  border: 1px solid var(--color-border, #e5e7eb);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  gap: 10px;
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary, #4098fc) 14%, var(--color-card-bg)),
+    var(--color-card-bg)
+  );
+  border: 1px solid color-mix(in srgb, var(--color-primary, #4098fc) 38%, transparent);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  align-items: flex-start;
+  /* 入场：淡入上移 + 一次高亮脉冲 */
+  animation:
+    resume-bubble-in 0.32s ease-out both,
+    resume-bubble-pulse 1.1s ease-out 0.2s 1;
 }
-.resume-banner-msg {
+@keyframes resume-bubble-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes resume-bubble-pulse {
+  0% {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08),
+                0 0 0 0 color-mix(in srgb, var(--color-primary, #4098fc) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08),
+                0 0 0 8px color-mix(in srgb, var(--color-primary, #4098fc) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08),
+                0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-inline-bubble { animation: resume-bubble-in 0.2s ease-out both; }
+}
+.resume-bubble-icon {
+  font-size: 20px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+.resume-bubble-body {
+  flex: 1;
+  min-width: 0;
+}
+.resume-bubble-msg {
   font-size: var(--text-sm);
   color: var(--color-text);
-  line-height: 1.5;
+  line-height: 1.6;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
 }
-.resume-banner-hint {
+.resume-bubble-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.resume-bubble-hint {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
+  margin-top: 6px;
 }
 
 
