@@ -31,22 +31,25 @@ RUN (apt-get update && \
 # Must be BEFORE Layer 3 (pip install) to maximize cache reuse.
 ENV HF_HOME=/app/.cache/huggingface \
     HF_ENDPOINT=https://hf-mirror.com
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --no-cache-dir --quiet huggingface_hub && \
+# 国内镜像（可构建时通过 --build-arg PYPI_MIRROR=... 覆盖）；默认仅作官方源不通时的兜底
+ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+# 先尝试官方 PyPI，失败再回退到国内镜像（与 apt 源规则一致）
+RUN pip install --no-cache-dir --quiet huggingface_hub || \
+    pip install --no-cache-dir --quiet --index-url ${PYPI_MIRROR} huggingface_hub && \
     python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-zh-v1.5')"
 
 # ── Layer 3: Python deps (changes more often than model, less than code) ──
 # Single source of truth: backend/pyproject.toml. Avoids drift between
 # pyproject.toml and a separate flat list here.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Copy only pyproject.toml first to maximize layer caching of pip install.
 COPY backend/pyproject.toml ./backend/
 # A minimal placeholder so pip install . works without full source; we will
 # overwrite with the real source in Layer 4.
 RUN mkdir -p backend/app && touch backend/app/__init__.py && \
-    pip install --no-cache-dir ./backend
+    (pip install --no-cache-dir ./backend || \
+     pip install --no-cache-dir --index-url ${PYPI_MIRROR} ./backend)
 
 # ── Layer 4: Backend code (most frequent changes) ──
 COPY backend/ backend/
