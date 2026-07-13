@@ -1,7 +1,7 @@
 export default {
   // ── Page / titles ──
   title: 'Skill Management',
-  createModalTitle: 'Create Skill Online',
+  createModalTitle: 'Create Skill',
   detailTitle: 'Skill Details',
   editSkillMd: 'Edit SKILL.md',
 
@@ -9,11 +9,11 @@ export default {
   sync: 'Sync',
   uploadFolder: 'Upload Folder',
   uploadZip: 'Upload ZIP',
-  createOnline: 'Create Online',
+  createOnline: 'New Skill',
 
   // ── Filters ──
   searchPlaceholder: 'Search skill name or description…',
-  statusAll: 'All Status',
+  statusAll: 'All Statuses',
 
   // ── Empty / placeholders / labels ──
   empty: 'No skills yet. Upload a folder or create one online.',
@@ -25,7 +25,7 @@ export default {
   description: 'Description',
   descriptionPlaceholder: '≤250 chars, description shown to the LLM router',
   mcpServicePlaceholder: 'Select MCP services available to this skill (optional)',
-  skillBody: 'SKILL Body',
+  skillBody: 'SKILL.md Body',
   skillBodyPlaceholder: 'Markdown body of SKILL.md (front matter auto-generated)',
   skillBodyTemplate: '---\nname: ...\ndescription: ...\nmcp_servers:\n  - ...\n---\n\n# Body',
   folder: 'Folder',
@@ -36,7 +36,7 @@ export default {
   reupload: 'Re-upload',
   reuploadZip: 'Re-upload ZIP',
   selectZipFile: 'Select ZIP File',
-  confirmDeleteSkill: 'Delete this skill? Both the folder and the DB record will be removed.',
+  confirmDeleteSkill: 'Delete this skill? Both the folder and the database record will be removed.',
 
   // ── Messages ──
   loadFailed: 'Failed to load',

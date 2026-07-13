@@ -6,7 +6,7 @@ export default {
   topK: 'Top K',
   threshold: 'Threshold',
   empty: 'Enter a query and click Search',
-  resultSummary: 'Recalled {n} results',
+  resultSummary: 'Retrieved {n} results',
   fusionHint: '(Vector Top-{v} + BM25 Top-{b} → RRF fusion → Top-{r})',
   scoreFusion: 'Fusion',
   scoreVector: 'Vector',

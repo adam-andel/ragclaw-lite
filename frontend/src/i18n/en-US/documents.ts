@@ -23,7 +23,7 @@ export default {
   fileSize: 'File Size',
   errorMessage: 'Error Message',
   chunkNumber: 'Chunks',
-  linkedKbsLabel: 'Linked Knowledge Bases',
+  linkedKbsLabel: 'Connected Knowledge Bases',
   notLinkedKb: 'Not linked to any knowledge base',
   docId: 'Document ID',
   downloadOriginal: 'Download Original',
@@ -57,15 +57,15 @@ export default {
 
   // Filters / options
   allTypes: 'All Types',
-  loadingFormats: 'Loading supported formats…, max 50MB per file',
+  loadingFormats: 'Loading supported formats (max 50MB per file)…',
   supportedFormats: 'Supported: {formats}, max 50MB per file',
-  allStatus: 'All Status',
+  allStatus: 'All Statuses',
   unlinked: 'Unlinked',
 
   // Dynamic-count labels
-  fileCount: '{count} file(s)',
-  chunkCount: '{count} chunk(s)',
-  linkedKbs: 'Linked to {count} knowledge base(s)',
+  fileCount: '{count} files',
+  chunkCount: '{count} chunks',
+  linkedKbs: 'Linked to {count} knowledge bases',
   chunkTotal: 'Total {count} chunks',
   countMeta: '{docs} docs · {vectors} vectors',
   kbDocMeta: '{count} docs',
@@ -117,7 +117,7 @@ export default {
   downloadFailed: 'Failed to download: ',
   unknownError: 'Unknown error',
   loadChunksFailed: 'Failed to load chunks',
-  docsAdded: 'Added {added} document(s)',
+  docsAdded: 'Added {added} documents',
   docsSkipped: ', skipped {skipped}',
   uploadInterruptedByClose: 'Upload interrupted because the page was closed',
 

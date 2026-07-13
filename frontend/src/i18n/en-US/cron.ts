@@ -12,7 +12,7 @@ export default {
 
   // ── Filters ──
   searchPlaceholder: 'Search task name or description…',
-  statusAll: 'All Status',
+  statusAll: 'All Statuses',
 
   // ── Card / detail labels ──
   empty: 'No scheduled tasks yet',
@@ -45,7 +45,7 @@ export default {
 
   // ── Status labels ──
   status: {
-    all: 'All Status',
+    all: 'All Statuses',
     scheduled: 'Scheduled',
     running: 'Running',
     paused: 'Paused',

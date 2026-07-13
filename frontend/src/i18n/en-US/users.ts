@@ -3,7 +3,7 @@ export default {
   createUser: 'Create User',
   searchPlaceholder: 'Search username or display name…',
   empty: 'No users',
-  normal: 'Normal',
+  normal: 'Standard',
   noPermissionRole: 'No permission to manage this role',
   role: 'Role',
   username: 'Username',
