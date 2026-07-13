@@ -82,6 +82,7 @@ export default {
   agentPromptLang: 'Agent Prompt Language',
   agentPromptLangTip: 'Controls the language of Agent Graph internal prompts (intent routing + tool forced JSON).<br/>Default <b>Chinese</b>; switch to <b>English</b> to compare instruction-following on English-dominant models (GPT / Claude / DeepSeek, etc.).<br/>Takes effect immediately, no restart, good for A/B comparison.',
   promptLang: {
+    system: 'Follow System',
     en: 'English',
     zh: 'Chinese (default)',
   },
