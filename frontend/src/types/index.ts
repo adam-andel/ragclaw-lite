@@ -155,6 +155,12 @@ export type SSEEvent =
       retrieval_ms: number
       llm_ms: number
     }
+  | {
+      type: 'need_user_input'
+      message: string
+      conv_id: string
+      kind: 'skill_switch' | 'tool_round'
+    }
 
 // ---- SKILL (folder-based) ----
 export interface Skill {

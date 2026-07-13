@@ -50,6 +50,8 @@ const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
+// 挂起提示（后端命中上限后推送 need_user_input）：{ 文案, 后端给的 conv_id, 原因 }
+const pendingLimit = ref<{ message: string; convId: string; kind: string } | null>(null)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -338,13 +340,13 @@ onMounted(() => {
   })
 })
 
-async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false) {
+async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null) {
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
@@ -375,6 +377,11 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         proxyMsg.agentSteps.push(event)
       } else if (event.type === 'error') {
         streamedText = t('chat.streamError', { msg: event.message })
+        break
+      } else if (event.type === 'need_user_input') {
+        // 挂起：保存提示，移除本轮空白助手气泡；继续/停止时重建气泡
+        pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind }
+        messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
         break
       } else if (event.type === 'done') {
         proxyMsg.content = streamedText
@@ -416,6 +423,9 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isStreaming.value) return
+  // 挂起态下用户输入新问题：强制带上同一 conv_id，后端会视为「停止」并丢弃挂起
+  if (pendingLimit.value) conversationId.value = pendingLimit.value.convId
+  pendingLimit.value = null
 
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() }
   messages.value.push(userMsg)
@@ -454,6 +464,31 @@ function stopStream() {
   isStreaming.value = false
   queuePosition.value = null
   abortCtl = null
+}
+
+// 挂起恢复：继续（追加额度后重放被拒调用）/ 停止（用已累计结果出答案）
+async function resumeRun(action: 'continue' | 'stop') {
+  const pl = pendingLimit.value
+  if (!pl || isStreaming.value) return
+  const convId = pl.convId
+  pendingLimit.value = null
+  conversationId.value = convId
+  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
+  messages.value.push(assistantMsg)
+  const proxyMsg = messages.value[messages.value.length - 1]
+  isStreaming.value = true
+  isPinnedToBottom.value = true
+  await scrollToBottom()
+  await nextTick()
+  doStream('', proxyMsg, assistantMsg.id, false, action)
+}
+
+function continueResume() {
+  resumeRun('continue')
+}
+
+function stopResume() {
+  resumeRun('stop')
 }
 
 function cancelQueue() {
@@ -774,6 +809,18 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><Search /></NIcon></template>
           {{ t('chat.findRecords') }}
         </NButton>
+      </div>
+      <div v-if="pendingLimit" class="resume-banner" role="alert">
+        <div class="resume-banner-msg">{{ pendingLimit.message }}</div>
+        <NSpace align="center">
+          <NButton type="primary" :loading="isStreaming" @click="continueResume">
+            {{ t('chat.continueResume') }}
+          </NButton>
+          <NButton :disabled="isStreaming" @click="stopResume">
+            {{ t('chat.stopResume') }}
+          </NButton>
+        </NSpace>
+        <div class="resume-banner-hint">{{ t('chat.resumeHint') }}</div>
       </div>
       <div class="chat-input-area">
         <NInput
@@ -1151,6 +1198,28 @@ function handleKeydown(e: KeyboardEvent) {
   gap: var(--space-2);
   padding: 0 0 var(--space-3);
   flex-shrink: 0;
+}
+
+/* ── 挂起提示横幅（命中上限时）── */
+.resume-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-border, #e5e7eb);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.resume-banner-msg {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+.resume-banner-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 
