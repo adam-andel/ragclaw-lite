@@ -21,6 +21,7 @@ from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
 from app.services.kb_service import get_kb_prompt
+from app.services.token_count import count_messages_tokens
 from app.services.llm_semaphore import llm_limiter
 from app.services.cron_parser import try_parse_cron_payload
 from app.services.cron_graph import run_cron_creation_subgraph
@@ -48,6 +49,7 @@ async def _save_assistant_message(
     retrieval_ms: int = 0,
     msg_id: str | None = None,
     status: str | None = None,
+    prompt_tokens: int | None = None,
 ) -> Message:
     """Persist assistant message and update conversation timestamp.
 
@@ -67,6 +69,8 @@ async def _save_assistant_message(
                 existing.cache_hit = cache_hit
                 existing.retrieval_ms = retrieval_ms
                 existing.status = status
+                if prompt_tokens is not None:
+                    existing.token_count = prompt_tokens
                 await session.commit()
                 return existing
 
@@ -81,6 +85,7 @@ async def _save_assistant_message(
             retrieval_ms=retrieval_ms,
             llm_ms=0,
             status=status,
+            token_count=prompt_tokens,
             created_at=datetime.utcnow(),
         )
 
@@ -446,6 +451,8 @@ async def chat_stream(
                     # ── 3. Stream LLM generation ──
                     final_retr = state.get("retrieval_ms", 0)
                     messages = erag_agent_graph.build_generation_messages(state)
+                    # Approximate total tokens of the request payload sent to the LLM.
+                    prompt_tokens = count_messages_tokens(messages)
                     collected_content = ""
                     collected_citations = []
 
@@ -496,6 +503,7 @@ async def chat_stream(
                         cache_hit=False,
                         retrieval_ms=final_retr,
                         msg_id=pending_msg_id if resume_mode is not None else None,
+                        prompt_tokens=prompt_tokens,
                     )
                     enqueue("done", {
                         "conversation_id": conv_id,
@@ -504,6 +512,7 @@ async def chat_stream(
                         "ttft_ms": 0,
                         "retrieval_ms": final_retr,
                         "llm_ms": 0,
+                        "prompt_tokens": prompt_tokens,
                     })
 
             except asyncio.CancelledError:

@@ -25,6 +25,7 @@ class LLMConfigUpdate(BaseModel):
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
     agent_max_tokens: int | None = None
+    llm_context_window: int | None = None
     llm_concurrency: int | None = None
     embedding_model: str | None = None
     embedding_api_key: str | None = None
@@ -59,6 +60,13 @@ class LLMConfigUpdate(BaseModel):
     def agent_tokens_range(cls, v):
         if v is not None and not (128 <= v <= 131072):
             raise ValueError("agent_max_tokens 必须在 128-131072 之间")
+        return v
+
+    @field_validator("llm_context_window")
+    @classmethod
+    def context_window_range(cls, v):
+        if v is not None and not (1 <= v <= 10_000_000):
+            raise ValueError("上下文窗口必须在 1-10,000,000 之间")
         return v
 
     @field_validator("llm_concurrency")

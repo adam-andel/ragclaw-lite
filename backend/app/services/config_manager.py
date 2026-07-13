@@ -169,6 +169,7 @@ class ConfigManager:
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
             "agent_max_tokens": settings.agent_max_tokens,
+            "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             # Embedding
             "embedding_model": settings.embedding_model,
@@ -199,6 +200,7 @@ class ConfigManager:
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
             "agent_max_tokens": settings.agent_max_tokens,
+            "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             "embedding_model": settings.embedding_model,
             "server_host": "0.0.0.0",
@@ -276,6 +278,15 @@ class ConfigManager:
     def base_url(self) -> str:
         with self._lock:
             return self._config.get("llm_base_url", "")
+
+    @property
+    def context_window(self) -> int:
+        """Max context window (tokens) of the configured model (for UI usage bars)."""
+        with self._lock:
+            try:
+                return int(self._config.get("llm_context_window", 128000))
+            except (TypeError, ValueError):
+                return 128000
 
     @property
     def model(self) -> str:

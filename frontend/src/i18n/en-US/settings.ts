@@ -63,9 +63,11 @@ export default {
     agentMaxTokens: 'Maximum tokens for a single Agent "tool-decision" output, <b>independent of the Max Tokens above</b>.<br/>Tool call arguments (code / docs / query results) can be large; too small truncates the argument JSON and fails the tool call.<br/>Default <b>8192</b>, more lenient than normal answers; rarely needs lowering unless the model context is tiny.',
     maxConcurrency: 'Upper limit of concurrent sessions sending requests to the LLM API; excess enters a queue.<br/>Set per provider tier; OpenAI Tier 1 is usually 3~5.<br/><b>Takes effect immediately</b> without interrupting in-flight requests.',
     cacheTtl: 'Cache validity (seconds) for identical questions.<br/>Default 3600s (60 min). Set 0 to fully disable caching.<br/><b>Takes effect immediately</b> and does not affect already-cached entries (expiry judged by each entry\'s creation time).',
+    contextWindow: 'Max context window (tokens) of the current model. Used as the denominator for the "context usage" bar on the chat page.<br/>Varies widely by model (e.g. gpt-4o = 128000, Claude = 200000, some local/Chinese models = 32000/64000).<br/><b>Takes effect immediately</b>.',
   },
   maxConcurrency: 'Max Concurrency',
   cacheTtl: 'Cache TTL',
+  contextWindow: 'Context Window',
   cacheSecondsApprox: '{seconds} s ≈ {minutes} min',
   testConnection: 'Test Connection',
   test: {

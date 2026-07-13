@@ -46,6 +46,8 @@ export default {
   noMatchingSkill: '没有匹配的技能',
   findRecords: '查找记录',
   inputPlaceholder: '输入问题... (Enter 发送)',
+  contextTokens: '上下文 ≈ {used} / {total}',
+  contextTokensTip: '本次发送给 LLM 的请求体总 token 数（系统提示+历史+RAG+记忆+工具+问题）',
   configApiKey: '请先前往系统设置页面配置API KEY',
   cancelQueue: '取消排队',
   stop: '停止',

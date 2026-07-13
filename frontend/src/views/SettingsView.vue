@@ -51,6 +51,7 @@ const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
   llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 4096,
   agent_max_tokens: 8192,
+  llm_context_window: 128000,
   llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
   embedding_api_key: '',
@@ -278,6 +279,7 @@ let scrollTimer: number | null = null
 onMounted(async () => {
   try {
     config.value = await getLLMConfig()
+    if (!config.value.llm_context_window) config.value.llm_context_window = 128000
   } catch (e: any) {
     message.error(e.message || t('settings.msg.loadConfigFailed'))
   }
@@ -401,6 +403,7 @@ async function handleSave() {
       llm_temperature: config.value.llm_temperature,
       llm_max_tokens: config.value.llm_max_tokens,
       agent_max_tokens: config.value.agent_max_tokens,
+      llm_context_window: config.value.llm_context_window,
       llm_concurrency: config.value.llm_concurrency,
       embedding_model: config.value.embedding_model,
       llm_system_prompt: config.value.llm_system_prompt,
@@ -617,6 +620,22 @@ async function handleSaveSandbox() {
               </span>
             </template>
             <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" />
+          </NFormItem>
+
+          <!-- Context Window -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.contextWindow') }}
+                <NTooltip trigger="hover" :width="320">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span v-html="t('settings.tip.contextWindow')" />
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest" />
           </NFormItem>
 
           <!-- Cache TTL -->

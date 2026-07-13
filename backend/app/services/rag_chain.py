@@ -15,6 +15,7 @@ from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.kb_service import get_kb_prompt
 from app.services.memory import add_memory
+from app.services.token_count import count_messages_tokens
 
 logger = logging.getLogger("erag")
 
@@ -70,6 +71,9 @@ class RAGChain:
             messages.extend(conversation_history)
         messages.append({"role": "user", "content": f"## 参考文档\n{context_text}\n\n## 问题\n{question}"})
 
+        # Approximate total tokens of the request payload sent to the LLM.
+        prompt_tokens = count_messages_tokens(messages)
+
         # LLM streaming
         full_answer = ""
         ttft_ms = 0.0
@@ -93,7 +97,7 @@ class RAGChain:
 
             answer_cache.put(question, kb_id, full_answer, citations, kb_prompt=kb_prompt)
             total_ttft = round((time.time() - t_total) * 1000)
-            yield {"type": "done", "cache_hit": False, "ttft_ms": total_ttft, "retrieval_ms": retrieval_ms, "llm_ms": round(ttft_ms)}
+            yield {"type": "done", "cache_hit": False, "ttft_ms": total_ttft, "retrieval_ms": retrieval_ms, "llm_ms": round(ttft_ms), "prompt_tokens": prompt_tokens}
         except Exception as e:
             logger.error("RAG stream error: %s", e)
             yield {"type": "error", "message": str(e)}

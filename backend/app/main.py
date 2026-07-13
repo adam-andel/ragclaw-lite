@@ -237,6 +237,7 @@ async def health_check():
         "service": "EnterpriseRAG-Lite",
         "version": "0.5.0",
         "llm_configured": config_manager.is_configured,
+        "context_window": config_manager.context_window,
     }
 
 

@@ -46,6 +46,8 @@ export default {
   noMatchingSkill: 'No matching skills',
   findRecords: 'Find records',
   inputPlaceholder: 'Type a question... (Enter to send)',
+  contextTokens: 'Context ≈ {used} / {total}',
+  contextTokensTip: 'Total tokens of the request payload sent to the LLM this turn (system prompt + history + RAG + memory + tools + query)',
   configApiKey: 'Please go to System Settings to configure the API key',
   cancelQueue: 'Cancel queue',
   stop: 'Stop',

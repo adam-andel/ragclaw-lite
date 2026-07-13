@@ -50,6 +50,8 @@ const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
+// LLM 上下文 token 数：最近一次请求体（系统提示+历史+RAG+记忆+工具+问题）的总 token
+const contextTokens = ref(0)
 // 挂起提示（后端命中上限后推送 need_user_input）：{ 文案, 后端给的 conv_id, 原因 }
 const pendingLimit = ref<{ message: string; convId: string; kind: string; messageId: string } | null>(null)
 let abortCtl: AbortController | null = null
@@ -97,6 +99,7 @@ async function loadOlder() {
     currentPage.value = data.page
     totalPages.value = data.total_pages
     totalRounds.value = data.total_rounds
+    syncContextFromMessages()
   } catch {
     // 加载失败不改变现有展示
   } finally {
@@ -109,6 +112,18 @@ async function loadOlder() {
   }
 }
 
+// 从已加载消息里恢复上下文 token 数（取最后一条带 token_count 的 assistant 消息）
+function syncContextFromMessages() {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m.role === 'assistant' && typeof m.token_count === 'number' && m.token_count > 0) {
+      contextTokens.value = m.token_count
+      return
+    }
+  }
+  contextTokens.value = 0
+}
+
 // 加载对话的最新一页（最后一页），并滚动到底部
 async function loadInitialPage(id: string) {
   const data = await getConversationMessages(id, 'last', PAGE_SIZE_ROUNDS)
@@ -118,6 +133,7 @@ async function loadInitialPage(id: string) {
   totalRounds.value = data.total_rounds
   isLoadingOlder.value = false
   isPinnedToBottom.value = true
+  syncContextFromMessages()
   await nextTick()
   await scrollToBottom()
 }
@@ -220,6 +236,23 @@ const selectedSkillName = computed(() => {
   return skills.value.find(s => s.id === selectedSkillId.value)?.name || t('chat.autoSelectSkill')
 })
 
+// ── LLM 上下文 token 统计展示 ──
+function formatTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return String(n)
+}
+const contextRatio = computed(() => {
+  const w = auth.contextWindow || 1
+  return Math.min(1, contextTokens.value / w)
+})
+const contextRatioPct = computed(() => Math.round(contextRatio.value * 100))
+const contextRatioClass = computed(() => {
+  const r = contextRatio.value
+  if (r >= 0.9) return 'danger'
+  if (r >= 0.7) return 'warn'
+  return 'ok'
+})
+
 
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
@@ -302,6 +335,7 @@ watch(() => route.params.id, async (id) => {
     totalPages.value = 1
     totalRounds.value = 0
     conversationId.value = undefined
+    contextTokens.value = 0
     isReadonly.value = false
     emptyMode.value = 'conv'
     await loadConversations()
@@ -357,6 +391,7 @@ onMounted(() => {
     currentPage.value = 1
     totalPages.value = 1
     totalRounds.value = 0
+    contextTokens.value = 0
     emptyMode.value = 'conv'
     loadConversations()
   })
@@ -421,6 +456,10 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
           proxyMsg.content = (proxyMsg.content || '') + '\n\n' + t('chat.userStoppedNote')
         } else {
           proxyMsg.content = streamedText
+        }
+        if (typeof event.prompt_tokens === 'number') {
+          contextTokens.value = event.prompt_tokens
+          proxyMsg.token_count = event.prompt_tokens
         }
         proxyMsg._pending = false
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
@@ -557,6 +596,7 @@ function newConversation() {
   currentPage.value = 1
   totalPages.value = 1
   totalRounds.value = 0
+  contextTokens.value = 0
   isReadonly.value = false
   emptyMode.value = 'kb'
   loadConversations()
@@ -880,6 +920,15 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><Search /></NIcon></template>
           {{ t('chat.findRecords') }}
         </NButton>
+        <div
+          v-if="contextTokens > 0"
+          class="context-meter"
+          :class="contextRatioClass"
+          :title="t('chat.contextTokensTip')"
+        >
+          <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
+          <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
+        </div>
       </div>
       <div class="chat-input-area">
         <NInput
@@ -1331,6 +1380,45 @@ function handleKeydown(e: KeyboardEvent) {
 .chat-input-area :deep(.n-input) {
   flex: 1;
 }
+
+/* ── LLM 上下文 token 计量条（输入框上方技能栏右侧）── */
+.context-meter {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-variant-numeric: tabular-nums;
+  max-width: 220px;
+}
+.context-meter-text {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.context-meter-bar {
+  width: 120px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--color-primary);
+  transition: width .3s ease;
+}
+.context-meter.ok .context-meter-fill { background: var(--color-primary); }
+.context-meter.warn .context-meter-fill { background: #f0a020; }
+.context-meter.danger .context-meter-fill { background: #e0413e; }
+.context-meter.warn .context-meter-text { color: #f0a020; }
+.context-meter.danger .context-meter-text { color: #e0413e; }
 
 /* ── Scroll-to-bottom button ── */
 .scroll-bottom-btn {

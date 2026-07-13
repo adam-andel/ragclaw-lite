@@ -104,6 +104,7 @@ export interface ChatMessage {
   agentSteps?: AgentStep[]
   _pending?: boolean
   status?: string | null
+  token_count?: number | null  // LLM prompt tokens of this turn (assistant only)
 }
 
 export interface Citation {
@@ -163,6 +164,7 @@ export type SSEEvent =
       ttft_ms: number
       retrieval_ms: number
       llm_ms: number
+      prompt_tokens?: number
       stopped?: boolean
     }
   | {

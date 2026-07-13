@@ -19,6 +19,7 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token') || '')
   const user = ref<UserInfo | null>(null)
   const llmConfigured = ref(false)
+  const contextWindow = ref(128000)  // LLM max context window (tokens), from /api/health
 
   const isLoggedIn = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -60,6 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
       const hr = await fetch('/api/health')
       const health = await hr.json()
       llmConfigured.value = !!health.llm_configured
+      if (health.context_window) contextWindow.value = health.context_window
     } catch {
       clearAuth()
     }
@@ -75,5 +77,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, login, register, logout, fetchMe, setAuth, clearAuth }
+  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, logout, fetchMe, setAuth, clearAuth }
 })

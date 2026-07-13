@@ -63,9 +63,11 @@ export default {
     agentMaxTokens: 'Agent 在「工具决策」环节单次输出的最大 token 数，<b>独立于上面的 Max Tokens</b>。<br/>工具调用的参数（代码 / 文档 / 查询结果）可能很大，设太小会导致参数 JSON 被截断、工具调用失败。<br/>默认 <b>8192</b>，比普通回答更宽松；除非模型上下文极小，一般无需调小。',
     maxConcurrency: '同时向 LLM API 发送请求的会话数上限，超过后进入排队。<br/>建议按服务商账户等级设置，OpenAI Tier 1 通常设为 3~5。<br/><b>修改后立即生效</b>，不会强行中断已在处理的请求。',
     cacheTtl: '相同问题的回答缓存有效时间（秒）。<br/>默认 3600 秒（60 分钟）。设为 0 可完全禁用缓存。<br/><b>修改后立即生效</b>，不影响已缓存的条目（按各自创建时间判定过期）。',
+    contextWindow: '当前模型的最大上下文窗口（token 数）。用于对话页「上下文占用」进度条的分母。<br/>不同模型差异很大（如 gpt-4o 为 128000，Claude 为 200000，部分国产模型为 32000/64000 等）。<br/><b>修改后立即生效</b>。',
   },
   maxConcurrency: '最大并发数',
   cacheTtl: '缓存有效期',
+  contextWindow: '上下文窗口上限',
   cacheSecondsApprox: '{seconds} 秒 ≈ {minutes} 分钟',
   testConnection: '测试连接',
   test: {
