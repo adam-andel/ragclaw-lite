@@ -5,10 +5,11 @@ import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
   NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip, NSwitch,
+  NProgress, NTag,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server, Download } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, type LLMConfig, type SandboxNetworkConfig } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 
 const { t } = useI18n()
@@ -31,6 +32,7 @@ const urlDefaults: Record<string, string> = {
 
 const sections = [
   { id: 'llm', label: 'settings.nav.llm' },
+  { id: 'embedding-model', label: 'settings.nav.embeddingModel' },
   { id: 'server', label: 'settings.nav.server' },
   { id: 'system-prompt', label: 'settings.nav.systemPrompt' },
   { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
@@ -94,6 +96,67 @@ function formatKeep(min: number): string {
 }
 const savingSandbox = ref(false)
 
+// ── Embedding model (on-demand download) ──
+const embeddingStatus = ref<EmbeddingModelStatus>({
+  status: 'idle', progress: 0, message: '', error: '', model: '', installed: false,
+})
+const embeddingPollTimer = ref<number | null>(null)
+
+async function loadEmbeddingStatus() {
+  try {
+    embeddingStatus.value = await getEmbeddingModelStatus()
+  } catch (e: any) {
+    // non-fatal; section just stays in its last known state
+  }
+}
+
+function stopEmbeddingPolling() {
+  if (embeddingPollTimer.value !== null) {
+    clearInterval(embeddingPollTimer.value)
+    embeddingPollTimer.value = null
+  }
+}
+
+function startEmbeddingPolling() {
+  if (embeddingPollTimer.value !== null) return
+  embeddingPollTimer.value = window.setInterval(async () => {
+    await loadEmbeddingStatus()
+    const s = embeddingStatus.value.status
+    if (s === 'completed' || s === 'failed') {
+      stopEmbeddingPolling()
+      if (s === 'completed') message.success(t('settings.embeddingModelMgmt.installedTip'))
+      else message.error(t('settings.embeddingModelMgmt.statusFailed') + '：' + embeddingStatus.value.error)
+    }
+  }, 2000)
+}
+
+async function handleDownloadEmbedding() {
+  try {
+    const res = await downloadEmbeddingModel()
+    if (res.started) {
+      await loadEmbeddingStatus()
+      startEmbeddingPolling()
+      message.info(t('settings.embeddingModelMgmt.downloading'))
+    } else if (res.reason === 'already_downloading') {
+      await loadEmbeddingStatus()
+      startEmbeddingPolling()
+      message.warning(t('settings.embeddingModelMgmt.alreadyDownloading'))
+    }
+  } catch (e: any) {
+    message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
+async function handleDeleteEmbedding() {
+  try {
+    await deleteEmbeddingModel()
+    await loadEmbeddingStatus()
+    message.success(t('settings.embeddingModelMgmt.deleted'))
+  } catch (e: any) {
+    message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
 let observer: IntersectionObserver | null = null
 let scrollTimer: number | null = null
 
@@ -113,6 +176,8 @@ onMounted(async () => {
   } catch (e: any) {
     message.error(e.message || t('settings.msg.loadSandboxFailed'))
   }
+
+  await loadEmbeddingStatus()
 
   if (route.hash) {
     const id = route.hash.slice(1)
@@ -138,6 +203,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   observer?.disconnect()
+  stopEmbeddingPolling()
 })
 
 function clearTest() { testResult.value = null }
@@ -464,6 +530,92 @@ async function handleSaveSandbox() {
             </NSpace>
           </NFormItem>
 
+        </section>
+
+        <!-- Embedding Model (on-demand install) -->
+        <section id="embedding-model">
+          <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
+          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.embeddingModelMgmt.desc')" />
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.embeddingModelMgmt.name') }}
+                <NTooltip trigger="hover" :width="260">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  {{ t('settings.embeddingModelTip') }}
+                </NTooltip>
+              </span>
+            </template>
+            <NInput :value="embeddingStatus.model || config.embedding_model" disabled>
+              <template #prefix><NIcon :component="HardwareChip" /></template>
+            </NInput>
+          </NFormItem>
+
+          <NFormItem :label="t('settings.embeddingModelMgmt.status')">
+            <NSpace align="center" :size="12">
+              <NTag v-if="embeddingStatus.installed" type="success" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusInstalled') }}
+              </NTag>
+              <NTag v-else-if="embeddingStatus.status === 'downloading'" type="warning" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusDownloading') }}
+              </NTag>
+              <NTag v-else-if="embeddingStatus.status === 'failed'" type="error" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusFailed') }}
+              </NTag>
+              <NTag v-else type="default" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusNotInstalled') }}
+              </NTag>
+
+              <NProgress
+                v-if="embeddingStatus.status === 'downloading'"
+                type="line"
+                :percentage="embeddingStatus.progress"
+                :show-indicator="true"
+                :processing="true"
+                style="width: 200px"
+              />
+            </NSpace>
+          </NFormItem>
+
+          <NFormItem v-if="embeddingStatus.status === 'failed'" :show-feedback="false">
+            <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
+              {{ embeddingStatus.error }}
+            </NAlert>
+          </NFormItem>
+
+          <NFormItem :show-feedback="false">
+            <NSpace align="center">
+              <NButton
+                v-if="!embeddingStatus.installed && embeddingStatus.status !== 'downloading'"
+                type="primary"
+                @click="handleDownloadEmbedding"
+              >
+                <template #icon><NIcon><Download /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.download') }}
+              </NButton>
+              <NButton
+                v-if="embeddingStatus.installed"
+                type="error"
+                secondary
+                @click="handleDeleteEmbedding"
+              >
+                {{ t('settings.embeddingModelMgmt.delete') }}
+              </NButton>
+              <span class="muted" style="font-size: 12px">
+                <template v-if="embeddingStatus.status === 'downloading'">
+                  {{ embeddingStatus.message }}
+                </template>
+                <template v-else-if="embeddingStatus.installed">
+                  {{ t('settings.embeddingModelMgmt.installedTip') }}
+                </template>
+                <template v-else>
+                  {{ t('settings.embeddingModelMgmt.notInstalledTip') }}
+                </template>
+              </span>
+            </NSpace>
+          </NFormItem>
         </section>
 
         <NDivider />

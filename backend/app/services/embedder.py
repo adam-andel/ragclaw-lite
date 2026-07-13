@@ -13,6 +13,15 @@ class EmbedderService:
 
     def _ensure_model(self):
         if self._model is None:
+            # Do NOT auto-download. The model is installed on demand from the
+            # Settings UI; if it's missing we fail fast with a clear message so
+            # the user knows to install it instead of silently pulling ~2GB.
+            from app.services.model_manager import model_manager
+            if not model_manager.is_installed(config_manager.embedding_model):
+                raise RuntimeError(
+                    "EMBED_MODEL_NOT_INSTALLED:"
+                    "本地 Embedding 模型尚未安装，请前往「系统设置 → Embedding 模型」点击下载安装。"
+                )
             self._model = SentenceTransformer(
                 config_manager.embedding_model,
                 device=settings.embedding_device,

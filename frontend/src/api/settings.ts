@@ -71,3 +71,28 @@ export async function updateSandboxNetwork(data: Partial<SandboxNetworkConfig>):
   const res = await client.put('/config/sandbox-network', data)
   return res.data
 }
+
+// ── Embedding model (on-demand download) ──
+export interface EmbeddingModelStatus {
+  status: 'idle' | 'downloading' | 'completed' | 'failed'
+  progress: number
+  message: string
+  error: string
+  model: string
+  installed: boolean
+}
+
+export async function getEmbeddingModelStatus(): Promise<EmbeddingModelStatus> {
+  const res = await client.get('/embedding-model/status')
+  return res.data
+}
+
+export async function downloadEmbeddingModel(): Promise<{ started: boolean; reason?: string; model: string }> {
+  const res = await client.post('/embedding-model/download')
+  return res.data
+}
+
+export async function deleteEmbeddingModel(): Promise<{ deleted: boolean; model: string }> {
+  const res = await client.delete('/embedding-model')
+  return res.data
+}

@@ -26,17 +26,17 @@ RUN (apt-get update && \
      apt-get install -y --no-install-recommends libgl1 libglib2.0-0) \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Layer 2: Pre-download BGE model (almost never changes, ~2GB) ──
-# Uses huggingface_hub (lightweight) so dependency changes won't re-download the model.
-# Must be BEFORE Layer 3 (pip install) to maximize cache reuse.
-ENV HF_HOME=/app/.cache/huggingface \
-    HF_ENDPOINT=https://hf-mirror.com
+# ── Layer 2: Prepare HuggingFace tooling (do NOT pre-download the ~2GB model) ──
+# The BGE model is installed on demand from the Settings UI at runtime, so it is
+# NOT baked into the image here. We only ensure huggingface_hub (used by the
+# download endpoint) is present. HF_HOME points into the persistent /app/data
+# volume so an installed model survives container restarts.
+ENV HF_HOME=/app/data/hf_cache
 # 国内镜像（可构建时通过 --build-arg PYPI_MIRROR=... 覆盖）；默认仅作官方源不通时的兜底
 ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 # 先尝试官方 PyPI，失败再回退到国内镜像（与 apt 源规则一致）
 RUN pip install --no-cache-dir --quiet huggingface_hub || \
-    pip install --no-cache-dir --quiet --index-url ${PYPI_MIRROR} huggingface_hub && \
-    python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-small-zh-v1.5')"
+    pip install --no-cache-dir --quiet --index-url ${PYPI_MIRROR} huggingface_hub
 
 # ── Layer 3: Python deps (changes more often than model, less than code) ──
 # Single source of truth: backend/pyproject.toml. Avoids drift between
@@ -58,7 +58,7 @@ COPY backend/ backend/
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # ── Layer 6: Data dirs + non-root user (rarely changes) ──
-RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads && \
+RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads /app/data/hf_cache && \
     useradd -m -s /bin/bash erag && \
     chown -R erag:erag /app
 

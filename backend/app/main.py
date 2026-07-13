@@ -99,13 +99,18 @@ async def lifespan(app: FastAPI):
                 print(f"[seed] Default admin user created (admin / admin123)")
     except Exception as e:
         print(f"[seed] warning: {e}")
-    # Pre-warm BGE model to avoid cold-start on first request
+    # Pre-warm BGE model to avoid cold-start on first request.
+    # Only if the local model is already installed (do NOT auto-download at boot).
     try:
         import asyncio
-        from app.services.embedder import embedder_service
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, embedder_service.embed, ["warmup"])
-        print("BGE model pre-warmed")
+        from app.services.model_manager import model_manager
+        if model_manager.is_installed():
+            from app.services.embedder import embedder_service
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, embedder_service.embed, ["warmup"])
+            print("BGE model pre-warmed")
+        else:
+            print("BGE model not installed yet — skipping warmup (install via Settings UI)")
     except Exception as e:
         print(f"BGE warmup warning: {e}")
     # Ensure all models are loaded for create_all
@@ -204,7 +209,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs, notifications
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs, notifications, embedding_model
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -219,6 +224,7 @@ app.include_router(mcp_servers.router)
 app.include_router(plugins.router)
 app.include_router(cron_jobs.router)
 app.include_router(notifications.router)
+app.include_router(embedding_model.router)
 
 
 @app.get("/api/health")
