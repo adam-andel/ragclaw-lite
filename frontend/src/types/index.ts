@@ -42,6 +42,13 @@ export interface ChunkItem {
   page?: number
 }
 
+export interface ChunkListResponse {
+  items: ChunkItem[]
+  total: number
+  page: number
+  size: number
+}
+
 // ---- Knowledge Base ----
 export interface KnowledgeBase {
   id: string

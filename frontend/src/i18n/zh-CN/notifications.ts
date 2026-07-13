@@ -12,4 +12,10 @@ export default {
     cron: '定时任务',
     system: '系统',
   },
+  desktop: {
+    enable: '开启桌面通知',
+    on: '桌面通知已开启',
+    blocked: '浏览器已拦截通知',
+    unsupported: '浏览器不支持桌面通知',
+  },
 }

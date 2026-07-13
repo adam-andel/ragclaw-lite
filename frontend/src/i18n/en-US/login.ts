@@ -16,5 +16,5 @@ export default {
   login: 'Log in',
   noAccountHint: 'No account yet? Contact an admin to create one.',
   loginSuccess: 'Login successful, redirecting…',
-  loginFailed: 'Login failed, please try again later',
+  loginFailed: 'Login failed, please try again',
 }

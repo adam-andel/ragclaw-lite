@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm, NPopover, NTag, NText, NSelect,
+  NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
@@ -551,20 +551,16 @@ onMounted(() => {
             <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
             {{ t('skills.reupload') }}
           </NButton>
-          <NPopover v-if="detailSkill" trigger="click" placement="top-end" show-arrow>
-            <template #trigger>
-              <NButton size="small">
-                <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
-                {{ t('skills.reuploadZip') }}
-              </NButton>
-            </template>
-            <NUpload
-              :show-file-list="false"
-              :custom-request="(o: any) => handleReuploadZip(detailSkill!.id, o)"
-            >
-              <NButton size="small">{{ t('skills.selectZipFile') }}</NButton>
-            </NUpload>
-          </NPopover>
+          <NUpload
+            v-if="detailSkill"
+            :show-file-list="false"
+            :custom-request="(o: any) => handleReuploadZip(detailSkill!.id, o)"
+          >
+            <NButton size="small">
+              <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
+              {{ t('skills.reuploadZip') }}
+            </NButton>
+          </NUpload>
           <NButton size="small" v-if="detailSkill" @click="handleToggle(detailSkill)" :style="detailSkill.is_active
             ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
             : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">

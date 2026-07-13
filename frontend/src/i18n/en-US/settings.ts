@@ -1,6 +1,6 @@
 export default {
   title: 'System Settings',
-  subtitle: 'LLM · Server · Retrieval Debug · Plugins · Super admin only',
+  subtitle: 'LLM · Server · Retrieval Debug · Plugins · Super Admin only',
   saveConfig: 'Save Configuration',
   nav: {
     llm: 'LLM',
@@ -14,7 +14,7 @@ export default {
   embeddingModel: 'Embedding Model',
   embeddingModelTip: 'Uses the local Embedding model by default.',
   providerLabel: 'LLM Provider',
-  providerQwen: 'Qwen (Tongyi Qianwen)',
+  providerQwen: 'Qwen (Alibaba)',
   providerOllama: 'Ollama (Local)',
   providerCustom: 'Custom',
   apiKey: {
@@ -39,7 +39,7 @@ export default {
     failed: '❌ Connection failed: {error}',
     error: '❌ Request error: {message}',
   },
-  listenHost: 'Listen Address',
+  listenHost: 'Bind Address',
   listenHostTip: 'IP address the server binds to.<br/><b>0.0.0.0</b> = accept connections on all network interfaces.<br/><b>Requires a service restart to take effect</b>.',
   listenPort: 'Listen Port',
   listenPortTip: 'TCP port the server listens on, range 1~65535.<br/><b>Requires a service restart to take effect</b>.',

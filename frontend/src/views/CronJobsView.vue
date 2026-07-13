@@ -340,14 +340,14 @@ function isPaused(job: CronJob) {
 
           <div class="cj-card-desc" v-if="job.description">{{ job.description }}</div>
 
-          <div class="cj-card-row">
-            <span class="cj-card-label">{{ t('cron.runCount') }}</span>
-            <span class="cj-meta">{{ job.run_count }}</span>
+          <div class="cj-card-meta">
+            <span class="cj-meta-label">{{ t('cron.runCount') }}</span>
+            <span class="cj-meta-value">{{ job.run_count }}</span>
           </div>
 
-          <div class="cj-card-row">
-            <span class="cj-card-label">{{ t('cron.nextRun') }}</span>
-            <span class="cj-meta">{{ formatTime(job.next_run_at) }}</span>
+          <div class="cj-card-meta">
+            <span class="cj-meta-label">{{ t('cron.nextRun') }}</span>
+            <span class="cj-meta-value">{{ formatTime(job.next_run_at) }}</span>
           </div>
 
           <template #footer>
@@ -554,28 +554,29 @@ function isPaused(job: CronJob) {
 html.dark .cj-card-desc {
   color: #e5e7eb;
 }
-.cj-card-row {
+.cj-card-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--text-xs);
   margin-bottom: 8px;
+  flex-wrap: wrap;
 }
-.cj-card-row:last-child {
+.cj-card-meta:last-child {
   margin-bottom: 2px;
 }
-.cj-card-label {
+.cj-meta-label {
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text);
   flex-shrink: 0;
-  width: 56px;
 }
-.cj-meta {
+.cj-meta-value {
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .empty {
   color: var(--color-text-muted);

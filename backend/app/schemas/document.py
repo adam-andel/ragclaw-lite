@@ -84,3 +84,10 @@ class ChunkResponse(BaseModel):
     page: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ChunkListResponse(BaseModel):
+    items: list[ChunkResponse]
+    total: int
+    page: int
+    size: int

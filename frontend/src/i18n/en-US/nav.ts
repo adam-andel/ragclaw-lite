@@ -8,9 +8,9 @@ export default {
   users: 'User Management',
   settings: 'Settings',
   notifications: 'Notifications',
-  notificationCenter: 'Notifications',
+  notificationCenter: 'Notification Center',
   profile: 'Profile',
   darkMode: 'Dark Mode',
-  logout: 'Logout',
+  logout: 'Sign out',
   language: 'Language',
 }
