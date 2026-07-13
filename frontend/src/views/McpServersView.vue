@@ -246,19 +246,19 @@ async function handleRefresh() {
             </div>
           </div>
 
-          <div class="mcp-card-row">
-            <span class="mcp-card-label">{{ t('mcp.transport') }}</span>
+          <div class="mcp-card-meta">
+            <span class="mcp-meta-label">{{ t('mcp.transport') }}</span>
             <NTag :type="server.transport_type === 'http' ? 'info' : 'warning'" size="tiny" :bordered="false">{{ server.transport_type }}</NTag>
           </div>
 
-          <div class="mcp-card-row">
-            <span class="mcp-card-label">{{ t('mcp.address') }}</span>
-            <span class="mcp-meta" :title="(server.endpoint || server.command) ?? undefined">{{ server.endpoint || server.command || '—' }}</span>
+          <div class="mcp-card-meta">
+            <span class="mcp-meta-label">{{ t('mcp.address') }}</span>
+            <span class="mcp-meta-value" :title="(server.endpoint || server.command) ?? undefined">{{ server.endpoint || server.command || '—' }}</span>
           </div>
 
-          <div class="mcp-card-row">
-            <span class="mcp-card-label">{{ t('mcp.timeout') }}</span>
-            <span class="mcp-meta">{{ server.timeout_seconds }}s</span>
+          <div class="mcp-card-meta">
+            <span class="mcp-meta-label">{{ t('mcp.timeout') }}</span>
+            <span class="mcp-meta-value">{{ server.timeout_seconds }}s</span>
           </div>
 
           <template #footer>
@@ -408,24 +408,25 @@ async function handleRefresh() {
 .mcp-card-toggle {
   flex-shrink: 0;
 }
-.mcp-card-row {
+.mcp-card-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--text-xs);
   margin-bottom: 8px;
+  flex-wrap: wrap;
 }
-.mcp-card-label {
+.mcp-meta-label {
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text);
   flex-shrink: 0;
-  width: 36px;
 }
-.mcp-meta {
+.mcp-meta-value {
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 </style>
