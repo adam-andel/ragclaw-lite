@@ -26,6 +26,7 @@ class MessageResponse(BaseModel):
     id: str
     role: str
     content: str
+    status: str | None = None
     citations: list[CitationSchema] = []
     cache_hit: bool = False
     token_count: int | None = None

@@ -96,6 +96,11 @@ def _apply_migrations(raw):
         raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('kb_prompt', ?)",
                      (datetime.now(timezone.utc).isoformat(),))
 
+    if "message_status" not in applied:
+        _migrate_message_status(raw)
+        raw.execute("INSERT INTO _migrations(name, applied_at) VALUES ('message_status', ?)",
+                     (datetime.now(timezone.utc).isoformat(),))
+
     raw.commit()
 
 
@@ -523,6 +528,15 @@ def _migrate_kb_prompt(raw):
         print("[migrate] kb_prompt: added prompt column to knowledge_bases")
     else:
         print("[migrate] kb_prompt: column already exists, skipping")
+
+
+def _migrate_message_status(raw):
+    """Add status column to messages table (e.g. 'stopped' for manually terminated turns)."""
+    print("[migrate] Running message_status...")
+    if _add_col_if_missing(raw, "messages", "status", "VARCHAR(20)"):
+        print("[migrate] message_status: added status column to messages")
+    else:
+        print("[migrate] message_status: column already exists, skipping")
 
 
 def _migrate_system_settings(raw):

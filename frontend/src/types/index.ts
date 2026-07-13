@@ -95,6 +95,8 @@ export interface ChatMessage {
   citations: Citation[]
   created_at: string
   agentSteps?: AgentStep[]
+  _pending?: boolean
+  status?: string | null
 }
 
 export interface Citation {
@@ -154,12 +156,14 @@ export type SSEEvent =
       ttft_ms: number
       retrieval_ms: number
       llm_ms: number
+      stopped?: boolean
     }
   | {
       type: 'need_user_input'
       message: string
       conv_id: string
       kind: 'skill_switch' | 'tool_round'
+      message_id: string
     }
 
 // ---- SKILL (folder-based) ----

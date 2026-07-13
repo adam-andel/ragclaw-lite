@@ -51,7 +51,7 @@ const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
 // 挂起提示（后端命中上限后推送 need_user_input）：{ 文案, 后端给的 conv_id, 原因 }
-const pendingLimit = ref<{ message: string; convId: string; kind: string } | null>(null)
+const pendingLimit = ref<{ message: string; convId: string; kind: string; messageId: string } | null>(null)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -75,6 +75,16 @@ function onScroll() {
 }
 
 // 向前加载更早的对话：向服务端请求上一页，拼接到列表顶部，并补偿滚动位置避免画面跳动
+// 历史消息中被手动终止的一轮（status==='stopped'）：DB 只存原提示文案，
+// 加载时按当前界面语言叠加本地化终止说明，保证刷新后仍显示。
+function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
+  return msgs.map(m =>
+    m.status === 'stopped'
+      ? { ...m, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
+      : m,
+  )
+}
+
 async function loadOlder() {
   if (!hasMoreOlder.value || isLoadingOlder.value || !conversationId.value) return
   isLoadingOlder.value = true
@@ -83,7 +93,7 @@ async function loadOlder() {
   const prevPage = currentPage.value - 1
   try {
     const data = await getConversationMessages(conversationId.value, prevPage, PAGE_SIZE_ROUNDS)
-    messages.value = [...data.messages, ...messages.value]
+    messages.value = [...applyStoppedNote(data.messages), ...messages.value]
     currentPage.value = data.page
     totalPages.value = data.total_pages
     totalRounds.value = data.total_rounds
@@ -102,7 +112,7 @@ async function loadOlder() {
 // 加载对话的最新一页（最后一页），并滚动到底部
 async function loadInitialPage(id: string) {
   const data = await getConversationMessages(id, 'last', PAGE_SIZE_ROUNDS)
-  messages.value = data.messages
+  messages.value = applyStoppedNote(data.messages)
   currentPage.value = data.page
   totalPages.value = data.total_pages
   totalRounds.value = data.total_rounds
@@ -379,12 +389,28 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         streamedText = t('chat.streamError', { msg: event.message })
         break
       } else if (event.type === 'need_user_input') {
-        // 挂起：保存提示，移除本轮空白助手气泡；继续/停止时重建气泡
-        pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind }
+        // 挂起：后端已保存一条 assistant 消息（提示文案）。前端用真实消息渲染气泡，
+        // 用户答复后复用该消息 id，由后端把 content 原地替换为正式答案。
         messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
+        const pendingMsg: ChatMsg = {
+          id: event.message_id,
+          role: 'assistant',
+          content: event.message,
+          citations: [],
+          created_at: new Date().toISOString(),
+          agentSteps: [],
+          _pending: true,
+        }
+        messages.value.push(pendingMsg)
+        pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
         break
       } else if (event.type === 'done') {
-        proxyMsg.content = streamedText
+        if (event.stopped) {
+          proxyMsg.content = (proxyMsg.content || '') + '\n\n' + t('chat.userStoppedNote')
+        } else {
+          proxyMsg.content = streamedText
+        }
+        proxyMsg._pending = false
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
         ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
         ;(proxyMsg as any)._llm = event.llm_ms || 0
@@ -423,8 +449,13 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isStreaming.value) return
-  // 挂起态下用户输入新问题：强制带上同一 conv_id，后端会视为「停止」并丢弃挂起
-  if (pendingLimit.value) conversationId.value = pendingLimit.value.convId
+  // 挂起态下用户输入新问题：强制带上同一 conv_id，后端会视为「停止」并丢弃挂起；
+  // 挂起提示消息保留在对话记录里（作为历史），仅清掉本地的 pending 标记
+  if (pendingLimit.value) {
+    conversationId.value = pendingLimit.value.convId
+    const pm = messages.value.find(m => m.id === pendingLimit.value!.messageId)
+    if (pm) pm._pending = false
+  }
   pendingLimit.value = null
 
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', content: text, citations: [], created_at: new Date().toISOString() }
@@ -471,16 +502,26 @@ async function resumeRun(action: 'continue' | 'stop') {
   const pl = pendingLimit.value
   if (!pl || isStreaming.value) return
   const convId = pl.convId
+  const msgId = pl.messageId
   pendingLimit.value = null
   conversationId.value = convId
-  const assistantMsg: ChatMsg = { id: crypto.randomUUID(), role: 'assistant', content: '', citations: [], agentSteps: [], created_at: new Date().toISOString() }
-  messages.value.push(assistantMsg)
-  const proxyMsg = messages.value[messages.value.length - 1]
+  // 复用挂起时后端保存的那条消息：清空内容并承接流式 token，done 时后端原地替换
+  const msg = messages.value.find(m => m.id === msgId)
+  if (!msg) return
+  // 停止：保留原挂起提示文案，由前端在 done 时按当前语言叠加终止说明；
+  // 继续：清空内容，承接流式生成的新答案
+  if (action === 'continue') {
+    msg.content = ''
+    msg.citations = []
+    msg.agentSteps = []
+  }
+  msg._pending = false
+  const proxyMsg = msg
   isStreaming.value = true
   isPinnedToBottom.value = true
   await scrollToBottom()
   await nextTick()
-  doStream('', proxyMsg, assistantMsg.id, false, action)
+  doStream('', proxyMsg, msgId, false, action)
 }
 
 function continueResume() {
@@ -650,16 +691,17 @@ function handleKeydown(e: KeyboardEvent) {
         <span v-if="isLoadingOlder">{{ t('chat.loadingOlder') }}</span>
         <span v-else-if="!hasMoreOlder" class="history-sentinel-done">{{ t('chat.allShown', { count: totalRounds }) }}</span>
       </div>
-      <ChatMessage
-        v-for="msg in messages"
-        :key="msg.id"
-        :message="msg"
-        :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
-        :queue-position="queuePosition"
-        :search-keyword="searchKw"
-        :active-match="msg.id === activeMatchId"
-        @regenerate="regenerateAnswer"
-      />
+      <template v-for="msg in messages" :key="msg.id">
+        <ChatMessage
+          v-if="!msg._pending"
+          :message="msg"
+          :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
+          :queue-position="queuePosition"
+          :search-keyword="searchKw"
+          :active-match="msg.id === activeMatchId"
+          @regenerate="regenerateAnswer"
+        />
+      </template>
 
       <!-- 挂起提示内联气泡（命中上限时，融入消息流） -->
       <div v-if="pendingLimit" :key="pendingLimit.convId + ':' + pendingLimit.message" class="resume-inline-bubble" role="alert">

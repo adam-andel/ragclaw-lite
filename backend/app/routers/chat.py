@@ -44,22 +44,44 @@ async def _save_assistant_message(
     citations: list[dict],
     cache_hit: bool,
     retrieval_ms: int = 0,
+    msg_id: str | None = None,
+    status: str | None = None,
 ) -> Message:
-    """Persist assistant message and update conversation timestamp."""
-    assistant_msg = Message(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="assistant",
-        content=content,
-        citations=citations,
-        cache_hit=cache_hit,
-        ttft_ms=0,
-        retrieval_ms=retrieval_ms,
-        llm_ms=0,
-        created_at=datetime.utcnow(),
-    )
+    """Persist assistant message and update conversation timestamp.
 
+    If ``msg_id`` is given and that message already exists, update it in
+    place (used to replace a pending-limit placeholder with the final answer).
+    Otherwise create a new message (optionally reusing ``msg_id`` as its id).
+
+    ``status`` persists a message state (e.g. ``"stopped"`` for a manually
+    terminated turn) so the frontend can re-apply localized notes after reload.
+    """
     async with async_session() as session:
+        if msg_id:
+            existing = await session.get(Message, msg_id)
+            if existing:
+                existing.content = content
+                existing.citations = citations
+                existing.cache_hit = cache_hit
+                existing.retrieval_ms = retrieval_ms
+                existing.status = status
+                await session.commit()
+                return existing
+
+        assistant_msg = Message(
+            id=msg_id or str(uuid.uuid4()),
+            conversation_id=conv_id,
+            role="assistant",
+            content=content,
+            citations=citations,
+            cache_hit=cache_hit,
+            ttft_ms=0,
+            retrieval_ms=retrieval_ms,
+            llm_ms=0,
+            status=status,
+            created_at=datetime.utcnow(),
+        )
+
         session.add(assistant_msg)
         conv = await session.get(Conversation, conv_id)
         if conv:
@@ -229,7 +251,9 @@ async def chat_stream(
                 # ── 0. 挂起分诊：本会话是否有待用户确认的限额挂起 ──
                 pending = pending_by_conv.get(conv_id)
                 resume_mode = None
+                pending_msg_id = None
                 if pending is not None:
+                    pending_msg_id = pending.get("pending_msg_id")
                     if request.resume_action == "continue":
                         resume_mode = "continue"
                         pending_by_conv.pop(conv_id, None)
@@ -302,6 +326,30 @@ async def chat_stream(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id
                     )
 
+                # ── 1c. 用户手动停止：不重放工具、不生成答案，
+                #        仅把原挂起提示落库，并通过 done.stopped 让前端叠加本地化终止说明 ──
+                if resume_mode == "stop":
+                    plim = pending.get("pending_limit") or {}
+                    base_msg = plim.get("message") or ""
+                    assistant_msg = await _save_assistant_message(
+                        conv_id,
+                        base_msg,
+                        pending.get("citations", []),
+                        cache_hit=False,
+                        msg_id=pending_msg_id,
+                        status="stopped",
+                    )
+                    enqueue("done", {
+                        "conversation_id": conv_id,
+                        "message_id": assistant_msg.id,
+                        "cache_hit": False,
+                        "ttft_ms": 0,
+                        "retrieval_ms": 0,
+                        "llm_ms": 0,
+                        "stopped": True,
+                    })
+                    return
+
                 # ── 2. 跑图 ──
                 async with llm_limiter.acquire(on_queue_position):
                     # Token acquired: build state and run agent graph.
@@ -309,11 +357,21 @@ async def chat_stream(
 
                     # ── 2b. 挂起检测：图请求用户确认 ──
                     if state.get("pending_limit"):
-                        pending_by_conv[conv_id] = _snapshot_state(state)
+                        # 先把挂起提示作为一条 assistant 消息落库，记录其 id 以便答复后原地替换
+                        pending_msg = await _save_assistant_message(
+                            conv_id,
+                            state["pending_limit"]["message"],
+                            state.get("citations", []),
+                            cache_hit=False,
+                        )
+                        snap = _snapshot_state(state)
+                        snap["pending_msg_id"] = pending_msg.id
+                        pending_by_conv[conv_id] = snap
                         enqueue("need_user_input", {
                             "message": state["pending_limit"]["message"],
                             "conv_id": conv_id,
                             "kind": state["pending_limit"]["kind"],
+                            "message_id": pending_msg.id,
                         })
                         return
 
@@ -331,6 +389,7 @@ async def chat_stream(
                             collected_content,
                             collected_citations,
                             cache_hit=True,
+                            msg_id=pending_msg_id if resume_mode is not None else None,
                         )
                         enqueue("done", {
                             "conversation_id": conv_id,
@@ -394,6 +453,7 @@ async def chat_stream(
                         collected_citations,
                         cache_hit=False,
                         retrieval_ms=final_retr,
+                        msg_id=pending_msg_id if resume_mode is not None else None,
                     )
                     enqueue("done", {
                         "conversation_id": conv_id,
