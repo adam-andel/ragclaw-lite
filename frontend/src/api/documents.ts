@@ -1,5 +1,5 @@
 import client from './client'
-import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse, DocKBLinkResponse, KBUpdatePayload } from '@/types'
+import type { KnowledgeBase, DocumentItem, ChunkItem, DocumentListResponse, ChunkListResponse, DocKBLinkResponse, KBUpdatePayload } from '@/types'
 
 // ─── Knowledge Bases ───
 
@@ -61,7 +61,8 @@ export const getDocument = (id: string) => client.get<DocumentItem>(`/documents/
 export const getDocumentStatus = (id: string) =>
   client.get<{ id: string; status: string; error_message?: string; chunk_count: number; progress: number }>(`/documents/${id}/status`)
 
-export const getDocumentChunks = (id: string) => client.get<ChunkItem[]>(`/documents/${id}/chunks`)
+export const getDocumentChunks = (id: string, params?: { page?: number; size?: number; search?: string }) =>
+  client.get<ChunkListResponse>(`/documents/${id}/chunks`, { params })
 
 export const getDocumentChunk = (id: string, chunkIndex: number) =>
   client.get<ChunkItem>(`/documents/${id}/chunks/${chunkIndex}`)

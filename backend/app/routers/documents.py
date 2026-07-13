@@ -16,7 +16,7 @@ from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.user import User
 from app.schemas.document import (
     DocumentResponse, DocumentStatusResponse, ChunkResponse,
-    DocumentListResponse,
+    DocumentListResponse, ChunkListResponse,
 )
 from app.services.auth import get_current_user, get_current_staff
 from app.services.parser import parser_service
@@ -276,15 +276,29 @@ async def get_document_status(
 
 # ---- Document chunks ----
 
-@router.get("/{doc_id}/chunks", response_model=list[ChunkResponse])
+@router.get("/{doc_id}/chunks", response_model=ChunkListResponse)
 async def get_document_chunks(
-    doc_id: str, current_user: User = Depends(get_current_user),
+    doc_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: str | None = Query(None, description="Case-insensitive substring filter on chunk content"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    conditions = [Chunk.doc_id == doc_id]
+    if search and search.strip():
+        conditions.append(Chunk.content.ilike(f"%{search.strip()}%"))
+
+    total = (await db.execute(select(func.count()).select_from(Chunk).where(*conditions))).scalar() or 0
     result = await db.execute(
-        select(Chunk).where(Chunk.doc_id == doc_id).order_by(Chunk.chunk_index)
+        select(Chunk)
+        .where(*conditions)
+        .order_by(Chunk.chunk_index)
+        .offset((page - 1) * size)
+        .limit(size)
     )
-    return result.scalars().all()
+    items = result.scalars().all()
+    return ChunkListResponse(items=items, total=total, page=page, size=size)
 
 
 @router.get("/{doc_id}/chunks/{chunk_index}", response_model=ChunkResponse)

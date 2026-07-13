@@ -116,7 +116,9 @@ function saveUploadItems() {
 // Chunks preview (shown inline inside the Document Detail Modal)
 const showDetailChunks = ref(false)
 const chunkPreviewTitle = ref<HTMLElement | null>(null)
-const chunks = ref<ChunkItem[]>([])
+const chunkDocId = ref<string>('')
+const chunks = ref<ChunkItem[]>([])   // current page only (server-paginated)
+const chunkTotal = ref(0)             // total matching chunks for current search
 const chunksLoading = ref(false)
 const chunksPerPage = 10
 const chunkSearch = ref('')
@@ -205,18 +207,8 @@ const filteredDocKbs = computed(() => {
   )
 })
 
-const filteredChunks = computed(() => {
-  if (!chunkSearch.value.trim()) return chunks.value
-  const q = chunkSearch.value.trim().toLowerCase()
-  return chunks.value.filter(c => c.content.toLowerCase().includes(q))
-})
-
-const paginatedChunks = computed(() => {
-  const start = (chunkPage.value - 1) * chunksPerPage
-  return filteredChunks.value.slice(start, start + chunksPerPage)
-})
-
-const totalChunkPages = computed(() => Math.max(1, Math.ceil(filteredChunks.value.length / chunksPerPage)))
+// Total pages is derived from the server-reported total (backend pagination)
+const totalChunkPages = computed(() => Math.max(1, Math.ceil(chunkTotal.value / chunksPerPage)))
 
 function toggleChunkExpand(id: string) {
   const s = new Set(expandedChunks.value)
@@ -698,23 +690,47 @@ async function handleDownload(doc: DocumentItem) {
   }
 }
 
-async function openChunks(docId: string) {
+// Loads the current page of chunks from the backend (server-side pagination + search)
+async function loadChunks() {
+  if (!chunkDocId.value) return
   chunksLoading.value = true
+  try {
+    const res = await getDocumentChunks(chunkDocId.value, {
+      page: chunkPage.value,
+      size: chunksPerPage,
+      search: chunkSearch.value.trim() || undefined,
+    })
+    chunks.value = res.data.items
+    chunkTotal.value = res.data.total
+  } catch {
+    message.error(t('documents.loadChunksFailed'))
+  } finally {
+    chunksLoading.value = false
+  }
+}
+
+async function openChunks(docId: string) {
+  chunkDocId.value = docId
   chunkSearch.value = ''
   chunkPage.value = 1
   expandedChunks.value = new Set()
   showDetailChunks.value = true
-  try {
-    const res = await getDocumentChunks(docId)
-    chunks.value = res.data
-    await nextTick()
-    chunkPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  } catch {
-    message.error(t('documents.loadChunksFailed'))
-    showDetailChunks.value = false
-  } finally {
-    chunksLoading.value = false
-  }
+  await loadChunks()
+  await nextTick()
+  chunkPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// Triggered on search input change: reset to page 1 and reload
+function onChunkSearch(value: string) {
+  chunkSearch.value = value
+  chunkPage.value = 1
+  loadChunks()
+}
+
+// Triggered on pagination change: load the selected page
+function onChunkPageChange(page: number) {
+  chunkPage.value = page
+  loadChunks()
 }
 
 // ── Helpers ──
@@ -1160,24 +1176,26 @@ async function loadSupportedTypes() {
           <h3 ref="chunkPreviewTitle" class="chunk-preview-title">{{ t('documents.chunkPreview') }}</h3>
           <div class="chunks-modal">
             <NInput
-              v-if="chunks.length > 0"
+              v-if="chunkTotal > 0 || chunkSearch"
               v-model:value="chunkSearch"
               :placeholder="t('documents.searchChunkContent')"
               size="small"
               clearable
-              @update:value="chunkPage = 1"
+              @update:value="onChunkSearch"
               style="margin-bottom:12px"
             >
               <template #prefix><NIcon size="15"><Search /></NIcon></template>
             </NInput>
 
             <NSpin :show="chunksLoading">
-              <NEmpty v-if="!chunksLoading && chunks.length === 0" :description="t('documents.noChunkData')" />
-              <NEmpty v-if="!chunksLoading && chunks.length > 0 && filteredChunks.length === 0" :description="t('documents.noMatchingChunks')" />
+              <NEmpty
+                v-if="!chunksLoading && chunks.length === 0"
+                :description="chunkSearch ? t('documents.noMatchingChunks') : t('documents.noChunkData')"
+              />
 
-              <div v-if="filteredChunks.length > 0">
-                <div class="chunk-count">{{ t('documents.chunkTotal', { count: filteredChunks.length }) }}</div>
-                <NCard v-for="c in paginatedChunks" :key="c.id" size="small" class="chunk-card">
+              <div v-if="chunks.length > 0">
+                <div class="chunk-count">{{ t('documents.chunkTotal', { count: chunkTotal }) }}</div>
+                <NCard v-for="c in chunks" :key="c.id" size="small" class="chunk-card">
                   <div class="chunk-meta">
                     <NTag size="tiny">#{{ c.chunk_index }}</NTag>
                     <NTag size="tiny" v-if="c.heading">{{ c.heading }}</NTag>
@@ -1200,15 +1218,15 @@ async function loadSupportedTypes() {
                 </NCard>
               </div>
             </NSpin>
-            <AppPagination
-              v-if="totalChunkPages > 1"
-              :page="chunkPage"
-              :page-size="chunksPerPage"
-              :item-count="filteredChunks.length"
-              @update:page="chunkPage = $event"
-              style="margin-top:12px"
-            />
           </div>
+          <AppPagination
+            v-if="totalChunkPages > 1"
+            class="chunk-footer-pager"
+            :page="chunkPage"
+            :page-size="chunksPerPage"
+            :item-count="chunkTotal"
+            @update:page="onChunkPageChange"
+          />
         </div>
       </div>
       <template #footer>
@@ -1601,18 +1619,39 @@ async function loadSupportedTypes() {
 .doc-name-clickable:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; border-radius: 2px; }
 
 /* Chunks */
+/* Panel owns its height; the inner list scrolls while the pager stays pinned at the bottom */
 .detail-chunks {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
   margin-top: var(--space-6, 24px);
   padding-top: var(--space-4, 16px);
   border-top: 1px solid var(--color-border, #eee);
 }
 .chunk-preview-title {
+  flex-shrink: 0;
   margin: 0 0 var(--space-3, 12px);
   font-size: var(--text-base, 15px);
   font-weight: 600;
   color: var(--color-text, #1f2937);
 }
-.chunks-modal { display: flex; flex-direction: column; max-height: 75vh; overflow-y: auto; }
+/* Inner scroll region: flex:1 + min-height:0 is what makes scrolling work inside a flex column */
+.chunks-modal {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Pager = plain flex footer of the panel: stays at the panel bottom while the
+   inner list scrolls, but scrolls away with the panel when the outer modal scrolls */
+.detail-chunks > .chunk-footer-pager {
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 8px;
+  background: var(--modal-content-bg, #fff);
+  border-top: 1px solid var(--color-border, #eee);
+}
 .chunk-count { font-size: var(--text-xs); color: var(--color-text-muted); margin-bottom: 10px; }
 .chunk-card {
   margin-bottom: 8px;
