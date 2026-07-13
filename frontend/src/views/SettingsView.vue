@@ -4,12 +4,13 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip, NSwitch,
+  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, HardwareChip, Server } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, type LLMConfig, type SandboxNetworkConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
+import { currentLocale } from '@/i18n/useLocale'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -52,7 +53,7 @@ const config = ref<LLMConfig>({
   embedding_api_key: '',
   llm_system_prompt: '',
   llm_system_prompt_en: '',
-  prompt_language: 'zh',
+  prompt_language: 'system',
   server_host: '0.0.0.0', server_port: 8000,
   cache_ttl_seconds: 3600,
   is_configured: false,
@@ -150,22 +151,46 @@ function onProviderChange(val: string) {
   }
 }
 
-// System-prompt textarea binds to the field matching the current prompt language:
-// toggle off (zh) <-> llm_system_prompt, toggle on (en) <-> llm_system_prompt_en.
+// Effective prompt language: 'system' follows the global UI locale (zh-CN -> zh, en-US -> en).
+const effectivePromptLang = computed<'zh' | 'en'>(() => {
+  const v = config.value.prompt_language
+  if (v === 'system') return currentLocale.value === 'en-US' ? 'en' : 'zh'
+  return v === 'en' ? 'en' : 'zh'
+})
+
+// System-prompt textarea binds to the field matching the effective prompt language:
+// zh <-> llm_system_prompt, en <-> llm_system_prompt_en.
 // Both fields are persisted independently, so switching never overwrites the other.
 const systemPromptModel = computed<string>({
   get() {
-    return config.value.prompt_language === 'en'
+    return effectivePromptLang.value === 'en'
       ? config.value.llm_system_prompt_en
       : config.value.llm_system_prompt
   },
   set(v: string) {
-    if (config.value.prompt_language === 'en') {
+    if (effectivePromptLang.value === 'en') {
       config.value.llm_system_prompt_en = v
     } else {
       config.value.llm_system_prompt = v
     }
   },
+})
+
+// Prompt-language selector options: follow system / Chinese / English.
+const promptLangOptions = computed(() => [
+  { label: t('settings.promptLang.system'), value: 'system' },
+  { label: t('settings.promptLang.zh'), value: 'zh' },
+  { label: t('settings.promptLang.en'), value: 'en' },
+])
+
+// Helper text shown next to the selector.
+const promptLangHint = computed(() => {
+  const v = config.value.prompt_language
+  if (v === 'system') {
+    const sys = currentLocale.value === 'en-US' ? t('settings.promptLang.en') : t('settings.promptLang.zh')
+    return `${t('settings.promptLang.system')}（${sys}）`
+  }
+  return v === 'en' ? t('settings.promptLang.en') : t('settings.promptLang.zh')
 })
 
 function scrollTo(id: string) {
@@ -197,7 +222,9 @@ async function handleSave() {
       embedding_model: config.value.embedding_model,
       llm_system_prompt: config.value.llm_system_prompt,
       llm_system_prompt_en: config.value.llm_system_prompt_en,
-      prompt_language: config.value.prompt_language,
+      prompt_language: config.value.prompt_language === 'system'
+        ? (currentLocale.value === 'en-US' ? 'en' : 'zh')
+        : config.value.prompt_language,
       server_host: config.value.server_host,
       server_port: config.value.server_port,
       cache_ttl_seconds: config.value.cache_ttl_seconds,
@@ -541,13 +568,14 @@ async function handleSaveSandbox() {
               </span>
             </template>
             <NSpace align="center">
-              <NSwitch
+              <NSelect
                 v-model:value="config.prompt_language"
-                checked-value="en"
-                unchecked-value="zh"
+                :options="promptLangOptions"
+                size="small"
+                style="width: 160px"
               />
               <span class="muted" style="font-size: 13px">
-                {{ config.prompt_language === 'en' ? t('settings.promptLang.en') : t('settings.promptLang.zh') }}
+                {{ promptLangHint }}
               </span>
             </NSpace>
           </NFormItem>

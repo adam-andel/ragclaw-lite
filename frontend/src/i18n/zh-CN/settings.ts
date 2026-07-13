@@ -48,6 +48,7 @@ export default {
   agentPromptLang: 'Agent 提示词语言',
   agentPromptLangTip: '控制 Agent Graph 内部提示词（意图路由 + 工具强制 JSON）使用的语言。<br/>默认 <b>中文</b>；切到 <b>English</b> 可对比英文主导模型（GPT / Claude / DeepSeek 等）的指令遵循率。<br/>修改后立即生效，无需重启，便于 A/B 对比。',
   promptLang: {
+    system: '跟随系统',
     en: 'English（英文）',
     zh: '中文（默认）',
   },
