@@ -682,7 +682,7 @@ async def skill_switcher_node(state: dict) -> dict:
                 return _skill_control_return(tc, "use_skill：未提供 skill_name。", stack, state)
             quota = state.get("skill_switch_quota", MAX_SKILL_SWITCHES)
             if switch_count >= quota:
-                # 挂起：等待用户确认（"继续"= 追加额度后重放），而非静默拒绝
+               # Suspend: wait for user confirmation ("continue" = replay after adding quota) instead of silently rejecting
                 msg = build_skill_switch_limit_message(
                     name, switch_count, quota, lang=config_manager.prompt_language
                 )
@@ -756,17 +756,17 @@ async def skill_switcher_node(state: dict) -> dict:
 
 
 async def limit_suspend_node(state: dict) -> dict:
-    """挂起出口：pending_limit 已置位，由 chat.py 捕获后存快照、推 need_user_input，图在此正常 END。"""
+    """Suspension exit: pending_limit is set; chat.py catches it, stores the snapshot, pushes need_user_input, and the graph ends normally here."""
     return {}
 
 
 async def resume_replay_node(state: dict) -> dict:
-    """恢复入口：不经 LLM 决策。tool_calls 已由 chat.py 重设为被拒调用（原因A），
-    或留空（原因B，交给 tool_decision 重决策）。
+    """Resume entry: no LLM decision involved. tool_calls has already been reset by chat.py to the rejected call (cause A),
+    or left empty (cause B, handed to tool_decision for re-decision).
 
-    注意：被拒的 use_skill 对应的 assistant tool_call 消息，在原始那轮已由
-    tool_decision_node 写入 tool_messages（已存进快照），故此处无需再补，
-    skill_switcher 执行成功后会追加对应的 tool 结果，工具对天然完整。
+    Note: the assistant tool_call message corresponding to the rejected use_skill was already written to
+    tool_messages by tool_decision_node in the original round (and stored in the snapshot), so no need to add it again here;
+    after skill_switcher succeeds it appends the corresponding tool result, keeping the tool pair naturally complete.
     """
     return {}
 
@@ -860,7 +860,7 @@ async def tool_decision_node(state: dict) -> dict:
     if tool_round >= state.get("tool_round_quota", MAX_TOOL_ROUNDS):
         quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
         logger.warning("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
-        # 挂起：轮次耗尽，等待用户确认（恢复后由 LLM 重新决策，因超限时尚未调用 LLM）
+       # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
         msg = (f"工具调用轮次已达上限（{tool_round}/{quota}），"
                f"请回复「继续」以追加轮次后继续。")
         _emit(state, "tool_round_limit", msg)
@@ -1198,7 +1198,7 @@ async def tool_executor_node(state: dict) -> dict:
 
 
 async def _get_repl_server_config() -> dict | None:
-    """Get the python_repl MCP server config by name 'Python执行器'."""
+    """Get the python_repl MCP server config by name 'Python executor'."""
     async with async_session() as db:
         srv = (await db.execute(
             select(MCPServer).where(MCPServer.name == "Python执行器").limit(1)

@@ -97,10 +97,7 @@ async def _save_assistant_message(
 
     return assistant_msg
 
-
-# ── 挂起快照持久化（DB）──
-# 把 Human-in-the-Loop 的纯数据快照落库，刷新 / 进程重启后仍可恢复。
-# 这些助手复用调用方的 session，便于测试时用被覆盖的测试 session。
+# ── Suspension snapshot persistence (DB) ───# Persist the Human-in-the-Loop pure-data snapshot to the DB so it survives page refresh / process restart.。# These helpers reuse the caller's session, so tests can use their overridden test session.。
 
 async def _save_pending_state(session, conv_id: str, message_id: str, snap: dict) -> None:
     """Persist a pending-limit snapshot to DB (upsert by conversation_id)."""
@@ -136,14 +133,11 @@ async def _clear_pending_state(session, conv_id: str) -> None:
         await session.delete(row)
         await session.commit()
 
-
-# 方案B：手动挂起/恢复状态仓库。
-# 持久化到 DB（pending_limit_states 表），刷新 / 重启后仍可恢复，支持多 worker。
-# 仅在内存中保留瞬时运行期对象（由 _snapshot_state 剔除），快照本体落库。
+# Approach B: manual suspend/resume state repository.。# Persisted to the DB (pending_limit_states table); survives refresh / restart and supports multiple workers.。# Keep only transient runtime objects in memory (stripped by _snapshot_state); the snapshot body is persisted to the DB.。
 
 
 def _snapshot_state(state: dict) -> dict:
-    """保存挂起所需的纯数据快照（emit 等运行期对象不存）。"""
+    """Persist the pure-data snapshot needed for suspension (runtime objects such as emit are not stored)."""
     return {
         "query": state.get("query"),
         "active_skill": state.get("active_skill"),
@@ -165,7 +159,7 @@ def _snapshot_state(state: dict) -> dict:
 
 
 def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id) -> dict:
-    """从快照重建 initial_state：历史一概不动，仅充值限额（continue）或置空 tool_calls（stop）。"""
+    """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop)."""
     pl = pending.get("pending_limit") or {}
     if mode == "continue":
         quota_ss = pending["skill_switch_quota"] + MAX_SKILL_SWITCHES
@@ -295,7 +289,7 @@ async def chat_stream(
                 from app.services.llm_client import llm_client
                 from app.services.agent_nodes import _extract_download_links_from_state
 
-                # ── 0. 挂起分诊：本会话是否有待用户确认的限额挂起（持久化快照）──
+               # ── 0. Suspension triage: does this session have a pending quota suspension awaiting user confirmation (persisted snapshot) ───
                 pending = await _load_pending_state(db, conv_id)
                 resume_mode = None
                 pending_msg_id = None
@@ -308,11 +302,11 @@ async def chat_stream(
                         resume_mode = "stop"
                         await _clear_pending_state(db, conv_id)
                     else:
-                        # 用户发送新问题（非继续/停止）：视为停止，丢弃挂起，按新问题正常回答
+                       # User sends a new question (not continue/stop): treat as stop, discard the suspension, and answer the new question normally
                         await _clear_pending_state(db, conv_id)
 
                 if resume_mode is None:
-                    # ── 1. 正常新问题（含缓存）──
+                   # ── 1. Normal new question (with cache) ───
                     if settings.cache_enabled and not request.skip_cache:
                         cached = answer_cache.get(
                             request.query, request.kb_id, request.skill_id or "", kb_prompt=kb_prompt
@@ -368,13 +362,13 @@ async def chat_stream(
                         "emit": emit_agent_step,
                     }
                 else:
-                    # ── 1b. 恢复：从快照重建，历史一概不动，只充值/置空 ──
+                   # ── 1b. Resume: rebuild from snapshot, history untouched, only recharge / clear ───
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id
                     )
 
-                # ── 1c. 用户手动停止：不重放工具、不生成答案，
-                #        仅把原挂起提示落库，并通过 done.stopped 让前端叠加本地化终止说明 ──
+               # ── 1c. User manually stops: do not replay tools, do not generate an answer,，
+               #        only persist the original suspension hint, and let the frontend overlay a localized termination notice via done.stopped ───
                 if resume_mode == "stop":
                     plim = pending.get("pending_limit") or {}
                     base_msg = plim.get("message") or ""
@@ -397,14 +391,14 @@ async def chat_stream(
                     })
                     return
 
-                # ── 2. 跑图 ──
+               # ── 2. Run the graph ───
                 async with llm_limiter.acquire(on_queue_position):
                     # Token acquired: build state and run agent graph.
                     state = await erag_agent_graph.run(initial_state)
 
-                    # ── 2b. 挂起检测：图请求用户确认 ──
+                   # ── 2b. Suspension detection: the graph requests user confirmation ───
                     if state.get("pending_limit"):
-                        # 先把挂起提示作为一条 assistant 消息落库，记录其 id 以便答复后原地替换
+                       # First persist the suspension hint as an assistant message and record its id so it can be replaced in place after the reply
                         pending_msg = await _save_assistant_message(
                             conv_id,
                             state["pending_limit"]["message"],
@@ -636,7 +630,7 @@ async def get_conversation_messages(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Server-side paginated messages, paginated by rounds (一问一答为一轮 = 2 条消息).
+    """Server-side paginated messages, paginated by rounds (one Q&A = one round = 2 messages).
 
     page is 1-based, oldest first. Pass page=last to fetch the newest page.
     Rounds are kept intact at page boundaries so a Q&A pair is never split.

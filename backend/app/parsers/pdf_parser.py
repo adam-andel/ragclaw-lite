@@ -90,7 +90,7 @@ class PDFParser(BaseParser):
             return False
         if font_size > 12:
             return True
-        # Match patterns like "第X章", "1. ", "1.1 ", etc.
+       # Match patterns like "Chapter X", "1. ", "1.1 ", etc..
         heading_patterns = [
             r'^第[一二三四五六七八九十\d]+[章节]',
             r'^\d+(\.\d+)*\s+',

@@ -1,10 +1,10 @@
 import { ref } from 'vue'
 
 /**
- * 浏览器本地独立的明暗主题管理（模块级单例）。
- * - 选择存于 localStorage，按浏览器隔离，用户之间互不影响。
- * - 未显式选择时，跟随系统 prefers-color-scheme。
- * - isDark 为共享 ref：App.vue 用于驱动 NConfigProvider，侧边栏开关用于切换。
+ * Browser-local, independent light/dark theme management (module-level singleton).
+ * - The choice is stored in localStorage, isolated per browser, so users do not affect each other.
+ * - When no explicit choice is made, follow the system prefers-color-scheme.
+ * - isDark is a shared ref: App.vue uses it to drive NConfigProvider, and the sidebar switch uses it to toggle.
  */
 
 const STORAGE_KEY = 'erag-theme'
@@ -22,7 +22,7 @@ function readStored(): ThemeMode | null {
 }
 
 const stored = readStored()
-// 用户是否做过显式选择：做过则不再跟随系统
+// Whether the user has made an explicit choice: if so, stop following the system
 let explicit = stored !== null
 
 const isDark = ref<boolean>(stored ? stored === 'dark' : systemPrefersDark())
@@ -33,7 +33,7 @@ function apply() {
   else root.classList.remove('dark')
 }
 
-// 模块加载即应用一次，早于 Vue 挂载，避免首屏闪烁
+// Apply once at module load, before Vue mounts, to avoid first-paint flicker
 apply()
 
 function persist() {
@@ -51,7 +51,7 @@ export function toggleTheme() {
   setDark(!isDark.value)
 }
 
-// 仅当用户未显式选择时，实时跟随系统明暗变化
+// Only follow the system light/dark changes in real time when the user has not made an explicit choice
 if (window.matchMedia) {
   const mq = window.matchMedia('(prefers-color-scheme: dark)')
   const onChange = (e: MediaQueryListEvent) => {

@@ -4,13 +4,13 @@ import type { Component } from 'vue'
 
 withDefaults(
   defineProps<{
-    /** 标题文字（必填） */
+    /** Title text (required) */
     title?: string
-    /** 标题语义标签，默认 h2 */
+    /** Semantic heading tag for the title, defaults to h2 */
     titleTag?: 'h1' | 'h2' | 'h3'
-    /** 副标题（仅系统设置页用），也可用 #subtitle 插槽 */
+    /** Subtitle (used only on the system settings page); the #subtitle slot can also be used */
     subtitle?: string
-    /** 左侧图标组件，传入即用主色 22px 渲染；也可用 #icon 插槽自定义 */
+    /** Left-side icon component, rendered at 22px in the primary color when passed in; the #icon slot can also be used for a custom icon */
     icon?: Component
   }>(),
   {

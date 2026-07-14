@@ -324,7 +324,7 @@ def _seed_defaults(raw):
     """Seed default MCP Server and doc-gen Skill folder (v0.7.0 folder-based).
 
     Creates:
-    1. Default MCP Server 'Python执行器' (if not exists)
+    1. Default MCP Server 'Python executor' (if not exists)
     2. doc-gen Skill folder with SKILL.md on disk + DB index row
     """
     print("[seed] Checking default MCP Server and Skill folder...")
@@ -335,7 +335,7 @@ def _seed_defaults(raw):
     skill_id = str(uuid.UUID(hashlib.md5(b"erag-default-doc-gen").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
-    # Default MCP Server: Python执行器
+   # Default MCP Server: Python executor
     existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
     if not existing:
         raw.execute(

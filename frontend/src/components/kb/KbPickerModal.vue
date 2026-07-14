@@ -13,13 +13,13 @@ const props = withDefaults(defineProps<{
   kbs: any[]
   selectedId?: string | null
   title?: string
-  /** 是否显示「全部 / 不关联」特殊卡片（用于筛选场景） */
+  /** Whether to show the special "All / Unlinked" card (used in filter scenarios) */
   showAll?: boolean
   allLabel?: string
   allMeta?: string
   allActive?: boolean
   allCount?: number
-  /** 是否显示排序下拉（文档管理页用，聊天页不选） */
+  /** Whether to show the sort dropdown (used on the document management page, not on the chat page) */
   sortable?: boolean
   pageSize?: number
   searchPlaceholder?: string

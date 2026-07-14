@@ -100,7 +100,7 @@ class ToolRegistry:
         """Get tools from MCP servers declared by name in SKILL.md front matter.
 
         Args:
-            mcp_server_names: List of MCP server names (e.g. ["Python执行器"])
+            mcp_server_names: List of MCP server names (e.g. ["Python executor"])
 
         Returns:
             List of tool dicts in OpenAI format with _mcp_server_id metadata.

@@ -79,13 +79,13 @@ class LLMConfigUpdate(BaseModel):
 
 @router.get("/llm")
 async def get_llm_config(current_user=Depends(get_current_admin)):
-    """读取当前 LLM 配置（API Key 脱敏）。"""
+    """Read the current LLM configuration (API Key masked)."""
     return config_manager.get_config_safe()
 
 
 @router.put("/llm")
 async def update_llm_config(data: LLMConfigUpdate, current_user=Depends(get_current_admin)):
-    """更新 LLM 配置（含首次录入）。更新后立即生效，无需重启。"""
+    """Update the LLM configuration (including first-time entry). Takes effect immediately after update, no restart needed."""
     if data.llm_api_key is not None and not data.llm_api_key.strip():
         raise HTTPException(status_code=400, detail="API Key 不能为空")
     result = await config_manager.update(data.model_dump(exclude_none=True))
@@ -100,7 +100,7 @@ class TestRequest(BaseModel):
 
 @router.post("/llm/test")
 async def test_llm_connection(data: TestRequest, current_user=Depends(get_current_admin)):
-    """测试 LLM 连接是否正常。"""
+    """Test whether the LLM connection works."""
     if not config_manager.is_configured:
         raise HTTPException(status_code=400, detail="尚未配置 API Key，请先在设置页面录入")
 
@@ -154,7 +154,7 @@ class SandboxNetworkUpdate(BaseModel):
 
 @router.get("/sandbox-network")
 async def get_sandbox_network(current_user=Depends(get_current_admin)):
-    """读取沙盒网络策略（模式 + 白名单域名）。"""
+    """Read the sandbox network policy (mode + allowlisted domains)."""
     return {
         "sandbox_network_mode": config_manager.sandbox_network_mode,
         "sandbox_allow_domains": config_manager.sandbox_allow_domains,
@@ -168,7 +168,7 @@ async def update_sandbox_network(
     data: SandboxNetworkUpdate,
     current_user=Depends(get_current_admin),
 ):
-    """更新沙盒网络策略，保存后立即热加载到 MCP REPL 服务（无需重启）。"""
+    """Update the sandbox network policy; after saving it is hot-reloaded into the MCP REPL service (no restart needed)."""
     patch = {
         k: v for k, v in data.model_dump(exclude_none=True).items()
         if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods", "mcp_file_keep_minutes"}

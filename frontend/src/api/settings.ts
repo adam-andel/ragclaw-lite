@@ -7,7 +7,7 @@ export interface LLMConfig {
   llm_base_url: string
   llm_temperature: number
   llm_max_tokens: number
-  agent_max_tokens: number   // Agent 工具决策节点专用上限（独立于 llm_max_tokens）
+  agent_max_tokens: number   // Agent tool-decision node specific cap (independent of llm_max_tokens)
   llm_context_window: number // max context window (tokens) of the configured model
   llm_concurrency: number
   embedding_model: string

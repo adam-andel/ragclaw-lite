@@ -27,7 +27,7 @@ services:
     # File downloads go through ERAG's /api/download/{uuid}/{filename} proxy.
     environment:
       - REPL_PUBLIC_URL=http://mcp-repl:9200
-      # ── Egress broker (方案 B) ──
+      # ── Egress broker (approach B) ──
       - REPL_EGRESS_PORT=1080        # loopback proxy port children are forced through
       - REPL_EGRESS_DNS=1            # built-in allowlist-aware DNS service on :53
     # ── Container security hardening ──

@@ -33,8 +33,8 @@ const lightThemeOverrides: GlobalThemeOverrides = {
 }
 const darkThemeOverrides: GlobalThemeOverrides = {
   common: {
-    // 暗色模式主色按钮：原 #60a5fa 偏浅、发白，改为与浅色一致的实心蓝 #3b82f6，
-    // hover 提亮、pressed 压深，保证暗色下主按钮清晰不寡淡
+    // Dark-mode primary button: the original #60a5fa was too light/washed-out, changed to a solid blue #3b82f6 matching light mode,
+    // brighten on hover and darken when pressed, keeping the dark-mode primary button clear and not washed-out
     primaryColor: '#3b82f6',
     primaryColorHover: '#60a5fa',
     primaryColorPressed: '#2563eb',
@@ -46,8 +46,8 @@ const darkThemeOverrides: GlobalThemeOverrides = {
     fontSizeSmall: '13px',
   },
   Button: {
-    // dark theme 下 baseColor 为深色，会导致 primary 实心按钮文字变黑；
-    // 显式锁定为白色，保证深色模式主色按钮文字始终可读
+    // under dark theme baseColor is dark, which would make primary solid-button text black;
+    // explicitly lock it to white so the dark-mode primary button text stays readable
     textColorPrimary: '#ffffff',
     textColorHoverPrimary: '#ffffff',
     textColorPressedPrimary: '#ffffff',

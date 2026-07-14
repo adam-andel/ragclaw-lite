@@ -21,7 +21,7 @@ export const useNotificationStore = defineStore('notifications', () => {
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let hideToastTimer: ReturnType<typeof setTimeout> | null = null
 
-  // 浏览器桌面通知：仅当用户已授权时发送；lastNotifiedId 用于种子与去重
+  // Browser desktop notification: only sent when the user has granted permission; lastNotifiedId is used for seeding and deduplication
   const { notify: notifyBrowser } = useBrowserNotification()
   let lastNotifiedId: string | null = null
 
@@ -117,10 +117,10 @@ export const useNotificationStore = defineStore('notifications', () => {
     }
   }
 
-  // 新未读到达时，若用户“事先”已授权则推送浏览器桌面通知。
-  // 不在轮询里请求权限：权限申请必须由用户手势触发（见通知中心页面按钮）。
+  // When a new unread arrives, push a browser desktop notification only if the user has ALREADY granted permission.
+  // Do not request permission during polling: permission requests must be triggered by a user gesture (see the notification center page button).
   function fireBrowserNotification(item: NotificationItem) {
-    // 首次轮询仅作种子，避免对页面加载前已存在的未读旧通知弹浏览器通知
+    // The first poll only seeds, to avoid popping browser notifications for old unread notices that existed before page load
     if (lastNotifiedId === null) {
       lastNotifiedId = item.id
       return

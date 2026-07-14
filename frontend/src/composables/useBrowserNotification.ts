@@ -1,13 +1,14 @@
 import { ref } from 'vue'
 
 /**
- * 浏览器桌面通知封装（Web Notifications API）。
+ * Wrapper for browser desktop notifications (Web Notifications API).
  *
- * 设计原则：
- * - 仅当用户“事先”授予权限（Notification.permission === 'granted'）时才发送，
- *   绝不在轮询 / 后台逻辑中主动弹出权限请求。
- * - 申请权限必须由用户手势触发（按钮点击等），调用方应在合适处调用 requestPermission()。
- * - permission 为模块级单例响应式状态，所有组件共享同一份，避免状态不一致。
+ * Design principles:
+ * - Only send a notification when the user has ALREADY granted permission (Notification.permission === 'granted');
+ *   never proactively pop up a permission request during polling or background logic.
+ * - Requesting permission must be triggered by a user gesture (e.g. a button click); callers should call
+ *   requestPermission() at an appropriate place.
+ * - permission is a module-level singleton reactive state shared by all components to avoid inconsistency.
  */
 
 type NotifyPermission = 'granted' | 'denied' | 'default' | 'unsupported'
@@ -29,7 +30,7 @@ function syncPermission() {
 export function useBrowserNotification() {
   async function requestPermission(): Promise<NotifyPermission> {
     if (!supported) return 'unsupported'
-    // 已是 granted / denied 则无需再请求（denied 只能由用户在浏览器设置中更改）
+    // If already granted / denied, no need to request again (denied can only be changed by the user in the browser settings)
     if (Notification.permission !== 'default') {
       syncPermission()
       return permission.value
@@ -39,7 +40,7 @@ export function useBrowserNotification() {
       permission.value = result
       return result
     } catch (e) {
-      // 兼容旧版回调式 API 抛错的情况
+      // Compatibility for the old callback-style API throwing errors
       console.error('[BrowserNotification] requestPermission failed', e)
       return permission.value
     }

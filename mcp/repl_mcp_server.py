@@ -59,8 +59,7 @@ _allow_dir: str | None = None
 _network_mode: str = "deny"
 _allow_domains: list[str] = []      # allowed hostnames in allowlist mode
 _allow_methods: list[str] = []      # reserved for L7 filtering (Phase 2)
-_policy_file: str = "/tmp/repl_network_policy.json"
-# ── Egress proxy (network-layer broker, 方案 B) ──
+_policy_file: str = "/tmp/repl_network_policy.json"# ── Egress proxy (network-layer broker, approach B) ───
 # Children are forced through this loopback proxy so all HTTP(S) egress
 # (incl. asyncio/httpx/curl) hits the allowlist. Port is shared with
 # mcp/egress_proxy.py via REPL_EGRESS_PORT.
@@ -112,7 +111,7 @@ def _sanitize_env() -> dict:
     # Inject current network policy so the guard preamble can enforce it.
     env["REPL_NETWORK_POLICY"] = json.dumps(_build_policy(), ensure_ascii=False)
 
-    # ── 方案 B: force every child through the egress broker ──
+   # ── Approach B: force every child through the egress broker ───
     # All HTTP(S) clients (requests/urllib3/httpx sync+async, curl, wget...)
     # read HTTP_PROXY/HTTPS_PROXY, which closes the asyncio/httpx bypass.
     # Internal ERAG traffic (mcp-repl <-> backend) stays direct via NO_PROXY.

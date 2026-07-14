@@ -233,9 +233,10 @@ function goToNotifications() {
 .notification-badge {
   margin-left: 0;
 }
-/* 徽标默认 12px 且高度由主题变量控制，1px 改动看不出；这里同时收字号+尺寸才明显变小。
-   Naive 通过 --n-font-size 变量驱动字号，需 font-size 直写 + !important 才能覆盖；
-   scoped 下用 :deep() 穿透到 n-badge-sup。 */
+/* The badge defaults to 12px and its height is driven by a theme variable, so a 1px change is invisible; here we shrink both
+   font size and dimensions together to make the reduction clearly visible.
+   Naive drives the font size via the --n-font-size variable, so we must set font-size directly with !important to override it;
+   under scoped styles use :deep() to reach n-badge-sup. */
 .notification-badge :deep(.n-badge-sup) {
   font-size: 10px !important;
   height: 16px;
@@ -283,8 +284,8 @@ function goToNotifications() {
   margin-top: 1px;
 }
 
-/* ── Menu: 加粗提升导航层次（保持精致紧凑，不动字号） ── */
-/* 侧边栏为 scoped 样式，NMenu 内部节点不带 scope 属性，需用 :deep() 穿透 */
+/* ── Menu: bold to strengthen navigation hierarchy (keep it refined and compact, do not change font size) ── */
+/* The sidebar uses scoped styles; NMenu's internal nodes carry no scope attribute, so :deep() is needed to reach them */
 .sidebar :deep(.n-menu-item-content) {
   font-weight: 600;
 }

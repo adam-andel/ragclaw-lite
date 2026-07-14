@@ -2,7 +2,7 @@
 # REPL MCP Server entrypoint — Python / Shell / JavaScript sandbox
 mkdir -p /app/workspace
 
-# ── 方案 B: start the egress broker in the background ──
+# ── Approach B: start the egress broker in the background ──
 # It reads the SAME /tmp/repl_network_policy.json the MCP server writes via
 # PUT /policy, so backend policy pushes need no extra glue and hot-reload is
 # automatic. The proxy binds loopback (127.0.0.1) only.

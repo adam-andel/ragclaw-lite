@@ -6,11 +6,11 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    kb_id: str = Field(...)              # 保持必填，一次对话一个 KB
-    skill_id: str | None = None          # 可选：指定 SKILL，None 则自动路由
+    kb_id: str = Field(...)             # Keep required: one KB per conversationB
+    skill_id: str | None = None         # Optional: specify a SKILL; None means auto-route
     conversation_id: str | None = None
-    skip_cache: bool = False             # 重新生成时跳过缓存
-    resume_action: str | None = None     # "continue" | "stop" | None(新问题)
+    skip_cache: bool = False            # Skip the cache when regenerating
+    resume_action: str | None = None    # "continue" | "stop" | None (new question))
 
 
 class CitationSchema(BaseModel):
@@ -62,7 +62,7 @@ class ConversationDetail(BaseModel):
 
 
 class ConversationMessagesPage(BaseModel):
-    """Server-side paginated messages, paginated by rounds (一问一答为一轮)."""
+    """Server-side paginated messages, paginated by rounds (one Q&A = one round)."""
 
     conversation_id: str
     page: int
@@ -70,7 +70,7 @@ class ConversationMessagesPage(BaseModel):
     total_rounds: int
     total_pages: int
     total_messages: int
-    has_more: bool  # 是否还有更早的页（page > 1）
+    has_more: bool # Whether an earlier page exists (page > 1)）
     messages: list[MessageResponse] = []
 
     model_config = {"from_attributes": True}

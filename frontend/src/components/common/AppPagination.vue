@@ -21,32 +21,32 @@ import { NPagination } from 'naive-ui'
 
 const props = withDefaults(
   defineProps<{
-    /** 当前页（v-model:page） */
+    /** Current page (v-model:page) */
     page: number
-    /** 每页条数 */
+    /** Items per page */
     pageSize?: number
-    /** 总条数 */
+    /** Total item count */
     itemCount?: number
-    /** 总页数（与 itemCount 二选一；优先于 itemCount 判断显隐） */
+    /** Total page count (alternative to itemCount; takes precedence over itemCount for visibility) */
     pageCount?: number
-    /** 页码按钮数量 */
+    /** Number of page-number buttons */
     pageSlot?: number
-    /** 简洁模式 */
+    /** Simple mode */
     simple?: boolean
-    /** 显示“每页条数”选择器 */
+    /** Show the "items per page" selector */
     showSizePicker?: boolean
-    /** 可选每页条数 */
+    /** Optional items-per-page choices */
     pageSizes?: number[]
-    /** 对齐方式：center 居中（默认）/ end 右对齐 */
+    /** Alignment: center (default) / end (right-aligned) */
     align?: 'center' | 'end'
-    /** 仅一页时也渲染（用于带 size-picker 的列表，单页也需展示切换每页条数） */
+    /** Render even when there is only one page (for lists with a size-picker that still need to show the per-page selector) */
     alwaysShow?: boolean
   }>(),
   {
     pageSize: 20,
-    // 必须是 undefined 而非 0。Naive 的 NPagination 在 itemCount !== undefined 时
-    // 优先用 itemCount 推导页数（mergedPageCountRef），0 会被当成“真实总数 0 → 1 页”，
-    // 从而忽略调用方单独传入的 :page-count。默认 undefined 时才会走 pageCount 分支。
+    // Must be undefined, not 0. Naive's NPagination, when itemCount !== undefined,
+    // derives the page count from itemCount (mergedPageCountRef) first, and 0 is treated as "real total 0 → 1 page",
+    // thus ignoring the caller-supplied :page-count. Only the default undefined takes the pageCount branch.
     itemCount: undefined,
     pageSlot: 7,
     simple: false,
@@ -62,7 +62,7 @@ const emit = defineEmits<{
   'update:pageSize': [size: number]
 }>()
 
-// 多于 1 页才显示；alwaysShow 用于带 size-picker 的列表（单页也需展示切换每页条数）
+// Show only when there is more than one page; alwaysShow is for lists with a size-picker (a single page still needs to show the per-page switcher)
 const shouldShow = computed(() =>
   props.alwaysShow ||
   (props.pageCount != null
@@ -72,7 +72,7 @@ const shouldShow = computed(() =>
 </script>
 
 <style scoped>
-/* 统一分页条：与主列表页视觉一致（居中、统一上下间距） */
+/* Unified pagination bar: visually consistent with the main list page (centered, uniform vertical spacing) */
 .app-pagination {
   display: flex;
   margin-top: 16px;

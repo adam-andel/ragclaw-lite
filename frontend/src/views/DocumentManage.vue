@@ -364,7 +364,7 @@ async function openShare(kbId: string) {
     shareUsers.value = r.data
   } catch { shareUsers.value = [] }
   try {
-    // /users 已改为服务端分页，返回 {items,total,page,size}；共享弹窗按用户名搜索缩小范围，取前 200 条供本地过滤/分页
+    // /users now uses server-side pagination, returning {items,total,page,size}; the shared modal searches by username to narrow the scope and takes the first 200 for local filtering/pagination
     const r = await client.get('/users', { params: { size: 200 } })
     allUsers.value = r.data.items
   } catch { allUsers.value = [] }
@@ -1242,7 +1242,7 @@ async function loadSupportedTypes() {
       </template>
     </AppModal>
 
-    <!-- KB Filter Modal（复用共享组件） -->
+    <!-- KB Filter Modal (reuses the shared component) -->
     <KbPickerModal
       v-model:show="showKbFilter"
       :kbs="allKbs"
@@ -1508,7 +1508,7 @@ async function loadSupportedTypes() {
 :global(html.dark) .doc-unlink-btn :deep(.n-icon) {
   color: #fca5a5;
 }
-/* 添加/收起用户按钮：复用无背景样式，但用主色（非红色，非破坏性操作） */
+/* Add/collapse user button: reuses the borderless style but uses the primary color (not red, not a destructive action) */
 .share-add-more-btn {
   opacity: 1;
   margin-left: 0;

@@ -423,7 +423,7 @@ async function handleSave() {
     testResult.value = null
     message.success(t('settings.msg.configSaved'))
 
-    // 同步保存沙盒网络设置
+    // Also save the sandbox network settings
     const keepMins = keepPreset.value === 'custom' ? keepCustomMinutes.value : Number(keepPreset.value)
     const sres = await updateSandboxNetwork({
       sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
@@ -479,7 +479,7 @@ async function handleTest() {
         </template>
       </PageHeader>
 
-      <!-- 子导航 -->
+      <!-- Sub-navigation -->
       <nav class="settings-subnav">
       <a
         v-for="s in sections"
@@ -493,7 +493,7 @@ async function handleTest() {
   </div>
 
   <div class="settings-page">
-    <!-- 未配置警告 -->
+    <!-- Unconfigured warning -->
     <NAlert
       v-if="!config.is_configured"
       type="warning"

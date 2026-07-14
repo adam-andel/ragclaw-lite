@@ -29,7 +29,7 @@ const router = useRouter()
 const { t } = useI18n()
 const users = ref<UserRow[]>([])
 const loading = ref(false)
-// ── 服务端分页：仅拉取当前页，total 由后端返回 ──
+// ── Server-side pagination: fetch only the current page; total is returned by the backend ──
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
@@ -43,8 +43,8 @@ const activeOptions = [
   { label: t('common.enabled'), value: 'active' },
   { label: t('common.disabled'), value: 'inactive' },
 ]
-// 角色选项：admin 与 moderator 均可见全部角色（moderator 放开"查看所有用户"，
-// 但修改/删除仍受后端 can_manage_user 约束，UI 侧用 canManage 置灰危险操作）
+// Role options: both admin and moderator can see all roles (moderator is allowed to "view all users",
+// but modify/delete are still constrained by the backend's can_manage_user; the UI uses canManage to grey out dangerous actions)
 const filterRole = ref<'all' | 'user' | 'moderator' | 'admin'>('all')
 const roleOptions = [
   { label: t('users.filter.allRoles'), value: 'all' },
@@ -85,7 +85,7 @@ async function loadUsers() {
     const r = await client.get('/users', { params })
     users.value = r.data.items
     total.value = r.data.total
-    // 删除末页最后一条后当前页可能越界，回退到最后一个有效页并重拉
+    // After deleting the last item on the last page, the current page may go out of range; fall back to the last valid page and reload
     const totalPages = Math.max(1, Math.ceil(total.value / pageSize))
     if (page.value > totalPages) {
       page.value = totalPages
@@ -108,8 +108,8 @@ function roleType(role: string): 'error' | 'warning' | 'info' {
   if (role === 'moderator') return 'warning'
   return 'info'
 }
-// 当前用户是否可管理目标用户：admin 可管理所有人，moderator 仅可管理普通用户
-// （与后端 can_manage_user 语义一致）。用于禁用/删除按钮的置灰判断。
+// Whether the current user can manage the target user: admin can manage everyone, moderator can only manage regular users
+// (consistent with the backend's can_manage_user semantics). Used to decide greying out the disable/delete buttons.
 function canManage(user: UserRow) {
   return auth.isAdmin || user.role === 'user'
 }

@@ -54,7 +54,7 @@ class Message(Base):
 
 
 class PendingLimitState(Base):
-    """Persisted snapshot for an in-flight Human-in-the-Loop pause (限额挂起).
+    """Persisted snapshot for an in-flight Human-in-the-Loop pause (quota suspension).
 
     Replaces the previous in-memory ``pending_by_conv`` dict so a suspended turn
     survives page refresh / process restart and can be resumed or stopped.

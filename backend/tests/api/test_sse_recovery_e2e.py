@@ -11,7 +11,7 @@ Exercises the FULL chain without a live LLM by patching the agent graph:
   Phase 4  POST /api/chat/stream resume_action=stop     → pending cleared,
             message persisted with status="stopped".
 
-The four phases are the complete "SSE 端到端恢复流程".
+The four phases are the complete "SSE end-to-end recovery flow".
 """
 
 import json

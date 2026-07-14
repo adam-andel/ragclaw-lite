@@ -1,6 +1,6 @@
 """egress_proxy.py — network-layer egress broker for the REPL sandbox.
 
-Implements 方案 B (Phase 1): a self-built Python egress broker that moves the
+Implements approach B (Phase 1): a self-built Python egress broker that moves the
 network enforcement point from the in-process monkey-patch up to the network
 layer, closing the asyncio/httpx/curl bypasses described in the design doc.
 

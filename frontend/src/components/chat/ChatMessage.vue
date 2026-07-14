@@ -82,8 +82,8 @@ const renderedContent = computed(() => {
   return html
 })
 
-// 在已渲染的 HTML 中安全地高亮关键字：仅遍历文本节点，避免破坏标签结构。
-// active=true 时给命中标记加 .active（当前导航项），否则为普通命中。
+// Safely highlight keywords in already-rendered HTML: only walk text nodes to avoid breaking the tag structure.
+// When active=true, add .active to the hit marker (current navigation item); otherwise it is a normal hit.
 function highlightHtml(html: string, keyword: string, active = false): string {
   const kw = keyword.trim().toLowerCase()
   if (!kw) return html
@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
 
-      <!-- 处理过程时间线 -->
+      <!-- Processing timeline -->
       <details v-if="steps.length" class="agent-steps" :open="isStreaming">
         <summary>{{ t('chat.processSteps', { count: steps.length }) }}</summary>
         <ul class="agent-step-list">
@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
         </ul>
       </details>
 
-      <!-- 阶段 1：流式中 — innerHTML 由 chatview 写入（含 think-block + cursor） -->
+      <!-- Stage 1: streaming — innerHTML written by chatview (includes think-block + cursor) -->
       <template v-if="isStreaming">
         <div class="message-content streaming">
           <span ref="streamEl" :id="'stream-' + message.id"></span>
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <!-- 阶段 2：完成后 — v-html 渲染 Markdown（命中关键字时带高亮） -->
+      <!-- Stage 2: done — render Markdown via v-html (with highlighting when keywords are hit) -->
       <template v-else>
         <div class="message-content" v-html="displayHtml"></div>
       </template>
@@ -303,7 +303,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- 全部引用摘要 Modal -->
+      <!-- All references summary Modal -->
       <AppModal v-model:show="showCitationModal" :title="t('chat.citationDetail')" size="wide">
         <NSpin :show="loadingCitationContent">
           <div class="citation-modal-body">
@@ -411,7 +411,7 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--color-border);
 }
 
-/* 查找命中高亮：普通命中（黄）/ 当前导航项（橙），亮暗模式均可见 */
+/* Search-hit highlight: normal hit (yellow) / current navigation item (orange); visible in both light and dark modes */
 mark.search-hit {
   background: rgba(255, 196, 0, 0.6);
   color: inherit;
@@ -433,7 +433,7 @@ mark.search-hit.active {
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-/* 当前导航命中的消息：主色描边强调 */
+/* Message currently hit by navigation: emphasized with a primary-color outline */
 .message-wrapper.active-search-hit .message-body {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -511,7 +511,7 @@ mark.search-hit.active {
 .cursor-blink { animation: blink 1s infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-/* Markdown 渲染样式 — 仅对 v-html 分支生效 */
+/* Markdown rendering styles — only apply to the v-html branch */
 .message-content :deep(h1),
 .message-content :deep(h2),
 .message-content :deep(h3) { margin: var(--space-3) 0 6px; font-weight: 600; line-height: 1.4; }

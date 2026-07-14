@@ -39,8 +39,8 @@ function checkReadonly(convUserId?: string | null) {
 }
 
 const messages = ref<ChatMsg[]>([])
-// 服务端分页：每页 PAGE_SIZE_ROUNDS 轮（一问一答为一轮 = 2 条消息）。
-// 打开对话时加载最新一页（最后一页），向上滚动触顶时再请求上一页并拼接到顶部。
+// Server-side pagination: PAGE_SIZE_ROUNDS rounds per page (one Q&A = one round = 2 messages).
+// When opening a conversation, load the newest page (last page); when scrolling up to the top, request the previous page and prepend it.
 const PAGE_SIZE_ROUNDS = 10
 const currentPage = ref(1)
 const totalPages = ref(1)
@@ -50,9 +50,9 @@ const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
-// LLM 上下文 token 数：最近一次请求体（系统提示+历史+RAG+记忆+工具+问题）的总 token
+// LLM context token count: total tokens of the latest request body (system prompt + history + RAG + memory + tools + question)
 const contextTokens = ref(0)
-// 挂起提示（后端命中上限后推送 need_user_input）：{ 文案, 后端给的 conv_id, 原因 }
+// Suspension hint (pushed by the backend as need_user_input when the limit is hit): { copy, backend-supplied conv_id, reason }
 const pendingLimit = ref<{ message: string; convId: string; kind: string; messageId: string } | null>(null)
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
@@ -70,15 +70,15 @@ function onScroll() {
   if (!el) return
   const threshold = 60
   isPinnedToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
-  // 向上滚动触顶 → 自动加载更早的对话（上一页）
+  // Scroll up to the top → automatically load earlier conversations (previous page)
   if (el.scrollTop <= 48 && hasMoreOlder.value && !isLoadingOlder.value) {
     loadOlder()
   }
 }
 
-// 向前加载更早的对话：向服务端请求上一页，拼接到列表顶部，并补偿滚动位置避免画面跳动
-// 历史消息中被手动终止的一轮（status==='stopped'）：DB 只存原提示文案，
-// 加载时按当前界面语言叠加本地化终止说明，保证刷新后仍显示。
+// Load earlier conversations forward: request the previous page from the server, prepend it to the list, and compensate the scroll position to avoid jumps
+// A manually terminated round in history (status==='stopped'): the DB stores only the original hint copy,
+// and at load time overlays a localized termination notice based on the current UI language, so it still shows after refresh.
 function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.map(m =>
     m.status === 'stopped'
@@ -101,7 +101,7 @@ async function loadOlder() {
     totalRounds.value = data.total_rounds
     syncContextFromMessages()
   } catch {
-    // 加载失败不改变现有展示
+    // On load failure, do not change the current display
   } finally {
     await nextTick()
     if (el && el.isConnected) {
@@ -112,7 +112,7 @@ async function loadOlder() {
   }
 }
 
-// 从已加载消息里恢复上下文 token 数（取最后一条带 token_count 的 assistant 消息）
+// Restore the context token count from loaded messages (take the last assistant message that has token_count)
 function syncContextFromMessages() {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
@@ -124,7 +124,7 @@ function syncContextFromMessages() {
   contextTokens.value = 0
 }
 
-// 加载对话的最新一页（最后一页），并滚动到底部
+// Load the conversation's newest page (last page) and scroll to the bottom
 async function loadInitialPage(id: string) {
   const data = await getConversationMessages(id, 'last', PAGE_SIZE_ROUNDS)
   messages.value = applyStoppedNote(data.messages)
@@ -146,10 +146,10 @@ function scrollToBottomAndPin() {
 
 const showScrollBottomBtn = computed(() => !isPinnedToBottom.value && messages.value.length > 0)
 
-// ── 查找对话记录：仅对当前已加载的消息做关键字匹配 ──
+// ── Search conversation history: match keywords only against currently loaded messages ──
 const showSearch = ref(false)
 const searchKeyword = ref('')
-const searchMatches = ref<string[]>([])   // 命中的消息 id（按出现顺序）
+const searchMatches = ref<string[]>([])   // IDs of matched messages (in order of appearance)
 const currentMatchIndex = ref(-1)
 const searchInputRef = ref<any>(null)
 const searchKw = computed(() => searchKeyword.value.trim())
@@ -214,7 +214,7 @@ const convKbMap = ref<Record<string, string>>({})
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
-// ── 对话历史 modal 分页 ──
+// ── Conversation history modal pagination ──
 const convPage = ref(1)
 const convPageSize = 8
 const pagedConversations = computed(() => {
@@ -236,7 +236,7 @@ const selectedSkillName = computed(() => {
   return skills.value.find(s => s.id === selectedSkillId.value)?.name || t('chat.autoSelectSkill')
 })
 
-// ── LLM 上下文 token 统计展示 ──
+// ── LLM context token statistics display ──
 function formatTokens(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
   return String(n)
@@ -344,7 +344,7 @@ watch(() => route.params.id, async (id) => {
 
 async function loadConversation(id: string) {
   try {
-    // 仅获取会话元数据（不含消息），消息由服务端分页接口加载
+    // Fetch only conversation metadata (no messages); messages are loaded via the server-side pagination API
     const conv = await getConversation(id, false)
     conversationId.value = id
     // Restore the KB that was used with this conversation
@@ -358,9 +358,9 @@ async function loadConversation(id: string) {
     } else {
       router.replace(`/chat/${id}`)
     }
-    // 服务端分页：加载最新一页（最后一页）并滚动到底部
+    // Server-side pagination: load the newest page (last page) and scroll to the bottom
     await loadInitialPage(id)
-    // 刷新后恢复挂起态：若存在待用户确认的限额挂起，重建内联气泡并隐藏那条提示消息
+    // Restore suspension state after refresh: if a pending quota suspension awaiting confirmation exists, rebuild the inline bubble and hide that hint message
     const pending = await getPendingLimit(id)
     if (pending && pending.message_id) {
       pendingLimit.value = {
@@ -436,8 +436,8 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         streamedText = t('chat.streamError', { msg: event.message })
         break
       } else if (event.type === 'need_user_input') {
-        // 挂起：后端已保存一条 assistant 消息（提示文案）。前端用真实消息渲染气泡，
-        // 用户答复后复用该消息 id，由后端把 content 原地替换为正式答案。
+        // Suspension: the backend has saved an assistant message (the hint copy). The frontend renders it as a real message bubble,
+        // and after the user replies, reuses that message id so the backend replaces the content in place with the final answer.
         messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
         const pendingMsg: ChatMsg = {
           id: event.message_id,
@@ -500,8 +500,8 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isStreaming.value) return
-  // 挂起态下用户输入新问题：强制带上同一 conv_id，后端会视为「停止」并丢弃挂起；
-  // 挂起提示消息保留在对话记录里（作为历史），仅清掉本地的 pending 标记
+  // While suspended, if the user enters a new question: force the same conv_id, and the backend treats it as "stop" and discards the suspension;
+  // the suspension hint message stays in the conversation history (as history); only the local pending flag is cleared
   if (pendingLimit.value) {
     conversationId.value = pendingLimit.value.convId
     const pm = messages.value.find(m => m.id === pendingLimit.value!.messageId)
@@ -548,7 +548,7 @@ function stopStream() {
   abortCtl = null
 }
 
-// 挂起恢复：继续（追加额度后重放被拒调用）/ 停止（用已累计结果出答案）
+// Resume from suspension: continue (replay the rejected call after adding quota) / stop (answer with the already accumulated results)
 async function resumeRun(action: 'continue' | 'stop') {
   const pl = pendingLimit.value
   if (!pl || isStreaming.value) return
@@ -556,11 +556,11 @@ async function resumeRun(action: 'continue' | 'stop') {
   const msgId = pl.messageId
   pendingLimit.value = null
   conversationId.value = convId
-  // 复用挂起时后端保存的那条消息：清空内容并承接流式 token，done 时后端原地替换
+  // Reuse the message the backend saved at suspension: clear its content and accept streamed tokens; the backend replaces it in place when done
   const msg = messages.value.find(m => m.id === msgId)
   if (!msg) return
-  // 停止：保留原挂起提示文案，由前端在 done 时按当前语言叠加终止说明；
-  // 继续：清空内容，承接流式生成的新答案
+  // Stop: keep the original suspension hint copy, and let the frontend overlay a termination notice in the current language when done;
+  // Continue: clear the content and accept the newly streamed answer
   if (action === 'continue') {
     msg.content = ''
     msg.citations = []
@@ -737,7 +737,7 @@ function handleKeydown(e: KeyboardEvent) {
         <h3>{{ t('chat.emptyConversation') }}</h3>
         <p>{{ t('chat.inputToStart') }}</p>
       </div>
-      <!-- 分页提示：向上滚动到顶时自动加载更早的对话 -->
+      <!-- Pagination hint: automatically load earlier conversations when scrolling up to the top -->
       <div v-if="totalRounds > 0" class="history-sentinel" aria-live="polite">
         <span v-if="isLoadingOlder" class="history-sentinel-spinner" aria-hidden="true"></span>
         <span v-if="isLoadingOlder">{{ t('chat.loadingOlder') }}</span>
@@ -755,7 +755,7 @@ function handleKeydown(e: KeyboardEvent) {
         />
       </template>
 
-      <!-- 挂起提示内联气泡（命中上限时，融入消息流） -->
+      <!-- Inline suspension bubble (shown when the limit is hit, blends into the message stream) -->
       <div v-if="pendingLimit" :key="pendingLimit.convId + ':' + pendingLimit.message" class="resume-inline-bubble" role="alert">
         <div class="resume-bubble-icon">⏸️</div>
         <div class="resume-bubble-body">
@@ -786,7 +786,7 @@ function handleKeydown(e: KeyboardEvent) {
       </button>
     </Transition>
 
-    <!-- 浮动搜索条：查找已加载的对话记录 -->
+    <!-- Floating search bar: search loaded conversation history -->
     <Transition name="search-pop">
       <div v-if="showSearch" class="search-bar">
         <div class="search-bar-inner">
@@ -1020,7 +1020,7 @@ function handleKeydown(e: KeyboardEvent) {
   margin: 12px 0 8px;
   text-align: left;
 }
-/* KB 预览面板单独加宽，以容纳 3 列网格（与 KbPickerModal 观感一致），不影响对话面板 */
+/* KB preview panel is widened on its own to fit a 3-column grid (consistent with KbPickerModal) without affecting the chat panel */
 .center-panel-box-wide { max-width: 680px; }
 @media (max-width: 640px) {
   .center-panel-list { grid-template-columns: repeat(2, 1fr); }
@@ -1038,7 +1038,7 @@ function handleKeydown(e: KeyboardEvent) {
   border-top: 1px solid var(--color-border);
 }
 
-/* ── Optimized conversation history list (中间「选择一个对话」面板) ── */
+/* ── Optimized conversation history list (the "select a conversation" panel in the middle) ── */
 .center-panel-head {
   display: flex;
   flex-direction: column;
@@ -1141,7 +1141,7 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-text-muted);
 }
 
-/* Modal scrollable list (shared by "更多对话" and "更多知识库") */
+/* Modal scrollable list (shared by "More conversations" and "More knowledge bases") */
 .picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .kb-pick-card {
   cursor: pointer;
@@ -1188,8 +1188,8 @@ function handleKeydown(e: KeyboardEvent) {
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }
 .picker-footer-hint strong { color: var(--color-text); }
 .fallback-hint { margin-top: 8px; font-size: var(--text-base); color: var(--color-text-muted); }
-/* ── Skill picker modal（与 SkillsView .sk-card 同款卡片，3 栏网格）── */
-/* 卡片 chrome 与 .sk-card 统一（亮/暗 token 驱动） */
+/* ── Skill picker modal (same card style as SkillsView .sk-card, 3-column grid) ── */
+/* Card chrome unified with .sk-card (driven by light/dark tokens) */
 .skill-pick-card {
   cursor: pointer;
   background: var(--color-card-bg);
@@ -1209,12 +1209,12 @@ function handleKeydown(e: KeyboardEvent) {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
-/* 选中态：与 .sk-card 的 hover/focus 一致——主色边框 + 主色柔光底 */
+/* Selected state: consistent with .sk-card's hover/focus — primary-color border + soft primary-color fill */
 .skill-pick-card.active {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
 }
-/* 3 栏网格：宽度一致，一行 3 个 */
+/* 3-column grid: equal widths, 3 per row */
 .skill-pick-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1297,7 +1297,7 @@ function handleKeydown(e: KeyboardEvent) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 输入框上方的 KB / 技能选择按钮：字号从 tiny 略放大到 13px，更易读 */
+/* KB / skill picker buttons above the input box: font size bumped slightly from tiny to 13px for better readability */
 .skill-selector-bar :deep(.n-button) {
   font-size: 13px;
 }
@@ -1308,7 +1308,7 @@ function handleKeydown(e: KeyboardEvent) {
   flex-shrink: 0;
 }
 
-/* ── 挂起提示内联气泡（命中上限时，融入消息流）── */
+/* ── Inline suspension bubble (shown when the limit is hit, blends into the message stream) ── */
 .resume-inline-bubble {
   display: flex;
   gap: 10px;
@@ -1323,7 +1323,7 @@ function handleKeydown(e: KeyboardEvent) {
   border: 1px solid color-mix(in srgb, var(--color-primary, #4098fc) 38%, transparent);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
   align-items: flex-start;
-  /* 入场：淡入上移 + 一次高亮脉冲 */
+  /* Entrance: fade-in + slide-up plus one highlight pulse */
   animation:
     resume-bubble-in 0.32s ease-out both,
     resume-bubble-pulse 1.1s ease-out 0.2s 1;
@@ -1381,7 +1381,7 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
 }
 
-/* ── LLM 上下文 token 计量条（输入框上方技能栏右侧）── */
+/* ── LLM context token meter (right side of the skill bar above the input) ── */
 .context-meter {
   margin-left: auto;
   display: flex;
@@ -1470,7 +1470,7 @@ function handleKeydown(e: KeyboardEvent) {
   transform: translateY(10px);
 }
 
-/* ── 浮动搜索条（查找对话记录）── */
+/* ── Floating search bar (search conversation history) ── */
 .search-bar {
   position: absolute;
   left: 16px;
@@ -1549,7 +1549,7 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-/* ── 对话分页提示（顶部加载更早 / 已到顶）── */
+/* ── Conversation pagination hint (load earlier at top / reached the top) ── */
 .history-sentinel {
   display: flex;
   align-items: center;

@@ -35,7 +35,7 @@ class ParsedDocument:
 class ParserPluginMeta:
     """Static metadata describing a parser plugin, surfaced to the admin UI."""
     name: str                          # unique key, e.g. "excel"
-    display_name: str                  # UI label, e.g. "Excel 表格"
+    display_name: str                 # UI label, e.g. "Excel spreadsheet""
     description: str                   # one-line description
     category: str                      # office|data|web|email|ebook|text|notebook
     extensions: list[str]              # MUST match extensions() return value

@@ -59,8 +59,8 @@ class EragAgentState(TypedDict):
     workspace_id: str             # Stable workdir shared across tool calls in a turn/conversation
     conversation_id: str | None   # Conversation id, used to scope the workspace_id
 
-    # ── 限额模型（替代硬常量比较；"继续"= quota += MAX，历史 count 不动）──
-    skill_switch_quota: int       # 当前技能切换总额度，初始 = MAX_SKILL_SWITCHES
-    tool_round_quota: int         # 当前工具轮次总额度，初始 = MAX_TOOL_ROUNDS
-    pending_limit: dict | None    # 挂起信息: {kind, message, deferred_tool_call}; 非空即等待用户确认
-    resume_action: str | None     # "continue" | "stop" | None(新问题)
+   # ── Quota model (replaces hard-constant comparison; "continue" = quota += MAX, history count untouched) ───
+    skill_switch_quota: int      # Current total skill-switch quota, initialized to MAX_SKILL_SWITCHESS
+    tool_round_quota: int        # Current total tool-round quota, initialized to MAX_TOOL_ROUNDSS
+    pending_limit: dict | None   # Suspension info: {kind, message, deferred_tool_call}; non-empty means awaiting user confirmation
+    resume_action: str | None    # "continue" | "stop" | None (new question))

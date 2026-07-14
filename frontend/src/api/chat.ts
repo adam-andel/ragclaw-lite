@@ -73,7 +73,7 @@ export const listConversations = () =>
 export const getConversation = (id: string, includeMessages = true) =>
   fetch(`/api/conversations/${id}?include_messages=${includeMessages}`, { headers: authHeaders() }).then(handleResponse).then((r) => r.json())
 
-// 服务端分页获取对话消息：page 为 1-based（最旧在前），传 'last' 获取最新一页
+// Server-side paginated conversation messages: page is 1-based (oldest first); pass 'last' to fetch the newest page
 export const getConversationMessages = (id: string, page: number | string = 'last', pageSize = 10) => {
   const qs = new URLSearchParams()
   qs.set('page', String(page))
@@ -86,7 +86,7 @@ export const getConversationMessages = (id: string, page: number | string = 'las
 export const deleteConversation = (id: string) =>
   fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)
 
-// 刷新后恢复挂起态：返回该对话待用户确认的限额挂起（或 null）
+// Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)
 export const getPendingLimit = (id: string) =>
   fetch(`/api/conversations/${id}/pending`, { headers: authHeaders() })
     .then(handleResponse)

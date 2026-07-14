@@ -124,7 +124,7 @@ def _build_graph() -> StateGraph:
     # Tool executor → back to tool_decision (for multi-round)
     workflow.add_edge("tool_executor", "tool_decision")
 
-    # Skill switcher → tool_decision (re-decide) | limit_suspend (挂起)
+   # Skill switcher → tool_decision (re-decide) | limit_suspend (suspend))
     def route_after_skill_switcher(state: dict) -> str:
         if state.get("pending_limit"):
             return "limit_suspend"
@@ -135,7 +135,7 @@ def _build_graph() -> StateGraph:
         {"tool_decision": "tool_decision", "limit_suspend": "limit_suspend"},
     )
 
-    # Resume replay → skill_switcher (原因A 重放) | tool_decision (原因B 重决策)
+   # Resume replay → skill_switcher (cause A: replay) | tool_decision (cause B: re-decide))
     def route_resume(state: dict) -> str:
         if (state.get("pending_limit") or {}).get("kind") == "tool_round":
             return "tool_decision"
@@ -150,7 +150,7 @@ def _build_graph() -> StateGraph:
     workflow.add_node("resume_replay", resume_replay_node)
     workflow.add_node("limit_suspend", limit_suspend_node)
 
-    # Limit suspend → END (挂起出口)
+   # Limit suspend → END (suspension exit))
     workflow.add_edge("limit_suspend", END)
 
     # Build context → END
