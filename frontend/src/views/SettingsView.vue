@@ -110,6 +110,29 @@ const embeddingPollTimer = ref<number | null>(null)
 // dimension check (backend 409) detects an incompatible existing vector store.
 const dimensionConflict = ref<string>('')
 
+// Switch / re-index button state, derived from the selected model's install
+// status and whether a dimension conflict was detected:
+//   - not installed            → disabled, label "switch & re-index"
+//   - installed + conflict     → enabled,  label "switch & re-index"
+//   - installed + no conflict  → enabled,  label "switch"
+function isModelInstalled(m: string) {
+  return !!m && !!embeddingStatus.value.installed_models?.includes(m)
+}
+
+const switchBtnLabel = computed(() => {
+  const installed = isModelInstalled(selectedModel.value)
+  const conflict = dimensionConflict.value !== ''
+  return installed && !conflict
+    ? t('settings.embeddingModelMgmt.switchBtn')
+    : t('settings.embeddingModelMgmt.switchReindexBtn')
+})
+
+const switchBtnDisabled = computed(() => {
+  if (!selectedModel.value || switching.value || reindexing.value) return true
+  if (selectedModel.value === embeddingStatus.value.configured_model) return true
+  return !isModelInstalled(selectedModel.value)
+})
+
 // ── Re-index (after embedding-model switch) ──
 const reindexStatus = ref<ReindexStatus>({
   status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0,
@@ -690,11 +713,11 @@ async function handleTest() {
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
           <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.embeddingModelMgmt.desc')" />
-          <div style="margin-bottom: 10px">
+          <NFormItem :label="t('settings.embeddingModelMgmt.currentLabel')">
             <span class="muted" style="font-size: 14px; font-weight: 500">
-              {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
+              {{ embeddingStatus.configured_model || config.embedding_model }}
             </span>
-          </div>
+          </NFormItem>
           <NFormItem>
             <template #label>
               <span class="label-with-help">
@@ -716,6 +739,15 @@ async function handleTest() {
                 style="flex: 1"
                 @update:value="onSelectModelChange"
               />
+              <NButton
+                type="primary"
+                :loading="switching || reindexing"
+                :disabled="switchBtnDisabled"
+                @click="handleReindex"
+              >
+                <template #icon><NIcon><Flash /></NIcon></template>
+                {{ switchBtnLabel }}
+              </NButton>
             </div>
           </NFormItem>
 
@@ -729,24 +761,7 @@ async function handleTest() {
             {{ dimensionConflict }}
           </NAlert>
           
-          <NFormItem
-            v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
-            :label="t('settings.embeddingModelMgmt.installedList')"
-          >
-            <NSpace :size="8">
-              <NTag
-                v-for="m in embeddingStatus.installed_models"
-                :key="m"
-                :type="m === embeddingStatus.configured_model ? 'success' : 'default'"
-                :bordered="false"
-                round
-              >
-                {{ m }}
-              </NTag>
-            </NSpace>
-          </NFormItem>
-
-          <NFormItem :label="t('settings.embeddingModelMgmt.status')">
+          <NFormItem v-if="selectedModel" :label="t('settings.embeddingModelMgmt.status')">
             <NSpace align="center" :size="12">
               <NTag v-if="selectedInstalled && !selectedDownloading" type="success" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusInstalled') }}
@@ -807,36 +822,27 @@ async function handleTest() {
             </div>
           </NFormItem>
 
+          <NFormItem
+            v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
+            :label="t('settings.embeddingModelMgmt.installedList')"
+          >
+            <NSpace :size="8">
+              <NTag
+                v-for="m in embeddingStatus.installed_models"
+                :key="m"
+                :type="m === embeddingStatus.configured_model ? 'success' : 'default'"
+                :bordered="false"
+                round
+              >
+                {{ m }}
+              </NTag>
+            </NSpace>
+          </NFormItem>
+
           <NFormItem v-if="selectedFailed" :show-feedback="false">
             <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
               {{ embeddingStatus.error }}
             </NAlert>
-          </NFormItem>
-
-          <NFormItem :show-feedback="false">
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
-                <NTooltip trigger="hover" :width="280">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  {{ t('settings.embeddingModelMgmt.reindexHint') }}
-                </NTooltip>
-              </span>
-            </template>
-            <NSpace align="center">
-              <NButton
-                type="warning"
-                secondary
-                :loading="switching || reindexing"
-                :disabled="!selectedModel || switching || reindexing"
-                @click="handleReindex"
-              >
-                <template #icon><NIcon><Flash /></NIcon></template>
-                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
-              </NButton>
-            </NSpace>
           </NFormItem>
 
           <NFormItem v-if="reindexStatus.status !== 'idle'" :show-feedback="false">
@@ -995,6 +1001,7 @@ async function handleTest() {
                 v-model:value="keepCustomMinutes"
                 :min="1" :max="525600" :step="60"
                 :placeholder="t('settings.customMinutesPlaceholder')"
+                style="max-width: 240px"
               >
                 <template #suffix>{{ t('settings.minutes') }}</template>
               </NInputNumber>
