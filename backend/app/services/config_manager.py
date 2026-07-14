@@ -428,6 +428,7 @@ class ConfigManager:
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
             "agent_max_tokens", "llm_concurrency", "embedding_model", "embedding_api_key",
+            "llm_context_window",
             "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
