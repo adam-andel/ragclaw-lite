@@ -114,11 +114,6 @@ async def lifespan(app: FastAPI):
             print("BGE model not installed yet — skipping warmup (install via Settings UI)")
     except Exception as e:
         print(f"BGE warmup warning: {e}")
-    # Ensure all models are loaded for create_all
-    from app.models import kb_access  # noqa: F401
-    from app.models import skill as _skill_models  # noqa: F401
-    from app.models import cron_job as _cron_job_models  # noqa: F401
-    from app.models import notification as _notification_models  # noqa: F401
     # Rebuild BM25 indexes from DB (using new kb_documents junction table)
     try:
         from app.models.document import Chunk, Document, DocStatus, KBDocument

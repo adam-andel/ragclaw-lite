@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Text, Float, DateTime, ForeignKey, Enum as SAEnum, LargeBinary
+from sqlalchemy import String, Integer, Text, Float, DateTime, ForeignKey, Enum as SAEnum, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
@@ -78,6 +78,9 @@ class Chunk(Base):
 class KBDocument(Base):
     """Many-to-many: which documents belong to which knowledge bases."""
     __tablename__ = "kb_documents"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_kb_documents_kb_doc"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     kb_id: Mapped[str] = mapped_column(String(36), ForeignKey("knowledge_bases.id"), index=True)

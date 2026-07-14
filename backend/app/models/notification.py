@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Enum as SAEnum
+from sqlalchemy import String, Text, DateTime, ForeignKey, Boolean, Enum as SAEnum, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -20,6 +20,10 @@ class Notification(Base):
     """User notification persisted in the database."""
 
     __tablename__ = "notifications"
+    __table_args__ = (
+        Index("idx_notifications_user_read", "user_id", "read"),
+        Index("idx_notifications_created_at", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=False)

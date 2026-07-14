@@ -73,7 +73,8 @@ erag/
 │   └── app/
 │       ├── main.py             # 入口
 │       ├── config.py           # 配置
-│       ├── database.py         # SQLite + 自动迁移
+│       ├── database.py         # SQLite 入口（init_db：alembic upgrade + seed）
+│       ├── migrations/         # Alembic 迁移（含 initial schema 单条基线）
 │       ├── models/             # ORM 模型（含 Skill/MCPServer）
 │       ├── schemas/            # Pydantic（含 skill/mcp schema）
 │       ├── routers/            # API 路由（含 skills/mcp_servers）
@@ -114,7 +115,7 @@ erag/
 | 后端框架 | FastAPI | 异步原生、自动 OpenAPI |
 | Agent 编排 | LangGraph | 声明式状态图，条件路由 + 多轮工具调用 |
 | 向量数据库 | ChromaDB | 嵌入式运行、零配置 |
-| 元数据库 | SQLite + SQLAlchemy | 单文件存储 + 自动迁移 |
+| 元数据库 | SQLite + SQLAlchemy + Alembic | 单文件存储 + 版本化迁移（基线 + 增量） |
 | Embedding | BGE-small-zh-v1.5 | 384维中文向量 |
 | LLM | OpenAI / 通义千问 / Ollama | 可切换，支持 tool calling |
 | 记忆系统 | Mem0（可选） | 跨会话记忆，并行加载不增加延迟 |
@@ -122,6 +123,35 @@ erag/
 | 前端 | Vue3 + TS + NaiveUI | 企业级管理后台 |
 | 构建 | Vite + UnoCSS | 秒级 HMR |
 | 部署 | Docker Compose | 一键启动 |
+
+## 🗄️ 数据库构建（Database）
+
+元数据使用单文件 SQLite，schema 由 **Alembic** 版本化迁移统一管理，不再依赖自研的增量补丁脚本。
+
+- **Schema 来源**：`migrations/versions/2624081b4b65_initial_schema.py`（单条 *initial schema* 基线，一次性建出全部 16 张业务表 + 约束/索引）。后续所有 schema 演进都通过新的迁移文件表达。
+- **构建入口**：`app/database.py` 的 `init_db()` 依次执行
+  1. `alembic upgrade head`（应用全部迁移，已是最新则为空操作）；
+  2. 幂等 seed（写入默认管理员 `admin`、文档生成技能 `doc-gen`、Python 执行器 MCP Server）。
+- **依赖**：`alembic` 已加入 `backend/pyproject.toml`。
+
+### 全新安装
+删除 `data/sqlite/erag.db` 后启动后端，数据库与种子数据会自动重建（契合开源「全新项目」姿态）。
+
+### 演进 schema（标准流程）
+1. 修改 `app/models/` 下的 ORM 模型；
+2. 生成迁移（可对空库设 `ALEMBIC_DB_URL` 隔离测试，不影响真实库）：
+   ```bash
+   cd backend
+   ALEMBIC_DB_URL="sqlite+aiosqlite:////tmp/test.db" \
+     python -m alembic revision --autogenerate -m "add column xxx"
+   ```
+3. **务必核对**生成的迁移文件，确认只包含预期的建表/改表操作，再提交。
+
+### 既有开发库升级到本基线
+旧库若仍按历史机制构建，直接用 `alembic upgrade head` 会因子表已存在而报错。两种处理：
+- **保留数据**：先把旧库 schema 补齐到基线（缺失的表/列），再 `alembic stamp head` 标记为已到基线；
+- **重新开始**：直接删除 `data/sqlite/erag.db` 重建。
+> 历史 `_migrations` 记录表可保留（无害），新机制改用 `alembic_version`。
 
 ## 🔑 核心亮点
 
