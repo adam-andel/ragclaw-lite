@@ -1,16 +1,43 @@
-# ERAG Backend Full Test Suite
-# Usage:   cd erag/backend; ..\bin\run_all_tests.ps1
-#          or from erag root: .\bin\run_all_tests.ps1
+# ERAG Backend Full Test Suite (container mode)
+# Usage:   .\bin\run_all_tests.ps1
+#
+# Runs the pytest suite inside the 'erag-lite' Docker container. Local Python
+# execution is no longer supported — this project must run in container mode.
+#
+# The erag container is started on demand (docker compose up -d erag) and the
+# tests are executed via `docker compose exec`.
 
 $ErrorActionPreference = "Continue"
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$eragRoot  = Split-Path -Parent $scriptDir
-$backend   = Join-Path $eragRoot "backend"
+$BinDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $BinDir
+$ComposeFile = Join-Path $Root "docker-compose.yml"
 
-Set-Location $backend
-$env:PYTHONPATH = "."
-$env:HF_ENDPOINT = "https://hf-mirror.com"
+function Test-Docker {
+    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
+    catch { return $false }
+}
+
+if (-not (Test-Docker)) {
+    Write-Host "ERROR: Docker is not installed or not running. Container mode only." -ForegroundColor Red
+    exit 1
+}
+
+# Ensure the erag container is up (it is the test execution environment)
+Write-Host "Ensuring erag-lite container is running..." -ForegroundColor Yellow
+docker compose -f $ComposeFile up -d erag
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: failed to start erag-lite container" -ForegroundColor Red
+    exit 1
+}
+
+# Install test deps inside the container (idempotent, non-root image)
+Write-Host "[1/9] Installing dev dependencies in container (pytest, pytest-asyncio, pytest-html, httpx)..." -ForegroundColor Yellow
+docker compose -f $ComposeFile exec -T erag bash -c "pip install --break-system-packages -q pytest pytest-asyncio pytest-html httpx"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "WARNING: pip install in container returned exit code $LASTEXITCODE" -ForegroundColor Red
+}
+Write-Host "  OK" -ForegroundColor Green
 
 $passed  = 0
 $failed  = 0
@@ -20,18 +47,13 @@ $errors  = 0
 $failureLog = @()
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  ERAG Backend Full Test Suite" -ForegroundColor Cyan
+Write-Host "  ERAG Backend Full Test Suite (container)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# ---- Install deps ----
-Write-Host "`n[1/9] Installing dev dependencies (pytest, pytest-asyncio, pytest-html, httpx)..." -ForegroundColor Yellow
-pip install pytest pytest-asyncio pytest-html httpx -q
-Write-Host "  OK" -ForegroundColor Green
-
-# ---- Helper: run pytest batch and tally ----
+# ---- Helper: run pytest batch (inside container) and tally ----
 function Run-Batch($label, $files) {
     Write-Host "`n[$label] Running..." -ForegroundColor Yellow
-    $output = Invoke-Expression "pytest $files -v --tb=short" 2>&1
+    $output = docker compose -f $ComposeFile exec -T erag bash -c "cd /app/backend && PYTHONPATH=/app/backend pytest $files -v --tb=short" 2>&1
     $output | ForEach-Object { Write-Host $_ }
 
     # Join output for regex matching

@@ -14,7 +14,6 @@ echo     [2] Restart All
 echo     [3] Stop All
 echo     [4] Status
 echo     [5] Backend Only
-echo     [6] Frontend Only
 echo     [0] Exit
 echo.
 set /p choice="Choose: "
@@ -24,6 +23,5 @@ if "%choice%"=="2" powershell -ExecutionPolicy Bypass -File "bin\start.ps1" rest
 if "%choice%"=="3" powershell -ExecutionPolicy Bypass -File "bin\start.ps1" stop
 if "%choice%"=="4" powershell -ExecutionPolicy Bypass -File "bin\start.ps1" status
 if "%choice%"=="5" powershell -ExecutionPolicy Bypass -File "bin\backend.ps1" start
-if "%choice%"=="6" powershell -ExecutionPolicy Bypass -File "bin\frontend.ps1" start
 
 pause

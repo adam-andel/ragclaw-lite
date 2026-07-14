@@ -1,18 +1,15 @@
 # ERAG Backend Control Script
 # Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]
 #
-# Smart mode: auto-detects Docker. If Docker is installed, runs containerized
-# (erag-lite). If Docker is not installed, falls back to local Python.
-# Adapted from mcp_repl.ps1 pattern.
+# Container mode only: the backend always runs as a Docker container (erag-lite).
+# Local Python / uvicorn execution is no longer supported — this project must
+# run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down erag
-# Local  mode uses:  py -3.12 -m uvicorn app.main:app ... (the original way)
 
 param([string]$Action = "start")
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$BackendDir = Join-Path $Root "backend"
-$EnvFile = Join-Path $Root ".env"
 $Port = 8000
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
@@ -25,6 +22,14 @@ $MirrorList = @(
 # =====================================================================
 # Helpers
 # =====================================================================
+
+function Assert-Docker {
+    if (-not (Test-Docker)) {
+        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
+        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 function Test-Docker {
     try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
@@ -56,7 +61,7 @@ function Test-Backend {
 }
 
 # =====================================================================
-# Docker mirror helpers (shared with mcp_repl.ps1 pattern)
+# Docker mirror helpers
 # =====================================================================
 
 function Get-WorkingMirrorDomain {
@@ -169,83 +174,11 @@ function Get-ExistingMirrors {
 }
 
 # =====================================================================
-# Kill Python processes (shared helper)
-# =====================================================================
-
-function Kill-Pythons {
-    try {
-        Get-Process -Name "python*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction Stop
-    }
-    catch {
-        cmd /c "taskkill /F /IM python.exe 2>nul" | Out-Null
-        cmd /c "taskkill /F /IM python3.12.exe 2>nul" | Out-Null
-    }
-    Start-Sleep 1
-}
-
-# =====================================================================
-# Actions: Local mode
-# =====================================================================
-
-function Start-LocalBackend {
-    Write-Host "=== ERAG Backend (local :$Port) ===" -ForegroundColor Cyan
-
-    if (Test-Backend) {
-        Write-Host "Backend already running on :$Port (local mode)" -ForegroundColor Yellow
-        return
-    }
-
-    $env:PYTHONPATH = $BackendDir
-    $env:HF_ENDPOINT = "https://hf-mirror.com"
-
-    # Load .env
-    if (Test-Path $EnvFile) {
-        foreach ($line in Get-Content $EnvFile) {
-            if ($line -match '^\s*([^#][^=]+)=(.*)$') {
-                $k = $matches[1].Trim(); $v = $matches[2].Trim()
-                [Environment]::SetEnvironmentVariable($k, $v, "Process")
-            }
-        }
-    }
-
-    $env:WATCHFILES_FORCE_POLLING = "true"
-    Write-Host "Starting uvicorn (loading model, may take ~20s)..." -ForegroundColor Gray
-    $proc = Start-Process -FilePath "py" `
-        -ArgumentList "-3.12","-m","uvicorn","app.main:app","--host","127.0.0.1","--port","$Port","--reload" `
-        -WorkingDirectory $Root -PassThru -WindowStyle Minimized
-
-    Write-Host "Waiting for startup..." -NoNewline
-    for ($i = 0; $i -lt 60; $i++) {
-        Start-Sleep 1
-        if (Test-Backend) {
-            Write-Host " OK (PID: $($proc.Id))" -ForegroundColor Green
-            Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
-            Write-Host "  Mode: local (no Docker)" -ForegroundColor Gray
-            return
-        }
-        if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
-    }
-    Write-Host " timeout!" -ForegroundColor Red
-    Write-Host "  Check manually: cd $Root && py -3.12 -m uvicorn app.main:app --port $Port" -ForegroundColor Gray
-}
-
-function Stop-LocalBackend {
-    Write-Host "=== Stopping backend (local) ===" -ForegroundColor Cyan
-    Kill-Pythons
-    Start-Sleep 1
-    if (-not (Test-Backend)) {
-        Write-Host "Backend stopped" -ForegroundColor Green
-    }
-    else {
-        Write-Host "WARNING: Backend still responding" -ForegroundColor Yellow
-    }
-}
-
-# =====================================================================
-# Actions: Docker mode
+# Actions: Docker mode (container mode only)
 # =====================================================================
 
 function Start-DockerBackend {
+    Assert-Docker
     Write-Host "=== ERAG Backend (Docker :$Port) ===" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
@@ -255,7 +188,6 @@ function Start-DockerBackend {
 
     if (-not (Test-ComposeAvailable $ComposeFile)) {
         Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
-        Write-Host "       Fall back: .\bin\backend.ps1 start (auto-detects Docker absence)" -ForegroundColor Yellow
         return
     }
 
@@ -316,19 +248,12 @@ function Stop-DockerBackend {
 function Show-Status {
     Write-Host "=== ERAG Backend Status ===" -ForegroundColor Cyan
     Write-Host "  Port: $Port" -ForegroundColor Gray
+    Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
-        Write-Host "  Mode:   Docker container" -ForegroundColor Green
         Write-Host "  Status: running (erag-lite)" -ForegroundColor Green
         $startedAt = docker inspect erag-lite --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
-        return
-    }
-
-    if (Test-Backend) {
-        Write-Host "  Mode:   Local Python" -ForegroundColor Yellow
-        Write-Host "  Status: running on :$Port" -ForegroundColor Green
-        Write-Host "  Backend: $BackendDir" -ForegroundColor Gray
         return
     }
 
@@ -347,28 +272,17 @@ function Show-Status {
 
 switch ($Action) {
     "start" {
-        if (Test-Docker) {
-            Write-Host "[detect] Docker found, using container mode" -ForegroundColor DarkGray
-            Start-DockerBackend
-        }
-        else {
-            Write-Host "[detect] Docker not found, using local mode" -ForegroundColor DarkGray
-            Start-LocalBackend
-        }
+        Start-DockerBackend
     }
 
     "stop" {
-        if (Test-DockerBackend) { Stop-DockerBackend }
-        else { Stop-LocalBackend }
+        Stop-DockerBackend
     }
 
     "status" { Show-Status }
 
     "build" {
-        if (-not (Test-Docker)) {
-            Write-Host "ERROR: Docker not available" -ForegroundColor Red
-            return
-        }
+        Assert-Docker
         $buildMirror = Get-WorkingMirrorDomain
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -379,54 +293,49 @@ switch ($Action) {
     }
 
     "restart" {
-        if (Test-Docker) {
-            if (-not (Test-ComposeAvailable $ComposeFile)) {
-                Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
-                return
-            }
-
-            if (Test-DockerBackend) {
-                Stop-DockerBackend
-            }
-
-            $buildMirror = Get-WorkingMirrorDomain
-            if (-not $buildMirror) {
-                Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-                return
-            }
-            Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-            docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror erag
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: build failed" -ForegroundColor Red
-                return
-            }
-
-            Write-Host ""
-            Write-Host "=== Starting container ===" -ForegroundColor Cyan
-            docker compose -f $ComposeFile up -d erag
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
-                return
-            }
-
-            Write-Host "Waiting for startup (loading model, may take ~30s) ..." -NoNewline
-            for ($i = 0; $i -lt 90; $i++) {
-                Start-Sleep 1
-                if (Test-Backend) {
-                    Write-Host " OK" -ForegroundColor Green
-                    Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
-                    Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
-                    return
-                }
-                if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
-            }
-            Write-Host " timeout!" -ForegroundColor Red
-            Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
+        Assert-Docker
+        if (-not (Test-ComposeAvailable $ComposeFile)) {
+            Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
+            return
         }
-        else {
-            if (Test-Backend) { Stop-LocalBackend }
-            Start-LocalBackend
+
+        if (Test-DockerBackend) {
+            Stop-DockerBackend
         }
+
+        $buildMirror = Get-WorkingMirrorDomain
+        if (-not $buildMirror) {
+            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
+            return
+        }
+        Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
+        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror erag
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: build failed" -ForegroundColor Red
+            return
+        }
+
+        Write-Host ""
+        Write-Host "=== Starting container ===" -ForegroundColor Cyan
+        docker compose -f $ComposeFile up -d erag
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+            return
+        }
+
+        Write-Host "Waiting for startup (loading model, may take ~30s) ..." -NoNewline
+        for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep 1
+            if (Test-Backend) {
+                Write-Host " OK" -ForegroundColor Green
+                Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
+                Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
+                return
+            }
+            if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
+        }
+        Write-Host " timeout!" -ForegroundColor Red
+        Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
     }
 
     "logs" {
@@ -437,10 +346,10 @@ switch ($Action) {
     default {
         Write-Host "Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  start       Start backend (build + up, auto: Docker or local fallback)"
+        Write-Host "  start       Start backend (build + up, container mode)"
         Write-Host "  stop        Stop backend"
         Write-Host "  restart     Stop, rebuild image (uses cache), and start backend"
-        Write-Host "  status      Show running status (Docker / local / not running)"
+        Write-Host "  status      Show running status (Docker)"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"
     }

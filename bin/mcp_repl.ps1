@@ -1,24 +1,20 @@
 # ERAG REPL MCP Server Control Script (Python + Shell + JavaScript)
 # Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]
 #
-# Smart mode: auto-detects Docker. If Docker is installed, runs containerized.
-# If Docker is not installed, falls back to local Python venv.
+# Container mode only: the REPL MCP server always runs as a Docker container
+# (erag-mcp-repl). Local Python venv execution is no longer supported — this
+# project must run in container mode.
 #
-# Docker mode uses: docker compose -f docker-compose.yml up/down
-# Local  mode uses:  .\mcp\venv + python_repl_mcp_server.py
+# Docker mode uses: docker compose -f docker-compose.yml up/down mcp-repl
 #
-# Languages: Python (always), Shell (--enable-shell, Docker only by default),
-#           JavaScript (--enable-javascript, requires Node.js)
+# Languages: Python (always), Shell (enabled by default in container),
+#           JavaScript (--enable-javascript, requires Node.js in image)
 
 param([string]$Action = "start")
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$McpDir = Join-Path $Root "mcp"
-$VenvDir = Join-Path $McpDir "venv"
-$ServerScript = Join-Path $McpDir "python_repl_mcp_server.py"
-$WorkDir = "$Root\data\workspace"
-$Port = 9200
 $ComposeFile = Join-Path $Root "docker-compose.yml"
+$Port = 9200
 
 # Mirror sources (China-friendly, tested in order)
 $MirrorList = @(
@@ -26,14 +22,17 @@ $MirrorList = @(
     "https://docker.1ms.run"
 )
 
-# Ensure workspace exists (used by both modes)
-if (-not (Test-Path $WorkDir)) {
-    New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
-}
-
 # =====================================================================
 # Helpers
 # =====================================================================
+
+function Assert-Docker {
+    if (-not (Test-Docker)) {
+        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
+        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 function Test-Docker {
     try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
@@ -52,17 +51,6 @@ function Test-DockerRepl {
     try {
         $id = docker ps -q -f "name=erag-mcp-repl" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
-    }
-    catch { return $false }
-}
-
-function Test-LocalRepl {
-    try {
-        $body = '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/mcp" `
-            -Method Post -ContentType "application/json" -Body $body `
-            -TimeoutSec 3 -ErrorAction SilentlyContinue
-        return ($r.StatusCode -eq 200)
     }
     catch { return $false }
 }
@@ -184,83 +172,11 @@ function Get-ExistingMirrors {
 }
 
 # =====================================================================
-# Actions
+# Actions: Docker mode (container mode only)
 # =====================================================================
 
-function Start-LocalRepl {
-    Write-Host "=== REPL MCP Server (local :$Port) ===" -ForegroundColor Cyan
-
-    if (Test-LocalRepl) {
-        Write-Host "Already running on :$Port (local mode)" -ForegroundColor Yellow
-        return
-    }
-
-    if (-not (Test-Path $VenvDir)) {
-        Write-Host "Creating venv at $VenvDir ..." -ForegroundColor Gray
-        py -3.12 -m venv $VenvDir
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Failed to create venv (is Python 3.12 installed?)" -ForegroundColor Red
-            return
-        }
-        Write-Host "Installing packages ..." -ForegroundColor Gray
-        & "$VenvDir\Scripts\python.exe" -m pip install --quiet pandas python-docx python-pptx PyPDF2
-        Write-Host "Venv ready" -ForegroundColor Green
-    }
-
-    if (-not (Test-Path $ServerScript)) {
-        Write-Host "ERROR: $ServerScript not found" -ForegroundColor Red
-        return
-    }
-
-    # Detect Node.js for JavaScript support
-    $NodePath = $null
-    try { $NodePath = (Get-Command node -ErrorAction Stop).Source } catch {
-        Write-Host "  Node.js not found — JavaScript (run_javascript) will be skipped" -ForegroundColor DarkYellow
-    }
-    if ($NodePath) {
-        Write-Host "  Node.js: $NodePath" -ForegroundColor Gray
-    }
-
-    # Build arg list
-    $Args = @($ServerScript, "--port", $Port, "--allow-dir", $WorkDir, "--no-network",
-              "--keep-minutes", "120", "--max-memory-mb", "512", "--max-nproc", "64", "--max-concurrent", "4")
-
-    # Shell on Windows local mode: explicitly disabled by default (security).
-    # Use --enable-shell-local to override (⚠️ dev only).
-    # If $env:REPL_ENABLE_SHELL_LOCAL is set, pass --enable-shell-local
-    if ($env:REPL_ENABLE_SHELL_LOCAL -eq "1") {
-        Write-Host "  ⚠ Shell (local) ENABLED — use with caution" -ForegroundColor Red
-        $Args += "--enable-shell"
-        $Args += "--enable-shell-local"
-    }
-
-    # JavaScript: enabled if Node.js is available
-    if ($NodePath) {
-        $Args += "--enable-javascript"
-    }
-
-    Write-Host "Starting REPL server (workspace: $WorkDir) ..." -ForegroundColor Gray
-    $proc = Start-Process -FilePath "$VenvDir\Scripts\python.exe" `
-        -ArgumentList $Args `
-        -WorkingDirectory $McpDir -PassThru -WindowStyle Minimized
-
-    Start-Sleep 3
-    if (Test-LocalRepl) {
-        Write-Host "REPL server started (PID: $($proc.Id))" -ForegroundColor Green
-        Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-        Write-Host "  Workspace: $WorkDir" -ForegroundColor Gray
-        Write-Host "  Mode: local (no Docker)" -ForegroundColor Gray
-        $langs = @("python")
-        if ($NodePath) { $langs += "javascript" }
-        if ($env:REPL_ENABLE_SHELL_LOCAL -eq "1") { $langs += "shell" }
-        Write-Host "  Languages: $($langs -join ', ')" -ForegroundColor Gray
-    }
-    else {
-        Write-Host "WARNING: Server may not have started, check console window" -ForegroundColor Yellow
-    }
-}
-
 function Start-DockerRepl {
+    Assert-Docker
     Write-Host "=== REPL MCP Server (Docker :$Port) ===" -ForegroundColor Cyan
 
     if (Test-DockerRepl) {
@@ -270,7 +186,6 @@ function Start-DockerRepl {
 
     if (-not (Test-ComposeAvailable $ComposeFile)) {
         Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
-        Write-Host "       Fall back: .\bin\mcp_repl.ps1 start (auto-detects Docker absence)" -ForegroundColor Yellow
         return
     }
 
@@ -296,7 +211,7 @@ function Start-DockerRepl {
     }
 
     Start-Sleep 3
-    if (Test-LocalRepl) {
+    if (Test-DockerRepl) {
         Write-Host "REPL server started (Docker)" -ForegroundColor Green
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
         Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
@@ -305,23 +220,6 @@ function Start-DockerRepl {
     }
     else {
         Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
-    }
-}
-
-function Stop-LocalRepl {
-    Write-Host "=== Stopping REPL server (local) ===" -ForegroundColor Cyan
-    try {
-        Get-Process -Name "python*" -ErrorAction SilentlyContinue | Where-Object {
-            $_.CommandLine -like "*repl_mcp_server*"
-        } | Stop-Process -Force -ErrorAction SilentlyContinue
-    }
-    catch { }
-    Start-Sleep 1
-    if (-not (Test-LocalRepl)) {
-        Write-Host "REPL server stopped" -ForegroundColor Green
-    }
-    else {
-        Write-Host "WARNING: REPL server still responding" -ForegroundColor Yellow
     }
 }
 
@@ -341,19 +239,12 @@ function Stop-DockerRepl {
 function Show-Status {
     Write-Host "=== Python REPL MCP Server Status ===" -ForegroundColor Cyan
     Write-Host "  Port: $Port" -ForegroundColor Gray
+    Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerRepl) {
-        Write-Host "  Mode:   Docker container" -ForegroundColor Green
         Write-Host "  Status: running (erag-mcp-repl)" -ForegroundColor Green
         $startedAt = docker inspect erag-mcp-repl --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
-        return
-    }
-
-    if (Test-LocalRepl) {
-        Write-Host "  Mode:   Local Python" -ForegroundColor Yellow
-        Write-Host "  Status: running on :$Port" -ForegroundColor Green
-        Write-Host "  Workspace: $WorkDir" -ForegroundColor Gray
         return
     }
 
@@ -372,28 +263,17 @@ function Show-Status {
 
 switch ($Action) {
     "start" {
-        if (Test-Docker) {
-            Write-Host "[detect] Docker found, using container mode" -ForegroundColor DarkGray
-            Start-DockerRepl
-        }
-        else {
-            Write-Host "[detect] Docker not found, using local mode" -ForegroundColor DarkGray
-            Start-LocalRepl
-        }
+        Start-DockerRepl
     }
 
     "stop" {
-        if (Test-DockerRepl) { Stop-DockerRepl }
-        else { Stop-LocalRepl }
+        Stop-DockerRepl
     }
 
     "status" { Show-Status }
 
     "build" {
-        if (-not (Test-Docker)) {
-            Write-Host "ERROR: Docker not available" -ForegroundColor Red
-            return
-        }
+        Assert-Docker
         $buildMirror = Get-WorkingMirrorDomain
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
@@ -404,51 +284,46 @@ switch ($Action) {
     }
 
     "restart" {
-        if (Test-Docker) {
-            if (-not (Test-ComposeAvailable $ComposeFile)) {
-                Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
-                return
-            }
+        Assert-Docker
+        if (-not (Test-ComposeAvailable $ComposeFile)) {
+            Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
+            return
+        }
 
-            if (Test-DockerRepl) {
-                Stop-DockerRepl
-            }
+        if (Test-DockerRepl) {
+            Stop-DockerRepl
+        }
 
-            $buildMirror = Get-WorkingMirrorDomain
-            if (-not $buildMirror) {
-                Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-                return
-            }
-            Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-            docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: build failed" -ForegroundColor Red
-                return
-            }
+        $buildMirror = Get-WorkingMirrorDomain
+        if (-not $buildMirror) {
+            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
+            return
+        }
+        Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
+        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: build failed" -ForegroundColor Red
+            return
+        }
 
-            Write-Host ""
-            Write-Host "=== Starting container ===" -ForegroundColor Cyan
-            docker compose -f $ComposeFile up -d mcp-repl
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
-                return
-            }
+        Write-Host ""
+        Write-Host "=== Starting container ===" -ForegroundColor Cyan
+        docker compose -f $ComposeFile up -d mcp-repl
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+            return
+        }
 
-            Start-Sleep 3
-            if (Test-LocalRepl) {
-                Write-Host "REPL server restarted (Docker)" -ForegroundColor Green
-                Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-                Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
-                Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
-                Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
-            }
-            else {
-                Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
-            }
+        Start-Sleep 3
+        if (Test-DockerRepl) {
+            Write-Host "REPL server restarted (Docker)" -ForegroundColor Green
+            Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
+            Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
+            Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
+            Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
         }
         else {
-            if (Test-LocalRepl) { Stop-LocalRepl }
-            Start-LocalRepl
+            Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
         }
     }
 
@@ -460,7 +335,7 @@ switch ($Action) {
     default {
         Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  start       Start REPL server (build + up, auto: Docker or local fallback)"
+        Write-Host "  start       Start REPL server (build + up, container mode)"
         Write-Host "  stop        Stop REPL server"
         Write-Host "  restart     Stop, rebuild image (uses cache), and start REPL server"
         Write-Host "  status      Show running status"
