@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
+  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
@@ -15,7 +15,6 @@ import { currentLocale } from '@/i18n/useLocale'
 
 const { t } = useI18n()
 const message = useMessage()
-const dialog = useDialog()
 const route = useRoute()
 
 const providerOptions = computed(() => [
@@ -107,6 +106,9 @@ const embeddingOptions = ref<EmbeddingModelOption[]>([])
 const selectedModel = ref<string>('')
 const switching = ref(false)
 const embeddingPollTimer = ref<number | null>(null)
+// Inline conflict warning shown below the model selector when the dry-run
+// dimension check (backend 409) detects an incompatible existing vector store.
+const dimensionConflict = ref<string>('')
 
 // ── Re-index (after embedding-model switch) ──
 const reindexStatus = ref<ReindexStatus>({
@@ -225,26 +227,26 @@ async function handleDeleteEmbedding() {
 
 // When the dropdown changes, only *query* whether the new model's dimension is
 // compatible with the existing vector store. Nothing is mutated here — if the
-// backend returns 409 we surface a warning telling the user that switching will
-// require clearing and rebuilding the indexes. The actual clear+rebuild happens
-// when they click "Re-index All".
+// backend returns 409 we show an inline warning below the selector telling the
+// user that switching will require clearing and rebuilding the indexes. The
+// actual clear+rebuild happens when they click "Re-index All".
 async function onSelectModelChange(target: string) {
-  if (!target || target === embeddingStatus.value.configured_model) return
+  if (!target || target === embeddingStatus.value.configured_model) {
+    dimensionConflict.value = ''
+    return
+  }
+  dimensionConflict.value = ''
   try {
     await checkEmbeddingDimension(target)
   } catch (e: any) {
     const resp = e?.response
     if (resp?.status === 409) {
       const d = resp.data?.detail ?? {}
-      await dialog.warning({
-        title: t('settings.embeddingModelMgmt.conflictTitle'),
-        content: t('settings.embeddingModelMgmt.dimensionConflictTip', {
-          model: target,
-          existing: d.existing_dim,
-          neu: d.new_dim,
-          count: d.vector_count,
-        }),
-        positiveText: t('common.ok'),
+      dimensionConflict.value = t('settings.embeddingModelMgmt.dimensionConflictTip', {
+        model: target,
+        existing: d.existing_dim,
+        neu: d.new_dim,
+        count: d.vector_count,
       })
     }
   }
@@ -688,6 +690,11 @@ async function handleTest() {
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
           <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.embeddingModelMgmt.desc')" />
+          <div style="margin-bottom: 10px">
+            <span class="muted" style="font-size: 14px; font-weight: 500">
+              {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
+            </span>
+          </div>
           <NFormItem>
             <template #label>
               <span class="label-with-help">
@@ -700,11 +707,6 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <div style="margin-bottom: 10px">
-              <span class="muted" style="font-size: 14px; font-weight: 500">
-                {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
-              </span>
-            </div>
             <div style="display: flex; align-items: center; gap: 12px; width: 100%">
               <NSelect
                 v-model:value="selectedModel"
@@ -717,6 +719,16 @@ async function handleTest() {
             </div>
           </NFormItem>
 
+          <NAlert
+            v-if="dimensionConflict"
+            type="warning"
+            :bordered="false"
+            :title="t('settings.embeddingModelMgmt.conflictTitle')"
+            style="margin-top: 8px"
+          >
+            {{ dimensionConflict }}
+          </NAlert>
+          
           <NFormItem
             v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
             :label="t('settings.embeddingModelMgmt.installedList')"
@@ -792,7 +804,7 @@ async function handleTest() {
                 :processing="true"
                 style="width: 200px"
               />
-            </div>            
+            </div>
           </NFormItem>
 
           <NFormItem v-if="selectedFailed" :show-feedback="false">
