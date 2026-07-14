@@ -102,6 +102,19 @@ def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
     )
 
 
+def build_skill_switch_limit_message(name: str, switch_count: int, quota: int, lang: str = "zh") -> str:
+    """Suspension message when skill-switch quota is exhausted. lang='zh' = original."""
+    if lang == "en":
+        return (
+            f"use_skill: skill-switch limit reached ({switch_count}/{quota}); "
+            f'cannot load "{name}". Reply "continue" to add quota and auto-retry.'
+        )
+    return (
+        f"use_skill：已达技能切换上限（{switch_count}/{quota}），"
+        f"无法加载「{name}」。请回复「继续」以追加额度后自动重试。"
+    )
+
+
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
     import re
     _clog = logging.getLogger("erag.agent")
@@ -670,8 +683,9 @@ async def skill_switcher_node(state: dict) -> dict:
             quota = state.get("skill_switch_quota", MAX_SKILL_SWITCHES)
             if switch_count >= quota:
                 # 挂起：等待用户确认（"继续"= 追加额度后重放），而非静默拒绝
-                msg = (f"use_skill：已达技能切换上限（{switch_count}/{quota}），"
-                       f"无法加载「{name}」。请回复「继续」以追加额度后自动重试。")
+                msg = build_skill_switch_limit_message(
+                    name, switch_count, quota, lang=config_manager.prompt_language
+                )
                 _emit(state, "skill_switch_fail", msg, skill=name)
                 return {
                     "pending_limit": {
