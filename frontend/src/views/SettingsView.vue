@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
+  NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
@@ -15,6 +15,7 @@ import { currentLocale } from '@/i18n/useLocale'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const route = useRoute()
 
 const providerOptions = computed(() => [
@@ -304,9 +305,7 @@ async function onSwitched(res: { switched: boolean; model: string; installed: bo
 // and rebuild — i.e. switch(force=True). This only runs for an already-installed
 // model (the switch button is disabled otherwise); to use a new model the user
 // must download & install it first, then switch.
-async function handleReindex() {
-  const target = selectedModel.value
-  if (!target) return
+async function doReindex(target: string) {
   switching.value = true
   try {
     const res = await switchEmbeddingModel(target, true)
@@ -316,6 +315,25 @@ async function handleReindex() {
   } finally {
     switching.value = false
   }
+}
+
+async function handleReindex() {
+  const target = selectedModel.value
+  if (!target) return
+  // When the button reads "Switch & Re-index" (an incompatible-dimension switch),
+  // the action will wipe ALL vector indexes. Pop a second confirmation that
+  // re-states the dimension-conflict warning before proceeding.
+  if (dimensionConflict.value) {
+    dialog.warning({
+      title: t('settings.embeddingModelMgmt.conflictTitle'),
+      content: dimensionConflict.value,
+      positiveText: t('settings.embeddingModelMgmt.conflictOk'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => doReindex(target),
+    })
+    return
+  }
+  await doReindex(target)
 }
 
 let observer: IntersectionObserver | null = null
