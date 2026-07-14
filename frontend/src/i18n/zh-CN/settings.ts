@@ -46,6 +46,7 @@ export default {
     reindexStarted: '已启动后台重新向量化任务',
     reindexRunning: '重新向量化正在进行中',
     reindexPendingDownload: '模型下载完成后将自动开始重新向量化',
+    downloadProgress: '下载进度',
   },
   providerLabel: 'LLM 提供商',
   providerQwen: 'Qwen (通义千问)',

@@ -145,12 +145,32 @@ const embeddingSelectOptions = computed(() =>
   embeddingOptions.value.map((o) => ({ label: o.label, value: o.id })),
 )
 
+// ── Selected-model-centric state (the dropdown drives install/download) ──
+const selectedInstalled = computed(() =>
+  selectedModel.value
+    ? embeddingStatus.value.installed_models.includes(selectedModel.value)
+    : false,
+)
+const selectedIsConfigured = computed(() =>
+  selectedModel.value === embeddingStatus.value.configured_model,
+)
+const selectedDownloading = computed(() =>
+  embeddingStatus.value.status === 'downloading' &&
+  embeddingStatus.value.model === selectedModel.value,
+)
+const selectedFailed = computed(() =>
+  embeddingStatus.value.status === 'failed' &&
+  embeddingStatus.value.model === selectedModel.value,
+)
+
 async function loadEmbeddingStatus() {
   try {
     const s = await getEmbeddingModelStatus()
     embeddingStatus.value = s
     embeddingOptions.value = s.options || []
-    if (s.configured_model) selectedModel.value = s.configured_model
+    // Only pre-select on first load; never override the user's current choice
+    // during subsequent refreshes (e.g. while a download is polling).
+    if (s.configured_model && !selectedModel.value) selectedModel.value = s.configured_model
   } catch (e: any) {
     // non-fatal; section just stays in its last known state
   }
@@ -178,7 +198,7 @@ function startEmbeddingPolling() {
 
 async function handleDownloadEmbedding() {
   try {
-    const res = await downloadEmbeddingModel()
+    const res = await downloadEmbeddingModel(selectedModel.value || undefined)
     if (res.started) {
       await loadEmbeddingStatus()
       startEmbeddingPolling()
@@ -195,7 +215,7 @@ async function handleDownloadEmbedding() {
 
 async function handleDeleteEmbedding() {
   try {
-    await deleteEmbeddingModel()
+    await deleteEmbeddingModel(selectedModel.value || undefined)
     await loadEmbeddingStatus()
     message.success(t('settings.embeddingModelMgmt.deleted'))
   } catch (e: any) {
@@ -688,16 +708,19 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NSelect
-              v-model:value="selectedModel"
-              :options="embeddingSelectOptions"
-              :placeholder="t('settings.embeddingModelMgmt.selectPlaceholder')"
-              :disabled="embeddingStatus.status === 'downloading'"
-            />
-          </NFormItem>
-
-          <NFormItem :show-feedback="false">
-            <NSpace align="center">
+            <div style="margin-bottom: 10px">
+              <span class="muted" style="font-size: 14px; font-weight: 500">
+                {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
+              </span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; width: 100%">
+              <NSelect
+                v-model:value="selectedModel"
+                :options="embeddingSelectOptions"
+                :placeholder="t('settings.embeddingModelMgmt.selectPlaceholder')"
+                :disabled="selectedDownloading"
+                style="flex: 1"
+              />
               <NButton
                 type="primary"
                 secondary
@@ -707,10 +730,7 @@ async function handleTest() {
               >
                 {{ t('settings.embeddingModelMgmt.apply') }}
               </NButton>
-              <span class="muted" style="font-size: 12px">
-                {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
-              </span>
-            </NSpace>
+            </div>
           </NFormItem>
 
           <NFormItem
@@ -732,71 +752,83 @@ async function handleTest() {
 
           <NFormItem :label="t('settings.embeddingModelMgmt.status')">
             <NSpace align="center" :size="12">
-              <NTag v-if="embeddingStatus.installed" type="success" :bordered="false" round>
+              <NTag v-if="selectedInstalled && !selectedDownloading" type="success" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusInstalled') }}
               </NTag>
-              <NTag v-else-if="embeddingStatus.status === 'downloading'" type="warning" :bordered="false" round>
+              <NTag v-else-if="selectedDownloading" type="warning" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusDownloading') }}
               </NTag>
-              <NTag v-else-if="embeddingStatus.status === 'failed'" type="error" :bordered="false" round>
+              <NTag v-else-if="selectedFailed" type="error" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusFailed') }}
               </NTag>
               <NTag v-else type="default" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusNotInstalled') }}
               </NTag>
 
-              <NProgress
-                v-if="embeddingStatus.status === 'downloading'"
-                type="line"
-                :percentage="embeddingStatus.progress"
-                :show-indicator="true"
-                :processing="true"
-                style="width: 200px"
-              />
-            </NSpace>
-          </NFormItem>
-
-          <NFormItem v-if="embeddingStatus.status === 'failed'" :show-feedback="false">
-            <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
-              {{ embeddingStatus.error }}
-            </NAlert>
-          </NFormItem>
-
-          <NFormItem :show-feedback="false">
-            <NSpace align="center">
-              <NButton
-                v-if="!embeddingStatus.installed && embeddingStatus.status !== 'downloading'"
-                type="primary"
-                :disabled="selectedModel !== embeddingStatus.configured_model"
-                @click="handleDownloadEmbedding"
-              >
-                <template #icon><NIcon><Download /></NIcon></template>
-                {{ t('settings.embeddingModelMgmt.download') }}
-              </NButton>
-              <NButton
-                v-if="embeddingStatus.installed"
-                type="error"
-                secondary
-                :disabled="selectedModel !== embeddingStatus.configured_model"
-                @click="handleDeleteEmbedding"
-              >
-                {{ t('settings.embeddingModelMgmt.delete') }}
-              </NButton>
               <span class="muted" style="font-size: 12px">
-                <template v-if="embeddingStatus.status === 'downloading'">
+                <template v-if="selectedDownloading">
                   {{ embeddingStatus.message }}
                 </template>
-                <template v-else-if="embeddingStatus.installed">
+                <template v-else-if="selectedInstalled">
                   {{ t('settings.embeddingModelMgmt.installedTip') }}
                 </template>
                 <template v-else>
                   {{ t('settings.embeddingModelMgmt.notInstalledTip') }}
                 </template>
               </span>
+              
+              <NButton
+                v-if="!selectedInstalled && !selectedDownloading"
+                type="primary"
+                :disabled="!selectedModel"
+                @click="handleDownloadEmbedding"
+              >
+                <template #icon><NIcon><Download /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.download') }}
+              </NButton>
+
+              <NButton
+                v-if="selectedInstalled"
+                type="error"
+                secondary
+                :disabled="selectedIsConfigured"
+                @click="handleDeleteEmbedding"
+              >
+                {{ t('settings.embeddingModelMgmt.delete') }}
+              </NButton>
+
             </NSpace>
+
+            <div v-if="selectedDownloading" style="margin-top: 10px">
+              <span class="muted" style="font-size: 12px; margin-right: 8px">{{ t('settings.embeddingModelMgmt.downloadProgress') }}</span>
+              <NProgress
+                type="line"
+                :percentage="embeddingStatus.progress"
+                :show-indicator="true"
+                :processing="true"
+                style="width: 200px"
+              />
+            </div>            
+          </NFormItem>
+
+          <NFormItem v-if="selectedFailed" :show-feedback="false">
+            <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
+              {{ embeddingStatus.error }}
+            </NAlert>
           </NFormItem>
 
           <NFormItem :show-feedback="false">
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
+                <NTooltip trigger="hover" :width="280">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  {{ t('settings.embeddingModelMgmt.reindexHint') }}
+                </NTooltip>
+              </span>
+            </template>
             <NSpace align="center">
               <NButton
                 type="warning"
@@ -808,9 +840,6 @@ async function handleTest() {
                 <template #icon><NIcon><Flash /></NIcon></template>
                 {{ t('settings.embeddingModelMgmt.reindexBtn') }}
               </NButton>
-              <span class="muted" style="font-size: 12px">
-                {{ t('settings.embeddingModelMgmt.reindexHint') }}
-              </span>
             </NSpace>
           </NFormItem>
 

@@ -46,6 +46,7 @@ export default {
     reindexStarted: 'Background re-index task started',
     reindexRunning: 'Re-index is already running',
     reindexPendingDownload: 'Re-index will start automatically once the model download finishes',
+    downloadProgress: 'Download progress',
   },
   providerLabel: 'LLM Provider',
   providerQwen: 'Qwen (Alibaba)',
