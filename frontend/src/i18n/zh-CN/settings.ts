@@ -42,6 +42,8 @@ export default {
     conflictOk: '清空并切换',
     switchBtn: '切换',
     switchReindexBtn: '切换并重建索引',
+    selectFirst: '请先选择模型',
+    installFirstHint: '请先安装该模型后再切换',
     dimensionConflictTip: '当前选中的模型「{model}」与原有模型维度不同（{existing}维 → {neu}维），如切换则须清空原有向量索引并重新建立向量索引。现有 {count} 条向量将被清除。',
     reindexTitle: '重新向量化进度',
     reindexStarted: '已启动后台重新向量化任务',

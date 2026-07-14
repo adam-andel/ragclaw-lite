@@ -42,6 +42,8 @@ export default {
     conflictOk: 'Clear & Switch',
     switchBtn: 'Switch',
     switchReindexBtn: 'Switch & Re-index',
+    selectFirst: 'Please select a model first',
+    installFirstHint: 'Please install the model before switching',
     dimensionConflictTip: 'The selected model "{model}" has a different dimension ({existing} → {neu}) from the current one. Switching will clear all {count} existing vector indexes and rebuild them.',
     reindexTitle: 'Re-index Progress',
     reindexStarted: 'Background re-index task started',

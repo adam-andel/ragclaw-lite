@@ -133,6 +133,18 @@ const switchBtnDisabled = computed(() => {
   return !isModelInstalled(selectedModel.value)
 })
 
+// Hover hint shown when the switch button is disabled, explaining *why*.
+// Only returns text for the actionable cases (no model / not installed);
+// during loading or when the model is already active there's nothing to hint.
+const switchBtnHint = computed(() => {
+  if (!switchBtnDisabled.value) return ''
+  if (switching.value || reindexing.value) return ''
+  if (!selectedModel.value) return t('settings.embeddingModelMgmt.selectFirst')
+  if (selectedModel.value === embeddingStatus.value.configured_model) return ''
+  if (!isModelInstalled(selectedModel.value)) return t('settings.embeddingModelMgmt.installFirstHint')
+  return ''
+})
+
 // ── Re-index (after embedding-model switch) ──
 const reindexStatus = ref<ReindexStatus>({
   status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0,
@@ -739,28 +751,25 @@ async function handleTest() {
                 style="flex: 1"
                 @update:value="onSelectModelChange"
               />
-              <NButton
-                type="primary"
-                :loading="switching || reindexing"
-                :disabled="switchBtnDisabled"
-                @click="handleReindex"
-              >
-                <template #icon><NIcon><Flash /></NIcon></template>
-                {{ switchBtnLabel }}
-              </NButton>
+              <NTooltip :disabled="!switchBtnHint" placement="top">
+                <template #trigger>
+                  <span style="display: inline-flex">
+                    <NButton
+                      type="primary"
+                      :loading="switching || reindexing"
+                      :disabled="switchBtnDisabled"
+                      @click="handleReindex"
+                    >
+                      <template #icon><NIcon><Flash /></NIcon></template>
+                      {{ switchBtnLabel }}
+                    </NButton>
+                  </span>
+                </template>
+                {{ switchBtnHint }}
+              </NTooltip>
             </div>
           </NFormItem>
 
-          <NAlert
-            v-if="dimensionConflict"
-            type="warning"
-            :bordered="false"
-            :title="t('settings.embeddingModelMgmt.conflictTitle')"
-            style="margin-top: 8px"
-          >
-            {{ dimensionConflict }}
-          </NAlert>
-          
           <NFormItem v-if="selectedModel" :label="t('settings.embeddingModelMgmt.status')">
             <NSpace align="center" :size="12">
               <NTag v-if="selectedInstalled && !selectedDownloading" type="success" :bordered="false" round>
@@ -867,6 +876,17 @@ async function handleTest() {
               </div>
             </NAlert>
           </NFormItem>
+
+          <NAlert
+            v-if="dimensionConflict"
+            type="warning"
+            :bordered="false"
+            :title="t('settings.embeddingModelMgmt.conflictTitle')"
+            style="margin-top: 8px"
+          >
+            {{ dimensionConflict }}
+          </NAlert>
+          
         </section>
 
         <NDivider />
