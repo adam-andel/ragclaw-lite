@@ -287,26 +287,23 @@ async function onSelectModelChange(target: string) {
   }
 }
 
-async function onSwitched(res: { model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
+async function onSwitched(res: { switched: boolean; model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
   config.value.embedding_model = res.model
   await loadEmbeddingStatus()
-  if (!res.installed) {
-    message.warning(t('settings.embeddingModelMgmt.switchedNotInstalled'))
-  } else if (res.cleared_vectors) {
-    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
-  } else {
-    message.success(t('settings.embeddingModelMgmt.switched'))
-  }
   if (res.cleared_vectors) {
+    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
     await loadReindexStatus()
     if (res.reindex_started) startReindexPolling()
     else message.info(t('settings.embeddingModelMgmt.reindexPendingDownload'))
+  } else {
+    message.success(t('settings.embeddingModelMgmt.switched'))
   }
 }
 
-// "Re-index All" now means: clear existing vector indexes, switch to the
-// selected model, and rebuild — i.e. switch(force=True). If the target model is
-// still downloading, the re-index is queued and runs when the download finishes.
+// "Re-index All" = clear existing vector indexes, switch to the selected model,
+// and rebuild — i.e. switch(force=True). This only runs for an already-installed
+// model (the switch button is disabled otherwise); to use a new model the user
+// must download & install it first, then switch.
 async function handleReindex() {
   const target = selectedModel.value
   if (!target) return

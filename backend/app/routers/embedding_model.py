@@ -83,10 +83,15 @@ async def switch_embedding_model(
 ):
     """Change the configured embedding model.
 
-    When ``force=True`` every existing vector collection is cleared first and a
-    re-index against the new model is started (immediately if the target model is
-    already installed, otherwise queued until its download completes). This is the
-    explicit "clear + switch + rebuild" action triggered from the UI.
+    ``force=True`` is the explicit "clear + switch + rebuild" action from the UI.
+    We only ever activate a model we are sure is present:
+
+    * target already installed → clear existing vectors (if any), switch the
+      active config immediately and start the re-index right away.
+    * target not installed → the switch is refused (400). We never auto-start a
+      download here; switching only ever activates an already-installed model, so
+      the user must install the target via the dedicated download action first.
+      Nothing is mutated.
 
     When ``force=False`` and a dimension conflict exists (existing vectors with a
     different dimension), a 409 is returned and nothing is mutated.
@@ -116,9 +121,21 @@ async def switch_embedding_model(
             },
         )
 
-    # force=True means the user explicitly wants "clear + switch + rebuild":
-    # wipe existing collections (if any) and re-index against the new model.
+    # force=True means the user explicitly wants "clear + switch + rebuild".
     will_clear = bool(body.force) and total > 0
+    installed = model_manager.is_installed(target)
+
+    # We only ever activate a model that is already present. Switching to a
+    # not-yet-installed model is refused — the user must download & install it
+    # first through the dedicated download action. No config is written, no
+    # vectors are cleared, and no download is started here.
+    if not installed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"模型 {target} 尚未安装，请先下载安装后再切换。",
+        )
+
+    # Target already installed → switch synchronously now.
     if will_clear:
         from app.services.vector_store import vector_store
 
@@ -130,32 +147,21 @@ async def switch_embedding_model(
         from app.services.embedder import embedder_service
 
         embedder_service._model = None
+        embedder_service._ensure_model()
     except Exception:
         pass
 
-    installed = model_manager.is_installed(target)
-    if installed:
-        try:
-            embedder_service._ensure_model()
-        except Exception:
-            pass
-
-    # Rebuild collections against the new model — immediately if it's already
-    # installed, otherwise queue it so the download worker starts it on completion.
     from app.services.reindex_service import reindex_service
 
     reindex_started = False
     if will_clear:
-        if installed:
-            reindex_service.start()
-            reindex_started = True
-        else:
-            model_manager.set_pending_reindex()
+        reindex_service.start()
+        reindex_started = True
 
     return {
         "switched": True,
         "model": target,
-        "installed": installed,
+        "installed": True,
         "cleared_vectors": will_clear,
         "reindex_started": reindex_started,
     }

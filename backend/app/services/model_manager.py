@@ -36,9 +36,6 @@ class EmbeddingModelManager:
         self._error = ""
         self._model = ""
         self._thread: threading.Thread | None = None
-        # Set when a model switch needs to re-index the corpus but the target
-        # model isn't downloaded yet; consumed when the download finishes.
-        self._pending_reindex = False
 
     # ── Queries ──
 
@@ -117,19 +114,6 @@ class EmbeddingModelManager:
         self._thread.start()
         return {"started": True, "model": name}
 
-    def set_pending_reindex(self) -> None:
-        """Request a corpus re-index once the current download completes."""
-        with self._lock:
-            self._pending_reindex = True
-
-    def consume_pending_reindex(self) -> bool:
-        """Return True (and clear) if a re-index is pending; one-shot."""
-        with self._lock:
-            if self._pending_reindex:
-                self._pending_reindex = False
-                return True
-            return False
-
     def delete(self, model_name: str | None = None) -> dict:
         name = model_name or settings.embedding_model
         cache_dir = self._hf_home()
@@ -201,7 +185,9 @@ class EmbeddingModelManager:
                     os.environ["HF_ENDPOINT"] = prev
                 elif "HF_ENDPOINT" in os.environ:
                     del os.environ["HF_ENDPOINT"]
-                # Pre-warm so the first embedding request is fast.
+
+                # Pre-warm so the first embedding request against the newly
+                # downloaded model is fast.
                 warmup_msg = ""
                 try:
                     from app.services.embedder import embedder_service
@@ -210,14 +196,6 @@ class EmbeddingModelManager:
                     warmup_msg = f"（预热跳过：{e}）"
                 self._set(status=_Status.COMPLETED, progress=100.0,
                           message=f"{model_name} 下载完成{warmup_msg}")
-                # If a model switch is waiting for this download to finish,
-                # kick off the background re-index now that the model is ready.
-                try:
-                    from app.services.reindex_service import reindex_service
-                    if self.consume_pending_reindex():
-                        reindex_service.start()
-                except Exception:
-                    pass
                 return
             except Exception as e:
                 last_err = e
