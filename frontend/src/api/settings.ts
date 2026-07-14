@@ -122,6 +122,19 @@ export async function switchEmbeddingModel(model: string, force = false): Promis
   return res.data
 }
 
+// ── Dry-run dimension check (no mutation) ──
+// Returns 200 when switching is safe; throws HTTP 409 (detail carries
+// existing/new dimension + vector count) when the dimensions are incompatible.
+export async function checkEmbeddingDimension(model: string): Promise<{
+  conflict: boolean
+  existing_dim: number | null
+  new_dim: number | null
+  vector_count: number
+}> {
+  const res = await client.post('/embedding-model/check', { model })
+  return res.data
+}
+
 // ── Re-index all documents against the active embedding model ──
 export interface ReindexStatus {
   status: 'idle' | 'running' | 'completed' | 'failed'

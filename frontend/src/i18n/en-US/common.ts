@@ -1,6 +1,7 @@
 export default {
   appName: 'ERAG',
   confirm: 'Confirm',
+  ok: 'OK',
   cancel: 'Cancel',
   save: 'Save',
   delete: 'Delete',

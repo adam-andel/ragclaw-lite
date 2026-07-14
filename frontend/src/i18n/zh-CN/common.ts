@@ -1,6 +1,7 @@
 export default {
   appName: 'ERAG',
   confirm: '确定',
+  ok: '知道了',
   cancel: '取消',
   save: '保存',
   delete: '删除',
