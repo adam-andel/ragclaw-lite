@@ -9,7 +9,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 
@@ -223,38 +223,30 @@ async function handleDeleteEmbedding() {
   }
 }
 
-async function handleSwitchEmbedding() {
-  const target = selectedModel.value
+// When the dropdown changes, only *query* whether the new model's dimension is
+// compatible with the existing vector store. Nothing is mutated here — if the
+// backend returns 409 we surface a warning telling the user that switching will
+// require clearing and rebuilding the indexes. The actual clear+rebuild happens
+// when they click "Re-index All".
+async function onSelectModelChange(target: string) {
   if (!target || target === embeddingStatus.value.configured_model) return
-  switching.value = true
   try {
-    const res = await switchEmbeddingModel(target, false)
-    await onSwitched(res)
+    await checkEmbeddingDimension(target)
   } catch (e: any) {
     const resp = e?.response
     if (resp?.status === 409) {
       const d = resp.data?.detail ?? {}
-      const confirmed = await dialog.warning({
+      await dialog.warning({
         title: t('settings.embeddingModelMgmt.conflictTitle'),
-        content: t('settings.embeddingModelMgmt.conflictConfirm', {
-          existing: d.existing_dim, neu: d.new_dim, count: d.vector_count,
+        content: t('settings.embeddingModelMgmt.dimensionConflictTip', {
+          model: target,
+          existing: d.existing_dim,
+          neu: d.new_dim,
+          count: d.vector_count,
         }),
-        positiveText: t('settings.embeddingModelMgmt.conflictOk'),
-        negativeText: t('common.cancel'),
+        positiveText: t('common.ok'),
       })
-      if (confirmed) {
-        try {
-          const res = await switchEmbeddingModel(target, true)
-          await onSwitched(res)
-        } catch (e2: any) {
-          message.error(e2?.response?.data?.detail ?? e2?.message ?? t('settings.saveFailed'))
-        }
-      }
-    } else {
-      message.error(resp?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
     }
-  } finally {
-    switching.value = false
   }
 }
 
@@ -275,20 +267,20 @@ async function onSwitched(res: { model: string; installed: boolean; cleared_vect
   }
 }
 
+// "Re-index All" now means: clear existing vector indexes, switch to the
+// selected model, and rebuild — i.e. switch(force=True). If the target model is
+// still downloading, the re-index is queued and runs when the download finishes.
 async function handleReindex() {
+  const target = selectedModel.value
+  if (!target) return
+  switching.value = true
   try {
-    const res = await startReindex()
-    if (res.started) {
-      await loadReindexStatus()
-      startReindexPolling()
-      message.info(t('settings.embeddingModelMgmt.reindexStarted'))
-    } else if (res.reason === 'already_running') {
-      await loadReindexStatus()
-      startReindexPolling()
-      message.warning(t('settings.embeddingModelMgmt.reindexRunning'))
-    }
+    const res = await switchEmbeddingModel(target, true)
+    await onSwitched(res)
   } catch (e: any) {
-    message.error(e.response?.data?.detail ?? e.message ?? t('settings.saveFailed'))
+    message.error(e?.response?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
+  } finally {
+    switching.value = false
   }
 }
 
@@ -720,16 +712,8 @@ async function handleTest() {
                 :placeholder="t('settings.embeddingModelMgmt.selectPlaceholder')"
                 :disabled="selectedDownloading"
                 style="flex: 1"
+                @update:value="onSelectModelChange"
               />
-              <NButton
-                type="primary"
-                secondary
-                :loading="switching"
-                :disabled="!selectedModel || selectedModel === embeddingStatus.configured_model || embeddingStatus.status === 'downloading'"
-                @click="handleSwitchEmbedding"
-              >
-                {{ t('settings.embeddingModelMgmt.apply') }}
-              </NButton>
             </div>
           </NFormItem>
 
@@ -833,8 +817,8 @@ async function handleTest() {
               <NButton
                 type="warning"
                 secondary
-                :loading="reindexing"
-                :disabled="!embeddingStatus.installed || reindexing"
+                :loading="switching || reindexing"
+                :disabled="!selectedModel || switching || reindexing"
                 @click="handleReindex"
               >
                 <template #icon><NIcon><Flash /></NIcon></template>
