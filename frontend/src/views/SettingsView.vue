@@ -86,7 +86,7 @@ const sandboxConfig = ref<SandboxNetworkConfig>({
   mcp_file_keep_minutes: keepOptions.value[1].value as number,
 })
 
-const keepPreset = ref<string>('60')
+const keepPreset = ref<string | number>(60)
 const keepCustomMinutes = ref<number>(60)
 
 function formatKeep(min: number): string {
@@ -288,7 +288,7 @@ onMounted(async () => {
     sandboxConfig.value = await getSandboxNetwork()
     const v = sandboxConfig.value.mcp_file_keep_minutes ?? 60
     const preset = keepOptions.value.find((o) => o.value !== 'custom' && o.value === v)
-    keepPreset.value = preset ? String(v) : 'custom'
+    keepPreset.value = preset ? v : 'custom'
     keepCustomMinutes.value = v
   } catch (e: any) {
     message.error(e.message || t('settings.msg.loadSandboxFailed'))
