@@ -37,8 +37,8 @@ const sections = [
   { id: 'embedding-model', label: 'settings.nav.embeddingModel' },
   { id: 'server', label: 'settings.nav.server' },
   { id: 'system-prompt', label: 'settings.nav.systemPrompt' },
-  { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
   { id: 'plugins', label: 'settings.nav.plugins' },
+  { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
 ]
 
 const networkModeOptions = computed(() => [
@@ -670,6 +670,8 @@ async function handleTest() {
 
         </section>
 
+        <NDivider />
+
         <!-- Embedding Model (on-demand install) -->
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
@@ -949,6 +951,14 @@ async function handleTest() {
               placeholder="api.github.com, raw.githubusercontent.com"
             />
           </NFormItem>
+          <NFormItem>
+            <span class="muted" style="font-size: 12px">
+              {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
+              <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
+                （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
+              </template>
+            </span>
+          </NFormItem>
 
           <NDivider />
 
@@ -969,14 +979,6 @@ async function handleTest() {
             </NSpace>
           </NFormItem>
 
-          <NFormItem>
-            <span class="muted" style="font-size: 12px">
-              {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
-              <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
-                （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
-              </template>
-            </span>
-          </NFormItem>
         </NForm>
       </section>
     </NCard>
