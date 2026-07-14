@@ -97,7 +97,6 @@ function formatKeep(min: number): string {
   if (min % 60 === 0) return t('settings.keepHours', { n: min / 60 })
   return t('settings.keepMinutes', { n: min })
 }
-const savingSandbox = ref(false)
 
 // ── Embedding model (on-demand download) ──
 const embeddingStatus = ref<EmbeddingModelStatus>({
@@ -423,6 +422,21 @@ async function handleSave() {
     apiKeyInput.value = ''
     testResult.value = null
     message.success(t('settings.msg.configSaved'))
+
+    // 同步保存沙盒网络设置
+    const keepMins = keepPreset.value === 'custom' ? keepCustomMinutes.value : Number(keepPreset.value)
+    const sres = await updateSandboxNetwork({
+      sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
+      sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
+      sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
+      mcp_file_keep_minutes: keepMins,
+    })
+    sandboxConfig.value = sres.config
+    if (sres.mcp_pushed) {
+      message.success(t('settings.msg.sandboxSavedHot'))
+    } else {
+      message.warning(t('settings.msg.sandboxSavedRestart'))
+    }
   } catch (e: any) {
     message.error(e.message || t('settings.msg.saveFailed'))
   } finally {
@@ -445,28 +459,6 @@ async function handleTest() {
   }
 }
 
-async function handleSaveSandbox() {
-  savingSandbox.value = true
-  try {
-    const keepMins = keepPreset.value === 'custom' ? keepCustomMinutes.value : Number(keepPreset.value)
-    const res = await updateSandboxNetwork({
-      sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
-      sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
-      sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
-      mcp_file_keep_minutes: keepMins,
-    })
-    sandboxConfig.value = res.config
-    if (res.mcp_pushed) {
-      message.success(t('settings.msg.sandboxSavedHot'))
-    } else {
-      message.warning(t('settings.msg.sandboxSavedRestart'))
-    }
-  } catch (e: any) {
-    message.error(e.message || t('settings.msg.saveFailed'))
-  } finally {
-    savingSandbox.value = false
-  }
-}
 </script>
 
 <template>
@@ -978,15 +970,12 @@ async function handleSaveSandbox() {
           </NFormItem>
 
           <NFormItem>
-            <NSpace align="center">
-              <NButton type="primary" :loading="savingSandbox" @click="handleSaveSandbox">{{ t('settings.saveSandbox') }}</NButton>
-              <span class="muted" style="font-size: 12px">
-                {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
-                <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
-                  （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
-                </template>
-              </span>
-            </NSpace>
+            <span class="muted" style="font-size: 12px">
+              {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
+              <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
+                （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
+              </template>
+            </span>
           </NFormItem>
         </NForm>
       </section>
