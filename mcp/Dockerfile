@@ -18,11 +18,13 @@ RUN apt-get update && \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies into a shared site
+# Install Python dependencies into a shared site.
+# BuildKit cache mount keeps pip's HTTP/wheel cache across builds for faster rebuilds.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt || \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt || \
     (pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-     pip install --no-cache-dir -r requirements.txt)
+     pip install -r requirements.txt)
 
 # Copy server code (kept minimal — no venv, no tests)
 COPY repl_mcp_server.py .
