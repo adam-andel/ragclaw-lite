@@ -37,7 +37,7 @@ export default {
   searchKbName: '搜索知识库名称…',
   noUsersToAdd: '暂无可添加的用户',
   selectDocsToAdd: '选择文档加入知识库',
-  noAvailableDocs: '还没有可添加的已完成文档',
+  noAvailableDocs: '还没有可添加的文档',
   goToUploadDocs: '前往文档管理页上传文档',
   uploadMoreDocs: '上传更多文档',
   addToKb: '加入知识库',
@@ -72,6 +72,7 @@ export default {
   kbVectorMeta: '{count} 分片',
   selectedPrefix: '已选 ',
   totalDocsSuffix: ' / 共 {count} 个文档',
+  selectAll: '全选',
   create: '创建',
 
   // Status labels (document processing)

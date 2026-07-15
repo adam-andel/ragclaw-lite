@@ -37,7 +37,7 @@ export default {
   searchKbName: 'Search knowledge base name…',
   noUsersToAdd: 'No users to add',
   selectDocsToAdd: 'Select Documents to Add',
-  noAvailableDocs: 'No completed documents available to add',
+  noAvailableDocs: 'No documents available to add',
   goToUploadDocs: 'Go to Documents to upload',
   uploadMoreDocs: 'Upload more documents',
   addToKb: 'Add to Knowledge Base',
@@ -72,6 +72,7 @@ export default {
   kbVectorMeta: '{count} chunks',
   selectedPrefix: 'Selected: ',
   totalDocsSuffix: ' / {count} total',
+  selectAll: 'Select all',
   create: 'Create',
 
   // Status labels (document processing)

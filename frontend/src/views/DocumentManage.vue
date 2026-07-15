@@ -173,7 +173,7 @@ const availableTotal = ref(0)
 const availablePage = ref(1)
 const availablePageSize = ref(20)
 const availableSearch = ref('')
-const availableStatus = ref<string | null>('completed')
+const availableStatus = ref<string | null>('')
 const availableType = ref<string>('all')
 const linkingDocs = ref(false)
 
@@ -423,7 +423,7 @@ async function openSelectDocs(kbId: string) {
   selectedDocIds.value = []
   availablePage.value = 1
   availableSearch.value = ''
-  availableStatus.value = 'completed'
+  availableStatus.value = ''
   availableType.value = 'all'
   await loadAvailableDocs(kbId)
 }
@@ -471,6 +471,22 @@ function openUploadFromSelectDocs() {
 function onAvailablePageChange(p: number) {
   availablePage.value = p
   loadAvailableDocs()
+}
+
+const allAvailableSelected = computed(() =>
+  availableDocs.value.length > 0 && availableDocs.value.every(d => selectedDocIds.value.includes(d.id))
+)
+const someAvailableSelected = computed(() =>
+  availableDocs.value.some(d => selectedDocIds.value.includes(d.id))
+)
+function toggleSelectAllAvailable() {
+  if (allAvailableSelected.value) {
+    const visible = new Set(availableDocs.value.map(d => d.id))
+    selectedDocIds.value = selectedDocIds.value.filter(id => !visible.has(id))
+  } else {
+    const merged = new Set([...selectedDocIds.value, ...availableDocs.value.map(d => d.id)])
+    selectedDocIds.value = [...merged]
+  }
 }
 
 async function handleSelectDocs() {
@@ -1407,6 +1423,11 @@ async function loadSupportedTypes() {
         </NSpin>
         <div class="select-docs-actions">
           <div class="select-docs-left">
+            <NCheckbox
+              :checked="allAvailableSelected"
+              :indeterminate="someAvailableSelected && !allAvailableSelected"
+              @update:checked="toggleSelectAllAvailable"
+            >{{ t('documents.selectAll') }}</NCheckbox>
             <span class="select-docs-count">{{ t('documents.selectedPrefix') }}{{ selectedDocIds.length }}{{ availableTotal ? t('documents.totalDocsSuffix', { count: availableTotal }) : '' }}</span>
             <NButton text size="tiny" type="primary" @click="openUploadFromSelectDocs">
               {{ t('documents.uploadMoreDocs') }} →
