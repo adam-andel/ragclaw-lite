@@ -43,7 +43,12 @@ class HybridSearchService:
         threshold = threshold if threshold is not None else settings.retrieval_similarity_threshold
 
         # Run both searches in sequence (could be parallel with asyncio)
-        vector_results = vector_store.search(kb_id, query, top_k=vector_top_k)
+        # Vector search may fail (e.g. embedding model not installed) — degrade
+        # gracefully and rely on BM25 only instead of erroring the whole request.
+        try:
+            vector_results = vector_store.search(kb_id, query, top_k=vector_top_k)
+        except Exception:
+            vector_results = []
         bm25_results = bm25_index.search(kb_id, query, top_k=bm25_top_k)
 
         # Build lookup: chunk_id -> scores

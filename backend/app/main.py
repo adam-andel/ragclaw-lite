@@ -127,7 +127,7 @@ async def lifespan(app: FastAPI):
                 chunks_result = await db.execute(
                     select(Chunk).join(Document, Chunk.doc_id == Document.id).join(
                         KBDocument, and_(KBDocument.doc_id == Document.id, KBDocument.kb_id == kb_id)
-                    ).where(Document.status == DocStatus.COMPLETED)
+                    ).where(Document.status.in_([DocStatus.COMPLETED, DocStatus.CHUNKED]))
                 )
                 chunks = chunks_result.scalars().all()
                 if chunks:

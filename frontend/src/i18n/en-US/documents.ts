@@ -81,6 +81,7 @@ export default {
     parsing: 'Parsing',
     chunking: 'Chunking',
     embedding: 'Embedding',
+    chunked: 'Chunked·Pending Vectors',
     completed: 'Completed',
     failed: 'Failed',
     processing: 'Processing',

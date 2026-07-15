@@ -43,7 +43,7 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
         chunks_result = await db.execute(
             select(Chunk).join(Document, Chunk.doc_id == Document.id).join(
                 KBDocument, and_(KBDocument.doc_id == Document.id, KBDocument.kb_id == kb_id)
-            ).where(Document.status == DocStatus.COMPLETED, Chunk.content != "")
+            ).where(Document.status.in_([DocStatus.COMPLETED, DocStatus.CHUNKED]), Chunk.content != "")
         )
         chunks = chunks_result.scalars().all()
         if chunks:

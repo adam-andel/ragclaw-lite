@@ -63,6 +63,44 @@ async def _kb_to_response(kb: KnowledgeBase, db: AsyncSession) -> KBResponse:
         created_at=kb.created_at, updated_at=kb.updated_at,
     )
 
+async def _rebuild_kb_bm25(db: AsyncSession, kb_id: str):
+    """Full rebuild of a KB's BM25 index from every linked chunk.
+
+    Includes both COMPLETED (has vectors) and CHUNKED (keyword-only) documents.
+    This replaces the per-link partial rebuild that previously overwrote the
+    index with only the most recently added document's chunks.
+    """
+    from sqlalchemy import select as _select, and_ as _and_
+    from app.models.document import Chunk, Document, DocStatus, KBDocument
+    from app.services.bm25_index import bm25_index
+
+    chunks_result = await db.execute(
+        _select(Chunk).join(Document, Chunk.doc_id == Document.id).join(
+            KBDocument, _and_(KBDocument.doc_id == Document.id, KBDocument.kb_id == kb_id)
+        ).where(
+            Document.status.in_([DocStatus.COMPLETED, DocStatus.CHUNKED]),
+            Chunk.content != "",
+        )
+    )
+    chunks = chunks_result.scalars().all()
+    if not chunks:
+        bm25_index.delete_kb(kb_id)
+        return
+    doc_ids = {c.doc_id for c in chunks}
+    doc_result = await db.execute(
+        _select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+    )
+    doc_map = {row[0]: row[1] for row in doc_result.fetchall()}
+    bm25_index.build(kb_id, [
+        {
+            "id": c.id, "content": c.content, "doc_id": c.doc_id,
+            "heading": c.heading or "", "chunk_index": c.chunk_index,
+            "page": c.page, "filename": doc_map.get(c.doc_id, ""),
+        }
+        for c in chunks
+    ])
+
+
 @router.post("", response_model=KBResponse, status_code=201)
 async def create_kb(
     data: KBCreate, current_user: User = Depends(get_current_staff),
@@ -225,7 +263,7 @@ async def add_documents_to_kb(
 
     for doc_id in body.doc_ids:
         doc = await db.get(Document, doc_id)
-        if not doc or doc.status.value != "completed":
+        if not doc or doc.status.value not in ("completed", "chunked"):
             skipped += 1
             continue
 
@@ -241,14 +279,14 @@ async def add_documents_to_kb(
         link = KBDocument(id=_gen_id(), kb_id=kb_id, doc_id=doc_id)
         db.add(link)
 
-        # Load chunks and push vectors to KB collection
+        # Load chunks to (optionally) push vectors to KB collection
         chunks_result = await db.execute(
             select(Chunk).where(Chunk.doc_id == doc_id).order_by(Chunk.chunk_index)
         )
         chunks = chunks_result.scalars().all()
 
         if chunks and chunks[0].embedding is not None:
-            # Fast path: use cached embeddings
+            # Fast path: use cached embeddings (doc is COMPLETED)
             chunk_dicts = []
             for c in chunks:
                 emb_bytes = c.embedding
@@ -261,26 +299,17 @@ async def add_documents_to_kb(
                     "token_count": c.token_count, "filename": doc.filename,
                 })
             await loop.run_in_executor(None, vector_store.add_chunks_cached, kb_id, chunk_dicts)
-        elif chunks:
-            # Fallback: compute fresh
-            chunk_dicts = [{
-                "id": c.id, "content": c.content,
-                "doc_id": c.doc_id, "chunk_index": c.chunk_index,
-                "heading": c.heading or "", "page": c.page,
-                "token_count": c.token_count, "filename": doc.filename,
-            } for c in chunks]
-            await loop.run_in_executor(None, vector_store.add_chunks, kb_id, chunk_dicts)
+        # CHUNKED docs (embedding is None) are intentionally NOT pushed to the
+        # vector store — they are retrievable via BM25/keyword search only, until
+        # an embedding model is installed and the document is re-indexed.
 
-        # Update BM25
-        if chunks:
-            try:
-                bm25_data = [{
-                    "id": c.id, "content": c.content, "doc_id": c.doc_id,
-                    "heading": c.heading or "", "chunk_index": c.chunk_index, "page": c.page,
-                } for c in chunks]
-                await loop.run_in_executor(None, bm25_index.build, kb_id, bm25_data)
-            except Exception:
-                pass
+        # Rebuild BM25 for the WHOLE KB (not just this doc). This fixes a latent
+        # bug where each link overwrote the KB index with only the new doc's
+        # chunks, and it naturally includes CHUNKED docs (keyword retrieval).
+        try:
+            await _rebuild_kb_bm25(db, kb_id)
+        except Exception:
+            pass
 
         added += 1
 

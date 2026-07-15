@@ -81,6 +81,7 @@ export default {
     parsing: '解析中',
     chunking: '分块中',
     embedding: '向量化中',
+    chunked: '已切片·待向量化',
     completed: '已完成',
     failed: '失败',
     processing: '处理中',

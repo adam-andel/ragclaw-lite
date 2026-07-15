@@ -58,33 +58,54 @@ async def process_document(doc_id: str):
             await db.commit()
             raw_chunks = await loop.run_in_executor(None, chunker_service.chunk, parsed)
 
-            # Step 3: Save chunks + compute embeddings (50 -> 90)
-            doc.status = DocStatus.EMBEDDING
+            # Step 3: Persist chunks FIRST (embedding-agnostic). This guarantees
+            # chunks exist for BM25/keyword retrieval even when no embedding
+            # model is installed.
+            doc.status = DocStatus.CHUNKING
             doc.progress = 50
             await db.commit()
-
-            texts = [rc["content"] for rc in raw_chunks]
-            embeddings = embedder_service.embed(texts)
-
             for i, rc in enumerate(raw_chunks):
                 cid = _gen_id()
-                emb_bytes = _serialize_embedding(embeddings[i]) if i < len(embeddings) else None
                 chunk_obj = Chunk(
                     id=cid, doc_id=doc_id, chunk_index=i,
                     content=rc["content"], token_count=rc.get("token_count", 0),
                     heading=rc.get("heading"), page=rc.get("page"),
-                    embedding=emb_bytes,
+                    embedding=None,
                 )
                 chunk_objs.append(chunk_obj)
                 db.add(chunk_obj)
-
-            doc.progress = 90
+            doc.status = DocStatus.CHUNKED
+            doc.chunk_count = len(chunk_objs)
+            doc.progress = 60
             await db.commit()
 
-            # Step 4: Complete (100)
+            # Step 4: Embedding (optional — degrades to CHUNKED if no model)
+            doc.status = DocStatus.EMBEDDING
+            doc.progress = 70
+            await db.commit()
+            texts = [rc["content"] for rc in raw_chunks]
+            try:
+                embeddings = embedder_service.embed(texts)
+            except RuntimeError as e:
+                if str(e).startswith("EMBED_MODEL_NOT_INSTALLED"):
+                    # Non-fatal: keep CHUNKED, record an informational hint so
+                    # the UI can tell the user keyword retrieval is available.
+                    doc.status = DocStatus.CHUNKED
+                    doc.progress = 60
+                    doc.error_message = (
+                        "Embedding 模型未安装，文档已切片但仅支持关键词检索。"
+                        "请在「系统设置 → Embedding 模型」安装模型后点击「重建索引」。"
+                    )
+                    await db.commit()
+                    return
+                raise
+
+            for chunk_obj, emb in zip(chunk_objs, embeddings):
+                chunk_obj.embedding = _serialize_embedding(emb)
+
+            # Step 5: Complete (100)
             doc.status = DocStatus.COMPLETED
             doc.progress = 100
-            doc.chunk_count = len(chunk_objs)
             await db.commit()
 
         except Exception as e:

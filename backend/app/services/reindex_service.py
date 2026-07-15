@@ -95,7 +95,7 @@ class ReindexService:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, filename FROM documents "
-                "WHERE status IN ('completed','failed')"
+                "WHERE status IN ('completed','failed','chunked')"
             )
             docs = cur.fetchall()
             total = len(docs)

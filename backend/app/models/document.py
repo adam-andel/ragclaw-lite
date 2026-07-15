@@ -16,6 +16,7 @@ class DocStatus(str, enum.Enum):
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
     COMPLETED = "completed"
+    CHUNKED = "chunked"      # chunks saved, no vectors yet (embedding model missing)
     FAILED = "failed"
 
 

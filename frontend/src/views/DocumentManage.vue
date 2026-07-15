@@ -738,12 +738,13 @@ function onChunkPageChange(page: number) {
 const statusColors: Record<string, string> = {
   pending: 'default', uploaded: 'default',
   parsing: 'warning', chunking: 'warning',
-  embedding: 'info', completed: 'success', failed: 'error',
+  embedding: 'info', chunked: 'warning', completed: 'success', failed: 'error',
 }
 const statusLabels: Record<string, string> = {
   pending: t('documents.status.waiting'), uploaded: t('documents.status.uploaded'),
   parsing: t('documents.status.parsing'), chunking: t('documents.status.chunking'),
-  embedding: t('documents.status.embedding'), completed: t('documents.status.completed'), failed: t('documents.status.failed'),
+  embedding: t('documents.status.embedding'), chunked: t('documents.status.chunked'),
+  completed: t('documents.status.completed'), failed: t('documents.status.failed'),
 }
 
 // File type → icon + color (covers all 14 supported formats)
@@ -797,6 +798,7 @@ const statusOptions = [
   { label: t('documents.allStatus'), value: 'all' },
   { label: t('documents.status.completed'), value: 'completed' }, { label: t('documents.status.processing'), value: 'pending' },
   { label: t('documents.status.waiting'), value: 'pending' }, { label: t('documents.status.failed'), value: 'failed' },
+  { label: t('documents.status.chunked'), value: 'chunked' },
   { label: t('documents.unlinked'), value: 'unlinked' },
 ]
 
@@ -804,6 +806,7 @@ const availableStatusOptions = [
   { label: t('documents.allStatus'), value: '' },
   { label: t('documents.status.completed'), value: 'completed' },
   { label: t('documents.status.processing'), value: 'pending' },
+  { label: t('documents.status.chunked'), value: 'chunked' },
   { label: t('documents.status.failed'), value: 'failed' },
 ]
 
