@@ -301,12 +301,20 @@ async function handleKbSubmit() {
   kbFormSaving.value = true
   try {
     if (kbFormMode.value === 'create') {
-      await createKnowledgeBase({
+      const res = await createKnowledgeBase({
         name: kbFormName.value.trim(),
         description: kbFormDesc.value.trim() || undefined,
         prompt: kbFormPrompt.value.trim() || undefined,
       })
+      const newId = res.data.id
       message.success(t('documents.kbCreated'))
+      showKbForm.value = false
+      await loadKBs()
+      filterKbId.value = newId
+      page.value = 1
+      router.replace({ query: { ...route.query, kb: newId } })
+      await loadDocs()
+      return
     } else {
       await updateKnowledgeBase(kbFormId.value, {
         name: kbFormName.value,
