@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
-  NCard, NIcon, useMessage, NAlert, NSpace, NDivider, NTooltip,
+  NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
@@ -15,6 +15,7 @@ import { currentLocale } from '@/i18n/useLocale'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const route = useRoute()
 
 const providerOptions = computed(() => [
@@ -109,6 +110,41 @@ const embeddingPollTimer = ref<number | null>(null)
 // Inline conflict warning shown below the model selector when the dry-run
 // dimension check (backend 409) detects an incompatible existing vector store.
 const dimensionConflict = ref<string>('')
+
+// Switch / re-index button state, derived from the selected model's install
+// status and whether a dimension conflict was detected:
+//   - not installed            → disabled, label "switch & re-index"
+//   - installed + conflict     → enabled,  label "switch & re-index"
+//   - installed + no conflict  → enabled,  label "switch"
+function isModelInstalled(m: string) {
+  return !!m && !!embeddingStatus.value.installed_models?.includes(m)
+}
+
+const switchBtnLabel = computed(() => {
+  const installed = isModelInstalled(selectedModel.value)
+  const conflict = dimensionConflict.value !== ''
+  return installed && !conflict
+    ? t('settings.embeddingModelMgmt.switchBtn')
+    : t('settings.embeddingModelMgmt.switchReindexBtn')
+})
+
+const switchBtnDisabled = computed(() => {
+  if (!selectedModel.value || switching.value || reindexing.value) return true
+  if (selectedModel.value === embeddingStatus.value.configured_model) return true
+  return !isModelInstalled(selectedModel.value)
+})
+
+// Hover hint shown when the switch button is disabled, explaining *why*.
+// Only returns text for the actionable cases (no model / not installed);
+// during loading or when the model is already active there's nothing to hint.
+const switchBtnHint = computed(() => {
+  if (!switchBtnDisabled.value) return ''
+  if (switching.value || reindexing.value) return ''
+  if (!selectedModel.value) return t('settings.embeddingModelMgmt.selectFirst')
+  if (selectedModel.value === embeddingStatus.value.configured_model) return ''
+  if (!isModelInstalled(selectedModel.value)) return t('settings.embeddingModelMgmt.installFirstHint')
+  return ''
+})
 
 // ── Re-index (after embedding-model switch) ──
 const reindexStatus = ref<ReindexStatus>({
@@ -252,29 +288,24 @@ async function onSelectModelChange(target: string) {
   }
 }
 
-async function onSwitched(res: { model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
+async function onSwitched(res: { switched: boolean; model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
   config.value.embedding_model = res.model
   await loadEmbeddingStatus()
-  if (!res.installed) {
-    message.warning(t('settings.embeddingModelMgmt.switchedNotInstalled'))
-  } else if (res.cleared_vectors) {
-    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
-  } else {
-    message.success(t('settings.embeddingModelMgmt.switched'))
-  }
   if (res.cleared_vectors) {
+    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
     await loadReindexStatus()
     if (res.reindex_started) startReindexPolling()
     else message.info(t('settings.embeddingModelMgmt.reindexPendingDownload'))
+  } else {
+    message.success(t('settings.embeddingModelMgmt.switched'))
   }
 }
 
-// "Re-index All" now means: clear existing vector indexes, switch to the
-// selected model, and rebuild — i.e. switch(force=True). If the target model is
-// still downloading, the re-index is queued and runs when the download finishes.
-async function handleReindex() {
-  const target = selectedModel.value
-  if (!target) return
+// "Re-index All" = clear existing vector indexes, switch to the selected model,
+// and rebuild — i.e. switch(force=True). This only runs for an already-installed
+// model (the switch button is disabled otherwise); to use a new model the user
+// must download & install it first, then switch.
+async function doReindex(target: string) {
   switching.value = true
   try {
     const res = await switchEmbeddingModel(target, true)
@@ -284,6 +315,25 @@ async function handleReindex() {
   } finally {
     switching.value = false
   }
+}
+
+async function handleReindex() {
+  const target = selectedModel.value
+  if (!target) return
+  // When the button reads "Switch & Re-index" (an incompatible-dimension switch),
+  // the action will wipe ALL vector indexes. Pop a second confirmation that
+  // re-states the dimension-conflict warning before proceeding.
+  if (dimensionConflict.value) {
+    dialog.warning({
+      title: t('settings.embeddingModelMgmt.conflictTitle'),
+      content: dimensionConflict.value,
+      positiveText: t('settings.embeddingModelMgmt.conflictOk'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => doReindex(target),
+    })
+    return
+  }
+  await doReindex(target)
 }
 
 let observer: IntersectionObserver | null = null
@@ -690,11 +740,11 @@ async function handleTest() {
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
           <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.embeddingModelMgmt.desc')" />
-          <div style="margin-bottom: 10px">
+          <NFormItem :label="t('settings.embeddingModelMgmt.currentLabel')">
             <span class="muted" style="font-size: 14px; font-weight: 500">
-              {{ t('settings.embeddingModelMgmt.current', { model: embeddingStatus.configured_model || config.embedding_model }) }}
+              {{ embeddingStatus.configured_model || config.embedding_model }}
             </span>
-          </div>
+          </NFormItem>
           <NFormItem>
             <template #label>
               <span class="label-with-help">
@@ -716,37 +766,26 @@ async function handleTest() {
                 style="flex: 1"
                 @update:value="onSelectModelChange"
               />
+              <NTooltip :disabled="!switchBtnHint" placement="top">
+                <template #trigger>
+                  <span style="display: inline-flex">
+                    <NButton
+                      type="primary"
+                      :loading="switching || reindexing"
+                      :disabled="switchBtnDisabled"
+                      @click="handleReindex"
+                    >
+                      <template #icon><NIcon><Flash /></NIcon></template>
+                      {{ switchBtnLabel }}
+                    </NButton>
+                  </span>
+                </template>
+                {{ switchBtnHint }}
+              </NTooltip>
             </div>
           </NFormItem>
 
-          <NAlert
-            v-if="dimensionConflict"
-            type="warning"
-            :bordered="false"
-            :title="t('settings.embeddingModelMgmt.conflictTitle')"
-            style="margin-top: 8px"
-          >
-            {{ dimensionConflict }}
-          </NAlert>
-          
-          <NFormItem
-            v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
-            :label="t('settings.embeddingModelMgmt.installedList')"
-          >
-            <NSpace :size="8">
-              <NTag
-                v-for="m in embeddingStatus.installed_models"
-                :key="m"
-                :type="m === embeddingStatus.configured_model ? 'success' : 'default'"
-                :bordered="false"
-                round
-              >
-                {{ m }}
-              </NTag>
-            </NSpace>
-          </NFormItem>
-
-          <NFormItem :label="t('settings.embeddingModelMgmt.status')">
+          <NFormItem v-if="selectedModel" :label="t('settings.embeddingModelMgmt.status')">
             <NSpace align="center" :size="12">
               <NTag v-if="selectedInstalled && !selectedDownloading" type="success" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusInstalled') }}
@@ -807,36 +846,27 @@ async function handleTest() {
             </div>
           </NFormItem>
 
+          <NFormItem
+            v-if="embeddingStatus.installed_models && embeddingStatus.installed_models.length"
+            :label="t('settings.embeddingModelMgmt.installedList')"
+          >
+            <NSpace :size="8">
+              <NTag
+                v-for="m in embeddingStatus.installed_models"
+                :key="m"
+                :type="m === embeddingStatus.configured_model ? 'success' : 'default'"
+                :bordered="false"
+                round
+              >
+                {{ m }}
+              </NTag>
+            </NSpace>
+          </NFormItem>
+
           <NFormItem v-if="selectedFailed" :show-feedback="false">
             <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
               {{ embeddingStatus.error }}
             </NAlert>
-          </NFormItem>
-
-          <NFormItem :show-feedback="false">
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
-                <NTooltip trigger="hover" :width="280">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  {{ t('settings.embeddingModelMgmt.reindexHint') }}
-                </NTooltip>
-              </span>
-            </template>
-            <NSpace align="center">
-              <NButton
-                type="warning"
-                secondary
-                :loading="switching || reindexing"
-                :disabled="!selectedModel || switching || reindexing"
-                @click="handleReindex"
-              >
-                <template #icon><NIcon><Flash /></NIcon></template>
-                {{ t('settings.embeddingModelMgmt.reindexBtn') }}
-              </NButton>
-            </NSpace>
           </NFormItem>
 
           <NFormItem v-if="reindexStatus.status !== 'idle'" :show-feedback="false">
@@ -861,6 +891,17 @@ async function handleTest() {
               </div>
             </NAlert>
           </NFormItem>
+
+          <NAlert
+            v-if="dimensionConflict"
+            type="warning"
+            :bordered="false"
+            :title="t('settings.embeddingModelMgmt.conflictTitle')"
+            style="margin-top: 8px"
+          >
+            {{ dimensionConflict }}
+          </NAlert>
+          
         </section>
 
         <NDivider />
@@ -995,6 +1036,7 @@ async function handleTest() {
                 v-model:value="keepCustomMinutes"
                 :min="1" :max="525600" :step="60"
                 :placeholder="t('settings.customMinutesPlaceholder')"
+                style="max-width: 240px"
               >
                 <template #suffix>{{ t('settings.minutes') }}</template>
               </NInputNumber>

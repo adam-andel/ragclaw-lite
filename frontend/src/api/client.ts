@@ -20,11 +20,15 @@ client.interceptors.response.use(
         router.push('/login')
       }
       // Preserve server detail, or fallback to generic message
-      return Promise.reject(new Error(detail || i18n.global.t('errors.loginExpired')))
+      const e = new Error(detail || i18n.global.t('errors.loginExpired'))
+      e.response = err.response
+      return Promise.reject(e)
     }
     const msg = detail || err.message || i18n.global.t('errors.networkError')
     console.error('[API Error]', msg)
-    return Promise.reject(new Error(msg))
+    const e = new Error(msg)
+    e.response = err.response
+    return Promise.reject(e)
   },
 )
 
