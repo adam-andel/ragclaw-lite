@@ -223,6 +223,81 @@ const pagedConversations = computed(() => {
 })
 const convTotalPages = computed(() => Math.max(1, Math.ceil(conversations.value.length / convPageSize)))
 watch(showMoreConv, (v) => { if (v) convPage.value = 1 })
+
+// ── History questions modal: user questions of the current conversation ──
+// Backend paginates by "round" (one Q&A = one round = 1 user + 1 assistant message),
+// so 10 questions per page maps exactly to page_size=10. We reuse the backend pagination
+// instead of loading everything client-side.
+const showQuestionsModal = ref(false)
+const questions = ref<ChatMsg[]>([])
+const questionsPage = ref(1)
+const QUESTIONS_PAGE_SIZE = 10
+const questionsTotalRounds = ref(0)
+const questionsLoading = ref(false)
+const questionsListRef = ref<HTMLElement>()
+const questionsTotalPages = computed(() => Math.max(1, Math.ceil(questionsTotalRounds.value / QUESTIONS_PAGE_SIZE)))
+
+function scrollQuestionsToBottom() {
+  nextTick(() => {
+    const el = questionsListRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+async function openQuestionsModal() {
+  if (!conversationId.value) return
+  showQuestionsModal.value = true
+  questionsLoading.value = true
+  try {
+    const data = await getConversationMessages(conversationId.value, 'last', QUESTIONS_PAGE_SIZE)
+    questions.value = (data.messages || []).filter((m: ChatMsg) => m.role === 'user')
+    questionsTotalRounds.value = data.total_rounds ?? 0
+    questionsPage.value = data.page ?? questionsTotalPages.value
+  } catch {
+    questions.value = []
+    questionsTotalRounds.value = 0
+  } finally {
+    questionsLoading.value = false
+    scrollQuestionsToBottom()
+  }
+}
+
+async function onQuestionsPageChange(page: number) {
+  if (!conversationId.value) return
+  questionsPage.value = page
+  questionsLoading.value = true
+  try {
+    const data = await getConversationMessages(conversationId.value, page, QUESTIONS_PAGE_SIZE)
+    questions.value = (data.messages || []).filter((m: ChatMsg) => m.role === 'user')
+    questionsTotalRounds.value = data.total_rounds ?? 0
+  } catch {
+    questions.value = []
+  } finally {
+    questionsLoading.value = false
+    scrollQuestionsToBottom()
+  }
+}
+
+// Prepend earlier pages into the conversation view until the target message is present (or no more pages)
+async function ensureMessageLoaded(id: string) {
+  if (messages.value.some((m) => m.id === id)) return
+  if (!conversationId.value) return
+  const maxLoads = Math.max(0, totalPages.value - currentPage.value)
+  let loads = 0
+  while (!messages.value.some((m) => m.id === id) && hasMoreOlder.value && loads < maxLoads + 1) {
+    await loadOlder()
+    loads++
+  }
+}
+
+async function onQuestionClick(id: string) {
+  showQuestionsModal.value = false
+  await ensureMessageLoaded(id)
+  await nextTick()
+  const el = document.getElementById('msg-' + id)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 const kbPreview = computed(() => kbs.value.slice(0, 3))
 const kbHasMore = computed(() => kbs.value.length > 3)
 
@@ -839,6 +914,40 @@ function handleKeydown(e: KeyboardEvent) {
       />
     </AppModal>
 
+    <!-- Modal: history questions of the current conversation -->
+    <AppModal v-model:show="showQuestionsModal" :title="t('chat.historyQuestionsTitle')" size="wide">
+      <div class="questions-list" ref="questionsListRef">
+        <NEmpty v-if="!questionsLoading && questions.length === 0" :description="t('chat.noQuestions')" style="padding:24px 0" />
+        <div
+          v-for="q in questions"
+          :key="q.id"
+          class="question-row"
+          role="button"
+          tabindex="0"
+          @click="onQuestionClick(q.id)"
+          @keydown.enter.prevent="onQuestionClick(q.id)"
+          @keydown.space.prevent="onQuestionClick(q.id)"
+        >
+          <div class="question-row-index">Q</div>
+          <div class="question-row-body">
+            <div class="question-row-text">{{ q.content }}</div>
+            <div class="question-row-meta" v-if="q.created_at">
+              {{ new Intl.DateTimeFormat(currentLocale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(q.created_at)) }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <AppPagination
+        v-if="!questionsLoading"
+        :page="questionsPage"
+        :page-size="QUESTIONS_PAGE_SIZE"
+        :item-count="questionsTotalRounds"
+        simple
+        align="center"
+        @update:page="onQuestionsPageChange"
+      />
+    </AppModal>
+
     <!-- Modal: KB picker with search -->
     <KbPickerModal
       v-model:show="showMoreKb"
@@ -919,6 +1028,10 @@ function handleKeydown(e: KeyboardEvent) {
         <NButton size="tiny" ghost class="search-trigger-btn" :type="showSearch ? 'primary' : 'default'" @click="showSearch ? closeSearch() : openSearch()">
           <template #icon><NIcon size="14"><Search /></NIcon></template>
           {{ t('chat.findRecords') }}
+        </NButton>
+        <NButton size="tiny" ghost class="search-trigger-btn" @click="openQuestionsModal">
+          <template #icon><NIcon size="14"><List /></NIcon></template>
+          {{ t('chat.historyQuestions') }}
         </NButton>
         <div
           v-if="contextTokens > 0"
@@ -1143,6 +1256,69 @@ function handleKeydown(e: KeyboardEvent) {
 
 /* Modal scrollable list (shared by "More conversations" and "More knowledge bases") */
 .picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+
+/* History questions modal list */
+.questions-list {
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+.question-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.question-row:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.question-row:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+.question-row-index {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.question-row-body {
+  flex: 1;
+  min-width: 0;
+}
+.question-row-text {
+  font-size: 14px;
+  color: var(--color-text);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.question-row-meta {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
 .kb-pick-card {
   cursor: pointer;
   background: var(--color-card-bg);
@@ -1423,7 +1599,7 @@ function handleKeydown(e: KeyboardEvent) {
 /* ── Scroll-to-bottom button ── */
 .scroll-bottom-btn {
   position: absolute;
-  bottom: 84px;
+  bottom: 104px;
   right: 24px;
   width: 40px;
   height: 40px;
@@ -1533,7 +1709,7 @@ function handleKeydown(e: KeyboardEvent) {
   }
   .scroll-bottom-btn {
     right: 14px;
-    bottom: 78px;
+    bottom: 98px;
   }
   .search-bar {
     left: 8px;
