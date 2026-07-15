@@ -772,6 +772,12 @@ const statusLabels: Record<string, string> = {
   embedding: t('documents.status.embedding'), chunked: t('documents.status.chunked'),
   completed: t('documents.status.completed'), failed: t('documents.status.failed'),
 }
+const statusHints: Record<string, string> = {
+  pending: t('documents.statusHint.waiting'), uploaded: t('documents.statusHint.uploaded'),
+  parsing: t('documents.statusHint.parsing'), chunking: t('documents.statusHint.chunking'),
+  embedding: t('documents.statusHint.embedding'), chunked: t('documents.statusHint.chunked'),
+  completed: t('documents.statusHint.completed'), failed: t('documents.statusHint.failed'),
+}
 
 // File type → icon + color (covers all 14 supported formats)
 const fileTypeConfig: Record<string, { icon: string; color: string; label: string }> = {
@@ -1084,9 +1090,14 @@ async function loadSupportedTypes() {
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
             <span class="doc-meta-muted">{{ formatDate(doc.created_at) }}</span>
-            <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag">
-              {{ statusLabels[doc.status] || doc.status }}
-            </NTag>
+            <NTooltip trigger="hover" placement="top">
+              <template #trigger>
+                <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag" style="cursor:help">
+                  {{ statusLabels[doc.status] || doc.status }}
+                </NTag>
+              </template>
+              {{ statusHints[doc.status] || t('documents.statusHint.waiting') }}
+            </NTooltip>
           </div>
           <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress

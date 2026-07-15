@@ -87,6 +87,17 @@ export default {
     failed: 'Failed',
     processing: 'Processing',
   },
+  // Status hover hints: meaning + what the user can do
+  statusHint: {
+    waiting: 'Added to the queue, waiting to start parsing. No action needed — it will be retrievable once processed.',
+    uploaded: 'Upload succeeded, waiting to start parsing. No action needed — it will be processed automatically.',
+    parsing: 'Extracting text from the file. Please wait; it will advance automatically when done.',
+    chunking: 'Splitting the text into chunks. Please wait; it will advance automatically when done.',
+    embedding: 'Generating vector embeddings. Will be searchable once done — please wait.',
+    chunked: 'Text is chunked and waiting for vectorization. Will be searchable once done — please wait.',
+    completed: 'Processing complete and ready for Q&A retrieval. Open the card to view chunks or download the original.',
+    failed: 'Processing failed. Open the details to delete the document, then upload it again.',
+  },
 
   // Upload item status tags
   upload: {

@@ -87,6 +87,17 @@ export default {
     failed: '失败',
     processing: '处理中',
   },
+  // Status hover hints: meaning + what the user can do
+  statusHint: {
+    waiting: '已加入处理队列，等待开始解析。处理完成后即可用于检索，无需操作。',
+    uploaded: '文件已上传成功，等待开始解析。无需操作，稍后会自动处理。',
+    parsing: '正在从文件中提取文本。请稍候，处理完成后会自动进入下一步。',
+    chunking: '正在将文本切分为片段。请稍候，处理完成后会自动进入下一步。',
+    embedding: '正在生成向量嵌入。完成后即可用于问答检索，请稍候。',
+    chunked: '文本已切片完成，正在等待向量化。完成后即可用于检索，请稍候。',
+    completed: '处理完成，已可用于问答检索。可点击卡片查看分块内容或下载原文。',
+    failed: '处理失败。可打开详情删除该文档，然后重新上传。',
+  },
 
   // Upload item status tags
   upload: {
