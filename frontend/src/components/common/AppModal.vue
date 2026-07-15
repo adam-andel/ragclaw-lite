@@ -108,12 +108,23 @@ const modalAttrs = computed(() => {
   min-height: 0;
   overflow-y: auto;
 }
-/* Faster open/close transition: Naive's default enter/leave (open/close/backdrop-click) duration is 0.2s, which feels laggy.
-   Here we shorten it uniformly to 0.1s. The selector targets the modal card itself (app-modal and n-card are the same element;
-   a 3-class specificity beats Naive's runtime cssr 1-class rule, so it takes effect without !important),
-   and does not affect nested NCards inside the modal. */
+/* Faster open/close transition.
+   IMPORTANT: in naive-ui the fade-in-scale-up transition classes are applied to the `.n-modal-body-wrapper`
+   (the <Transition> root), NOT to the `.n-card`. So the previous rule that only targeted
+   `.app-modal.n-card.fade-in-scale-up-transition-*` did NOT control the actual close/open fade+scale —
+   it only affected the card's own border/box-shadow transition, leaving the visible close animation at
+   naive-ui's default (laggy) duration. We now target the body wrapper (where the real transition runs) and
+   the backdrop mask, with a short duration and zero delay. !important guarantees it beats naive-ui's runtime cssr.
+   Nested NCards inside the modal are untouched (they don't carry these transition classes on their root). */
+.n-modal-body-wrapper.fade-in-scale-up-transition-enter-active,
+.n-modal-body-wrapper.fade-in-scale-up-transition-leave-active,
 .app-modal.n-card.fade-in-scale-up-transition-enter-active,
 .app-modal.n-card.fade-in-scale-up-transition-leave-active {
-  transition-duration: 0.1s;
+  transition-duration: 0.08s !important;
+  transition-delay: 0s !important;
+}
+.n-modal-mask {
+  transition-duration: 0.08s !important;
+  transition-delay: 0s !important;
 }
 </style>

@@ -173,7 +173,7 @@ const availableTotal = ref(0)
 const availablePage = ref(1)
 const availablePageSize = ref(20)
 const availableSearch = ref('')
-const availableStatus = ref<string | null>('completed')
+const availableStatus = ref<string | null>('')
 const availableType = ref<string>('all')
 const linkingDocs = ref(false)
 
@@ -301,12 +301,20 @@ async function handleKbSubmit() {
   kbFormSaving.value = true
   try {
     if (kbFormMode.value === 'create') {
-      await createKnowledgeBase({
+      const res = await createKnowledgeBase({
         name: kbFormName.value.trim(),
         description: kbFormDesc.value.trim() || undefined,
         prompt: kbFormPrompt.value.trim() || undefined,
       })
+      const newId = res.data.id
       message.success(t('documents.kbCreated'))
+      showKbForm.value = false
+      await loadKBs()
+      filterKbId.value = newId
+      page.value = 1
+      router.replace({ query: { ...route.query, kb: newId } })
+      await loadDocs()
+      return
     } else {
       await updateKnowledgeBase(kbFormId.value, {
         name: kbFormName.value,
@@ -415,7 +423,7 @@ async function openSelectDocs(kbId: string) {
   selectedDocIds.value = []
   availablePage.value = 1
   availableSearch.value = ''
-  availableStatus.value = 'completed'
+  availableStatus.value = ''
   availableType.value = 'all'
   await loadAvailableDocs(kbId)
 }
@@ -463,6 +471,22 @@ function openUploadFromSelectDocs() {
 function onAvailablePageChange(p: number) {
   availablePage.value = p
   loadAvailableDocs()
+}
+
+const allAvailableSelected = computed(() =>
+  availableDocs.value.length > 0 && availableDocs.value.every(d => selectedDocIds.value.includes(d.id))
+)
+const someAvailableSelected = computed(() =>
+  availableDocs.value.some(d => selectedDocIds.value.includes(d.id))
+)
+function toggleSelectAllAvailable() {
+  if (allAvailableSelected.value) {
+    const visible = new Set(availableDocs.value.map(d => d.id))
+    selectedDocIds.value = selectedDocIds.value.filter(id => !visible.has(id))
+  } else {
+    const merged = new Set([...selectedDocIds.value, ...availableDocs.value.map(d => d.id)])
+    selectedDocIds.value = [...merged]
+  }
 }
 
 async function handleSelectDocs() {
@@ -1051,13 +1075,16 @@ async function loadSupportedTypes() {
             </NPopconfirm>
           </div>
           <div class="doc-card-meta">
-            <span>{{ t('documents.chunkCount', { count: doc.chunk_count }) }}</span>
-            <span class="doc-meta-sep">·</span>
             <span>{{ t('documents.linkedKbs', { count: doc.kb_ids.length }) }}</span>
+            <span class="doc-meta-sep">·</span>
+            <span>{{ t('documents.chunkCount', { count: doc.chunk_count }) }}</span>
             <span class="doc-meta-sep">·</span>
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
             <span class="doc-meta-muted">{{ formatDate(doc.created_at) }}</span>
+            <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag">
+              {{ statusLabels[doc.status] || doc.status }}
+            </NTag>
           </div>
           <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress
@@ -1399,6 +1426,11 @@ async function loadSupportedTypes() {
         </NSpin>
         <div class="select-docs-actions">
           <div class="select-docs-left">
+            <NCheckbox
+              :checked="allAvailableSelected"
+              :indeterminate="someAvailableSelected && !allAvailableSelected"
+              @update:checked="toggleSelectAllAvailable"
+            >{{ t('documents.selectAll') }}</NCheckbox>
             <span class="select-docs-count">{{ t('documents.selectedPrefix') }}{{ selectedDocIds.length }}{{ availableTotal ? t('documents.totalDocsSuffix', { count: availableTotal }) : '' }}</span>
             <NButton text size="tiny" type="primary" @click="openUploadFromSelectDocs">
               {{ t('documents.uploadMoreDocs') }} →
@@ -1545,6 +1577,7 @@ async function loadSupportedTypes() {
   max-width: 100%;
   display: block;
 }
+.doc-status-tag { flex-shrink: 0; align-self: center; }
 .doc-card-meta {
   display: flex;
   align-items: center;
@@ -1768,12 +1801,13 @@ async function loadSupportedTypes() {
   margin-top: 4px;
   max-height: 55vh;
   overflow-y: auto;
+  overflow-x: hidden;
 }
-.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: background .15s, border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: background .15s, border-color .15s ease, box-shadow .15s ease, transform .15s ease; min-width: 0; }
 .select-doc-row:hover { background: rgba(59, 130, 246, 0.04); border-color: var(--color-primary); box-shadow: var(--shadow); transform: translateY(-1px); }
 .select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); box-shadow: var(--shadow); }
 .select-doc-row:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
-.select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-doc-name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .select-docs-left { display: flex; align-items: center; gap: 12px; }
 .select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
