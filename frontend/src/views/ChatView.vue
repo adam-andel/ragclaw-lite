@@ -282,9 +282,11 @@ async function onQuestionsPageChange(page: number) {
 async function ensureMessageLoaded(id: string) {
   if (messages.value.some((m) => m.id === id)) return
   if (!conversationId.value) return
-  const maxLoads = Math.max(0, totalPages.value - currentPage.value)
+  // Safety cap: at most (currentPage - 1) earlier pages exist between the
+  // current page and page 1, so we never need (or want) to loop more than that.
+  const maxLoads = Math.max(1, currentPage.value - 1)
   let loads = 0
-  while (!messages.value.some((m) => m.id === id) && hasMoreOlder.value && loads < maxLoads + 1) {
+  while (!messages.value.some((m) => m.id === id) && hasMoreOlder.value && loads < maxLoads) {
     await loadOlder()
     loads++
   }
