@@ -931,11 +931,9 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown.space.prevent="onQuestionClick(q.id)"
         >
           <div class="question-row-index">Q</div>
-          <div class="question-row-body">
-            <div class="question-row-text">{{ q.content }}</div>
-            <div class="question-row-meta" v-if="q.created_at">
-              {{ new Intl.DateTimeFormat(currentLocale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(q.created_at)) }}
-            </div>
+          <div class="question-row-text">{{ q.content }}</div>
+          <div class="question-row-meta" v-if="q.created_at">
+            {{ new Intl.DateTimeFormat(currentLocale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(q.created_at)) }}
           </div>
         </div>
       </div>
@@ -1027,13 +1025,13 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><Sparkles /></NIcon></template>
           {{ selectedSkillName }}
         </NButton>
-        <NButton size="tiny" ghost class="search-trigger-btn" :type="showSearch ? 'primary' : 'default'" @click="showSearch ? closeSearch() : openSearch()">
-          <template #icon><NIcon size="14"><Search /></NIcon></template>
-          {{ t('chat.findRecords') }}
-        </NButton>
         <NButton size="tiny" ghost class="search-trigger-btn" @click="openQuestionsModal">
           <template #icon><NIcon size="14"><List /></NIcon></template>
           {{ t('chat.historyQuestions') }}
+        </NButton>
+        <NButton size="tiny" ghost class="search-trigger-btn" :type="showSearch ? 'primary' : 'default'" @click="showSearch ? closeSearch() : openSearch()">
+          <template #icon><NIcon size="14"><Search /></NIcon></template>
+          {{ t('chat.findRecords') }}
         </NButton>
         <div
           v-if="contextTokens > 0"
@@ -1270,9 +1268,9 @@ function handleKeydown(e: KeyboardEvent) {
 }
 .question-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 10px 16px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
@@ -1303,23 +1301,22 @@ function handleKeydown(e: KeyboardEvent) {
   font-weight: 600;
   flex-shrink: 0;
 }
-.question-row-body {
+.question-row-text {
   flex: 1;
   min-width: 0;
-}
-.question-row-text {
   font-size: 14px;
   color: var(--color-text);
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  line-height: 1.4;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 .question-row-meta {
-  margin-top: 6px;
+  flex-shrink: 0;
+  margin-left: 12px;
   font-size: var(--text-xs);
   color: var(--color-text-muted);
+  white-space: nowrap;
 }
 .kb-pick-card {
   cursor: pointer;
