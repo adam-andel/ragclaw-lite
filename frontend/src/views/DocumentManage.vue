@@ -1568,6 +1568,10 @@ async function loadSupportedTypes() {
 :global(html.dark) .doc-unlink-btn :deep(.n-icon) {
   color: #f87171;
 }
+/* Dim primary buttons slightly in dark mode (header actions + modals) — they read too bright on the dark surface */
+:global(html.dark) .dm-view :deep(.n-button.n-button--primary-type) {
+  filter: brightness(0.85);
+}
 .dm-card:hover .doc-unlink-btn { opacity: 1; }
 .doc-card-title-wrap {
   flex: 1;

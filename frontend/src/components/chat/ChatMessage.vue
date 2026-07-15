@@ -477,6 +477,11 @@ mark.search-hit.active {
 .time { color: var(--color-text-muted); }
 .user .time { color: rgba(255,255,255,0.7); }
 
+/* Dim the user bubble in dark mode — var(--color-primary) reads too bright on the dark surface */
+:global(html.dark) .user .message-body {
+  filter: brightness(0.85);
+}
+
 .agent-steps {
   margin-bottom: var(--space-2);
   border: 1px solid var(--color-border);
