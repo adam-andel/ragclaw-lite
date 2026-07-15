@@ -16,6 +16,7 @@ const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
   queuePosition?: number | null
+  stageHint?: string | null
   searchKeyword?: string
   activeMatch?: boolean
 }>()
@@ -276,7 +277,7 @@ onBeforeUnmount(() => {
             <template v-if="queuePosition != null && queuePosition > 0">
               {{ t('chat.queued', { count: queuePosition }) }}
             </template>
-            <template v-else>{{ t('chat.thinking') }}</template>
+            <template v-else>{{ stageHint || t('chat.thinking') }}</template>
           </span>
         </div>
       </template>

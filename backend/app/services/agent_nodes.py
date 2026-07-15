@@ -367,6 +367,7 @@ async def skill_router_node(state: dict) -> dict:
     """
     if state.get("cache_hit"):
         return {}
+    _emit(state, "routing", "分析意图并选择技能…")
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
     active_skill = None

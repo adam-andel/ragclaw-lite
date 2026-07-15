@@ -66,6 +66,8 @@ export default {
   queued: 'Queued — {count} ahead',
   thinking: 'Thinking…',
   retrieval: 'Retrieval',
+  retrieving: 'Retrieving…',
+  generating: 'Generating…',
   citationSource: 'Citations · {count}',
   citationDetail: 'Citation details',
   downloadX: 'Download {name}',

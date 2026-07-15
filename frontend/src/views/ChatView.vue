@@ -50,6 +50,8 @@ const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
 const queuePosition = ref<number | null>(null)
+// Tracks the backend agent_step stage during streaming so the assistant bubble can show "检索中" vs "生成中".
+const assistantStage = ref<string | null>(null)
 // LLM context token count: total tokens of the latest request body (system prompt + history + RAG + memory + tools + question)
 const contextTokens = ref(0)
 // Suspension hint (pushed by the backend as need_user_input when the limit is hit): { copy, backend-supplied conv_id, reason }
@@ -478,12 +480,16 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
+  // Start with the retrieval status; as agent_step events arrive we reflect the REAL stage message
+  // (routing / retrieval / skill / tool / generating) in the bubble so every phase is shown honestly.
+  assistantStage.value = t('chat.retrieving')
   abortCtl = new AbortController()
   try {
     for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
+        assistantStage.value = null
         streamedText += event.content
         const el = document.getElementById('stream-' + aid)
         if (el) {
@@ -509,6 +515,9 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
       } else if (event.type === 'agent_step') {
         if (!proxyMsg.agentSteps) proxyMsg.agentSteps = []
         proxyMsg.agentSteps.push(event)
+        // Drive the streaming placeholder with the REAL backend stage message so every
+        // phase (routing / retrieval / skill_load / tool / generating …) is reflected honestly.
+        assistantStage.value = (event as any).message || t('chat.thinking')
       } else if (event.type === 'error') {
         streamedText = t('chat.streamError', { msg: event.message })
         break
@@ -563,6 +572,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   } finally {
     isStreaming.value = false
     queuePosition.value = null
+    assistantStage.value = null
     abortCtl = null
     await nextTick()
     // After switching from streaming to final render (citations, badges, etc.),
@@ -826,6 +836,7 @@ function handleKeydown(e: KeyboardEvent) {
           :message="msg"
           :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
           :queue-position="queuePosition"
+          :stage-hint="assistantStage"
           :search-keyword="searchKw"
           :active-match="msg.id === activeMatchId"
           @regenerate="regenerateAnswer"

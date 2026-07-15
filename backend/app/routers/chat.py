@@ -447,6 +447,9 @@ async def chat_stream(
                     messages = erag_agent_graph.build_generation_messages(state)
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
+                    # Signal the final-generation phase so the frontend can show it honestly
+                    # (the graph handles everything up to here; the actual LLM stream starts now).
+                    emit_agent_step("generating", "生成回答中…")
                     collected_content = ""
                     collected_citations = []
 

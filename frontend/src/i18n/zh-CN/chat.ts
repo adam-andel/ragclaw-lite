@@ -66,6 +66,8 @@ export default {
   queued: '排队中，前面还有 {count} 人',
   thinking: '思考中……',
   retrieval: '检索',
+  retrieving: '检索中……',
+  generating: '生成中……',
   citationSource: '引用来源 · {count}',
   citationDetail: '引用来源详情',
   downloadX: '下载 {name}',
