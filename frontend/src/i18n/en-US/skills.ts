@@ -7,9 +7,17 @@ export default {
 
   // ── Header actions ──
   sync: 'Sync',
+  upload: 'Upload',
   uploadFolder: 'Upload Folder',
   uploadZip: 'Upload ZIP',
+  uploadModalTitle: 'Upload Skill',
   createOnline: 'New Skill',
+
+  // ── Upload modal (adaptive drag & drop) ──
+  dragDropTitle: 'Drag & drop a skill folder here',
+  dragDropHint: 'or click to browse — the folder must contain SKILL.md',
+  dragDropZipTitle: 'Drag & drop a .zip file here',
+  dragDropZipHint: 'or click to select a .zip archive — folder structure is preserved',
 
   // ── Filters ──
   searchPlaceholder: 'Search skill name or description…',
