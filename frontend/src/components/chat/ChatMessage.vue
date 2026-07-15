@@ -465,7 +465,10 @@ mark.search-hit.active {
   box-shadow: var(--shadow-sm);
 }
 .user .message-body {
-  background: var(--color-primary);
+  /* Use naive-ui's primary color (#3b82f6, same as the type="primary" buttons in DocumentManage)
+     so the bubble matches those buttons in BOTH light and dark mode. Note: --color-primary is #60a5fa
+     in dark mode, which would make the bubble lighter than the primary buttons, hence the fixed value. */
+  background: #3b82f6;
   color: white;
   border-color: transparent;
 }
