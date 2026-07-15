@@ -726,6 +726,8 @@ async function loadChunks() {
     })
     chunks.value = res.data.items
     chunkTotal.value = res.data.total
+    // Expand all chunks by default so the content is fully shown (not folded)
+    expandedChunks.value = new Set(res.data.items.map(c => c.id))
   } catch {
     message.error(t('documents.loadChunksFailed'))
   } finally {
