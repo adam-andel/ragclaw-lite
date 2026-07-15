@@ -7,9 +7,17 @@ export default {
 
   // ── Header actions ──
   sync: '同步',
+  upload: '上传',
   uploadFolder: '上传文件夹',
   uploadZip: '上传ZIP',
+  uploadModalTitle: '上传技能',
   createOnline: '在线创建',
+
+  // ── 上传弹窗（自适应拖拽区） ──
+  dragDropTitle: '拖拽技能文件夹到此处',
+  dragDropHint: '或点击选择文件夹 — 需包含 SKILL.md',
+  dragDropZipTitle: '拖拽 .zip 文件到此处',
+  dragDropZipHint: '或点击选择 .zip 压缩包 — 保留文件夹结构',
 
   // ── Filters ──
   searchPlaceholder: '搜索技能名称或描述…',

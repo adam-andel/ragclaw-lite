@@ -6,7 +6,7 @@ import {
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search, FolderOpen, Archive } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -58,6 +58,9 @@ const serverOptions = ref<{ label: string; value: string }[]>([])
 
 // Folder upload input ref (global upload)
 const folderInput = ref<HTMLInputElement>()
+
+// ZIP upload input ref (global upload)
+const zipInput = ref<HTMLInputElement>()
 
 // Detail modal
 const showDetail = ref(false)
@@ -197,12 +200,163 @@ async function doFolderUpload(files: File[], paths: string[]) {
   try {
     await uploadFolder(files, paths)
     message.success(t('skills.folderUploadSuccess'))
+    showUploadModal.value = false
+    dragOver.value = false
     await load()
   } catch (e: any) {
     message.error(e.message || t('skills.uploadFailed'))
   } finally {
     loading.value = false
   }
+}
+
+// ── Folder / ZIP Drag & Drop ──
+
+const dragOver = ref(false)
+const showUploadModal = ref(false)
+const uploadMode = ref<'folder' | 'zip'>('folder')
+
+function onDragOver(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = true
+}
+
+function onDragLeave(e: DragEvent) {
+  const related = e.relatedTarget as Node | null
+  if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
+    dragOver.value = false
+  }
+}
+
+function onFolderDrop(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = false
+  const dt = e.dataTransfer
+  if (!dt) return
+
+  // Prefer recursive directory traversal: yields reliable relative paths on folder drop
+  const items = dt.items as unknown as any[] | undefined
+  if (items && items.length && typeof items[0].webkitGetAsEntry === 'function') {
+    const entries: any[] = []
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const entry = it.webkitGetAsEntry()
+        if (entry) entries.push(entry)
+      }
+    }
+    if (entries.length) {
+      collectDroppedEntries(entries).then((files) => {
+        if (files.length) handleDroppedFolder(files)
+      })
+      return
+    }
+  }
+
+  // Fallback: flat file list (relative paths may be empty on some browsers)
+  if (dt.files && dt.files.length) {
+    const files = Array.from(dt.files).map((f: File) => ({
+      file: f,
+      path: (f as any).webkitRelativePath || f.name,
+    }))
+    handleDroppedFolder(files)
+  }
+}
+
+interface DroppedEntry { file: File; path: string }
+
+// Recursively read dropped DataTransferItem entries (files + directories),
+// preserving the folder structure as relative paths.
+function collectDroppedEntries(
+  entries: any[],
+  collected: Map<string, DroppedEntry> = new Map(),
+): Promise<DroppedEntry[]> {
+  return new Promise((resolve) => {
+    let pending = entries.length
+    if (pending === 0) return resolve(Array.from(collected.values()))
+
+    const visit = (entry: any, base: string) => {
+      if (entry.isFile) {
+        entry.file(
+          (file: File) => {
+            collected.set(base + file.name, { file, path: base + file.name })
+            if (--pending === 0) resolve(Array.from(collected.values()))
+          },
+          () => { if (--pending === 0) resolve(Array.from(collected.values())) },
+        )
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader()
+        const readBatch = () => {
+          reader.readEntries((batch: any[]) => {
+            if (batch.length === 0) {
+              if (--pending === 0) resolve(Array.from(collected.values()))
+              return
+            }
+            pending += batch.length
+            for (const child of batch) visit(child, base + entry.name + '/')
+            readBatch()
+          }, () => { if (--pending === 0) resolve(Array.from(collected.values())) })
+        }
+        readBatch()
+      } else {
+        if (--pending === 0) resolve(Array.from(collected.values()))
+      }
+    }
+
+    for (const entry of entries) visit(entry, '')
+  })
+}
+
+function handleDroppedFolder(files: DroppedEntry[]) {
+  const fileList = files.map((f) => f.file)
+  const paths = files.map((f) => f.path)
+  const hasSkillMd = paths.some((p) => p.toUpperCase().endsWith('SKILL.MD'))
+  if (!hasSkillMd) {
+    message.error(t('skills.folderMustContainSkillMd'))
+    return
+  }
+  doFolderUpload(fileList, paths)
+}
+
+// Unified drop handler — routes to folder or ZIP handling based on active mode
+function onDrop(e: DragEvent) {
+  if (uploadMode.value === 'zip') onZipDrop(e)
+  else onFolderDrop(e)
+}
+
+// Unified click handler — opens the matching native picker for the active mode
+function triggerUpload() {
+  if (uploadMode.value === 'zip') triggerZipUpload()
+  else triggerFolderUpload()
+}
+
+// ── ZIP Drag & Drop ──
+
+function triggerZipUpload() {
+  zipInput.value?.click()
+}
+
+function handleZipChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files && input.files.length) submitZip(input.files[0])
+  input.value = ''
+}
+
+function onZipDrop(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = false
+  const dt = e.dataTransfer
+  if (!dt || !dt.files || dt.files.length === 0) return
+  const zips = Array.from(dt.files).filter((f: File) => f.name.toLowerCase().endsWith('.zip'))
+  if (zips.length) submitZip(zips[0])
+}
+
+// Re-use the existing ZIP upload path (validates + closes modal on success)
+function submitZip(file: File) {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error(t('skills.pleaseUploadZip'))
+    return
+  }
+  handleZipUpload({ file: { file } })
 }
 
 // ── ZIP Upload ──
@@ -217,6 +371,7 @@ async function handleZipUpload(options: any) {
   try {
     await uploadZip(file)
     message.success(t('skills.zipUploadSuccess'))
+    showUploadModal.value = false
     await load()
   } catch (e: any) {
     message.error(e.message || t('skills.uploadFailed'))
@@ -357,16 +512,10 @@ onMounted(() => {
           <template #icon><NIcon><Sync /></NIcon></template>
           {{ t('skills.sync') }}
         </NButton>
-        <NButton size="small" @click="triggerFolderUpload">
+        <NButton size="small" @click="showUploadModal = true">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
-          {{ t('skills.uploadFolder') }}
+          {{ t('skills.upload') }}
         </NButton>
-        <NUpload :show-file-list="false" :custom-request="handleZipUpload" accept=".zip">
-          <NButton size="small">
-            <template #icon><NIcon><CloudUpload /></NIcon></template>
-            {{ t('skills.uploadZip') }}
-          </NButton>
-        </NUpload>
         <NButton size="small" type="primary" @click="openCreate">
           <template #icon><NIcon><Add /></NIcon></template>
           {{ t('skills.createOnline') }}
@@ -374,9 +523,60 @@ onMounted(() => {
       </template>
     </PageHeader>
 
+    <!-- Upload Modal -->
+    <AppModal v-model:show="showUploadModal" :title="t('skills.uploadModalTitle')" size="detail">
+      <div class="sk-upload-modal">
+        <!-- Mode toggle: switch the drop zone between folder and ZIP -->
+        <div class="sk-upload-modes">
+          <button
+            type="button"
+            :class="['sk-mode-tab', { active: uploadMode === 'folder' }]"
+            @click="uploadMode = 'folder'"
+          >
+            <NIcon size="16"><FolderOpen /></NIcon>
+            {{ t('skills.uploadFolder') }}
+          </button>
+          <button
+            type="button"
+            :class="['sk-mode-tab', { active: uploadMode === 'zip' }]"
+            @click="uploadMode = 'zip'"
+          >
+            <NIcon size="16"><Archive /></NIcon>
+            {{ t('skills.uploadZip') }}
+          </button>
+        </div>
+
+        <!-- Adaptive drag & drop zone (accepts folder or .zip based on mode) -->
+        <div
+          :class="['sk-dropzone', `mode-${uploadMode}`, { dragover: dragOver }]"
+          @dragover="onDragOver"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+          @click="triggerUpload"
+          role="button"
+          tabindex="0"
+          :aria-label="uploadMode === 'zip' ? t('skills.dragDropZipTitle') : t('skills.dragDropTitle')"
+          @keydown.enter.prevent="triggerUpload"
+          @keydown.space.prevent="triggerUpload"
+        >
+          <div class="sk-dropzone-content">
+            <NIcon size="32" color="var(--color-primary)">
+              <FolderOpen v-if="uploadMode === 'folder'" />
+              <Archive v-else />
+            </NIcon>
+            <p>{{ uploadMode === 'zip' ? t('skills.dragDropZipTitle') : t('skills.dragDropTitle') }}</p>
+            <span class="sk-dropzone-hint">
+              {{ uploadMode === 'zip' ? t('skills.dragDropZipHint') : t('skills.dragDropHint') }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </AppModal>
+
     <!-- Hidden folder inputs -->
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
     <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
+    <input ref="zipInput" type="file" accept=".zip" style="display:none" @change="handleZipChange" />
 
     <!-- Filters -->
     <div class="dm-filters">
@@ -591,6 +791,89 @@ onMounted(() => {
 <style scoped>
 /* Skill card grid */
 .dm-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+
+/* Folder drag & drop zone */
+.sk-dropzone {
+  border: 2px dashed var(--color-card-border);
+  border-radius: 12px;
+  padding: 26px;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 16px;
+  background: var(--color-card-bg);
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.sk-dropzone:hover,
+.sk-dropzone.dragover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: var(--shadow-sm);
+}
+.sk-dropzone.dragover {
+  transform: scale(1.01);
+}
+.sk-dropzone:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+.sk-dropzone-content p {
+  margin: 10px 0 4px;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+.sk-dropzone-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+/* Mode toggle (folder / zip) */
+.sk-upload-modes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sk-mode-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+.sk-mode-tab:hover {
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+.sk-mode-tab.active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 1px var(--color-primary-soft);
+}
+.sk-mode-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+/* Upload modal */
+.sk-upload-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sk-dropzone {
+  margin-bottom: 0;
+}
 .sk-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
