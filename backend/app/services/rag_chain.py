@@ -23,7 +23,7 @@ logger = logging.getLogger("erag")
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
     parts, citations = [], []
     for i, r in enumerate(retrieved):
-        doc_name = r.get("doc_name", r.get("doc_id", "?")[:8])
+        doc_name = r.get("doc_name") or r.get("doc_id", "?")[:8]
         heading = r.get("heading", "") or ""
         page = r.get("page")
         if page == 0:

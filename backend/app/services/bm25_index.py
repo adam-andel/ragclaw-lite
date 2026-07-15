@@ -69,6 +69,12 @@ class BM25Index:
                 "doc_id": chunk.get("doc_id", ""),
                 "heading": chunk.get("heading", ""),
                 "page": chunk.get("page"),
+                # Preserve chunk_index & filename so downstream citation
+                # metadata stays correct (otherwise hybrid_search falls
+                # back to chunk_index=0 and doc_id[:8], making distinct
+                # chunks from the same doc look like duplicate sources).
+                "chunk_index": chunk.get("chunk_index", 0),
+                "filename": chunk.get("filename", ""),
             })
 
         return results

@@ -82,7 +82,7 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
     return [
         SearchResultResponse(
             chunk_id=r["chunk_id"],
-            doc_name=r.get("doc_id", "未知")[:20],
+            doc_name=r.get("doc_name") or r.get("doc_id", "未知")[:20],
             heading=r.get("heading"),
             page=r.get("page"),
             content=r["content"],

@@ -825,12 +825,20 @@ def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
     if not retrieved:
         return "未找到相关文档", []
     parts, citations = [], []
+    # Defense-in-depth: collapse display-identical sources so the UI never
+    # shows what looks like the same chunk twice (e.g. same doc_id + chunk_index
+    # + heading). Distinct sections survive because their headings differ.
+    seen_keys: set[tuple] = set()
     for i, r in enumerate(retrieved):
-        doc_name = r.get("doc_name", r.get("doc_id", "?")[:8])
+        doc_name = r.get("doc_name") or r.get("doc_id", "?")[:8]
         heading = r.get("heading", "") or ""
         page = r.get("page")
         if page == 0:
             page = None
+        key = (r.get("doc_id", ""), r.get("chunk_index", 0), heading)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         parts.append(f"[{i + 1}] {doc_name} {heading}\n{r['content']}")
         citations.append({"doc_id": r.get("doc_id", ""), "doc_name": doc_name,
                           "chunk_index": r.get("chunk_index", 0), "heading": heading,
