@@ -1797,12 +1797,13 @@ async function loadSupportedTypes() {
   margin-top: 4px;
   max-height: 55vh;
   overflow-y: auto;
+  overflow-x: hidden;
 }
-.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: background .15s, border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.select-doc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; cursor: pointer; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); transition: background .15s, border-color .15s ease, box-shadow .15s ease, transform .15s ease; min-width: 0; }
 .select-doc-row:hover { background: rgba(59, 130, 246, 0.04); border-color: var(--color-primary); box-shadow: var(--shadow); transform: translateY(-1px); }
 .select-doc-row.selected { background: rgba(59, 130, 246, 0.1); border-color: var(--color-primary); box-shadow: var(--shadow); }
 .select-doc-row:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
-.select-doc-name { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-doc-name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-docs-actions { display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .select-docs-left { display: flex; align-items: center; gap: 12px; }
 .select-docs-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 0; }
