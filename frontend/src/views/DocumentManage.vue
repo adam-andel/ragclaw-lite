@@ -1075,13 +1075,16 @@ async function loadSupportedTypes() {
             </NPopconfirm>
           </div>
           <div class="doc-card-meta">
-            <span>{{ t('documents.chunkCount', { count: doc.chunk_count }) }}</span>
-            <span class="doc-meta-sep">·</span>
             <span>{{ t('documents.linkedKbs', { count: doc.kb_ids.length }) }}</span>
+            <span class="doc-meta-sep">·</span>
+            <span>{{ t('documents.chunkCount', { count: doc.chunk_count }) }}</span>
             <span class="doc-meta-sep">·</span>
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
             <span class="doc-meta-muted">{{ formatDate(doc.created_at) }}</span>
+            <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag">
+              {{ statusLabels[doc.status] || doc.status }}
+            </NTag>
           </div>
           <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress
@@ -1574,6 +1577,7 @@ async function loadSupportedTypes() {
   max-width: 100%;
   display: block;
 }
+.doc-status-tag { flex-shrink: 0; align-self: center; }
 .doc-card-meta {
   display: flex;
   align-items: center;
