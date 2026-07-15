@@ -27,7 +27,41 @@ settings.skills_dir.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = f"sqlite+aiosqlite:///{settings.sqlite_path}"
 
 engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class _AsyncSessionProxy:
+    """Late-bound async session factory.
+
+    Resolves the engine from the *current* ``settings.sqlite_path`` on
+    every call, so redirects of the database path (e.g. test fixtures
+    that point ``settings.sqlite_path`` at a temp dir) take effect for
+    every caller — including modules that imported ``async_session``
+    early at import time. In production ``settings.sqlite_path`` is
+    fixed, so a single engine is created and cached (no behaviour
+    change there).
+    """
+
+    _engines: dict[str, object] = {}
+
+    def _get_engine(self):
+        url = f"sqlite+aiosqlite:///{settings.sqlite_path}"
+        eng = self._engines.get(url)
+        if eng is None:
+            eng = create_async_engine(
+                url, echo=False, connect_args={"check_same_thread": False}
+            )
+            self._engines[url] = eng
+        return eng
+
+    def __call__(self, *args, **kwargs):
+        maker = async_sessionmaker(
+            self._get_engine(), class_=AsyncSession, expire_on_commit=False
+        )
+        return maker(*args, **kwargs)
+
+
+# Public session factory (late-bound — see _AsyncSessionProxy).
+async_session = _AsyncSessionProxy()
 
 
 class Base(DeclarativeBase):

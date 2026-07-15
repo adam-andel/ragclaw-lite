@@ -103,17 +103,16 @@ async def test_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Override the module-level session factory so FastAPI deps use the test DB
-    import app.database as db_mod
-    _orig_session = db_mod.async_session
-    db_mod.async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
+    # `app.database.async_session` is a late-bound proxy (_AsyncSessionProxy)
+    # that routes to the engine for the *current* settings.sqlite_path —
+    # patched to a per-test temp dir by the `_isolate_data` autouse fixture.
+    # Lazy imports (`from app.database import async_session`) therefore always
+    # hit the test DB, so no module-level rebind is needed here.
     try:
         yield
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
-        db_mod.async_session = _orig_session
         await engine.dispose()
 
 

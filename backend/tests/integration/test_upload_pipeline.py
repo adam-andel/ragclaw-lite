@@ -10,8 +10,16 @@ import pytest_asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.config import settings
-from app.database import async_session
-from app.models.document import Document, Chunk, DocStatus
+import app.database as _app_database
+def async_session():
+    """Late-bound session factory so the test-db isolation patch applies.
+
+    test_db monkeypatches app.database.async_session to a temp-DB
+    sessionmaker; an early-bound `from app.database import async_session`
+    would keep pointing at the original engine (stale schema).
+    """
+    return _app_database.async_session()
+from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.knowledge_base import KnowledgeBase
 from app.services.parser import parser_service
 from app.services.chunker import chunker_service
@@ -237,3 +245,194 @@ class TestUploadPipeline:
         """Uploading an unsupported format should raise ValueError."""
         with pytest.raises(Exception):
             await _run_pipeline(kb_id, "bad.exe", "not valid content")
+
+
+async def _add_distractor_doc(kb_id: str, filename: str, content: str) -> str:
+    """Create, link, and process a doc that deliberately omits the search keyword.
+
+    BM25's IDF for a term is <= 0 when the term appears in >= half of the
+    corpus documents (single-doc corpus -> negative, two-doc -> zero), so a
+    keyword-only CHUNKED doc would never rank above distractors. Linking two
+    unrelated docs makes the keyword-bearing chunk's IDF positive.
+    """
+    from app.services.doc_processor import process_document
+
+    file_path = settings.upload_dir / filename
+    file_path.write_text(content, encoding="utf-8")
+    doc_id = str(uuid.uuid4())
+    async with async_session() as db:
+        doc = Document(
+            id=doc_id, kb_id=kb_id, filename=filename,
+            file_type="md", file_size=file_path.stat().st_size,
+            file_path=str(file_path), status=DocStatus.PENDING,
+        )
+        db.add(doc)
+        db.add(KBDocument(kb_id=kb_id, doc_id=doc_id))
+        await db.commit()
+    # embed is monkeypatched to raise elsewhere -> doc degrades to CHUNKED.
+    await process_document(doc_id)
+    return doc_id
+
+
+class TestNoModelChunkedPipeline:
+    """No embedding model → CHUNKED → keyword/BM25 retrieval still works."""
+
+    @pytest.mark.asyncio
+    async def test_upload_without_model_becomes_chunked(self, kb_id, monkeypatch):
+        """With no embedding model, a document degrades to CHUNKED, not FAILED."""
+        from app.services.embedder import embedder_service
+        from app.services.doc_processor import process_document
+        from sqlalchemy import select
+
+        def _raise_no_model(texts):
+            raise RuntimeError("EMBED_MODEL_NOT_INSTALLED: forced by test")
+
+        monkeypatch.setattr(embedder_service, "embed", _raise_no_model)
+
+        filename = "no_model_doc.md"
+        file_path = settings.upload_dir / filename
+        file_path.write_text(
+            "# 量子纠缠加密协议\n\n本文介绍量子纠缠加密协议的原理与实现。\n",
+            encoding="utf-8",
+        )
+
+        doc_id = str(uuid.uuid4())
+        async with async_session() as db:
+            doc = Document(
+                id=doc_id, kb_id=kb_id, filename=filename,
+                file_type="md", file_size=file_path.stat().st_size,
+                file_path=str(file_path), status=DocStatus.PENDING,
+            )
+            db.add(doc)
+            await db.commit()
+
+        await process_document(doc_id)
+
+        async with async_session() as db:
+            refreshed = await db.get(Document, doc_id)
+            assert refreshed.status == DocStatus.CHUNKED
+            assert refreshed.chunk_count > 0
+            assert refreshed.error_message and "关键词" in refreshed.error_message
+            chunks = (await db.execute(
+                select(Chunk).where(Chunk.doc_id == doc_id)
+            )).scalars().all()
+            assert len(chunks) == refreshed.chunk_count
+            # CHUNKED docs must not cache any vectors.
+            assert all(c.embedding is None for c in chunks)
+
+    @pytest.mark.asyncio
+    async def test_chunked_doc_keyword_retrievable_via_bm25(self, kb_id, monkeypatch):
+        """A CHUNKED (linked) doc is retrievable via BM25, with no vectors pushed."""
+        from app.services.embedder import embedder_service
+        from app.services.doc_processor import process_document
+        from app.routers.knowledge_bases import _rebuild_kb_bm25
+        from app.services.vector_store import vector_store
+
+        def _raise_no_model(texts):
+            raise RuntimeError("EMBED_MODEL_NOT_INSTALLED: forced by test")
+
+        monkeypatch.setattr(embedder_service, "embed", _raise_no_model)
+
+        keyword = "ZebraProtocolKeyword"
+        filename = "chunked_kb_doc.md"
+        file_path = settings.upload_dir / filename
+        file_path.write_text(
+            f"# {keyword}\n\nThis document explains {keyword} and its implementation details.\n",
+            encoding="utf-8",
+        )
+
+        doc_id = str(uuid.uuid4())
+        async with async_session() as db:
+            doc = Document(
+                id=doc_id, kb_id=kb_id, filename=filename,
+                file_type="md", file_size=file_path.stat().st_size,
+                file_path=str(file_path), status=DocStatus.PENDING,
+            )
+            db.add(doc)
+            db.add(KBDocument(kb_id=kb_id, doc_id=doc_id))
+            await db.commit()
+
+        await process_document(doc_id)
+
+        # Link a couple of unrelated docs so the keyword-bearing chunk's BM25
+        # IDF is positive (a term in >= half the corpus scores <= 0).
+        await _add_distractor_doc(
+            kb_id, "distractor_apples.md",
+            "FruitWeatherTopic: this document discusses fruits, weather, and rivers.",
+        )
+        await _add_distractor_doc(
+            kb_id, "distractor_music.md",
+            "MusicCloudTopic: this document covers music theory, cloud computing, and tides.",
+        )
+
+        # add_documents_to_kb now calls this for CHUNKED docs (keyword-only).
+        async with async_session() as db:
+            await _rebuild_kb_bm25(db, kb_id)
+
+        try:
+            results = bm25_index.search(kb_id, keyword, top_k=5)
+            assert len(results) > 0
+            assert any(keyword in r["content"] for r in results)
+            # Nothing was pushed to the vector store for a CHUNKED doc.
+            assert vector_store.count(kb_id) == 0
+        finally:
+            bm25_index.delete_kb(kb_id)
+
+    @pytest.mark.asyncio
+    async def test_hybrid_search_degrades_to_bm25_without_model(self, kb_id, monkeypatch):
+        """When vector search fails (no model), hybrid search still returns BM25 hits."""
+        from app.services.embedder import embedder_service
+        from app.services.doc_processor import process_document
+        from app.routers.knowledge_bases import _rebuild_kb_bm25
+        from app.services.hybrid_search import hybrid_search
+
+        def _raise_no_model(texts):
+            raise RuntimeError("EMBED_MODEL_NOT_INSTALLED: forced by test")
+
+        monkeypatch.setattr(embedder_service, "embed", _raise_no_model)
+
+        keyword = "HybridDegradeTestToken"
+        filename = "hybrid_chunked.md"
+        file_path = settings.upload_dir / filename
+        file_path.write_text(
+            f"# {keyword}\n\n{keyword} verifies vector failure does not break keyword retrieval.\n",
+            encoding="utf-8",
+        )
+
+        doc_id = str(uuid.uuid4())
+        async with async_session() as db:
+            doc = Document(
+                id=doc_id, kb_id=kb_id, filename=filename,
+                file_type="md", file_size=file_path.stat().st_size,
+                file_path=str(file_path), status=DocStatus.PENDING,
+            )
+            db.add(doc)
+            db.add(KBDocument(kb_id=kb_id, doc_id=doc_id))
+            await db.commit()
+
+        await process_document(doc_id)
+
+        # Link a couple of unrelated docs so the keyword-bearing chunk's BM25
+        # IDF is positive (a term in >= half the corpus scores <= 0).
+        await _add_distractor_doc(
+            kb_id, "distractor_alpha.md",
+            "AlphaTopic: this document describes mountains, rivers, and ancient history.",
+        )
+        await _add_distractor_doc(
+            kb_id, "distractor_beta.md",
+            "BetaTopic: this document explains cooking recipes, gardening, and sports.",
+        )
+
+        async with async_session() as db:
+            await _rebuild_kb_bm25(db, kb_id)
+
+        try:
+            # vector_store.search would raise (no model); hybrid_search must
+            # catch it and still surface the BM25 hit.
+            results = hybrid_search.search(kb_id, keyword, final_top_k=5)
+            assert len(results) > 0
+            assert any(keyword in r["content"] for r in results)
+            assert all(r["vector_score"] == 0.0 for r in results)
+            assert any(r["bm25_score"] > 0 for r in results)
+        finally:
+            bm25_index.delete_kb(kb_id)
