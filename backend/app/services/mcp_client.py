@@ -11,12 +11,12 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.services.repl_auth import build_auth_envelope, REPL_AUTH_TOOLS
+from app.services.repl_auth import build_auth_envelope, get_user_repl_uid, REPL_AUTH_TOOLS
 
 logger = logging.getLogger("erag.mcp")
 
 
-def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) -> dict:
+async def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) -> dict:
     """Inject the signed identity envelope for REPL-sandbox tools.
 
     Only run_python/run_shell/run_javascript receive the envelope, and only
@@ -24,10 +24,15 @@ def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) ->
     combinations the arguments are returned unchanged. If signing fails
     (e.g. no secret configured, or unattributed user), the arguments are
     returned as-is so the sandbox can apply its own fail-closed policy.
+
+    The user's dedicated sandbox UID (if any) is resolved from the DB and
+    signed into the envelope, so the sandbox can drop privileges to the exact
+    UID without a database lookup of its own.
     """
     if not auth_user or tool_name not in REPL_AUTH_TOOLS:
         return arguments
-    envelope = build_auth_envelope(auth_user)
+    repl_uid = await get_user_repl_uid(auth_user)
+    envelope = build_auth_envelope(auth_user, repl_uid)
     if envelope is None:
         return arguments
     return {**arguments, "auth": envelope}
@@ -165,7 +170,7 @@ class MCPClient:
         if not endpoint:
             return ToolResult(tool_name=tool_name, ok=False, error="No endpoint configured")
 
-        arguments = _attach_repl_auth(arguments, tool_name, auth_user)
+        arguments = await _attach_repl_auth(arguments, tool_name, auth_user)
         resp = await self._http_post(endpoint, "tools/call", {
             "name": tool_name,
             "arguments": arguments,
@@ -214,7 +219,7 @@ class MCPClient:
         if proc is None:
             return ToolResult(tool_name=tool_name, ok=False, error="Failed to start stdio process")
 
-        arguments = _attach_repl_auth(arguments, tool_name, auth_user)
+        arguments = await _attach_repl_auth(arguments, tool_name, auth_user)
         try:
             tools = await self._stdio_rpc(proc, "tools/call", {
                 "name": tool_name, "arguments": arguments

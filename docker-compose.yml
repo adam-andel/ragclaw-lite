@@ -18,6 +18,11 @@ services:
       # boot and hot-reloads it into mcp-repl via PUT /auth-secret (no restart).
       # If you DO set it here, it seeds the Backend DB and is pushed to mcp-repl.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
+      # ── REPL sandbox per-user UID allocation (random, DB-backed) ──
+      # Capacity = MAX - MIN. Expand MAX later to grow capacity WITHOUT
+      # affecting existing users (their stored UIDs stay fixed).
+      - REPL_UID_RANGE_MIN=${REPL_UID_RANGE_MIN:-10000}
+      - REPL_UID_RANGE_MAX=${REPL_UID_RANGE_MAX:-110000}
     restart: unless-stopped
     networks:
       - erag
@@ -45,6 +50,9 @@ services:
       # Backend-generated secret via PUT /auth-secret at startup (auto-pushed +
       # periodic re-push). Unset => single account mode until the secret arrives.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
+      # ── Legacy UID pool (hash fallback) ──
+      # Only used for users whose Backend did NOT send a dedicated signed UID
+      # (legacy accounts). New users get a random, DB-backed UID instead.
       - REPL_UID_POOL_BASE=${REPL_UID_POOL_BASE:-2000}
       - REPL_UID_POOL_SIZE=${REPL_UID_POOL_SIZE:-100}
     # ── Container security hardening ──

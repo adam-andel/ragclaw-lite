@@ -84,8 +84,10 @@ _REPL_AUTH_SECRET: str | None = None   # shared HMAC secret with Backend; None =
 _auth_required: bool = False           # reject calls without a valid signature
 _isolation_enabled: bool = False       # per-user UID isolation (tied to auth)
 _allow_anonymous: bool = False         # if True, allow calls without a valid signature
-_uid_pool_base: int = 2000             # first UID of the numeric pool
-_uid_pool_size: int = 100              # pool size (modulo space)
+_uid_pool_base: int = 2000             # first UID of the legacy hash pool
+_uid_pool_size: int = 100              # legacy pool size (modulo space) — used only
+                                         # as a fallback for users whose Backend did
+                                         # not send a dedicated signed UID.
 _account_cache: dict = {}              # user id -> account dict
 
 # ═══════════════════════════════════════════════════════════
@@ -185,15 +187,22 @@ def _subprocess_flags() -> int:
     return subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
 
 
-def _verify_auth(auth) -> str | None:
+def _verify_auth(auth) -> dict | None:
     """Verify a Backend-signed identity envelope.
 
     Envelope (sent by Backend inside tools/call arguments):
         {"user": "<id>", "exp": <int>, "sig": "<hex>"}
-    sig = HMAC-SHA256(secret, f"{user}|{exp}")      (exp=0 means no expiry)
+        {"user": "<id>", "uid": <int>, "exp": <int>, "sig": "<hex>"}   (with uid)
+    sig = HMAC-SHA256(secret, f"{user}|{exp}")            (legacy: no uid)
+    sig = HMAC-SHA256(secret, f"{user}|{uid}|{exp}")      (with dedicated uid)
 
-    Returns the verified user id, or None when auth is disabled, or the
-    envelope is missing / malformed / expired / has a bad signature.
+    Returns ``{"user": <id>, "uid": <int|None>}`` on success, or ``None`` when
+    auth is disabled, or the envelope is missing / malformed / expired / has a
+    bad signature. When ``uid`` is present it is part of the signed message, so
+    a forged uid fails verification — the sandbox can then drop privileges to
+    that exact UID **statelessly**. When ``uid`` is absent (legacy envelopes for
+    users without a stored UID) it returns ``None`` and the caller falls back to
+    the deterministic hash mapping so existing directories keep working.
     """
     if _REPL_AUTH_SECRET is None:
         return None
@@ -211,12 +220,27 @@ def _verify_auth(auth) -> str | None:
         return None
     if exp and time.time() > exp:
         return None
-    msg = f"{user}|{exp}".encode("utf-8")
+
+    # Build the signed message. New envelopes include the uid; legacy envelopes
+    # (no uid) sign "user|exp". Verify both forms.
+    uid = auth.get("uid")
+    if uid is not None:
+        try:
+            uid = int(uid)
+        except (TypeError, ValueError):
+            return None
+        # Sanity-clamp: a valid Linux uid is a non-negative 32-bit integer.
+        if uid < 0 or uid > 2147483647:
+            return None
+        msg = f"{user}|{uid}|{exp}".encode("utf-8")
+    else:
+        msg = f"{user}|{exp}".encode("utf-8")
+
     expected = _hmac_module.new(_REPL_AUTH_SECRET.encode("utf-8"), msg,
                                  _hashlib_module.sha256).hexdigest()
     if not _hmac_module.compare_digest(expected, sig):
         return None
-    return user
+    return {"user": user, "uid": uid}
 
 
 def _set_auth_secret(secret):
@@ -855,7 +879,8 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     4. execution  5. post-processing (workspace note + download links)
     """
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
-                workspace_id: str | None = None, user: str | None = None) -> str:
+                workspace_id: str | None = None, user: str | None = None,
+                uid: int | None = None) -> str:
         t0 = time.time()
 
         # Pre-screen
@@ -870,10 +895,15 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             logger.warning("exec_busy max_concurrent=%d lang=%s", _max_concurrent, lang)
             return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试"
 
-        # Resolve per-user account (deterministic numeric UID pool).
+        # Resolve per-user account. Prefer the UID carried in the signed
+        # envelope (stateless, exact); fall back to the deterministic hash
+        # mapping for legacy users whose Backend did not send a uid.
         acct = None
         if user and _isolation_enabled:
-            acct = _resolve_user_account(user)
+            if uid is not None:
+                acct = {"uid": uid, "gid": uid, "name": f"u{uid}"}
+            else:
+                acct = _resolve_user_account(user)
 
         try:
             workdir = _make_workdir(workspace_id, acct)
@@ -1079,7 +1109,8 @@ class MCPHandler(BaseHTTPRequestHandler):
 
             # ── Identity: verify Backend-signed envelope (fail closed) ──
             auth = arguments.get("auth") or params.get("auth")
-            user = _verify_auth(auth)
+            auth_info = _verify_auth(auth)
+            user = auth_info["user"] if auth_info else None
             if _auth_required and user is None:
                 logger.warning("auth_reject tool=%s reason=invalid_or_missing_sig", tool_name)
                 resp = {"jsonrpc": "2.0", "id": req_id,
@@ -1094,8 +1125,9 @@ class MCPHandler(BaseHTTPRequestHandler):
             # Route to correct executor by tool name
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
+                uid = auth_info["uid"] if auth_info else None
                 result = {"content": [{"type": "text",
-                        "text": executor(code, workspace_id=workspace_id, user=user)}]}
+                        "text": executor(code, workspace_id=workspace_id, user=user, uid=uid)}]}
             else:
                 result = {"content": [{"type": "text", "text": f"未知工具: {tool_name}"}]}
         else:
@@ -1107,6 +1139,58 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(resp, ensure_ascii=False).encode())
+
+    def do_DELETE(self):
+        """Internal-only endpoint to remove a user's sandbox base directory.
+
+        Path:  /user/<uid>
+        Auth:  caller must present the shared ``REPL_AUTH_SECRET`` in the
+               ``X-Repl-Auth`` header (same secret the Backend uses to sign
+               envelopes). This keeps directory cleanup on the Backend's
+               user-deletion path strictly internal.
+        """
+        if self.path.startswith("/user/"):
+            self._handle_delete_user_dir()
+            return
+        self.send_error(404)
+
+    def _handle_delete_user_dir(self):
+        # Directory cleanup is only meaningful when isolation is active.
+        if _REPL_AUTH_SECRET is None or not _isolation_enabled or not _allow_dir:
+            self._json_response(403, {"error": "sandbox isolation disabled"})
+            return
+        provided = self.headers.get("X-Repl-Auth", "")
+        if not _hmac_module.compare_digest(provided, _REPL_AUTH_SECRET):
+            self._json_response(403, {"error": "unauthorized"})
+            return
+
+        m = re.fullmatch(r"/user/(\d+)", self.path)
+        if not m:
+            self._json_response(400, {"error": "invalid uid"})
+            return
+        uid = int(m.group(1))
+        if uid < 0 or uid > 2147483647:
+            self._json_response(400, {"error": "invalid uid"})
+            return
+
+        target = os.path.realpath(os.path.join(_allow_dir, f"user_u{uid}"))
+        root = os.path.realpath(_allow_dir)
+        # Path-traversal guard: the resolved target must be strictly inside
+        # _allow_dir (never equal to it, never outside it).
+        if target != root and not target.startswith(root + os.sep):
+            self._json_response(400, {"error": "invalid path"})
+            return
+
+        if os.path.isdir(target):
+            try:
+                shutil.rmtree(target)
+            except OSError as e:
+                self._json_response(500, {"error": f"rmtree failed: {e}"})
+                return
+            self._json_response(200, {"deleted": f"user_u{uid}"})
+        else:
+            # Idempotent: nothing to remove is not an error.
+            self._json_response(200, {"deleted": None, "note": "no such dir"})
 
     def _json_response(self, code: int, obj: dict):
         self.send_response(code)

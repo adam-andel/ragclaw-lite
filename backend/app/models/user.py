@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, Enum as SAEnum
+from sqlalchemy import String, Boolean, DateTime, Enum as SAEnum, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -33,3 +33,9 @@ class User(Base):
     # Multi-tenant: each user belongs to a tenant; admin can see all
     tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Per-user dedicated Linux UID for the REPL sandbox isolation account.
+    # Randomly assigned at creation, stored with a unique constraint (NULL
+    # allowed for legacy users that still rely on the sandbox's deterministic
+    # hash fallback). Expanding the UID range never touches existing rows.
+    repl_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True, index=True)

@@ -1,16 +1,41 @@
 """User management routes (admin/moderator)."""
 
 import uuid
+import secrets
+import logging
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, or_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UserListResponse, UserCreateRequest, UserUpdateRequest
 from app.services.auth import hash_password, get_current_staff, can_manage_user
+from app.services.config_manager import config_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
+
+
+async def _delete_repl_user_dir(repl_uid: int) -> None:
+    """Delete a user's sandbox base directory on the mcp-repl service.
+
+    Best-effort-strict: called BEFORE the caller releases the UID so the UID
+    cannot be reused while stale files linger (cleanup-before-reuse guarantee).
+    Raises on failure so the caller can block the deletion. No-op when the
+    sandbox runs in single-account mode (no secret => nothing per-user to drop).
+    """
+    secret = config_manager.repl_auth_secret
+    if not secret:
+        return
+    url = f"{settings.mcp_repl_internal_url.rstrip('/')}/user/{int(repl_uid)}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(url, headers={"X-Repl-Auth": secret})
+        resp.raise_for_status()
 
 
 @router.get("", response_model=UserListResponse)
@@ -72,19 +97,41 @@ async def create_user(
     if existing.scalar_one_or_none():
         raise HTTPException(400, "用户名已存在")
 
-    user = User(
-        id=str(uuid.uuid4()),
-        username=data.username,
-        hashed_password=hash_password(data.password),
-        display_name=data.display_name or data.username,
-        email=data.email,
-        role=target_role,
-        tenant_id=str(uuid.uuid4()),
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    return UserResponse.model_validate(user)
+    # Allocate a dedicated REPL sandbox UID and commit the whole user row.
+    # Retry the commit on a (rare) unique-constraint collision; if all retries
+    # fail the pool is exhausted and we surface a clear 503.
+    created = None
+    last_err: Exception | None = None
+    for _ in range(settings.repl_uid_alloc_retries):
+        try:
+            cand = secrets.randbelow(settings.repl_uid_range_max - settings.repl_uid_range_min) \
+                + settings.repl_uid_range_min
+            user = User(
+                id=str(uuid.uuid4()),
+                username=data.username,
+                hashed_password=hash_password(data.password),
+                display_name=data.display_name or data.username,
+                email=data.email,
+                role=target_role,
+                tenant_id=str(uuid.uuid4()),
+                repl_uid=cand,
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            created = user
+            break
+        except IntegrityError:
+            await db.rollback()
+            last_err = "repl_uid collision on commit"
+            continue
+
+    if created is None:
+        raise HTTPException(
+            503,
+            f"无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。",
+        )
+    return UserResponse.model_validate(created)
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -149,6 +196,24 @@ async def delete_user(
         raise HTTPException(404, "用户不存在")
     if not can_manage_user(current_user, user):
         raise HTTPException(403, "无权删除该用户")
+
+    # Capture the UID BEFORE releasing it. Delete the user's sandbox base
+    # directory first (cleanup-before-reuse): if the sandbox is unreachable the
+    # deletion is blocked so the UID cannot be reassigned to a new user while
+    # stale files linger. Legacy users without a stored UID have no dedicated
+    # directory, so there is nothing to clean up.
+    repl_uid = user.repl_uid
+    if repl_uid is not None:
+        try:
+            await _delete_repl_user_dir(repl_uid)
+        except Exception as e:
+            logger.warning("repl_dir_cleanup_failed user=%s uid=%s err=%s", user_id, repl_uid, e)
+            raise HTTPException(
+                502,
+                f"无法清理用户 {user_id} 的沙盒目录（mcp-repl 可能不可用），用户未删除。"
+                f"请排查 mcp-repl 服务后重试。原始错误: {e}",
+            )
+
     await db.delete(user)
     await db.commit()
     return {"status": "deleted"}
