@@ -6,6 +6,8 @@ from app.config import settings
 from app.database import async_session
 from app.models.skill import Skill, MCPServer
 from app.services.hybrid_search import hybrid_search
+from app.services.vector_store import vector_store
+from app.services.bm25_index import bm25_index
 from app.services.llm_client import llm_client
 from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
@@ -781,22 +783,36 @@ async def parallel_retrieval_node(state: dict) -> dict:
     query, kb_id, user_id = state["query"], state["kb_id"], state.get("user_id", "")
     t_start = time.time()
     loop = asyncio.get_running_loop()
-    rag_task = loop.run_in_executor(None, lambda: hybrid_search.search(kb_id, query))
+
+    # Run vector + BM25 concurrently. BM25 is an in-memory jieba+rank_bm25 call
+    # (sub-10ms); vector is the slow path (embedding + Chroma query). Overlapping
+    # them via separate executor threads drops total latency from
+    # T_vec + T_bm25 to max(T_vec, T_bm25). fuse() then merges both result sets.
+    v_task = loop.run_in_executor(None, vector_store.search, kb_id, query, settings.retrieval_vector_top_k)
+    b_task = loop.run_in_executor(None, bm25_index.search, kb_id, query, settings.retrieval_bm25_top_k)
     mem_coro = _search_memories_safe(
         query, user_id,
         agent_id=state.get("kb_id"),
         run_id=state.get("conversation_id"),
     ) if user_id else None
+
     if mem_coro:
-        results = await asyncio.gather(rag_task, mem_coro, return_exceptions=True)
-        mem_raw = results[1] if not isinstance(results[1], Exception) and results[1] is not None else []
-        if isinstance(results[1], Exception):
-            logger.warning("Mem0 search error: %s", results[1])
+        v_res, b_res, mem_raw = await asyncio.gather(v_task, b_task, mem_coro, return_exceptions=True)
     else:
-        results = [await rag_task, []]; mem_raw = []
-    retrieved = results[0] if not isinstance(results[0], Exception) else []
-    if isinstance(results[0], Exception):
-        logger.warning("Retrieval error: %s", results[0])
+        v_res, b_res = await asyncio.gather(v_task, b_task, return_exceptions=True)
+        mem_raw = []
+
+    if isinstance(v_res, Exception):
+        logger.warning("Vector search error: %s", v_res)
+        v_res = []
+    if isinstance(b_res, Exception):
+        logger.warning("BM25 search error: %s", b_res)
+        b_res = []
+    if isinstance(mem_raw, Exception):
+        logger.warning("Mem0 search error: %s", mem_raw)
+        mem_raw = []
+
+    retrieved = hybrid_search.fuse(v_res, b_res)
     rag_context, citations = _build_context(retrieved)
     memory_context = _build_memory_context(mem_raw) if mem_raw else ""
     chunk_count = len(retrieved) if isinstance(retrieved, list) else 0

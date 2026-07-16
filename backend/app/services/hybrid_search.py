@@ -22,16 +22,10 @@ class HybridSearchService:
     ) -> list[dict]:
         """Execute hybrid search with weighted RRF fusion.
 
-        Args:
-            kb_id: Knowledge base ID
-            query: Search query
-            vector_top_k: Number of results from vector search
-            bm25_top_k: Number of results from BM25 search
-            final_top_k: Number of final fused results
-            vector_weight: Weight for vector search (0-1)
-            bm25_weight: Weight for BM25 search (0-1)
-            threshold: Minimum fusion score
-            doc_ids: Optional filter by document IDs
+        Runs vector + BM25 sequentially. Kept for synchronous callers (retrieval
+        router, tests). Async callers that want vector/BM25 to run concurrently
+        should run both searches themselves and call `fuse()` directly — see
+        `parallel_retrieval_node` for the pattern.
 
         Returns:
             List of result dicts with: chunk_id, content, doc_name,
@@ -39,17 +33,44 @@ class HybridSearchService:
         """
         vector_top_k = vector_top_k or settings.retrieval_vector_top_k
         bm25_top_k = bm25_top_k or settings.retrieval_bm25_top_k
-        final_top_k = final_top_k or settings.retrieval_final_top_k
-        threshold = threshold if threshold is not None else settings.retrieval_similarity_threshold
 
-        # Run both searches in sequence (could be parallel with asyncio)
         # Vector search may fail (e.g. embedding model not installed) — degrade
         # gracefully and rely on BM25 only instead of erroring the whole request.
         try:
             vector_results = vector_store.search(kb_id, query, top_k=vector_top_k)
         except Exception:
             vector_results = []
+
         bm25_results = bm25_index.search(kb_id, query, top_k=bm25_top_k)
+
+        return self.fuse(
+            vector_results,
+            bm25_results,
+            final_top_k=final_top_k,
+            vector_weight=vector_weight,
+            bm25_weight=bm25_weight,
+            threshold=threshold,
+            doc_ids=doc_ids,
+        )
+
+    def fuse(
+        self,
+        vector_results: list[dict],
+        bm25_results: list[dict],
+        final_top_k: int | None = None,
+        vector_weight: float = 0.5,
+        bm25_weight: float = 0.5,
+        threshold: float | None = None,
+        doc_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """Fuse pre-computed vector + BM25 results via weighted RRF.
+
+        Pure fusion — no I/O. Safe to call directly after running both searches
+        concurrently (e.g. `parallel_retrieval_node`), so the slow vector path
+        and the fast BM25 path overlap instead of running back-to-back.
+        """
+        final_top_k = final_top_k or settings.retrieval_final_top_k
+        threshold = threshold if threshold is not None else settings.retrieval_similarity_threshold
 
         # Build lookup: chunk_id -> scores
         scores: dict[str, dict] = {}
