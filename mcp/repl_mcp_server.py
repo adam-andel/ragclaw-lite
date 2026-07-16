@@ -83,6 +83,7 @@ _exec_semaphore = threading.BoundedSemaphore(DEFAULT_MAX_CONCURRENT)
 _REPL_AUTH_SECRET: str | None = None   # shared HMAC secret with Backend; None => auth disabled
 _auth_required: bool = False           # reject calls without a valid signature
 _isolation_enabled: bool = False       # per-user UID isolation (tied to auth)
+_allow_anonymous: bool = False         # if True, allow calls without a valid signature
 _uid_pool_base: int = 2000             # first UID of the numeric pool
 _uid_pool_size: int = 100              # pool size (modulo space)
 _account_cache: dict = {}              # user id -> account dict
@@ -216,6 +217,18 @@ def _verify_auth(auth) -> str | None:
     if not _hmac_module.compare_digest(expected, sig):
         return None
     return user
+
+
+def _set_auth_secret(secret):
+    """Hot-reload the shared HMAC secret at runtime (called by Backend).
+
+    ``secret`` may be a non-empty string (enable auth + isolation) or an
+    empty/None value (disable). Isolation is tied to auth being enabled.
+    """
+    global _REPL_AUTH_SECRET, _auth_required, _isolation_enabled
+    _REPL_AUTH_SECRET = secret or None
+    _auth_required = bool(_REPL_AUTH_SECRET) and not _allow_anonymous
+    _isolation_enabled = bool(_REPL_AUTH_SECRET)
 
 
 def _resolve_user_account(user):
@@ -1110,6 +1123,9 @@ class MCPHandler(BaseHTTPRequestHandler):
         if self.path == "/keep-minutes":
             self._handle_keep_update(body)
             return
+        if self.path == "/auth-secret":
+            self._handle_auth_secret_update(body)
+            return
         self.send_error(404)
 
     def _handle_policy_update(self, body: dict):
@@ -1137,6 +1153,27 @@ class MCPHandler(BaseHTTPRequestHandler):
         _set_keep_minutes(mins)
         logger.info("keep_minutes_updated mins=%d", _keep_minutes)
         self._json_response(200, {"status": "ok", "keep_minutes": _keep_minutes})
+
+    def _handle_auth_secret_update(self, body: dict):
+        """Hot-reload the REPL identity HMAC secret (called by backend /api/config/repl-auth).
+
+        Internal-network-only endpoint (no host port mapping), mirroring
+        /policy and /keep-minutes. Body: {"secret": "<str>"} — empty/None disables
+        auth (single-account fallback). After a successful update, per-user UID
+        isolation is enabled/disabled to match.
+        """
+        secret = body.get("secret")
+        if secret is not None and not isinstance(secret, str):
+            self._json_response(400, {"error": "secret must be a string"})
+            return
+        _set_auth_secret(secret)
+        logger.info("auth_secret_updated auth_required=%s isolation=%s",
+                    _auth_required, _isolation_enabled)
+        self._json_response(200, {
+            "status": "ok",
+            "auth_enabled": _auth_required,
+            "isolation_enabled": _isolation_enabled,
+        })
 
     def log_message(self, _fmt, *args):
         logger.info("http %s", args[0])
@@ -1235,8 +1272,9 @@ if __name__ == "__main__":
                           or os.environ.get("REPL_ENABLE_JAVASCRIPT", "").lower() in ("1", "true", "yes"))
 
     # ── Auth + per-user UID isolation config ──
+    _allow_anonymous = bool(args.allow_anonymous)
     _REPL_AUTH_SECRET = args.auth_secret or os.environ.get("REPL_AUTH_SECRET")
-    _auth_required = bool(_REPL_AUTH_SECRET) and not args.allow_anonymous
+    _auth_required = bool(_REPL_AUTH_SECRET) and not _allow_anonymous
     _isolation_enabled = bool(_REPL_AUTH_SECRET)
     _uid_pool_base = args.uid_pool_base
     _uid_pool_size = max(1, args.uid_pool_size)

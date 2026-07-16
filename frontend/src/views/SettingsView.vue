@@ -7,9 +7,9 @@ import {
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, type LLMConfig, type SandboxNetworkConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 
@@ -39,6 +39,7 @@ const sections = [
   { id: 'system-prompt', label: 'settings.nav.systemPrompt' },
   { id: 'plugins', label: 'settings.nav.plugins' },
   { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
+  { id: 'repl-auth', label: 'settings.nav.replAuth' },
 ]
 
 const networkModeOptions = computed(() => [
@@ -88,6 +89,13 @@ const sandboxConfig = ref<SandboxNetworkConfig>({
 
 const keepPreset = ref<string | number>(60)
 const keepCustomMinutes = ref<number>(60)
+
+// ── REPL MCP identity secret ──
+const replAuthSecret = ref<string>('')
+const replAuthSaving = ref(false)
+const replAuthGenerating = ref(false)
+const replAuthDirty = ref(false)
+const replAuthPushed = ref<boolean | null>(null)
 
 function formatKeep(min: number): string {
   if (!min) return t('settings.keepUnset')
@@ -360,6 +368,13 @@ onMounted(async () => {
     message.error(e.message || t('settings.msg.loadSandboxFailed'))
   }
 
+  try {
+    const ra = await getReplAuth()
+    replAuthSecret.value = ra.repl_auth_secret || ''
+  } catch (e: any) {
+    message.error(e.message || t('settings.msg.loadReplAuthFailed'))
+  }
+
   await loadEmbeddingStatus()
   await loadReindexStatus()
   if (reindexing.value) startReindexPolling()
@@ -508,6 +523,61 @@ async function handleSave() {
     message.error(e.message || t('settings.msg.saveFailed'))
   } finally {
     saving.value = false
+  }
+}
+
+async function handleReplAuthSave() {
+  const secret = replAuthSecret.value.trim()
+  if (!secret) {
+    message.warning(t('settings.replAuthEmpty'))
+    return
+  }
+  if (secret.length < 16) {
+    message.warning(t('settings.replAuthTooShort'))
+    return
+  }
+  replAuthSaving.value = true
+  try {
+    const res = await updateReplAuth(secret)
+    replAuthPushed.value = res.mcp_pushed
+    replAuthDirty.value = false
+    if (res.mcp_pushed) {
+      message.success(t('settings.msg.replAuthSavedHot'))
+    } else {
+      message.warning(t('settings.msg.replAuthSavedRestart'))
+    }
+  } catch (e: any) {
+    message.error(e.message || t('settings.msg.saveFailed'))
+  } finally {
+    replAuthSaving.value = false
+  }
+}
+
+async function handleReplAuthGenerate() {
+  replAuthGenerating.value = true
+  try {
+    const res = await regenerateReplAuth()
+    replAuthSecret.value = res.repl_auth_secret
+    replAuthPushed.value = res.mcp_pushed
+    replAuthDirty.value = false
+    if (res.mcp_pushed) {
+      message.success(t('settings.msg.replAuthGeneratedHot'))
+    } else {
+      message.warning(t('settings.msg.replAuthSavedRestart'))
+    }
+  } catch (e: any) {
+    message.error(e.message || t('settings.msg.saveFailed'))
+  } finally {
+    replAuthGenerating.value = false
+  }
+}
+
+async function handleReplAuthCopy() {
+  try {
+    await navigator.clipboard.writeText(replAuthSecret.value)
+    message.success(t('settings.replAuthCopied'))
+  } catch {
+    message.warning(t('settings.replAuthCopyFailed'))
   }
 }
 
@@ -1049,6 +1119,62 @@ async function handleTest() {
             </NSpace>
           </NFormItem>
 
+        </NForm>
+      </section>
+    </NCard>
+
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <section id="repl-auth">
+        <h3 class="section-title">{{ t('settings.replAuthTitle') }}</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.replAuthDesc')" />
+        <NForm label-placement="left" label-width="140">
+          <NFormItem :label="t('settings.replAuthSecretLabel')">
+            <NSpace vertical :size="8" style="width: 100%">
+              <NInput
+                v-model:value="replAuthSecret"
+                type="password"
+                show-password-on="click"
+                :placeholder="t('settings.replAuthPlaceholder')"
+                @input="replAuthDirty = true"
+              />
+              <NSpace :size="8">
+                <NButton
+                  type="primary"
+                  :loading="replAuthGenerating"
+                  :disabled="replAuthGenerating"
+                  @click="handleReplAuthGenerate"
+                >
+                  <template #icon><NIcon><Refresh /></NIcon></template>
+                  {{ t('settings.replAuthGenerate') }}
+                </NButton>
+                <NButton
+                  type="primary"
+                  :disabled="replAuthSaving || !replAuthSecret.trim()"
+                  :loading="replAuthSaving"
+                  @click="handleReplAuthSave"
+                >
+                  <template #icon><NIcon><Save /></NIcon></template>
+                  {{ t('settings.replAuthSave') }}
+                </NButton>
+                <NButton :disabled="!replAuthSecret.trim()" @click="handleReplAuthCopy">
+                  <template #icon><NIcon><Copy /></NIcon></template>
+                  {{ t('settings.replAuthCopy') }}
+                </NButton>
+              </NSpace>
+              <span class="muted" style="font-size: 12px">
+                <template v-if="replAuthPushed === true">
+                  {{ t('settings.replAuthStatusOn') }}
+                </template>
+                <template v-else-if="replAuthPushed === false">
+                  {{ t('settings.replAuthStatusRestart') }}
+                </template>
+                <template v-else>
+                  {{ t('settings.replAuthStatus', { on: replAuthSecret.trim() ? t('settings.replAuthOn') : t('settings.replAuthOff') }) }}
+                </template>
+                <template v-if="replAuthDirty"> · {{ t('settings.replAuthUnsaved') }}</template>
+              </span>
+            </NSpace>
+          </NFormItem>
         </NForm>
       </section>
     </NCard>

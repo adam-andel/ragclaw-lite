@@ -76,6 +76,28 @@ async def lifespan(app: FastAPI):
     # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
     await config_manager.init()
+
+    # Push the (auto-generated) REPL identity secret to the MCP REPL container so
+    # per-user isolation is active out of the box. Retry because containers may
+    # start in any order; a periodic re-push keeps MCP in sync after restarts.
+    try:
+        from app.routers import config as _cfg_router
+        pushed = await _cfg_router.ensure_mcp_auth_secret_pushed()
+        if not pushed:
+            print("[startup] WARNING: could not push REPL_AUTH_SECRET to MCP — REPL "
+                  "isolation may be inactive until you save it in Settings or restart mcp-repl")
+
+        async def _periodic_push_auth_secret(interval: int = 60):
+            while True:
+                await _asyncio.sleep(interval)
+                try:
+                    await _cfg_router._push_mcp_auth_secret(config_manager.repl_auth_secret)
+                except Exception:
+                    pass
+
+        asyncio.create_task(_periodic_push_auth_secret())
+    except Exception as e:
+        print(f"[startup] push REPL_AUTH_SECRET warning: {e}")
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)

@@ -13,8 +13,10 @@ services:
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
       - PUBLIC_URL=${PUBLIC_URL:-}
-      # Shared HMAC secret for signing REPL sandbox user identity. MUST match
-      # the value supplied to the mcp-repl service (same ${REPL_AUTH_SECRET}).
+      # Shared HMAC secret for signing REPL sandbox user identity.
+      # OPTIONAL: if unset, the Backend auto-generates a strong secret on first
+      # boot and hot-reloads it into mcp-repl via PUT /auth-secret (no restart).
+      # If you DO set it here, it seeds the Backend DB and is pushed to mcp-repl.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
     restart: unless-stopped
     networks:
@@ -39,8 +41,9 @@ services:
       - REPL_EGRESS_PORT=1080        # loopback proxy port children are forced through
       - REPL_EGRESS_DNS=1            # built-in allowlist-aware DNS service on :53
       # ── Per-user UID isolation (Backend-signed identity) ──
-      # Operator MUST set a strong shared secret (same as Backend). Unset => single
-      # account mode (no per-user isolation).
+      # OPTIONAL: if unset, mcp-repl starts with auth disabled and receives the
+      # Backend-generated secret via PUT /auth-secret at startup (auto-pushed +
+      # periodic re-push). Unset => single account mode until the secret arrives.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
       - REPL_UID_POOL_BASE=${REPL_UID_POOL_BASE:-2000}
       - REPL_UID_POOL_SIZE=${REPL_UID_POOL_SIZE:-100}

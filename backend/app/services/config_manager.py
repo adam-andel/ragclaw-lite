@@ -6,6 +6,7 @@ key source when present and no key has been persisted via the web UI; a persiste
 
 import json
 import os
+import secrets
 import threading
 import uuid
 
@@ -102,6 +103,11 @@ def _mask(key: str) -> str:
     return key[:6] + "****" + key[-4:]
 
 
+def _generate_repl_auth_secret() -> str:
+    """Generate a cryptographically strong REPL_AUTH_SECRET (64 hex chars)."""
+    return secrets.token_hex(32)
+
+
 class ConfigManager:
     """Thread-safe singleton for runtime configuration."""
 
@@ -161,6 +167,7 @@ class ConfigManager:
                 print("[ConfigManager] no encrypted config yet — waiting for admin setup")
 
         await self._load_from_db(legacy_file_existed)
+        await self._ensure_repl_auth_secret()
 
     def _build_defaults(self, env_api_key: str = "") -> dict:
         return {
@@ -193,6 +200,8 @@ class ConfigManager:
             "sandbox_allow_methods": "",
             # REPL MCP generated-file retention (minutes); pushed to MCP container
             "mcp_file_keep_minutes": 1440,
+            # REPL MCP identity HMAC secret (auto-generated on first boot if absent)
+            "repl_auth_secret": "",
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -216,6 +225,8 @@ class ConfigManager:
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
             "mcp_file_keep_minutes": 60,
+            # Seed from env REPL_AUTH_SECRET if provided, else a fresh strong default.
+            "repl_auth_secret": settings.repl_auth_secret or _generate_repl_auth_secret(),
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -265,6 +276,24 @@ class ConfigManager:
         }
         plain = json.dumps(keys_only, ensure_ascii=False)
         self._config_file.write_bytes(_encrypt(plain))
+
+    async def _ensure_repl_auth_secret(self):
+        """Guarantee a non-empty REPL_AUTH_SECRET exists (preset default).
+
+        Handles three cases:
+          * DB empty -> seeded by _load_from_db with env value or a fresh secret.
+          * DB has rows but predates this key -> missing -> generate + persist.
+          * Key present but blank -> regenerate (shouldn't happen, defensive).
+        """
+        with self._lock:
+            current = self._config.get("repl_auth_secret", "") or ""
+        if current:
+            return
+        new_secret = _generate_repl_auth_secret()
+        with self._lock:
+            self._config["repl_auth_secret"] = new_secret
+        await self._save_db_settings({"repl_auth_secret": new_secret})
+        print("[ConfigManager] generated preset REPL_AUTH_SECRET")
 
     # ── Properties ──
 
@@ -397,6 +426,16 @@ class ConfigManager:
             return int(self._config.get("mcp_file_keep_minutes", 60))
 
     @property
+    def repl_auth_secret(self) -> str:
+        """REPL MCP identity HMAC secret (runtime value, source of truth).
+
+        Auto-generated on first boot and persisted to DB, so per-user UID
+        isolation is enabled out of the box without manual .env setup.
+        """
+        with self._lock:
+            return self._config.get("repl_auth_secret", "") or ""
+
+    @property
     def system_prompt(self) -> str:
         """Effective system prompt, selected by prompt_language:
         'en' -> llm_system_prompt_en, otherwise -> llm_system_prompt (Chinese default)."""
@@ -420,6 +459,9 @@ class ConfigManager:
             c = dict(self._config)
             c["llm_api_key"] = _mask(c.get("llm_api_key", ""))
             c["embedding_api_key"] = _mask(c.get("embedding_api_key", ""))
+            # Mask the REPL auth secret in the general config payload; the
+            # dedicated /api/config/repl-auth endpoint returns the real value.
+            c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
             c.setdefault("agent_max_tokens", self._config.get("agent_max_tokens", 8192))
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
             c["api_key_source"] = "env" if self._key_from_env else "stored"
@@ -436,6 +478,7 @@ class ConfigManager:
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "mcp_file_keep_minutes",
+            "repl_auth_secret",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 

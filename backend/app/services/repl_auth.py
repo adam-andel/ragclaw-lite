@@ -21,7 +21,7 @@ import hashlib
 import hmac
 import time
 
-from app.config import settings
+from app.services.config_manager import config_manager
 
 # Tools executed inside the REPL sandbox that require the identity envelope.
 REPL_AUTH_TOOLS = frozenset({"run_python", "run_shell", "run_javascript"})
@@ -34,10 +34,12 @@ def build_auth_envelope(user_id: str) -> dict | None:
       * no ``repl_auth_secret`` is configured (single-account fallback), or
       * ``user_id`` is empty/unresolvable (caller must surface the error).
 
-    The returned dict matches exactly what
-    ``mcp/repl_mcp_server.py::_verify_auth`` expects.
+    The secret is read from ``config_manager`` (the runtime DB value, which is
+    auto-generated on first boot and editable in the system settings UI), not
+    from the static env — so the Backend and the MCP server stay in sync after
+    an admin rotates the secret in the UI.
     """
-    secret = settings.repl_auth_secret
+    secret = config_manager.repl_auth_secret
     if not secret:
         return None
 

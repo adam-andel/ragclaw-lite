@@ -1,5 +1,6 @@
 """LLM configuration management routes (admin only)."""
 
+import asyncio
 import json
 import logging
 
@@ -237,4 +238,92 @@ async def _push_mcp_keep_minutes() -> bool:
                 logger.warning("push keep_minutes to %s -> HTTP %d", url, resp.status_code)
         except Exception as e:
             logger.warning("push keep_minutes to %s failed: %s", url, e)
+    return False
+
+
+# ═══════════════════════════════════════════════════════════
+# REPL MCP identity secret (HMAC) — hot-reloadable
+# ═══════════════════════════════════════════════════════════
+
+class ReplAuthUpdate(BaseModel):
+    repl_auth_secret: str | None = None  # explicit secret; empty/None => leave unchanged
+
+
+@router.get("/repl-auth")
+async def get_repl_auth(current_user=Depends(get_current_admin)):
+    """Read the current REPL MCP identity secret (admin only, unmasked)."""
+    return {"repl_auth_secret": config_manager.repl_auth_secret}
+
+
+@router.put("/repl-auth")
+async def update_repl_auth(
+    data: ReplAuthUpdate,
+    current_user=Depends(get_current_admin),
+):
+    """Set the REPL MCP identity secret explicitly; hot-reloaded into MCP (no restart)."""
+    secret = (data.repl_auth_secret or "").strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 不能为空")
+    if len(secret) < 16:
+        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 至少 16 个字符")
+    await config_manager.update({"repl_auth_secret": secret})
+    mcp_pushed = await _push_mcp_auth_secret(secret)
+    return {
+        "message": "REPL_AUTH_SECRET 已更新，立即生效"
+        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        "repl_auth_secret": config_manager.repl_auth_secret,
+        "mcp_pushed": mcp_pushed,
+    }
+
+
+@router.post("/repl-auth/regenerate")
+async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
+    """Generate a new random REPL MCP identity secret; hot-reloaded into MCP (no restart)."""
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    await config_manager.update({"repl_auth_secret": new_secret})
+    mcp_pushed = await _push_mcp_auth_secret(new_secret)
+    return {
+        "message": "已生成新的 REPL_AUTH_SECRET，立即生效"
+        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        "repl_auth_secret": config_manager.repl_auth_secret,
+        "mcp_pushed": mcp_pushed,
+    }
+
+
+async def _push_mcp_auth_secret(secret: str) -> bool:
+    """Best-effort: hot-reload the REPL identity secret into the MCP REPL container.
+
+    The MCP server exposes PUT /auth-secret on its internal Docker-network URL.
+    Falls back to localhost for local (non-Docker) deployments. The endpoint is
+    internal-only (no host port mapping), mirroring /policy and /keep-minutes.
+    """
+    payload = {"secret": secret}
+    urls = [settings.mcp_repl_internal_url, "http://127.0.0.1:9200"]
+    for url in urls:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.put(url.rstrip("/") + "/auth-secret", json=payload)
+                if resp.status_code == 200:
+                    logger.info("pushed auth-secret to %s ok", url)
+                    return True
+                logger.warning("push auth-secret to %s -> HTTP %d", url, resp.status_code)
+        except Exception as e:
+            logger.warning("push auth-secret to %s failed: %s", url, e)
+    return False
+
+
+async def ensure_mcp_auth_secret_pushed(retries: int = 6, interval: float = 2.0) -> bool:
+    """Startup helper: push the current secret to MCP, retrying because the
+    MCP container may not be up yet when the backend starts.
+
+    Returns True once a push succeeds.
+    """
+    secret = config_manager.repl_auth_secret
+    for attempt in range(1, retries + 1):
+        ok = await _push_mcp_auth_secret(secret)
+        if ok:
+            return True
+        if attempt < retries:
+            await asyncio.sleep(interval)
     return False
