@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     # --- REPL sandbox per-user isolation (shared HMAC secret with mcp/repl_mcp_server.py) ---
     # When set, every run_python/run_shell/run_javascript call is signed with the
     # authenticated user id so the sandbox can drop privileges to a per-user UID.
-    # Leave empty to run the sandbox in single-account fallback mode.
+    # Auth + isolation are mandatory; ConfigManager auto-generates this on first
+    # boot when empty, so it is never blank in practice.
     repl_auth_secret: str = ""
     repl_auth_exp_seconds: int = 0  # 0 = envelope never expires
 

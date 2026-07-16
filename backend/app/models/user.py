@@ -35,7 +35,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Per-user dedicated Linux UID for the REPL sandbox isolation account.
-    # Randomly assigned at creation, stored with a unique constraint (NULL
-    # allowed for legacy users that still rely on the sandbox's deterministic
-    # hash fallback). Expanding the UID range never touches existing rows.
+    # Randomly assigned at creation, stored with a unique constraint. Every user
+    # gets one, so the sandbox always has an exact UID to drop privileges to.
+    # Expanding the UID range never touches existing rows.
     repl_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True, index=True)

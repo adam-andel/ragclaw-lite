@@ -21,18 +21,24 @@ async def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | No
 
     Only run_python/run_shell/run_javascript receive the envelope, and only
     when a trusted ``auth_user`` is supplied. For all other tool/caller
-    combinations the arguments are returned unchanged. If signing fails
-    (e.g. no secret configured, or unattributed user), the arguments are
-    returned as-is so the sandbox can apply its own fail-closed policy.
+    combinations the arguments are returned unchanged. If the envelope cannot
+    be built (e.g. unattributed user, missing UID, or the shared secret is
+    unavailable), the arguments are returned as-is so the sandbox rejects the
+    call — auth + per-user isolation are mandatory, there is no single-account
+    fallback.
 
-    The user's dedicated sandbox UID (if any) is resolved from the DB and
-    signed into the envelope, so the sandbox can drop privileges to the exact
-    UID without a database lookup of its own.
+    The user's dedicated sandbox UID is resolved from the DB and signed into the
+    envelope, so the sandbox can drop privileges to the exact UID without a
+    database lookup of its own.
     """
     if not auth_user or tool_name not in REPL_AUTH_TOOLS:
         return arguments
     repl_uid = await get_user_repl_uid(auth_user)
-    envelope = build_auth_envelope(auth_user, repl_uid)
+    try:
+        envelope = build_auth_envelope(auth_user, repl_uid)
+    except Exception as e:
+        logger.warning("repl_auth_envelope_failed user=%s reason=%s", auth_user, e)
+        return arguments
     if envelope is None:
         return arguments
     return {**arguments, "auth": envelope}

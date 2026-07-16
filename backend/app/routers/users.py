@@ -26,12 +26,10 @@ async def _delete_repl_user_dir(repl_uid: int) -> None:
 
     Best-effort-strict: called BEFORE the caller releases the UID so the UID
     cannot be reused while stale files linger (cleanup-before-reuse guarantee).
-    Raises on failure so the caller can block the deletion. No-op when the
-    sandbox runs in single-account mode (no secret => nothing per-user to drop).
+    Raises on failure so the caller can block the deletion. Auth + per-user
+    isolation are always on, so the sandbox directory is always cleaned up.
     """
     secret = config_manager.repl_auth_secret
-    if not secret:
-        return
     url = f"{settings.mcp_repl_internal_url.rstrip('/')}/user/{int(repl_uid)}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.delete(url, headers={"X-Repl-Auth": secret})
@@ -200,8 +198,8 @@ async def delete_user(
     # Capture the UID BEFORE releasing it. Delete the user's sandbox base
     # directory first (cleanup-before-reuse): if the sandbox is unreachable the
     # deletion is blocked so the UID cannot be reassigned to a new user while
-    # stale files linger. Legacy users without a stored UID have no dedicated
-    # directory, so there is nothing to clean up.
+    # stale files linger. Every user has a dedicated UID, so there is always a
+    # directory to clean up.
     repl_uid = user.repl_uid
     if repl_uid is not None:
         try:
