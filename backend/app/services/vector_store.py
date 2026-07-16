@@ -5,6 +5,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from app.config import settings
+from app.services.config_manager import config_manager
 from app.services.embedder import embedder_service
 
 
@@ -67,6 +68,30 @@ class VectorStore:
             metadata={"hnsw:space": "cosine"},
         )
 
+    def stored_embed_info(self) -> "tuple[str | None, str | None]":
+        """Return the (embed_model, embed_backend) stamped on existing vectors.
+
+        Reads the metadata of the first stored vector across all collections.
+        Returns (None, None) when there are no vectors or the stamp is absent
+        (legacy data prior to the stamp being introduced).
+        """
+        try:
+            client = self._ensure_client()
+            for col in client.list_collections():
+                try:
+                    if col.count() == 0:
+                        continue
+                    peek = col.peek(limit=1)
+                    metas = peek.get("metadatas") or []
+                    if metas and isinstance(metas[0], dict):
+                        m = metas[0]
+                        return m.get("embed_model"), m.get("embed_backend")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return (None, None)
+
     def add_chunks(self, kb_id: str, chunks: list[dict]):
         """Add chunks with fresh embedding computation."""
         if not chunks:
@@ -83,6 +108,8 @@ class VectorStore:
                 "doc_id": c.get("doc_id", ""), "chunk_index": c.get("chunk_index", 0),
                 "heading": c.get("heading", ""), "page": c.get("page") or 0,
                 "token_count": c.get("token_count", 0), "filename": c.get("filename", ""),
+                "embed_model": config_manager.embedding_model,
+                "embed_backend": embedder_service.BACKEND,
             } for c in chunks]
             try:
                 collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
@@ -106,6 +133,8 @@ class VectorStore:
                 "doc_id": c.get("doc_id", ""), "chunk_index": c.get("chunk_index", 0),
                 "heading": c.get("heading", ""), "page": c.get("page") or 0,
                 "token_count": c.get("token_count", 0), "filename": c.get("filename", ""),
+                "embed_model": config_manager.embedding_model,
+                "embed_backend": embedder_service.BACKEND,
             } for c in chunks]
             try:
                 collection.add(ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)

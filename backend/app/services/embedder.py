@@ -34,6 +34,11 @@ def _normalize_query(text: str) -> str:
 class EmbedderService:
     """Lazy-loading wrapper for the BGE embedding model."""
 
+    # Backend identifier stamped onto every stored vector so a future
+    # model/backend switch can detect incompatibility (e.g. torch vs onnx)
+    # even when the embedding dimension is unchanged.
+    BACKEND = "torch"
+
     def __init__(self):
         self._model: SentenceTransformer | None = None
 
