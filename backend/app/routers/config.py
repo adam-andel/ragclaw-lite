@@ -327,3 +327,19 @@ async def ensure_mcp_auth_secret_pushed(retries: int = 6, interval: float = 2.0)
         if attempt < retries:
             await asyncio.sleep(interval)
     return False
+
+
+async def ensure_mcp_keep_minutes_pushed(retries: int = 6, interval: float = 2.0) -> bool:
+    """Startup helper: push the current file-retention to MCP, retrying because
+    the MCP container may not be up yet when the backend starts.
+
+    0 means "keep forever" (no auto-cleanup) and is pushed as-is. Returns True
+    once a push succeeds.
+    """
+    for attempt in range(1, retries + 1):
+        ok = await _push_mcp_keep_minutes()
+        if ok:
+            return True
+        if attempt < retries:
+            await asyncio.sleep(interval)
+    return False

@@ -52,7 +52,7 @@ DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_MEMORY_MB = 512
 DEFAULT_MAX_NPROC = 64
 DEFAULT_MAX_CONCURRENT = 4
-DEFAULT_KEEP_MINUTES = 60
+DEFAULT_KEEP_MINUTES = 0  # 0 = keep generated files forever (no auto-cleanup)
 _CLEANUP_EVERY = 300
 
 _allow_dir: str | None = None
@@ -358,9 +358,13 @@ def _load_policy_file() -> None:
 
 
 def _set_keep_minutes(mins: int) -> None:
-    """Apply a new file-retention duration at runtime (hot-reload, no restart)."""
+    """Apply a new file-retention duration at runtime (hot-reload, no restart).
+
+    0 means "keep forever" (cleanup disabled); any positive value is the retention
+    window in minutes. Negative values are rejected by the caller.
+    """
     global _keep_minutes
-    _keep_minutes = max(1, int(mins))
+    _keep_minutes = 0 if mins == 0 else max(1, int(mins))
     try:
         with open(_keep_file, "w", encoding="utf-8") as f:
             json.dump({"keep_minutes": _keep_minutes}, f)
@@ -375,7 +379,8 @@ def _load_keep_file() -> None:
         if os.path.exists(_keep_file):
             with open(_keep_file, "r", encoding="utf-8") as f:
                 d = json.load(f)
-            _keep_minutes = max(1, int(d.get("keep_minutes", _keep_minutes)))
+            km = int(d.get("keep_minutes", _keep_minutes))
+            _keep_minutes = km if km >= 0 else 1  # 0 = keep forever; negatives clamp to 1
             logger.info("keep_minutes_loaded_from_file mins=%d", _keep_minutes)
     except Exception as e:
         logger.warning("keep_minutes_load_failed %s", e)
@@ -1229,10 +1234,13 @@ class MCPHandler(BaseHTTPRequestHandler):
         self._json_response(200, {"status": "ok", "policy": _build_policy()})
 
     def _handle_keep_update(self, body: dict):
-        """Hot-reload file-retention duration (called by backend /api/config/sandbox-network)."""
+        """Hot-reload file-retention duration (called by backend /api/config/sandbox-network).
+
+        0 = keep forever (cleanup disabled); positive int = retention minutes.
+        """
         mins = body.get("keep_minutes")
-        if not isinstance(mins, int) or mins < 1:
-            self._json_response(400, {"error": "keep_minutes must be a positive integer (minutes)"})
+        if not isinstance(mins, int) or mins < 0:
+            self._json_response(400, {"error": "keep_minutes must be a non-negative integer (0 = keep forever, else minutes)"})
             return
         _set_keep_minutes(mins)
         logger.info("keep_minutes_updated mins=%d", _keep_minutes)
@@ -1409,7 +1417,9 @@ if __name__ == "__main__":
     def _cleanup_loop():
         while not _shutdown_event.is_set():
             _shutdown_event.wait(_CLEANUP_EVERY)
-            if not _allow_dir:
+            # Retention 0 means "keep forever" — skip cleanup entirely so generated
+            # files are retained indefinitely (account dirs and their children stay).
+            if not _allow_dir or _keep_minutes <= 0:
                 continue
             cutoff = time.time() - (_keep_minutes * 60)
             try:

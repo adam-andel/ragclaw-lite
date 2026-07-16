@@ -71,8 +71,10 @@ const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
-// Generated-file retention presets (minutes). "custom" reveals a minutes input.
+// Generated-file retention presets (minutes). 0 = keep forever (no auto-cleanup).
+// "custom" reveals a minutes input. Unlimited is the default (first option).
 const keepOptions = computed(() => [
+  { label: t('settings.keepUnlimited'), value: 0 },
   { label: t('settings.keep1h'), value: 60 },
   { label: t('settings.keep1d'), value: 1440 },
   { label: t('settings.keep1w'), value: 10080 },
@@ -84,10 +86,10 @@ const sandboxConfig = ref<SandboxNetworkConfig>({
   sandbox_network_mode: 'deny',
   sandbox_allow_domains: '',
   sandbox_allow_methods: '',
-  mcp_file_keep_minutes: keepOptions.value[1].value as number,
+  mcp_file_keep_minutes: keepOptions.value[0].value as number,
 })
 
-const keepPreset = ref<string | number>(60)
+const keepPreset = ref<string | number>(0)
 const keepCustomMinutes = ref<number>(60)
 
 // ── REPL MCP identity secret ──
@@ -98,6 +100,7 @@ const replAuthDirty = ref(false)
 const replAuthPushed = ref<boolean | null>(null)
 
 function formatKeep(min: number): string {
+  if (min === 0) return t('settings.keepUnlimited')
   if (!min) return t('settings.keepUnset')
   if (min % 43200 === 0) return t('settings.keepMonths', { n: min / 43200 })
   if (min % 10080 === 0) return t('settings.keepWeeks', { n: min / 10080 })
@@ -360,7 +363,7 @@ onMounted(async () => {
 
   try {
     sandboxConfig.value = await getSandboxNetwork()
-    const v = sandboxConfig.value.mcp_file_keep_minutes ?? 60
+    const v = sandboxConfig.value.mcp_file_keep_minutes ?? 0
     const preset = keepOptions.value.find((o) => o.value !== 'custom' && o.value === v)
     keepPreset.value = preset ? v : 'custom'
     keepCustomMinutes.value = v

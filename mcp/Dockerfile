@@ -50,7 +50,7 @@ ENTRYPOINT ["./entrypoint.sh"]
 CMD ["--port", "9200", \
      "--allow-dir", "/app/workspace", \
      "--no-network", \
-     "--keep-minutes", "120", \
+     "--keep-minutes", "0", \
      "--max-memory-mb", "512", \
      "--max-nproc", "64", \
      "--max-concurrent", "4", \

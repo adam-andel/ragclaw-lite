@@ -106,6 +106,7 @@ export default {
   keep1w: '1 周',
   keep1m: '1 个月',
   keepCustom: '自定义',
+  keepUnlimited: '不限时长',
   keepUnset: '未设置',
   keepMonths: '{n} 个月',
   keepWeeks: '{n} 周',

@@ -106,6 +106,7 @@ export default {
   keep1w: '1 week',
   keep1m: '1 month',
   keepCustom: 'Custom',
+  keepUnlimited: 'Unlimited',
   keepUnset: 'Not set',
   keepMonths: '{n} months',
   keepWeeks: '{n} weeks',
