@@ -284,6 +284,7 @@ async def execute_script_tool(
     arguments: dict,
     repl_server_config: dict,
     workspace_id: str | None = None,
+    user_id: str | None = None,
 ) -> ToolResult:
     """Execute a script tool via python_repl_mcp_server sandbox.
 
@@ -311,7 +312,8 @@ async def execute_script_tool(
         if workspace_id:
             call_args["workspace_id"] = workspace_id
         result = await mcp_client.call_tool(
-            repl_server_config, "run_python", call_args
+            repl_server_config, "run_python", call_args,
+            auth_user=user_id,
         )
 
         if result.ok:

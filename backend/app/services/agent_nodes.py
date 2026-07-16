@@ -1042,20 +1042,26 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     Generates download URLs pointing to ERAG's own /api/download/{uuid}/ proxy
     endpoint, so the user only needs access to ERAG — the MCP server stays
     fully internal with no host port exposure.
+
+    ``uuid_dir`` is the full relative path under the sandbox's allow-dir, which
+    may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
     """
-    m = _re.search(r'\[workspace:\s*([a-f0-9]{8})/\]', result)
+    m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
     if not m:
         return result
-    uuid_dir = m.group(1)
+    uuid_dir = m.group(1).strip("/")
+    if not uuid_dir:
+        return result
 
     from app.config import settings
     public_base = settings.public_url.rstrip("/") if settings.public_url else ""
     proxy_prefix = f"{public_base}/api/download/{uuid_dir}" if public_base else f"/api/download/{uuid_dir}"
 
     if "[File]" in result:
-        # MCP server included [File] tags with its own URL — rewrite to ERAG proxy
+        # MCP server included [File] tags with its own URL — rewrite to ERAG proxy.
+        # uuid_dir may contain "/" (nested per-user path), so escape it.
         result = _re.sub(
-            r'(?<=\[File\] )\S+/files/' + uuid_dir + r'/(\S+)',
+            r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',
             f'{proxy_prefix}/\\1',
             result
         )
@@ -1135,6 +1141,7 @@ async def tool_executor_node(state: dict) -> dict:
             result = await execute_script_tool(
                 folder_name, script_path, func_name, args, repl_config,
                 workspace_id=state.get("workspace_id"),
+                user_id=state.get("user_id"),
             )
             if result.ok:
                 return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
@@ -1185,7 +1192,7 @@ async def tool_executor_node(state: dict) -> dict:
             ws_id = state.get("workspace_id")
             if ws_id:
                 call_args["workspace_id"] = ws_id
-            res = await _mc.call_tool(cfg, tname, call_args)
+            res = await _mc.call_tool(cfg, tname, call_args, auth_user=state.get("user_id"))
             logger.warning(">>> tool_executor RESULT: tool=%s ok=%s result=%.200s <<<",
                           tname, res.ok, (res.result or res.error)[:200])
             if res.ok:

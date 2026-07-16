@@ -11,7 +11,26 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from app.services.repl_auth import build_auth_envelope, REPL_AUTH_TOOLS
+
 logger = logging.getLogger("erag.mcp")
+
+
+def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) -> dict:
+    """Inject the signed identity envelope for REPL-sandbox tools.
+
+    Only run_python/run_shell/run_javascript receive the envelope, and only
+    when a trusted ``auth_user`` is supplied. For all other tool/caller
+    combinations the arguments are returned unchanged. If signing fails
+    (e.g. no secret configured, or unattributed user), the arguments are
+    returned as-is so the sandbox can apply its own fail-closed policy.
+    """
+    if not auth_user or tool_name not in REPL_AUTH_TOOLS:
+        return arguments
+    envelope = build_auth_envelope(auth_user)
+    if envelope is None:
+        return arguments
+    return {**arguments, "auth": envelope}
 
 
 @dataclass
@@ -74,7 +93,8 @@ class MCPClient:
             return []
 
     async def call_tool(
-        self, server_config: dict, tool_name: str, arguments: dict
+        self, server_config: dict, tool_name: str, arguments: dict,
+        auth_user: str | None = None,
     ) -> ToolResult:
         """Execute a tool on an MCP server.
 
@@ -82,6 +102,11 @@ class MCPClient:
             server_config: Same format as list_tools
             tool_name: Name of the tool to call
             arguments: Tool arguments as dict
+            auth_user: Authenticated user id. When set and the tool runs inside
+                the REPL sandbox (run_python/run_shell/run_javascript), a signed
+                identity envelope is injected so the sandbox can attribute the
+                execution to a per-user Linux account. Leave None for tools that
+                do not need (or support) user attribution.
 
         Returns:
             ToolResult with ok, result, error
@@ -91,9 +116,9 @@ class MCPClient:
 
         try:
             if transport == "http":
-                return await self._call_tool_http(server_config, tool_name, arguments, timeout)
+                return await self._call_tool_http(server_config, tool_name, arguments, timeout, auth_user)
             elif transport == "stdio":
-                return await self._call_tool_stdio(server_config, tool_name, arguments, timeout)
+                return await self._call_tool_stdio(server_config, tool_name, arguments, timeout, auth_user)
             else:
                 return ToolResult(tool_name=tool_name, ok=False, error=f"Unknown transport: {transport}")
         except asyncio.TimeoutError:
@@ -133,12 +158,14 @@ class MCPClient:
             return []
 
     async def _call_tool_http(
-        self, config: dict, tool_name: str, arguments: dict, timeout: int
+        self, config: dict, tool_name: str, arguments: dict, timeout: int,
+        auth_user: str | None = None,
     ) -> ToolResult:
         endpoint = config.get("endpoint", "")
         if not endpoint:
             return ToolResult(tool_name=tool_name, ok=False, error="No endpoint configured")
 
+        arguments = _attach_repl_auth(arguments, tool_name, auth_user)
         resp = await self._http_post(endpoint, "tools/call", {
             "name": tool_name,
             "arguments": arguments,
@@ -180,12 +207,14 @@ class MCPClient:
         return await self._stdio_rpc(proc, "tools/list", {}, timeout)
 
     async def _call_tool_stdio(
-        self, config: dict, tool_name: str, arguments: dict, timeout: int
+        self, config: dict, tool_name: str, arguments: dict, timeout: int,
+        auth_user: str | None = None,
     ) -> ToolResult:
         proc = await self._ensure_stdio_process(config)
         if proc is None:
             return ToolResult(tool_name=tool_name, ok=False, error="Failed to start stdio process")
 
+        arguments = _attach_repl_auth(arguments, tool_name, auth_user)
         try:
             tools = await self._stdio_rpc(proc, "tools/call", {
                 "name": tool_name, "arguments": arguments

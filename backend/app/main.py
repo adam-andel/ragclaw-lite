@@ -237,22 +237,36 @@ async def health_check():
 
 
 # --- Download proxy: relay MCP-generated files through ERAG ---
-@app.get("/api/download/{uuid}/{filename}")
-async def download_mcp_file(uuid: str, filename: str):
+@app.get("/api/download/{file_path:path}")
+async def download_mcp_file(file_path: str):
     """Proxy file download from MCP REPL server.
 
     Fetches the file from the MCP server's internal /files/ endpoint and
     returns it to the client. This keeps the MCP server isolated — no
     host port mapping needed, and no localhost-dependent URLs.
+
+    The ``file_path`` carries the nested allow-dir-relative path, which may
+    include a per-user prefix (e.g. ``user_u2001/<ws>/<file>``) when sandbox
+    isolation is active. Slashes are preserved; path traversal is blocked.
     """
     from fastapi import HTTPException
     from fastapi.responses import Response
     import httpx
     import mimetypes
+    import posixpath
 
-    # Sanitize inputs to prevent path traversal
-    safe_uuid = uuid.replace("/", "").replace("\\", "").replace("..", "")
-    safe_filename = filename.replace("..", "").replace("/", "").replace("\\", "")
+    # Reconstruct the nested allow-dir-relative path and block traversal.
+    # Slashes inside file_path are kept so per-user isolation paths survive.
+    norm = posixpath.normpath(file_path.replace("\\", "/").strip("/"))
+    if not norm or ".." in norm.split("/"):
+        raise HTTPException(400, detail="Invalid download path")
+    parts = norm.split("/")
+    if len(parts) < 2:
+        raise HTTPException(400, detail="Invalid download path")
+    safe_uuid = "/".join(parts[:-1])
+    safe_filename = parts[-1]
+    if not safe_filename or "/" in safe_filename or ".." in safe_filename:
+        raise HTTPException(400, detail="Invalid filename")
 
     mcp_base = settings.mcp_repl_internal_url.rstrip("/")
     mcp_url = f"{mcp_base}/files/{safe_uuid}/{safe_filename}"

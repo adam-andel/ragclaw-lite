@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     public_url: str = ""  # External URL for download links; empty = use relative URLs
     mcp_repl_internal_url: str = "http://mcp-repl:9200"  # Docker internal network URL for MCP REPL
 
+    # --- REPL sandbox per-user isolation (shared HMAC secret with mcp/repl_mcp_server.py) ---
+    # When set, every run_python/run_shell/run_javascript call is signed with the
+    # authenticated user id so the sandbox can drop privileges to a per-user UID.
+    # Leave empty to run the sandbox in single-account fallback mode.
+    repl_auth_secret: str = ""
+    repl_auth_exp_seconds: int = 0  # 0 = envelope never expires
+
     # --- Conversation ---
     conversation_max_history: int = 10
 

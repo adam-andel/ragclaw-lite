@@ -13,6 +13,9 @@ services:
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
       - PUBLIC_URL=${PUBLIC_URL:-}
+      # Shared HMAC secret for signing REPL sandbox user identity. MUST match
+      # the value supplied to the mcp-repl service (same ${REPL_AUTH_SECRET}).
+      - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
     restart: unless-stopped
     networks:
       - erag
@@ -24,12 +27,23 @@ services:
       dockerfile: Dockerfile
     container_name: erag-mcp-repl
     # No host port mapping — MCP is internal-only, accessed via Docker network.
-    # File downloads go through ERAG's /api/download/{uuid}/{filename} proxy.
+    # File downloads go through ERAG's /api/download/{file_path} proxy, where
+    # file_path may be nested (user_u<uid>/<ws>/<file>) under per-user isolation.
+    # Run as root so the server can chown workdirs to per-user UIDs and
+    # traverse/cleanup their 700 dirs; children are dropped to unprivileged
+    # pool UIDs via setuid (root-parent + unprivileged-children model).
+    user: "0"
     environment:
       - REPL_PUBLIC_URL=http://mcp-repl:9200
       # ── Egress broker (approach B) ──
       - REPL_EGRESS_PORT=1080        # loopback proxy port children are forced through
       - REPL_EGRESS_DNS=1            # built-in allowlist-aware DNS service on :53
+      # ── Per-user UID isolation (Backend-signed identity) ──
+      # Operator MUST set a strong shared secret (same as Backend). Unset => single
+      # account mode (no per-user isolation).
+      - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
+      - REPL_UID_POOL_BASE=${REPL_UID_POOL_BASE:-2000}
+      - REPL_UID_POOL_SIZE=${REPL_UID_POOL_SIZE:-100}
     # ── Container security hardening ──
     read_only: true
     tmpfs:
@@ -40,11 +54,14 @@ services:
       - seccomp:./mcp/seccomp.json
     cap_drop:
       - ALL
-    # NET_BIND_SERVICE is the only cap added back — required to bind :53 for
-    # the DNS service. Without it the proxy logs a warning and still serves
-    # HTTP/CONNECT (weak DNS takeover). Far below full caps.
+    # Caps required for per-user isolation: SETUID/SETGID to drop children to
+    # pool UIDs, CHOWN to own workdirs to those UIDs. NET_BIND_SERVICE stays for
+    # the DNS broker on :53. With cap_drop:ALL the container holds ONLY these.
     cap_add:
       - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+      - CHOWN
     # ── Resource limits ──
     deploy:
       resources:

@@ -22,6 +22,8 @@ import logging
 import threading
 import re
 import ast as _ast_module
+import hmac as _hmac_module
+import hashlib as _hashlib_module
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from argparse import ArgumentParser
@@ -76,6 +78,14 @@ _enable_shell_local: bool = False
 _enable_javascript: bool = False
 _shutdown_event = threading.Event()
 _exec_semaphore = threading.BoundedSemaphore(DEFAULT_MAX_CONCURRENT)
+
+# ── Auth (Backend session injection + HMAC signature) ──
+_REPL_AUTH_SECRET: str | None = None   # shared HMAC secret with Backend; None => auth disabled
+_auth_required: bool = False           # reject calls without a valid signature
+_isolation_enabled: bool = False       # per-user UID isolation (tied to auth)
+_uid_pool_base: int = 2000             # first UID of the numeric pool
+_uid_pool_size: int = 100              # pool size (modulo space)
+_account_cache: dict = {}              # user id -> account dict
 
 # ═══════════════════════════════════════════════════════════
 # OS resource limits (shared across languages)
@@ -133,14 +143,28 @@ def _acquire_slot(timeout: int = 5) -> bool:
     return _exec_semaphore.acquire(timeout=timeout)
 
 
-def _make_workdir(workspace_id: str | None = None) -> str:
-    """Create a workdir inside --allow-dir (or tempdir if not set).
+def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
+    """Create a workdir.
 
-    If ``workspace_id`` is provided and safe, reuse a *stable* directory so that
-    multiple tool calls within the same conversation share files (e.g. generate
-    a PPT in one call, then read/beautify it in another). Otherwise a fresh
-    per-call UUID directory is created (original behaviour).
+    When isolated (acct set): workdir lives under _allow_dir/user_<name>/,
+    owned by that account with mode 700, so one user's code can neither be
+    read by nor read others' directories (each account dir is 700).
+
+    Otherwise original behaviour: a per-call UUID dir (or stable workspace_id
+    dir) directly under _allow_dir / tempdir.
     """
+    if acct is not None and _allow_dir:
+        base = os.path.join(_allow_dir, "user_" + acct["name"])
+        _ensure_dir_owned(base, acct, 0o700)
+        if workspace_id and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
+            workdir = os.path.join(base, workspace_id)
+            _ensure_dir_owned(workdir, acct, 0o700)
+            return workdir
+        call_uuid = str(uuid.uuid4())[:8]
+        workdir = os.path.join(base, call_uuid)
+        _ensure_dir_owned(workdir, acct, 0o700)
+        return workdir
+
     if _allow_dir and workspace_id:
         # Sanitize: only safe chars, capped length, prevent traversal.
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
@@ -158,6 +182,94 @@ def _make_workdir(workspace_id: str | None = None) -> str:
 def _subprocess_flags() -> int:
     """Cross-platform process-creation flags."""
     return subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+
+
+def _verify_auth(auth) -> str | None:
+    """Verify a Backend-signed identity envelope.
+
+    Envelope (sent by Backend inside tools/call arguments):
+        {"user": "<id>", "exp": <int>, "sig": "<hex>"}
+    sig = HMAC-SHA256(secret, f"{user}|{exp}")      (exp=0 means no expiry)
+
+    Returns the verified user id, or None when auth is disabled, or the
+    envelope is missing / malformed / expired / has a bad signature.
+    """
+    if _REPL_AUTH_SECRET is None:
+        return None
+    if not isinstance(auth, dict):
+        return None
+    user = auth.get("user")
+    sig = auth.get("sig")
+    if not isinstance(user, str) or not user:
+        return None
+    if not isinstance(sig, str) or not sig:
+        return None
+    try:
+        exp = int(auth.get("exp", 0))
+    except (TypeError, ValueError):
+        return None
+    if exp and time.time() > exp:
+        return None
+    msg = f"{user}|{exp}".encode("utf-8")
+    expected = _hmac_module.new(_REPL_AUTH_SECRET.encode("utf-8"), msg,
+                                 _hashlib_module.sha256).hexdigest()
+    if not _hmac_module.compare_digest(expected, sig):
+        return None
+    return user
+
+
+def _resolve_user_account(user):
+    """Map a verified user id to a numeric pool account (deterministic).
+
+    user -> sha256 -> idx = hash % pool_size -> uid = base + idx.
+    We use RAW numeric UIDs (no /etc/passwd entries) so this works on a
+    read-only rootfs. Returns a dict {uid, gid, name} or None.
+    """
+    if not _isolation_enabled or not user:
+        return None
+    cached = _account_cache.get(user)
+    if cached is not None:
+        return cached
+    h = int(_hashlib_module.sha256(user.encode("utf-8")).hexdigest(), 16)
+    idx = h % _uid_pool_size
+    uid = _uid_pool_base + idx
+    acct = {"uid": uid, "gid": uid, "name": f"u{uid}"}
+    _account_cache[user] = acct
+    return acct
+
+
+def _ensure_dir_owned(path: str, acct, mode: int = 0o700) -> None:
+    """Create dir (idempotent) and chown/chmod to the target account when isolated."""
+    os.makedirs(path, exist_ok=True)
+    if acct is not None and os.name != 'nt':
+        try:
+            os.chown(path, acct["uid"], acct["gid"])
+        except OSError:
+            pass
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def _build_preexec(acct):
+    """preexec_fn: apply rlimits, then drop to the target account's UID/GID.
+
+    If dropping privileges fails we _exit(1) so the child never runs as root.
+    """
+    if acct is None or os.name == 'nt':
+        return _set_limits if os.name != 'nt' else None
+
+    def _fn():
+        _set_limits()
+        try:
+            os.setgid(acct["gid"])
+            os.setgroups([])
+            os.setuid(acct["uid"])
+        except OSError:
+            os._exit(1)
+
+    return _fn
 
 
 # ═══════════════════════════════════════════════════════════
@@ -380,23 +492,32 @@ def _py_ast_prescreen(code: str) -> str | None:
     return None
 
 
-def _run_python(code: str, workdir: str, timeout: int) -> str:
+def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
     """Execute Python code in isolated subprocess (preserved from original)."""
     guard = _py_build_guard(workdir)
     full_code = guard + "\n" + code if guard else code
 
-    fd, temp_script = tempfile.mkstemp(suffix=".py", text=True)
+    # Write the script INSIDE workdir (owned by the target account) so the
+    # dropped-privilege child can read it (a root-owned /tmp script would be 0600).
+    script_path = os.path.join(workdir, f".repl_{uuid.uuid4().hex[:8]}.py")
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(full_code)
+        try:
+            os.chmod(script_path, 0o644)
+        except OSError:
+            pass
 
         env = _sanitize_env()
+        if acct is not None:
+            env["HOME"] = workdir
+
         proc = subprocess.run(
-            [os.sys.executable, temp_script],
+            [os.sys.executable, script_path],
             capture_output=True, text=True, timeout=timeout,
             cwd=workdir, env=env,
             creationflags=_subprocess_flags(),
-            preexec_fn=_set_limits if os.name != 'nt' else None,
+            preexec_fn=_build_preexec(acct),
         )
 
         parts = [proc.stdout.strip()] if proc.stdout.strip() else []
@@ -407,7 +528,7 @@ def _run_python(code: str, workdir: str, timeout: int) -> str:
         return "\n".join(parts) or "(无输出)"
     finally:
         try:
-            os.unlink(temp_script)
+            os.unlink(script_path)
         except Exception:
             pass
 
@@ -495,7 +616,7 @@ def _sh_prescreen(code: str) -> str | None:
     return None
 
 
-def _run_shell(code: str, workdir: str, timeout: int) -> str:
+def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
     """Execute shell command in isolated subprocess."""
     # Force working directory first
     if os.name == 'nt':
@@ -505,13 +626,15 @@ def _run_shell(code: str, workdir: str, timeout: int) -> str:
         shell_cmd = ["/bin/sh", "-c", f"cd '{workdir}' && {code}"]
 
     env = _sanitize_env()
+    if acct is not None:
+        env["HOME"] = workdir
     try:
         proc = subprocess.run(
             shell_cmd,
             capture_output=True, text=True, timeout=timeout,
             cwd=workdir, env=env,
             creationflags=_subprocess_flags(),
-            preexec_fn=_set_limits if os.name != 'nt' else None,
+            preexec_fn=_build_preexec(acct),
         )
 
         parts = [proc.stdout.strip()] if proc.stdout.strip() else []
@@ -627,28 +750,35 @@ def _js_prescreen(code: str) -> str | None:
     return None
 
 
-def _run_javascript(code: str, workdir: str, timeout: int) -> str:
+def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
     """Execute JavaScript code via Node.js in isolated subprocess."""
     full_code = _JS_GUARD_PREAMBLE + "\n" + code
 
-    fd, temp_script = tempfile.mkstemp(suffix=".js", text=True)
+    # Write the script INSIDE workdir so the dropped-privilege child can read it.
+    script_path = os.path.join(workdir, f".repl_{uuid.uuid4().hex[:8]}.js")
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(full_code)
+        try:
+            os.chmod(script_path, 0o644)
+        except OSError:
+            pass
 
         env = _sanitize_env()
         env["REPL_ALLOW_DIR"] = workdir
         env["NODE_OPTIONS"] = "--no-warnings"
+        if acct is not None:
+            env["HOME"] = workdir
 
         # Find node executable
         node_exe = shutil.which("node") or "node"
 
         proc = subprocess.run(
-            [node_exe, temp_script],
+            [node_exe, script_path],
             capture_output=True, text=True, timeout=timeout,
             cwd=workdir, env=env,
             creationflags=_subprocess_flags(),
-            preexec_fn=_set_limits if os.name != 'nt' else None,
+            preexec_fn=_build_preexec(acct),
         )
 
         parts = [proc.stdout.strip()] if proc.stdout.strip() else []
@@ -659,7 +789,7 @@ def _run_javascript(code: str, workdir: str, timeout: int) -> str:
         return "\n".join(parts) or "(无输出)"
     finally:
         try:
-            os.unlink(temp_script)
+            os.unlink(script_path)
         except Exception:
             pass
 
@@ -669,19 +799,34 @@ def _run_javascript(code: str, workdir: str, timeout: int) -> str:
 # ═══════════════════════════════════════════════════════════
 
 def _make_workspace_note(workdir: str) -> str:
-    """Generate workspace identifier for output prefix."""
+    """Generate workspace identifier for output prefix.
+
+    Emits the full relative path under _allow_dir (e.g. `user_u2001/<ws>` when
+    per-user isolation is active, or just `<ws>` in single-account mode) so the
+    Backend can reconstruct the nested /files/... URL and proxy it correctly.
+    """
     if not _allow_dir:
         return ""
-    call_uuid = os.path.basename(workdir)
-    return f"[workspace: {call_uuid}/]\n"
+    try:
+        rel = os.path.relpath(workdir, _allow_dir)
+    except ValueError:
+        return ""
+    return f"[workspace: {rel}/]\n"
 
 
 def _append_download_links(result: str, workdir: str) -> str:
-    """Append File download URLs to result if public_url is configured."""
+    """Append File download URLs to result if public_url is configured.
+
+    Uses the full relative path under _allow_dir so nested per-user dirs
+    (user_uXXXX/<ws>/file) produce correct /files/... URLs.
+    """
     if not _public_url or not _allow_dir:
         return result
-    call_uuid = os.path.basename(workdir)
-    download_base = f"{_public_url}/files/{call_uuid}"
+    try:
+        rel = os.path.relpath(workdir, _allow_dir)
+    except ValueError:
+        return result
+    download_base = f"{_public_url}/files/{rel}"
     for f in sorted(os.listdir(workdir)):
         fpath = os.path.join(workdir, f)
         if os.path.isfile(fpath) and os.path.getsize(fpath) > 0:
@@ -696,7 +841,8 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     1. prescreening  2. concurrency gate  3. workspace creation
     4. execution  5. post-processing (workspace note + download links)
     """
-    def execute(code: str, timeout: int = DEFAULT_TIMEOUT, workspace_id: str | None = None) -> str:
+    def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
+                workspace_id: str | None = None, user: str | None = None) -> str:
         t0 = time.time()
 
         # Pre-screen
@@ -711,17 +857,22 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             logger.warning("exec_busy max_concurrent=%d lang=%s", _max_concurrent, lang)
             return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试"
 
+        # Resolve per-user account (deterministic numeric UID pool).
+        acct = None
+        if user and _isolation_enabled:
+            acct = _resolve_user_account(user)
+
         try:
-            workdir = _make_workdir(workspace_id)
-            result = run_fn(code, workdir, timeout)
-            ws_note = _make_workspace_note(workdir) if lang != "Python" else _make_workspace_note(workdir)
+            workdir = _make_workdir(workspace_id, acct)
+            result = run_fn(code, workdir, timeout, acct)
+            ws_note = _make_workspace_note(workdir)
             result = ws_note + result
             result = result[:MAX_OUTPUT]
             result = _append_download_links(result, workdir)
 
             elapsed_ms = int((time.time() - t0) * 1000)
-            logger.info("exec_ok lang=%s uuid=%s elapsed_ms=%d output_len=%d",
-                        lang, os.path.basename(workdir) if _allow_dir else "-",
+            logger.info("exec_ok lang=%s user=%s uuid=%s elapsed_ms=%d output_len=%d",
+                        lang, user or "-", os.path.basename(workdir) if _allow_dir else "-",
                         elapsed_ms, len(result))
             return result
         except subprocess.TimeoutExpired:
@@ -771,6 +922,17 @@ def _build_tools() -> list[dict]:
                     "description": "可选：固定 workspace 目录名（仅允许 [A-Za-z0-9_-]，≤64 字符）。"
                                    "同一 workspace_id 的多次调用共享同一工作目录，便于在一个对话内先生成文件再处理它。",
                 },
+                "auth": {
+                    "type": "object",
+                    "description": "身份信封（Backend 签名注入；未启用 --auth-secret 时忽略）。"
+                                   "结构: {user:str, exp:int(0=不过期), sig:hex}。"
+                                   "sig = HMAC-SHA256(secret, f'{user}|{exp}')。",
+                    "properties": {
+                        "user": {"type": "string"},
+                        "exp": {"type": "integer"},
+                        "sig": {"type": "string"},
+                    },
+                },
             },
             "required": ["code"],
         },
@@ -787,7 +949,18 @@ def _build_tools() -> list[dict]:
             ),
             "inputSchema": {
                 "type": "object",
-                "properties": {"code": {"type": "string", "description": "完整的 Shell 命令"}},
+                "properties": {
+                "code": {"type": "string", "description": "完整的 Shell 命令"},
+                "auth": {
+                    "type": "object",
+                    "description": "身份信封（Backend 签名注入）。结构见 run_python。",
+                    "properties": {
+                        "user": {"type": "string"},
+                        "exp": {"type": "integer"},
+                        "sig": {"type": "string"},
+                    },
+                },
+            },
                 "required": ["code"],
             },
         })
@@ -803,7 +976,18 @@ def _build_tools() -> list[dict]:
             ),
             "inputSchema": {
                 "type": "object",
-                "properties": {"code": {"type": "string", "description": "完整的 JavaScript 代码"}},
+                "properties": {
+                "code": {"type": "string", "description": "完整的 JavaScript 代码"},
+                "auth": {
+                    "type": "object",
+                    "description": "身份信封（Backend 签名注入）。结构见 run_python。",
+                    "properties": {
+                        "user": {"type": "string"},
+                        "exp": {"type": "integer"},
+                        "sig": {"type": "string"},
+                    },
+                },
+            },
                 "required": ["code"],
             },
         })
@@ -826,49 +1010,43 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.wfile.write(b'{"status":"ok"}')
             return
 
-        # File download: GET /files/{uuid}/{filename}
+        # File download: GET /files/<path-under-allow-dir>  (depth-agnostic;
+        # supports nested per-user dirs like user_u2005/<ws>/<file>)
         if self.path.startswith("/files/") and _allow_dir:
             rel = self.path[len("/files/"):].lstrip("/")
             if rel.endswith("/"):
                 rel = rel.rstrip("/")
-            parts = rel.split("/")
-            if len(parts) == 1:
-                uuid_dir = parts[0]
-                dirpath = os.path.join(_allow_dir, uuid_dir)
-                if os.path.isdir(dirpath) and os.path.commonpath(
-                    [os.path.realpath(dirpath), os.path.realpath(_allow_dir)]
-                ) == os.path.realpath(_allow_dir):
-                    try:
-                        files = [f for f in os.listdir(dirpath)
-                                if os.path.isfile(os.path.join(dirpath, f))]
+            parts = [p for p in rel.split("/") if p]
+            if parts:
+                target = os.path.realpath(os.path.join(_allow_dir, *parts))
+                root = os.path.realpath(_allow_dir)
+                if target == root or target.startswith(root + os.sep):
+                    if os.path.isdir(target):
+                        try:
+                            files = [f for f in os.listdir(target)
+                                    if os.path.isfile(os.path.join(target, f))]
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/json")
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "path": rel,
+                                "files": [{"name": f, "url": f"/files/{rel}/{f}"}
+                                         for f in sorted(files)]
+                            }, ensure_ascii=False).encode())
+                            return
+                        except Exception:
+                            pass
+                    elif os.path.isfile(target):
                         self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Type", "application/octet-stream")
+                        self.send_header("Content-Disposition",
+                                        f'attachment; filename="{os.path.basename(target)}"')
                         self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "uuid": uuid_dir,
-                            "files": [{"name": f, "url": f"/files/{uuid_dir}/{f}"}
-                                     for f in sorted(files)]
-                        }, ensure_ascii=False).encode())
+                        with open(target, "rb") as f:
+                            self.wfile.write(f.read())
                         return
-                    except Exception:
-                        pass
-                self.send_error(404)
-                return
-            if len(parts) == 2:
-                uuid_dir, filename = parts
-                filepath = os.path.join(_allow_dir, uuid_dir, filename)
-                real = os.path.realpath(filepath)
-                if (os.path.commonpath([real, os.path.realpath(_allow_dir)])
-                        == os.path.realpath(_allow_dir)
-                        and os.path.isfile(real)):
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/octet-stream")
-                    self.send_header("Content-Disposition",
-                                    f'attachment; filename="{filename}"')
-                    self.end_headers()
-                    with open(real, "rb") as f:
-                        self.wfile.write(f.read())
-                    return
+            self.send_error(404)
+            return
         self.send_error(404)
 
     def do_POST(self):
@@ -886,10 +1064,25 @@ class MCPHandler(BaseHTTPRequestHandler):
             code = arguments.get("code", "")
             workspace_id = arguments.get("workspace_id")
 
+            # ── Identity: verify Backend-signed envelope (fail closed) ──
+            auth = arguments.get("auth") or params.get("auth")
+            user = _verify_auth(auth)
+            if _auth_required and user is None:
+                logger.warning("auth_reject tool=%s reason=invalid_or_missing_sig", tool_name)
+                resp = {"jsonrpc": "2.0", "id": req_id,
+                        "error": {"code": -32001,
+                                  "message": "身份校验失败：缺少或无效的签名（需 Backend 签名的 auth 信封）"}}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(resp, ensure_ascii=False).encode())
+                return
+
             # Route to correct executor by tool name
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
-                result = {"content": [{"type": "text", "text": executor(code, workspace_id=workspace_id)}]}
+                result = {"content": [{"type": "text",
+                        "text": executor(code, workspace_id=workspace_id, user=user)}]}
             else:
                 result = {"content": [{"type": "text", "text": f"未知工具: {tool_name}"}]}
         else:
@@ -987,6 +1180,17 @@ if __name__ == "__main__":
                    help="Windows 本地模式启用 Shell（⚠️ 安全风险，仅限开发环境）")
     p.add_argument("--enable-javascript", action="store_true",
                    help="启用 JavaScript (Node.js) 执行支持")
+    p.add_argument("--auth-secret", type=str, default=None,
+                   help="Backend 与 MCP server 共享的 HMAC 密钥。设置后启用身份校验与每用户 "
+                        "UID 隔离；未设置则 auth 关闭（退化为单账户模式）。也可通过 REPL_AUTH_SECRET 传入。")
+    p.add_argument("--allow-anonymous", action="store_true",
+                   help="即使设置了 --auth-secret，也允许无签名的匿名调用（仅限开发/内部可信网络）。")
+    p.add_argument("--uid-pool-base", type=int,
+                   default=int(os.environ.get("REPL_UID_POOL_BASE", "2000")),
+                   help="数值 UID 池起始 UID（默认 2000）。")
+    p.add_argument("--uid-pool-size", type=int,
+                   default=int(os.environ.get("REPL_UID_POOL_SIZE", "100")),
+                   help="数值 UID 池大小（取模空间，默认 100，即 UID 2000..2099）。")
     args = p.parse_args()
 
     # ── Config: CLI args > env vars > defaults ──
@@ -1029,6 +1233,20 @@ if __name__ == "__main__":
                            or os.environ.get("REPL_ENABLE_SHELL_LOCAL", "").lower() in ("1", "true", "yes"))
     _enable_javascript = (args.enable_javascript
                           or os.environ.get("REPL_ENABLE_JAVASCRIPT", "").lower() in ("1", "true", "yes"))
+
+    # ── Auth + per-user UID isolation config ──
+    _REPL_AUTH_SECRET = args.auth_secret or os.environ.get("REPL_AUTH_SECRET")
+    _auth_required = bool(_REPL_AUTH_SECRET) and not args.allow_anonymous
+    _isolation_enabled = bool(_REPL_AUTH_SECRET)
+    _uid_pool_base = args.uid_pool_base
+    _uid_pool_size = max(1, args.uid_pool_size)
+    if _isolation_enabled:
+        logger.info("auth_enabled required=%s uid_pool=%d..%d",
+                    _auth_required, _uid_pool_base, _uid_pool_base + _uid_pool_size - 1)
+        logger.info("isolation_note — 容器需以 root 运行并持有 CAP_SETUID/SETGID/CHOWN，"
+                    "否则子进程降权会失败（子进程将以退出码 1 结束）。")
+    else:
+        logger.info("auth_disabled — 单账户模式（未配置 --auth-secret）。")
 
     # ── Shell safety gate for local (non-Docker) Windows mode ──
     if _enable_shell and os.name == 'nt' and not _enable_shell_local:
@@ -1074,7 +1292,21 @@ if __name__ == "__main__":
             cutoff = time.time() - (_keep_minutes * 60)
             try:
                 for entry in os.scandir(_allow_dir):
-                    if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                    if entry.name.startswith("user_"):
+                        # Per-user isolation dir: keep the account dir, reap only
+                        # its stale per-call / workspace children (root server can
+                        # traverse/delete because it runs as root).
+                        try:
+                            for child in os.scandir(entry.path):
+                                if (child.is_dir()
+                                        and child.stat().st_mtime < cutoff):
+                                    shutil.rmtree(child.path, ignore_errors=True)
+                                    logger.info("cleanup removed=%s/%s",
+                                                entry.name, child.name)
+                        except Exception:
+                            pass
+                    elif entry.is_dir() and entry.stat().st_mtime < cutoff:
+                        # Legacy (non-isolated) per-call UUID dir.
                         shutil.rmtree(entry.path, ignore_errors=True)
                         logger.info("cleanup removed=%s", entry.name)
             except Exception:
