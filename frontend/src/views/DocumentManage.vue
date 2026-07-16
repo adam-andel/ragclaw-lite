@@ -726,6 +726,8 @@ async function loadChunks() {
     })
     chunks.value = res.data.items
     chunkTotal.value = res.data.total
+    // Expand all chunks by default so the content is fully shown (not folded)
+    expandedChunks.value = new Set(res.data.items.map(c => c.id))
   } catch {
     message.error(t('documents.loadChunksFailed'))
   } finally {
@@ -769,6 +771,12 @@ const statusLabels: Record<string, string> = {
   parsing: t('documents.status.parsing'), chunking: t('documents.status.chunking'),
   embedding: t('documents.status.embedding'), chunked: t('documents.status.chunked'),
   completed: t('documents.status.completed'), failed: t('documents.status.failed'),
+}
+const statusHints: Record<string, string> = {
+  pending: t('documents.statusHint.waiting'), uploaded: t('documents.statusHint.uploaded'),
+  parsing: t('documents.statusHint.parsing'), chunking: t('documents.statusHint.chunking'),
+  embedding: t('documents.statusHint.embedding'), chunked: t('documents.statusHint.chunked'),
+  completed: t('documents.statusHint.completed'), failed: t('documents.statusHint.failed'),
 }
 
 // File type → icon + color (covers all 14 supported formats)
@@ -1082,9 +1090,14 @@ async function loadSupportedTypes() {
             <span>{{ formatSize(doc.file_size) }}</span>
             <span class="doc-meta-sep">·</span>
             <span class="doc-meta-muted">{{ formatDate(doc.created_at) }}</span>
-            <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag">
-              {{ statusLabels[doc.status] || doc.status }}
-            </NTag>
+            <NTooltip trigger="hover" placement="top">
+              <template #trigger>
+                <NTag :type="statusColors[doc.status] as any" size="small" :bordered="false" class="doc-status-tag" style="cursor:help">
+                  {{ statusLabels[doc.status] || doc.status }}
+                </NTag>
+              </template>
+              {{ statusHints[doc.status] || t('documents.statusHint.waiting') }}
+            </NTooltip>
           </div>
           <div v-if="isProcessing(doc.status)" class="doc-card-progress">
             <NProgress
@@ -1567,6 +1580,10 @@ async function loadSupportedTypes() {
 }
 :global(html.dark) .doc-unlink-btn :deep(.n-icon) {
   color: #f87171;
+}
+/* Dim primary buttons slightly in dark mode (header actions + modals) — they read too bright on the dark surface */
+:global(html.dark) .dm-view :deep(.n-button.n-button--primary-type) {
+  filter: brightness(0.85);
 }
 .dm-card:hover .doc-unlink-btn { opacity: 1; }
 .doc-card-title-wrap {

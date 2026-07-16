@@ -466,7 +466,10 @@ mark.search-hit.active {
   box-shadow: var(--shadow-sm);
 }
 .user .message-body {
-  background: var(--color-primary);
+  /* Use naive-ui's primary color (#3b82f6, same as the type="primary" buttons in DocumentManage)
+     so the bubble matches those buttons in BOTH light and dark mode. Note: --color-primary is #60a5fa
+     in dark mode, which would make the bubble lighter than the primary buttons, hence the fixed value. */
+  background: #3b82f6;
   color: white;
   border-color: transparent;
 }
@@ -477,6 +480,11 @@ mark.search-hit.active {
 .role-label { font-weight: 600; }
 .time { color: var(--color-text-muted); }
 .user .time { color: rgba(255,255,255,0.7); }
+
+/* Dim the user bubble in dark mode — var(--color-primary) reads too bright on the dark surface */
+:global(html.dark) .user .message-body {
+  filter: brightness(0.85);
+}
 
 .agent-steps {
   margin-bottom: var(--space-2);

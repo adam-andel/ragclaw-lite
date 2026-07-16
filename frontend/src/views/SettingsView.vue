@@ -141,8 +141,11 @@ const switchBtnHint = computed(() => {
   if (!switchBtnDisabled.value) return ''
   if (switching.value || reindexing.value) return ''
   if (!selectedModel.value) return t('settings.embeddingModelMgmt.selectFirst')
-  if (selectedModel.value === embeddingStatus.value.configured_model) return ''
+  // Model not installed → always hint to install first, even when it happens to be
+  // the currently configured (but not yet installed) model.
   if (!isModelInstalled(selectedModel.value)) return t('settings.embeddingModelMgmt.installFirstHint')
+  // Installed and already the active model → nothing to do, no hint.
+  if (selectedModel.value === embeddingStatus.value.configured_model) return ''
   return ''
 })
 
