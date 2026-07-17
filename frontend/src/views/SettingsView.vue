@@ -1062,15 +1062,6 @@ async function handleTest() {
               placeholder="api.github.com, raw.githubusercontent.com"
             />
           </NFormItem>
-          <NFormItem>
-            <span class="muted" style="font-size: 12px">
-              {{ t('settings.currentMode', { mode: sandboxConfig.sandbox_network_mode }) }}
-              <template v-if="sandboxConfig.sandbox_network_mode === 'allowlist'">
-                （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
-              </template>
-            </span>
-          </NFormItem>
-
         </NForm>
       </section>
     </NCard>
