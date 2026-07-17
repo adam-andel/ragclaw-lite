@@ -8,28 +8,24 @@ mkdir -p /app/workspace
 # workdirs. No-op when already root-owned.
 chown root:root /app/workspace
 
-# ── Approach B: start the egress broker in the background ──
-# It reads the SAME /tmp/repl_network_policy.json the MCP server writes via
-# PUT /policy, so backend policy pushes need no extra glue and hot-reload is
-# automatic. The proxy binds loopback (127.0.0.1) only.
-python egress_proxy.py &
-# (backgrounded before exec; becomes a child of PID 1 and keeps running)
-
-# Capture the ORIGINAL upstream nameservers before we rewrite resolv.conf, so
-# the proxy's built-in DNS service can forward real queries without looping.
-ORIG_NS=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-export REPL_DNS_UPSTREAM="${ORIG_NS:-8.8.8.8,1.1.1.1}"
-
-# Rewrite DNS to point at the proxy's built-in allowlist-aware DNS service.
-# Normally /etc/resolv.conf is a Docker bind-mount and stays writable even
-# under a read_only rootfs. But when it is NOT (e.g. some WSL2/Desktop
-# setups where the rootfs is fully read-only), the write fails. Only attempt
-# it when writable; otherwise the egress proxy still runs and forwards via
-# REPL_DNS_UPSTREAM, so skip silently rather than erroring.
-if [ "${REPL_EGRESS_DNS:-1}" != "0" ]; then
-  if [ -w /etc/resolv.conf ]; then
-    printf 'nameserver 127.0.0.1\noptions ndots:0\n' > /etc/resolv.conf
-  fi
+# ── Approach B (network-layer): the egress broker now runs in a SEPARATE
+# container (erag-egress) on the internal Docker network. This sandbox
+# container is attached ONLY to erag-internal (internal: true), which has NO
+# default route — so any direct egress to the internet fails at the routing
+# layer, regardless of client proxy compliance or the in-process guard.
+#
+# All HTTP(S) egress is forced through the broker via the HTTP(S)_PROXY env
+# injected into children (see repl_mcp_server._sanitize_env). We only need to
+# point DNS at the broker's built-in allowlist-aware DNS service
+# (REPL_EGRESS_HOST on the internal network). The broker container itself has
+# a public default route (it is also attached to the external bridge), so it
+# can forward allowed traffic.
+#
+# NOTE: /etc/resolv.conf is a Docker bind-mount and usually stays writable
+# under a read_only rootfs; if it isn't, skip silently (the broker is still
+# reachable by IP).
+if [ -w /etc/resolv.conf ]; then
+  printf 'nameserver %s\noptions ndots:0\n' "${REPL_EGRESS_HOST:-127.0.0.1}" > /etc/resolv.conf
 fi
 
 # python_repl_mcp_server.py delegates to repl_mcp_server.py (backward compat)

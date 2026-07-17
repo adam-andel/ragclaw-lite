@@ -1,0 +1,22 @@
+# REPL egress broker — minimal Python image (Python stdlib only).
+# Runs as its own container (erag-egress) dual-attached to the internal
+# sandbox network (receives proxied requests from mcp-repl) and the public
+# bridge (forwards allowed traffic to the internet). See network-layer plan A.
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/library/python:3.12-slim
+
+WORKDIR /app
+COPY egress_proxy.py .
+
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# The broker binds REPL_EGRESS_HOST (the internal-network IP) for both the
+# HTTP(S) proxy (:REPL_EGRESS_PORT) and the allowlist-aware DNS service (:53).
+# Outbound forwarding uses the public bridge's default route, so the broker
+# never needs a published host port.
+EXPOSE 1080 53
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
+  CMD python -c "import os,socket; s=socket.create_connection((os.environ.get('REPL_EGRESS_HOST','127.0.0.1'), int(os.environ.get('REPL_EGRESS_PORT','1080'))),2); s.close()" || exit 1
+
+ENTRYPOINT ["python", "egress_proxy.py"]

@@ -61,11 +61,13 @@ _allow_dir: str | None = None
 _network_mode: str = "deny"
 _allow_domains: list[str] = []      # allowed hostnames in allowlist mode
 _allow_methods: list[str] = []      # reserved for L7 filtering (Phase 2)
-_policy_file: str = "/tmp/repl_network_policy.json"# ── Egress proxy (network-layer broker, approach B) ───
+_policy_file: str = os.environ.get("REPL_POLICY_FILE", "/tmp/repl_network_policy.json")
+# ── Egress proxy (network-layer broker, approach B) ───
 # Children are forced through this loopback proxy so all HTTP(S) egress
 # (incl. asyncio/httpx/curl) hits the allowlist. Port is shared with
 # mcp/egress_proxy.py via REPL_EGRESS_PORT.
 _EGRESS_PORT: int = int(os.environ.get("REPL_EGRESS_PORT", "1080"))
+_EGRESS_HOST: str = os.environ.get("REPL_EGRESS_HOST", "127.0.0.1")
 _no_network: bool = False           # backward-compat alias (sets initial mode=deny)
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
 _max_nproc: int = DEFAULT_MAX_NPROC
@@ -128,7 +130,7 @@ def _sanitize_env() -> dict:
     # In deny mode no proxy is injected — the in-process guard already blocks
     # everything, and there is nothing legitimate to proxy.
     if _network_mode != "deny":
-        proxy = f"http://127.0.0.1:{_EGRESS_PORT}"
+        proxy = f"http://{_EGRESS_HOST}:{_EGRESS_PORT}"
         env["HTTP_PROXY"] = proxy
         env["HTTPS_PROXY"] = proxy
         env["http_proxy"] = proxy
@@ -396,6 +398,18 @@ _G_POLICY = _g_load_policy()
 _G_MODE = _G_POLICY.get("mode", "deny")
 _G_DOMAINS = set(d.lower() for d in _G_POLICY.get("domains", []))
 _G_METHODS = set(m.upper() for m in _G_POLICY.get("methods", []))
+_G_EGRESS_HOST = _g_os.environ.get("REPL_EGRESS_HOST", "127.0.0.1")
+# Egress broker + loopback are ALWAYS permitted (proxy hop / internal traffic),
+# independent of the domain allowlist. Without this, the connection to the
+# broker itself (a bare IP) would be rejected by the allowlist check below,
+# which would break allowlist-mode egress entirely. See network-layer plan A:
+# the broker runs in a separate erag-egress container on the internal network.
+_G_ALLOW_IPS = {"127.0.0.1", "::1", "localhost"}
+try:
+    if _G_EGRESS_HOST:
+        _G_ALLOW_IPS.add(_G_EGRESS_HOST)
+except Exception:
+    pass
 # IPs produced by an allowed getaddrinfo() — used to admit the subsequent
 # socket.connect(ip) that create_connection performs internally.
 _g_resolved_ips = set()
@@ -431,6 +445,9 @@ def _g_create_connection(orig, *a, **kw):
         host = a[0][0]
     if _G_MODE == "allow":
         return orig(*a, **kw)
+    if host and host in _G_ALLOW_IPS:
+        # Always permit the egress broker + loopback (proxy hop / internal).
+        return orig(*a, **kw)
     if _G_MODE == "allowlist":
         if _g_host_allowed(host):
             return orig(*a, **kw)
@@ -440,6 +457,9 @@ def _g_create_connection(orig, *a, **kw):
 def _g_getaddrinfo(orig, *a, **kw):
     host = a[0] if a else None
     if _G_MODE == "allow":
+        return orig(*a, **kw)
+    if host and host in _G_ALLOW_IPS:
+        # Always permit the egress broker + loopback (proxy hop / internal).
         return orig(*a, **kw)
     if _G_MODE == "allowlist":
         if _g_host_allowed(host):
@@ -470,6 +490,9 @@ def _g_connect(self, address, *a, **kw):
     host = address[0] if isinstance(address, (tuple, list)) and address else None
     if _G_MODE == "allow":
         return _orig_connect(self, address, *a, **kw)
+    if host and host in _G_ALLOW_IPS:
+        # Always permit the egress broker + loopback (proxy hop / internal).
+        return _orig_connect(self, address, *a, **kw)
     if _G_MODE == "allowlist":
         if host and not _g_is_ip(host):
             if _g_host_allowed(host):
@@ -484,6 +507,10 @@ def _g_connect(self, address, *a, **kw):
 def _g_wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
                    suppress_ragged_eofs=True, server_hostname=None, session=None):
     if _G_MODE == "allow":
+        return _orig_wrap(self, sock, server_side, do_handshake_on_connect,
+                          suppress_ragged_eofs, server_hostname, session)
+    if server_hostname and server_hostname in _G_ALLOW_IPS:
+        # Always permit the egress broker + loopback (proxy hop / internal).
         return _orig_wrap(self, sock, server_side, do_handshake_on_connect,
                           suppress_ragged_eofs, server_hostname, session)
     if _G_MODE == "allowlist":

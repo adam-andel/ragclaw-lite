@@ -47,7 +47,7 @@ logger = logging.getLogger("egress")
 # ── Config (env-overridable, shared conventions with repl_mcp_server.py) ──
 POLICY_FILE = os.environ.get("REPL_POLICY_FILE", "/tmp/repl_network_policy.json")
 EGRESS_PORT = int(os.environ.get("REPL_EGRESS_PORT", "1080"))
-EGRESS_HOST = "127.0.0.1"
+EGRESS_HOST = os.environ.get("REPL_EGRESS_HOST", "127.0.0.1")
 ENABLE_DNS = os.environ.get("REPL_EGRESS_DNS", "1") in ("1", "true", "yes")
 
 # Make 100% sure the proxy never routes its own outbound through itself.
