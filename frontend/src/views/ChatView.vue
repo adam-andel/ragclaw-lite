@@ -1100,6 +1100,10 @@ function handleKeydown(e: KeyboardEvent) {
 
     <div v-if="!isReadonly" class="chat-input-wrapper">
       <div class="skill-selector-bar">
+        <NButton size="tiny" tertiary class="ws-trigger-btn" @click="openWsModal" :disabled="isStreaming">
+          <template #icon><NIcon size="14"><FolderOpen /></NIcon></template>
+          {{ t('chat.workspaceDirBtn', { dir: workspaceDir ? workspaceDir : t('workspace.default') }) }}
+        </NButton>
         <NButton size="tiny" ghost class="kb-trigger-btn" @click="showMoreKb = true">
           {{ currentKbName }}
         </NButton>
@@ -1126,12 +1130,6 @@ function handleKeydown(e: KeyboardEvent) {
         </div>
       </div>
       <div class="chat-input-area">
-        <div class="ws-toolbar">
-          <NButton size="small" tertiary @click="openWsModal" :disabled="isStreaming">
-            <template #icon><NIcon size="16"><FolderOpen /></NIcon></template>
-            {{ t('chat.workspaceDirBtn', { dir: workspaceDir ? workspaceDir : t('workspace.default') }) }}
-          </NButton>
-        </div>
         <NInput
           v-model:value="inputText"
           type="textarea"
@@ -1635,11 +1633,6 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 /* ── Workspace directory selector (button above the input box) ── */
-.ws-toolbar {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--space-2);
-}
 .ws-crumbs {
   display: flex;
   align-items: center;
