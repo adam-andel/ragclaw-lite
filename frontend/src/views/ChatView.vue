@@ -3,15 +3,15 @@ import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NModal, NSpin, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NModal, NSpin, useMessage, useDialog } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations } from '@/api/chat'
-import { listWorkspace, mkdirWorkspace } from '@/api/workspace'
+import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
@@ -24,6 +24,7 @@ const router = useRouter()
 const { t } = useI18n()
 const auth = useAuthStore()
 const nmessage = useMessage()
+const dialog = useDialog()
 
 const isReadonly = ref(false)
 const conversationOwnerId = ref<string>()
@@ -137,6 +138,99 @@ function fpSelectFile(entry: WorkspaceEntry) {
   if (entry.type !== 'file') return
   insertAtCursor(`[[file:${entry.rel_path}]]`)
   showFileModal.value = false
+}
+
+// ── Drag-and-drop upload into the file-picker modal ──
+// A file dropped anywhere inside the modal is uploaded to the directory
+// currently displayed (root when fpPath is ''), then treated exactly like a
+// file selection: the modal closes and the path is inserted into the input.
+const fpDragging = ref(false)
+const fpDragDepth = ref(0)
+const fpUploading = ref(false)
+
+function fpOnDragEnter(e: DragEvent) {
+  e.preventDefault()
+  fpDragDepth.value++
+  fpDragging.value = true
+}
+function fpOnDragLeave(e: DragEvent) {
+  e.preventDefault()
+  fpDragDepth.value = Math.max(0, fpDragDepth.value - 1)
+  if (fpDragDepth.value === 0) fpDragging.value = false
+}
+function fpOnDragOver(e: DragEvent) {
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+function fpOnDrop(e: DragEvent) {
+  e.preventDefault()
+  fpDragDepth.value = 0
+  fpDragging.value = false
+  const files = e.dataTransfer?.files
+  if (!files || files.length === 0) return
+  void fpUploadDropped(Array.from(files))
+}
+
+async function fpUploadDropped(files: File[]) {
+  if (fpUploading.value) return
+
+  // Detect name collisions with files already present in the directory the
+  // modal is currently showing. The backend `upload` action overwrites
+  // existing files, so we ask before doing that.
+  const existing = files.filter(f =>
+    fpEntries.value.some(e => e.type === 'file' && e.name === f.name),
+  )
+
+  let toUpload = files
+  if (existing.length > 0) {
+    const overwrite = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: t('workspace.overwriteTitle'),
+        content:
+          existing.length === 1
+            ? t('workspace.overwriteConfirmOne', { name: existing[0].name })
+            : t('workspace.overwriteConfirmMany', { count: existing.length }),
+        positiveText: t('workspace.overwrite'),
+        negativeText: t('workspace.skipExisting'),
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+      })
+    })
+    if (!overwrite) {
+      toUpload = files.filter(f => !existing.includes(f))
+      if (toUpload.length === 0) {
+        nmessage.info(t('workspace.allSkipped'))
+        return
+      }
+    }
+  }
+
+  await fpDoUpload(toUpload)
+}
+
+async function fpDoUpload(files: File[]) {
+  fpUploading.value = true
+  const ok: string[] = []
+  try {
+    for (const file of files) {
+      // Target the directory the modal is currently showing (root if fpPath is '').
+      const name = fpPath.value ? `${fpPath.value}/${file.name}` : file.name
+      try {
+        const content = await fileToBase64(file)
+        await uploadWorkspace(name, content)
+        ok.push(name)
+      } catch (err: any) {
+        nmessage.error(`${file.name}: ${err?.message || t('workspace.errors.upload')}`)
+      }
+    }
+  } finally {
+    fpUploading.value = false
+  }
+  if (ok.length) {
+    const token = ok.map(p => `[[file:${p}]]`).join(' ')
+    insertAtCursor(token)
+    showFileModal.value = false
+  }
 }
 
 
@@ -1311,42 +1405,66 @@ function handleKeydown(e: KeyboardEvent) {
         style="width: 560px; max-width: 92vw;"
         :mask-closable="false"
       >
-        <p class="fp-hint">{{ t('workspace.pickFileHint') }}</p>
-        <div class="ws-crumbs">
-          <NButton text size="small" :type="fpPath ? 'primary' : 'default'" @click="fpCrumb('')">
-            {{ t('workspace.breadcrumbRoot') }}
-          </NButton>
-          <template v-for="seg in fpCrumbSegments" :key="seg.path">
-            <span class="ws-sep">/</span>
-            <NButton
-              text
-              size="small"
-              :type="seg.path === fpPath ? 'default' : 'primary'"
-              @click="fpCrumb(seg.path)"
-            >{{ seg.name }}</NButton>
-          </template>
-        </div>
-
-        <NSpin :show="fpLoading">
-          <div class="ws-dir-list">
-            <div v-if="fpEntries.length === 0 && !fpLoading" class="ws-empty">
-              {{ t('workspace.empty') }}
-            </div>
-            <div
-              v-for="e in fpEntries"
-              :key="e.rel_path"
-              class="ws-dir-row"
-              :class="{ 'ws-file-row': e.type === 'file' }"
-              @click="e.type === 'dir' ? fpEnterDir(e) : fpSelectFile(e)"
-            >
-              <NIcon v-if="e.type === 'dir'" size="18" class="ws-folder"><Folder /></NIcon>
-              <NIcon v-else size="18" class="ws-file-icon"><DocumentText /></NIcon>
-              <span class="ws-dir-name">{{ e.name }}</span>
-              <span v-if="e.type === 'file' && e.size != null" class="ws-file-size">{{ (e.size / 1024).toFixed(1) }} KB</span>
-              <span v-else class="ws-enter">›</span>
-            </div>
+        <div
+          class="fp-dropzone"
+          :class="{ 'fp-dragging': fpDragging }"
+          @dragenter="fpOnDragEnter"
+          @dragleave="fpOnDragLeave"
+          @dragover="fpOnDragOver"
+          @drop="fpOnDrop"
+        >
+          <p class="fp-hint">{{ t('workspace.pickFileHint') }}</p>
+          <p class="fp-drop-hint">
+            <NIcon size="14" class="fp-drop-icon"><CloudUploadOutline /></NIcon>
+            {{ t('workspace.dropFilesHere') }}
+          </p>
+          <div class="ws-crumbs">
+            <NButton text size="small" :type="fpPath ? 'primary' : 'default'" @click="fpCrumb('')">
+              {{ t('workspace.breadcrumbRoot') }}
+            </NButton>
+            <template v-for="seg in fpCrumbSegments" :key="seg.path">
+              <span class="ws-sep">/</span>
+              <NButton
+                text
+                size="small"
+                :type="seg.path === fpPath ? 'default' : 'primary'"
+                @click="fpCrumb(seg.path)"
+              >{{ seg.name }}</NButton>
+            </template>
           </div>
-        </NSpin>
+
+          <NSpin :show="fpLoading">
+            <div class="ws-dir-list">
+              <div v-if="fpEntries.length === 0 && !fpLoading" class="ws-empty">
+                {{ t('workspace.empty') }}
+              </div>
+              <div
+                v-for="e in fpEntries"
+                :key="e.rel_path"
+                class="ws-dir-row"
+                :class="{ 'ws-file-row': e.type === 'file' }"
+                @click="e.type === 'dir' ? fpEnterDir(e) : fpSelectFile(e)"
+              >
+                <NIcon v-if="e.type === 'dir'" size="18" class="ws-folder"><Folder /></NIcon>
+                <NIcon v-else size="18" class="ws-file-icon"><DocumentText /></NIcon>
+                <span class="ws-dir-name">{{ e.name }}</span>
+                <span v-if="e.type === 'file' && e.size != null" class="ws-file-size">{{ (e.size / 1024).toFixed(1) }} KB</span>
+                <span v-else class="ws-enter">›</span>
+              </div>
+            </div>
+          </NSpin>
+
+          <!-- Drag overlay -->
+          <div v-if="fpDragging" class="fp-overlay">
+            <NIcon size="40" class="fp-overlay-icon"><CloudUploadOutline /></NIcon>
+            <div class="fp-overlay-text">{{ t('workspace.dropHere') }}</div>
+          </div>
+          <!-- Uploading overlay -->
+          <div v-else-if="fpUploading" class="fp-overlay">
+            <NSpin size="large" />
+            <div class="fp-overlay-text">{{ t('workspace.uploading') }}</div>
+          </div>
+        </div>
 
         <template #footer>
           <div class="ws-footer">
@@ -1852,6 +1970,48 @@ function handleKeydown(e: KeyboardEvent) {
   margin: 0 0 10px;
   font-size: 13px;
   color: var(--color-text-muted);
+}
+.fp-dropzone {
+  position: relative;
+  border-radius: 12px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.fp-dropzone.fp-dragging {
+  background: var(--color-primary-soft, rgba(64, 152, 252, 0.08));
+  box-shadow: inset 0 0 0 2px var(--color-primary, #4098fc);
+}
+.fp-drop-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.fp-drop-icon {
+  color: var(--color-primary, #4098fc);
+}
+.fp-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 12px;
+  background: var(--color-overlay, rgba(255, 255, 255, 0.72));
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 2;
+}
+.fp-overlay-icon {
+  color: var(--color-primary, #4098fc);
+}
+.fp-overlay-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
 }
 .ws-file-icon {
   color: var(--color-primary, #4098fc);
