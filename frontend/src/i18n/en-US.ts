@@ -15,6 +15,7 @@ import notifications from './en-US/notifications'
 import kb from './en-US/kb'
 import plugins from './en-US/plugins'
 import retrieval from './en-US/retrieval'
+import workspace from './en-US/workspace'
 
 export default {
   common,
@@ -34,4 +35,5 @@ export default {
   kb,
   plugins,
   retrieval,
+  workspace,
 }

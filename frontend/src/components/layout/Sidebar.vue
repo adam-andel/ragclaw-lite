@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { NMenu, NIcon, NButton, NTag, NBadge, NSwitch, NSelect } from 'naive-ui'
 import {
   Chatbubbles, DocumentText, StatsChart, Bulb, Flash,
-  LogOut, People, Settings, Time,
+  LogOut, People, Settings, Time, FolderOpen,
   Notifications,
 } from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
@@ -30,14 +30,20 @@ const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
 // ── Menu ──
 
 const menuOptions = computed<MenuOption[]>(() => {
+  const workspaceItem = {
+    label: t('nav.workspace'), key: '/workspace',
+    icon: () => h(NIcon, null, { default: () => h(FolderOpen) }),
+  }
   if (!auth.isStaff) {
     return [
       { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+      workspaceItem,
     ]
   }
   return [
     { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
+    workspaceItem,
     ...(auth.isAdmin ? [
       { label: t('nav.skills'), key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
       { label: t('nav.mcp'), key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
@@ -54,6 +60,7 @@ const selectedKey = computed(() => {
   const path = route.path
   if (path.startsWith('/chat')) return '/chat'
   if (path.startsWith('/documents')) return '/documents'
+  if (path.startsWith('/workspace')) return '/workspace'
   return path
 })
 

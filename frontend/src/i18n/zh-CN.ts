@@ -15,6 +15,7 @@ import notifications from './zh-CN/notifications'
 import kb from './zh-CN/kb'
 import plugins from './zh-CN/plugins'
 import retrieval from './zh-CN/retrieval'
+import workspace from './zh-CN/workspace'
 
 export default {
   common,
@@ -34,4 +35,5 @@ export default {
   kb,
   plugins,
   retrieval,
+  workspace,
 }

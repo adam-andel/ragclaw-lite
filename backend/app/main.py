@@ -227,7 +227,7 @@ app.add_middleware(
 )
 
 # --- API Routers ---
-from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs, notifications, embedding_model
+from app.routers import auth, users, documents, knowledge_bases, retrieval, chat, stats, memory, config, skills, mcp_servers, plugins, cron_jobs, notifications, embedding_model, workspace
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(documents.router)
@@ -243,6 +243,7 @@ app.include_router(plugins.router)
 app.include_router(cron_jobs.router)
 app.include_router(notifications.router)
 app.include_router(embedding_model.router)
+app.include_router(workspace.router)
 
 
 @app.get("/api/health")

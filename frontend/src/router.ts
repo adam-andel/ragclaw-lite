@@ -94,6 +94,12 @@ const router = createRouter({
       component: () => import('@/views/NotificationsView.vue'),
       meta: { titleKey: 'nav.notificationCenter', requiresAuth: true },
     },
+    {
+      path: '/workspace',
+      name: 'workspace',
+      component: () => import('@/views/WorkspaceView.vue'),
+      meta: { titleKey: 'nav.workspace', requiresAuth: true },
+    },
   ],
 })
 
@@ -108,7 +114,7 @@ router.beforeEach(async (to, _from, next) => {
     next('/chat')
   } else if (to.meta.staff && !auth.isStaff) {
     next('/chat')
-  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications') {
+  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications' && !to.path.startsWith('/workspace')) {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')

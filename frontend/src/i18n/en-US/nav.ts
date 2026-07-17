@@ -10,6 +10,7 @@ export default {
   notifications: 'Notifications',
   notificationCenter: 'Notification Center',
   profile: 'Profile',
+  workspace: 'Workspace',
   darkMode: 'Dark Mode',
   logout: 'Sign out',
   language: 'Language',

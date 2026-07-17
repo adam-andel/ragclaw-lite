@@ -21,6 +21,8 @@ import signal
 import logging
 import threading
 import re
+import base64
+from urllib.parse import urlparse, parse_qs
 import ast as _ast_module
 import hmac as _hmac_module
 import hashlib as _hashlib_module
@@ -259,6 +261,37 @@ def _ensure_dir_owned(path: str, acct, mode: int = 0o700) -> None:
         os.chmod(path, mode)
     except OSError:
         pass
+
+
+def _workspace_root(uid: int) -> str:
+    """Resolve (and lazily create) a user's sandbox root dir ``user_u<uid>``.
+
+    Lives under ``_allow_dir`` and mirrors the isolation convention used
+    by ``_make_workdir`` (chown to the uid, mode 700). Raises
+    ``ValueError`` when no sandbox dir is configured.
+    """
+    if not _allow_dir:
+        raise ValueError("sandbox not configured")
+    root = os.path.realpath(os.path.join(_allow_dir, f"user_u{int(uid)}"))
+    _ensure_dir_owned(root, {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}, 0o700)
+    return root
+
+
+def _ws_safe(root: str, rel: str) -> str | None:
+    """Resolve a relative path strictly inside ``root``; ``None`` if it escapes.
+
+    Rejects ``..`` components and absolute paths, and uses ``realpath``
+    so symlink escapes are caught (same guard as the /files/ handler).
+    An empty ``rel`` resolves to ``root`` itself.
+    """
+    if rel:
+        rel = rel.strip("/")
+        if not rel or ".." in rel.split("/"):
+            return None
+    target = os.path.realpath(os.path.join(root, rel)) if rel else root
+    if target != root and not target.startswith(root + os.sep):
+        return None
+    return target
 
 
 def _build_preexec(acct):
@@ -1035,10 +1068,17 @@ class MCPHandler(BaseHTTPRequestHandler):
                         return
             self.send_error(404)
             return
+        # Per-user workspace file manager (trusted internal API).
+        if self.path.startswith("/workspace"):
+            self._handle_workspace_get()
+            return
         self.send_error(404)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
+        if self.path == "/workspace/":
+            self._handle_workspace_post(length)
+            return
         body = json.loads(self.rfile.read(length)) if length else {}
         method = body.get("method", "")
         req_id = body.get("id", 0)
@@ -1097,6 +1137,9 @@ class MCPHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/user/"):
             self._handle_delete_user_dir()
             return
+        if self.path.startswith("/workspace/"):
+            self._handle_workspace_delete()
+            return
         self.send_error(404)
 
     def _handle_delete_user_dir(self):
@@ -1142,6 +1185,198 @@ class MCPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode())
+
+    # ── Workspace API (per-user sandbox file manager) ──────────────────────
+    # Trusted internal endpoints: caller must present the shared REPL_AUTH_SECRET
+    # in ``X-Repl-Auth`` and the target uid in ``X-Repl-Uid``. Every path is
+    # resolved strictly inside ``user_u<uid>`` (path-traversal guarded by
+    # _ws_safe), mirroring the DELETE /user/<uid> internal-auth pattern.
+    def _workspace_auth(self):
+        """Return ``(uid, None)`` on success or ``(None, error_dict)``."""
+        if _REPL_AUTH_SECRET is None:
+            return (None, {"error": "auth not configured"})
+        if not _allow_dir:
+            return (None, {"error": "sandbox not configured"})
+        provided = self.headers.get("X-Repl-Auth", "")
+        if not _hmac_module.compare_digest(provided, _REPL_AUTH_SECRET):
+            return (None, {"error": "unauthorized"})
+        raw = self.headers.get("X-Repl-Uid", "")
+        try:
+            uid = int(raw)
+        except (TypeError, ValueError):
+            return (None, {"error": "invalid uid"})
+        if uid < 0 or uid > 2147483647:
+            return (None, {"error": "invalid uid"})
+        return (uid, None)
+
+    def _handle_workspace_get(self):
+        uid, err = self._workspace_auth()
+        if err:
+            self._json_response(403, err)
+            return
+        parsed = urlparse(self.path)
+        # Download: GET /workspace/<rel>  (rel may contain '/')
+        if parsed.path not in ("/workspace", "/workspace/"):
+            rel = parsed.path[len("/workspace"):].lstrip("/")
+            root = _workspace_root(uid)
+            target = _ws_safe(root, rel)
+            if target is None or not os.path.isfile(target):
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="{os.path.basename(target)}"')
+            self.send_header("Content-Length", str(os.path.getsize(target)))
+            self.end_headers()
+            with open(target, "rb") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            return
+        # List: GET /workspace/?path=<rel>
+        q = parse_qs(parsed.query)
+        rel = (q.get("path", [""])[0] or "").strip("/")
+        root = _workspace_root(uid)
+        target = _ws_safe(root, rel)
+        if target is None:
+            self._json_response(400, {"error": "invalid path"})
+            return
+        if not os.path.isdir(target):
+            self._json_response(404, {"error": "no such directory"})
+            return
+        entries = []
+        for name in sorted(os.listdir(target)):
+            full = os.path.join(target, name)
+            is_dir = os.path.isdir(full)
+            rel_path = f"{rel}/{name}" if rel else name
+            entries.append({
+                "name": name,
+                "type": "dir" if is_dir else "file",
+                "rel_path": rel_path,
+                "size": None if is_dir else os.path.getsize(full),
+                "mtime": os.path.getmtime(full),
+                "download_url": f"/workspace/{rel_path}" if not is_dir else None,
+            })
+        self._json_response(200, {"path": rel, "entries": entries})
+
+    def _handle_workspace_post(self, length: int):
+        uid, err = self._workspace_auth()
+        if err:
+            self._json_response(403, err)
+            return
+        body = json.loads(self.rfile.read(length)) if length else {}
+        action = body.get("action")
+        root = _workspace_root(uid)
+        acct = {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}
+
+        def _validate_rel(rel):
+            rel = (rel or "").strip("/")
+            if not rel:
+                return None
+            for seg in rel.replace("\\", "/").split("/"):
+                if not seg or seg in (".", ".."):
+                    return None
+            return rel
+
+        def _chown(path):
+            if os.name != 'nt':
+                try:
+                    os.chown(path, acct["uid"], acct["gid"])
+                except OSError:
+                    pass
+
+        if action == "mkdir":
+            rel = _validate_rel(body.get("name", ""))
+            if rel is None:
+                self._json_response(400, {"error": "invalid name"})
+                return
+            target = _ws_safe(root, rel)
+            if target is None:
+                self._json_response(400, {"error": "invalid path"})
+                return
+            if os.path.exists(target):
+                self._json_response(409, {"error": "already exists"})
+                return
+            _ensure_dir_owned(target, acct, 0o700)
+            self._json_response(200, {"created": rel})
+            return
+
+        if action in ("file", "upload"):
+            rel = _validate_rel(body.get("name", ""))
+            if rel is None:
+                self._json_response(400, {"error": "invalid name"})
+                return
+            target = _ws_safe(root, rel)
+            if target is None:
+                self._json_response(400, {"error": "invalid path"})
+                return
+            try:
+                data = base64.b64decode(body.get("content") or "")
+            except Exception:
+                self._json_response(400, {"error": "invalid base64 content"})
+                return
+            if action == "file" and os.path.exists(target):
+                self._json_response(409, {"error": "already exists"})
+                return
+            parent = os.path.dirname(target)
+            _ensure_dir_owned(parent, acct, 0o700)
+            with open(target, "wb") as f:
+                f.write(data)
+            _chown(target)
+            self._json_response(200, {"written": rel, "size": len(data)})
+            return
+
+        if action == "rename":
+            path = _validate_rel(body.get("path", ""))
+            new_name = (body.get("new_name") or "").strip()
+            if path is None or not new_name or "/" in new_name or "\\" in new_name \
+                    or new_name in (".", ".."):
+                self._json_response(400, {"error": "invalid path or name"})
+                return
+            src = _ws_safe(root, path)
+            if src is None or not os.path.exists(src):
+                self._json_response(404, {"error": "no such path"})
+                return
+            new_rel = f"{os.path.dirname(path)}/{new_name}" if os.path.dirname(path) \
+                else new_name
+            dst = _ws_safe(root, new_rel)
+            if dst is None or os.path.exists(dst):
+                self._json_response(409, {"error": "target exists or invalid"})
+                return
+            os.rename(src, dst)
+            _chown(dst)
+            self._json_response(200, {"renamed": new_rel})
+            return
+
+        self._json_response(400, {"error": f"unknown action: {action}"})
+
+    def _handle_workspace_delete(self):
+        uid, err = self._workspace_auth()
+        if err:
+            self._json_response(403, err)
+            return
+        rel = self.path[len("/workspace/"):].lstrip("/")
+        # Never allow deleting the user's whole sandbox root.
+        if not rel:
+            self._json_response(400, {"error": "cannot delete root"})
+            return
+        root = _workspace_root(uid)
+        target = _ws_safe(root, rel)
+        if target is None or not os.path.exists(target):
+            self.send_error(404)
+            return
+        try:
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+        except OSError as e:
+            self._json_response(500, {"error": f"delete failed: {e}"})
+            return
+        self._json_response(200, {"deleted": rel or "."})
 
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))

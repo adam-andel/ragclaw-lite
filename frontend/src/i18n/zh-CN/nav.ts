@@ -10,6 +10,7 @@ export default {
   notifications: '通知',
   notificationCenter: '通知中心',
   profile: '个人信息',
+  workspace: '工作空间',
   darkMode: '深色模式',
   logout: '退出',
   language: '语言',
