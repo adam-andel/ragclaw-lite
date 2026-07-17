@@ -52,8 +52,6 @@ DEFAULT_TIMEOUT = 15
 DEFAULT_MAX_MEMORY_MB = 512
 DEFAULT_MAX_NPROC = 64
 DEFAULT_MAX_CONCURRENT = 4
-DEFAULT_KEEP_MINUTES = 0  # 0 = keep generated files forever (no auto-cleanup)
-_CLEANUP_EVERY = 300
 
 _allow_dir: str | None = None
 # ── Network policy (hot-reloadable at runtime) ──
@@ -70,8 +68,6 @@ _no_network: bool = False           # backward-compat alias (sets initial mode=d
 _max_memory_mb: int = DEFAULT_MAX_MEMORY_MB
 _max_nproc: int = DEFAULT_MAX_NPROC
 _max_concurrent: int = DEFAULT_MAX_CONCURRENT
-_keep_minutes: int = DEFAULT_KEEP_MINUTES
-_keep_file: str = "/tmp/repl_keep_minutes.json"  # persisted file-retention (survives restart)
 _public_url: str = ""
 _enable_shell: bool = False
 _enable_shell_local: bool = False
@@ -331,35 +327,6 @@ def _load_policy_file() -> None:
                         _network_mode, len(_allow_domains))
     except Exception as e:
         logger.warning("policy_load_failed %s", e)
-
-
-def _set_keep_minutes(mins: int) -> None:
-    """Apply a new file-retention duration at runtime (hot-reload, no restart).
-
-    0 means "keep forever" (cleanup disabled); any positive value is the retention
-    window in minutes. Negative values are rejected by the caller.
-    """
-    global _keep_minutes
-    _keep_minutes = 0 if mins == 0 else max(1, int(mins))
-    try:
-        with open(_keep_file, "w", encoding="utf-8") as f:
-            json.dump({"keep_minutes": _keep_minutes}, f)
-    except Exception:
-        pass
-
-
-def _load_keep_file() -> None:
-    """Load persisted retention from disk (survives container restart)."""
-    global _keep_minutes
-    try:
-        if os.path.exists(_keep_file):
-            with open(_keep_file, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            km = int(d.get("keep_minutes", _keep_minutes))
-            _keep_minutes = km if km >= 0 else 1  # 0 = keep forever; negatives clamp to 1
-            logger.info("keep_minutes_loaded_from_file mins=%d", _keep_minutes)
-    except Exception as e:
-        logger.warning("keep_minutes_load_failed %s", e)
 
 
 def _py_build_guard(per_call_dir: str) -> str:
@@ -1182,9 +1149,6 @@ class MCPHandler(BaseHTTPRequestHandler):
         if self.path == "/policy":
             self._handle_policy_update(body)
             return
-        if self.path == "/keep-minutes":
-            self._handle_keep_update(body)
-            return
         if self.path == "/auth-secret":
             self._handle_auth_secret_update(body)
             return
@@ -1206,24 +1170,11 @@ class MCPHandler(BaseHTTPRequestHandler):
         logger.info("policy_updated mode=%s domains=%d", mode, len(domains))
         self._json_response(200, {"status": "ok", "policy": _build_policy()})
 
-    def _handle_keep_update(self, body: dict):
-        """Hot-reload file-retention duration (called by backend /api/config/sandbox-network).
-
-        0 = keep forever (cleanup disabled); positive int = retention minutes.
-        """
-        mins = body.get("keep_minutes")
-        if not isinstance(mins, int) or mins < 0:
-            self._json_response(400, {"error": "keep_minutes must be a non-negative integer (0 = keep forever, else minutes)"})
-            return
-        _set_keep_minutes(mins)
-        logger.info("keep_minutes_updated mins=%d", _keep_minutes)
-        self._json_response(200, {"status": "ok", "keep_minutes": _keep_minutes})
-
     def _handle_auth_secret_update(self, body: dict):
         """Hot-reload the REPL identity HMAC secret (called by backend /api/config/repl-auth).
 
         Internal-network-only endpoint (no host port mapping), mirroring
-        /policy and /keep-minutes. Body: {"secret": "<str>"} — must be a
+        /policy. Body: {"secret": "<str>"} — must be a
         non-empty string; auth + per-user UID isolation are always on, so an
         empty secret is rejected rather than disabling them.
         """
@@ -1269,8 +1220,6 @@ if __name__ == "__main__":
                    help="allowlist 模式下允许的域名，逗号分隔，如 api.github.com,raw.githubusercontent.com")
     p.add_argument("--allow-methods", type=str, default="",
                    help="allowlist 模式下允许的 HTTP 方法（保留字段，暂未启用）")
-    p.add_argument("--keep-minutes", type=int, default=DEFAULT_KEEP_MINUTES,
-                   help=f"生成文件保留时长（分钟），默认 {DEFAULT_KEEP_MINUTES}")
     p.add_argument("--max-memory-mb", type=int, default=DEFAULT_MAX_MEMORY_MB,
                    help=f"子进程最大内存（MB），默认 {DEFAULT_MAX_MEMORY_MB}")
     p.add_argument("--max-nproc", type=int, default=DEFAULT_MAX_NPROC,
@@ -1313,9 +1262,6 @@ if __name__ == "__main__":
 
     # Load persisted policy file (survives container restart) — overrides CLI if present
     _load_policy_file()
-    _keep_minutes = int(os.environ.get("REPL_KEEP_MINUTES", args.keep_minutes))
-    # Load persisted retention (if any) so a prior config survives restart.
-    _load_keep_file()
     _max_memory_mb = int(os.environ.get("REPL_MAX_MEMORY_MB", args.max_memory_mb))
     _max_nproc = int(os.environ.get("REPL_MAX_NPROC", args.max_nproc))
     _max_concurrent = int(os.environ.get("REPL_MAX_CONCURRENT", args.max_concurrent))
@@ -1375,43 +1321,10 @@ if __name__ == "__main__":
                           "请 apt-get install nodejs 或安装 Node.js。")
             _enable_javascript = False
 
-    # ── Background cleanup thread ──
-    def _cleanup_loop():
-        while not _shutdown_event.is_set():
-            _shutdown_event.wait(_CLEANUP_EVERY)
-            # Retention 0 means "keep forever" — skip cleanup entirely so generated
-            # files are retained indefinitely (account dirs and their children stay).
-            if not _allow_dir or _keep_minutes <= 0:
-                continue
-            cutoff = time.time() - (_keep_minutes * 60)
-            try:
-                for entry in os.scandir(_allow_dir):
-                    if entry.name.startswith("user_"):
-                        # Per-user isolation dir: keep the account dir, reap only
-                        # its stale per-call / workspace children (root server can
-                        # traverse/delete because it runs as root).
-                        try:
-                            for child in os.scandir(entry.path):
-                                if (child.is_dir()
-                                        and child.stat().st_mtime < cutoff):
-                                    shutil.rmtree(child.path, ignore_errors=True)
-                                    logger.info("cleanup removed=%s/%s",
-                                                entry.name, child.name)
-                        except Exception:
-                            pass
-                    elif entry.is_dir() and entry.stat().st_mtime < cutoff:
-                        # Stray top-level per-call dir (shouldn't occur under
-                        # mandatory isolation, but reap defensively).
-                        shutil.rmtree(entry.path, ignore_errors=True)
-                        logger.info("cleanup removed=%s", entry.name)
-            except Exception:
-                pass
-    threading.Thread(target=_cleanup_loop, daemon=True).start()
-
     # ── Start server ──
     server = ThreadingHTTPServer(("0.0.0.0", args.port), MCPHandler)
-    logger.info("start port=%d timeout=%d max_mem=%d max_nproc=%d max_concurrent=%d keep=%d",
-                args.port, DEFAULT_TIMEOUT, _max_memory_mb, _max_nproc, _max_concurrent, _keep_minutes)
+    logger.info("start port=%d timeout=%d max_mem=%d max_nproc=%d max_concurrent=%d",
+                args.port, DEFAULT_TIMEOUT, _max_memory_mb, _max_nproc, _max_concurrent)
     if _allow_dir:
         logger.info("allow_dir=%s", _allow_dir)
     logger.info("network_mode=%s allow_domains=%d allow_methods=%d",

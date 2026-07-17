@@ -61,7 +61,6 @@ export interface SandboxNetworkConfig {
   sandbox_network_mode: 'deny' | 'allow' | 'allowlist'
   sandbox_allow_domains: string
   sandbox_allow_methods: string
-  mcp_file_keep_minutes: number   // generated-file retention in minutes
 }
 
 export async function getSandboxNetwork(): Promise<SandboxNetworkConfig> {

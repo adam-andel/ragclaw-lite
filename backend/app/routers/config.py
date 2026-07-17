@@ -143,7 +143,6 @@ class SandboxNetworkUpdate(BaseModel):
     sandbox_network_mode: str | None = None   # deny | allow | allowlist
     sandbox_allow_domains: str | None = None  # comma-separated
     sandbox_allow_methods: str | None = None  # comma-separated (reserved)
-    mcp_file_keep_minutes: int | None = None  # generated-file retention (minutes)
 
     @field_validator("sandbox_network_mode")
     @classmethod
@@ -160,7 +159,6 @@ async def get_sandbox_network(current_user=Depends(get_current_admin)):
         "sandbox_network_mode": config_manager.sandbox_network_mode,
         "sandbox_allow_domains": config_manager.sandbox_allow_domains,
         "sandbox_allow_methods": config_manager.sandbox_allow_methods,
-        "mcp_file_keep_minutes": config_manager.mcp_file_keep_minutes,
     }
 
 
@@ -172,14 +170,13 @@ async def update_sandbox_network(
     """Update the sandbox network policy; after saving it is hot-reloaded into the MCP REPL service (no restart needed)."""
     patch = {
         k: v for k, v in data.model_dump(exclude_none=True).items()
-        if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods", "mcp_file_keep_minutes"}
+        if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods"}
     }
     if not patch:
         raise HTTPException(status_code=400, detail="没有提供任何可更新的字段")
     await config_manager.update(patch)
     pushed_policy = await _push_mcp_policy()
-    pushed_keep = await _push_mcp_keep_minutes() if "mcp_file_keep_minutes" in patch else True
-    mcp_pushed = pushed_policy and pushed_keep
+    mcp_pushed = pushed_policy
     return {
         "message": "沙盒策略已更新，立即生效"
         + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
@@ -187,7 +184,6 @@ async def update_sandbox_network(
             "sandbox_network_mode": config_manager.sandbox_network_mode,
             "sandbox_allow_domains": config_manager.sandbox_allow_domains,
             "sandbox_allow_methods": config_manager.sandbox_allow_methods,
-            "mcp_file_keep_minutes": config_manager.mcp_file_keep_minutes,
         },
         "mcp_pushed": mcp_pushed,
     }
@@ -217,27 +213,6 @@ async def _push_mcp_policy() -> bool:
                 logger.warning("push policy to %s -> HTTP %d", url, resp.status_code)
         except Exception as e:
             logger.warning("push policy to %s failed: %s", url, e)
-    return False
-
-
-async def _push_mcp_keep_minutes() -> bool:
-    """Best-effort: hot-reload generated-file retention into the MCP REPL container.
-
-    The MCP server exposes PUT /keep-minutes on its internal Docker-network URL.
-    Falls back to localhost for local (non-Docker) deployments.
-    """
-    payload = {"keep_minutes": config_manager.mcp_file_keep_minutes}
-    urls = [settings.mcp_repl_internal_url, "http://127.0.0.1:9200"]
-    for url in urls:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.put(url.rstrip("/") + "/keep-minutes", json=payload)
-                if resp.status_code == 200:
-                    logger.info("pushed keep_minutes to %s ok", url)
-                    return True
-                logger.warning("push keep_minutes to %s -> HTTP %d", url, resp.status_code)
-        except Exception as e:
-            logger.warning("push keep_minutes to %s failed: %s", url, e)
     return False
 
 
@@ -296,7 +271,7 @@ async def _push_mcp_auth_secret(secret: str) -> bool:
 
     The MCP server exposes PUT /auth-secret on its internal Docker-network URL.
     Falls back to localhost for local (non-Docker) deployments. The endpoint is
-    internal-only (no host port mapping), mirroring /policy and /keep-minutes.
+    internal-only (no host port mapping), mirroring /policy.
     """
     payload = {"secret": secret}
     urls = [settings.mcp_repl_internal_url, "http://127.0.0.1:9200"]
@@ -322,22 +297,6 @@ async def ensure_mcp_auth_secret_pushed(retries: int = 6, interval: float = 2.0)
     secret = config_manager.repl_auth_secret
     for attempt in range(1, retries + 1):
         ok = await _push_mcp_auth_secret(secret)
-        if ok:
-            return True
-        if attempt < retries:
-            await asyncio.sleep(interval)
-    return False
-
-
-async def ensure_mcp_keep_minutes_pushed(retries: int = 6, interval: float = 2.0) -> bool:
-    """Startup helper: push the current file-retention to MCP, retrying because
-    the MCP container may not be up yet when the backend starts.
-
-    0 means "keep forever" (no auto-cleanup) and is pushed as-is. Returns True
-    once a push succeeds.
-    """
-    for attempt in range(1, retries + 1):
-        ok = await _push_mcp_keep_minutes()
         if ok:
             return True
         if attempt < retries:

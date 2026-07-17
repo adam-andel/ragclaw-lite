@@ -71,26 +71,11 @@ const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
-// Generated-file retention presets (minutes). 0 = keep forever (no auto-cleanup).
-// "custom" reveals a minutes input. Unlimited is the default (first option).
-const keepOptions = computed(() => [
-  { label: t('settings.keepUnlimited'), value: 0 },
-  { label: t('settings.keep1h'), value: 60 },
-  { label: t('settings.keep1d'), value: 1440 },
-  { label: t('settings.keep1w'), value: 10080 },
-  { label: t('settings.keep1m'), value: 43200 },
-  { label: t('settings.keepCustom'), value: 'custom' },
-])
-
 const sandboxConfig = ref<SandboxNetworkConfig>({
   sandbox_network_mode: 'deny',
   sandbox_allow_domains: '',
   sandbox_allow_methods: '',
-  mcp_file_keep_minutes: keepOptions.value[0].value as number,
 })
-
-const keepPreset = ref<string | number>(0)
-const keepCustomMinutes = ref<number>(60)
 
 // ── REPL MCP identity secret ──
 const replAuthSecret = ref<string>('')
@@ -98,16 +83,6 @@ const replAuthSaving = ref(false)
 const replAuthGenerating = ref(false)
 const replAuthDirty = ref(false)
 const replAuthPushed = ref<boolean | null>(null)
-
-function formatKeep(min: number): string {
-  if (min === 0) return t('settings.keepUnlimited')
-  if (!min) return t('settings.keepUnset')
-  if (min % 43200 === 0) return t('settings.keepMonths', { n: min / 43200 })
-  if (min % 10080 === 0) return t('settings.keepWeeks', { n: min / 10080 })
-  if (min % 1440 === 0) return t('settings.keepDays', { n: min / 1440 })
-  if (min % 60 === 0) return t('settings.keepHours', { n: min / 60 })
-  return t('settings.keepMinutes', { n: min })
-}
 
 // ── Embedding model (on-demand download) ──
 const embeddingStatus = ref<EmbeddingModelStatus>({
@@ -363,10 +338,6 @@ onMounted(async () => {
 
   try {
     sandboxConfig.value = await getSandboxNetwork()
-    const v = sandboxConfig.value.mcp_file_keep_minutes ?? 0
-    const preset = keepOptions.value.find((o) => o.value !== 'custom' && o.value === v)
-    keepPreset.value = preset ? v : 'custom'
-    keepCustomMinutes.value = v
   } catch (e: any) {
     message.error(e.message || t('settings.msg.loadSandboxFailed'))
   }
@@ -509,12 +480,10 @@ async function handleSave() {
     message.success(t('settings.msg.configSaved'))
 
     // Also save the sandbox network settings
-    const keepMins = keepPreset.value === 'custom' ? keepCustomMinutes.value : Number(keepPreset.value)
     const sres = await updateSandboxNetwork({
       sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
       sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
       sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
-      mcp_file_keep_minutes: keepMins,
     })
     sandboxConfig.value = sres.config
     if (sres.mcp_pushed) {
@@ -1100,26 +1069,6 @@ async function handleTest() {
                 （{{ sandboxConfig.sandbox_allow_domains || t('settings.noDomainsConfigured') }}）
               </template>
             </span>
-          </NFormItem>
-
-          <NDivider />
-
-          <NFormItem :label="t('settings.fileRetention')">
-            <NSpace vertical :size="8" style="width: 100%">
-              <NSelect v-model:value="keepPreset" :options="keepOptions" style="max-width: 240px" />
-              <NInputNumber
-                v-if="keepPreset === 'custom'"
-                v-model:value="keepCustomMinutes"
-                :min="1" :max="525600" :step="60"
-                :placeholder="t('settings.customMinutesPlaceholder')"
-                style="max-width: 240px"
-              >
-                <template #suffix>{{ t('settings.minutes') }}</template>
-              </NInputNumber>
-              <span class="muted" style="font-size: 12px">
-                {{ t('settings.currentRetention', { keep: formatKeep(sandboxConfig.mcp_file_keep_minutes) }) }}
-              </span>
-            </NSpace>
           </NFormItem>
 
         </NForm>

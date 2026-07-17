@@ -96,25 +96,6 @@ async def lifespan(app: FastAPI):
                     pass
 
         asyncio.create_task(_periodic_push_auth_secret())
-
-        # Push generated-file retention (keep_minutes) so the MCP cleanup thread
-        # honors the configured default (0 = keep forever) out of the box. Same
-        # retry + periodic re-push pattern as the auth secret above.
-        pushed_keep = await _cfg_router.ensure_mcp_keep_minutes_pushed()
-        if not pushed_keep:
-            print("[startup] WARNING: could not push file retention (keep_minutes) to "
-                  "MCP — generated files may be auto-cleaned until you save it in Settings "
-                  "or restart mcp-repl")
-
-        async def _periodic_push_keep(interval: int = 60):
-            while True:
-                await _asyncio.sleep(interval)
-                try:
-                    await _cfg_router._push_mcp_keep_minutes()
-                except Exception:
-                    pass
-
-        asyncio.create_task(_periodic_push_keep())
     except Exception as e:
         print(f"[startup] push REPL_AUTH_SECRET warning: {e}")
     # Init LLM concurrency limiter from saved config

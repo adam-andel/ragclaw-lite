@@ -198,8 +198,6 @@ class ConfigManager:
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
-            # REPL MCP generated-file retention (minutes); 0 = keep forever (no auto-cleanup)
-            "mcp_file_keep_minutes": 0,
             # REPL MCP identity HMAC secret (auto-generated on first boot if absent)
             "repl_auth_secret": "",
         }
@@ -224,7 +222,6 @@ class ConfigManager:
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
-            "mcp_file_keep_minutes": 0,  # 0 = keep forever
             # Seed from env REPL_AUTH_SECRET if provided, else a fresh strong default.
             "repl_auth_secret": settings.repl_auth_secret or _generate_repl_auth_secret(),
         }
@@ -421,11 +418,6 @@ class ConfigManager:
             return self._config.get("sandbox_allow_methods", "")
 
     @property
-    def mcp_file_keep_minutes(self) -> int:
-        with self._lock:
-            return int(self._config.get("mcp_file_keep_minutes", 0))
-
-    @property
     def repl_auth_secret(self) -> str:
         """REPL MCP identity HMAC secret (runtime value, source of truth).
 
@@ -477,7 +469,6 @@ class ConfigManager:
             "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
-            "mcp_file_keep_minutes",
             "repl_auth_secret",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
