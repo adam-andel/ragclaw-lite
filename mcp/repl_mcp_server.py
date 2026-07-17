@@ -165,12 +165,12 @@ def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
     """
     if acct is not None and _allow_dir:
         base = os.path.join(_allow_dir, "user_" + acct["name"])
-        _ensure_dir_owned(base, acct, 0o700)
+        _ensure_dir_owned(base, acct, 0o770)
         if workspace_id:
             target = _ws_safe(base, workspace_id)
             if target is None:
                 target = base  # fall back to root on any unsafe input
-            _ensure_dir_owned(target, acct, 0o700)
+            _ensure_dir_owned(target, acct, 0o770)
             return target
         # No workspace_id → use the user's root directory directly.
         return base
@@ -259,12 +259,24 @@ def _set_auth_secret(secret):
     _isolation_enabled = True
 
 
-def _ensure_dir_owned(path: str, acct, mode: int = 0o700) -> None:
-    """Create dir (idempotent) and chown/chmod to the target account when isolated."""
+def _ensure_dir_owned(path: str, acct, mode: int = 0o770) -> None:
+    """Create dir (idempotent) and set ownership so BOTH the server process and
+    the dropped-privilege executor can read/write it.
+
+    Under Docker Desktop/WSL2 user-remap the container ``root`` is *not*
+    privileged, so simply chowning the sandbox to the executor uid with mode 700
+    locks the workspace API out of its own files (PermissionError -> the socket
+    is closed with no response -> httpx reports "server disconnected without
+    sending a response"). Instead we keep the dir owned by root (the server's
+    identity, so it can always write) but group-owned by the executor account
+    with group rwx (770) so dropped-privilege code can still use its own
+    sandbox. "other" stays excluded, preserving per-user isolation.
+    """
     os.makedirs(path, exist_ok=True)
-    if acct is not None and os.name != 'nt':
+    gid = acct["gid"] if acct else 0
+    if os.name != 'nt':
         try:
-            os.chown(path, acct["uid"], acct["gid"])
+            os.chown(path, 0, gid)
         except OSError:
             pass
     try:
@@ -283,7 +295,7 @@ def _workspace_root(uid: int) -> str:
     if not _allow_dir:
         raise ValueError("sandbox not configured")
     root = os.path.realpath(os.path.join(_allow_dir, f"user_u{int(uid)}"))
-    _ensure_dir_owned(root, {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}, 0o700)
+    _ensure_dir_owned(root, {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}, 0o770)
     return root
 
 
@@ -1105,16 +1117,22 @@ class MCPHandler(BaseHTTPRequestHandler):
                         return
             self.send_error(404)
             return
-        # Per-user workspace file manager (trusted internal API).
+            # Per-user workspace file manager (trusted internal API).
         if self.path.startswith("/workspace"):
-            self._handle_workspace_get()
+            try:
+                self._handle_workspace_get()
+            except Exception as e:  # noqa: BLE001 - never drop the connection
+                self._json_response(500, {"error": f"workspace error: {e}"})
             return
         self.send_error(404)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         if self.path == "/workspace/":
-            self._handle_workspace_post(length)
+            try:
+                self._handle_workspace_post(length)
+            except Exception as e:  # noqa: BLE001 - never drop the connection
+                self._json_response(500, {"error": f"workspace error: {e}"})
             return
         body = json.loads(self.rfile.read(length)) if length else {}
         method = body.get("method", "")
@@ -1175,7 +1193,10 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._handle_delete_user_dir()
             return
         if self.path.startswith("/workspace/"):
-            self._handle_workspace_delete()
+            try:
+                self._handle_workspace_delete()
+            except Exception as e:  # noqa: BLE001 - never drop the connection
+                self._json_response(500, {"error": f"workspace error: {e}"})
             return
         self.send_error(404)
 
@@ -1321,7 +1342,11 @@ class MCPHandler(BaseHTTPRequestHandler):
         def _chown(path):
             if os.name != 'nt':
                 try:
-                    os.chown(path, acct["uid"], acct["gid"])
+                    # Mirror _ensure_dir_owned: root-owned (server can rewrite)
+                    # but group-owned by the executor with group-write, so the
+                    # user's own code can still read/modify uploaded files.
+                    os.chown(path, 0, acct["gid"])
+                    os.chmod(path, 0o664)
                 except OSError:
                     pass
 
@@ -1337,7 +1362,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             if os.path.exists(target):
                 self._json_response(409, {"error": "already exists"})
                 return
-            _ensure_dir_owned(target, acct, 0o700)
+            _ensure_dir_owned(target, acct, 0o770)
             self._json_response(200, {"created": rel})
             return
 
@@ -1359,9 +1384,23 @@ class MCPHandler(BaseHTTPRequestHandler):
                 self._json_response(409, {"error": "already exists"})
                 return
             parent = os.path.dirname(target)
-            _ensure_dir_owned(parent, acct, 0o700)
-            with open(target, "wb") as f:
-                f.write(data)
+            _ensure_dir_owned(parent, acct, 0o770)
+            try:
+                with open(target, "wb") as f:
+                    f.write(data)
+            except PermissionError:
+                # Target may already be owned by the executor account (created
+                # by the user's own code). The server owns the parent dir, so it
+                # can delete the file and re-create it, preserving writability.
+                if os.path.exists(target):
+                    try:
+                        os.remove(target)
+                    except OSError:
+                        pass
+                    with open(target, "wb") as f:
+                        f.write(data)
+                else:
+                    raise
             _chown(target)
             self._json_response(200, {"written": rel, "size": len(data)})
             return
