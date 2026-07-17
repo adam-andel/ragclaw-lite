@@ -79,7 +79,8 @@ async def lifespan(app: FastAPI):
 
     # Push the (auto-generated) REPL identity secret to the MCP REPL container so
     # per-user isolation is active out of the box. Retry because containers may
-    # start in any order; a periodic re-push keeps MCP in sync after restarts.
+    # start in any order; on failure a self-heal loop retries until success, then
+    # stops (no perpetual heartbeat) and is re-triggered by the next save.
     try:
         from app.routers import config as _cfg_router
         pushed = await _cfg_router.ensure_mcp_auth_secret_pushed()
@@ -87,15 +88,11 @@ async def lifespan(app: FastAPI):
             print("[startup] WARNING: could not push REPL_AUTH_SECRET to MCP — REPL "
                   "isolation may be inactive until you save it in Settings or restart mcp-repl")
 
-        async def _periodic_push_auth_secret(interval: int = 60):
-            while True:
-                await _asyncio.sleep(interval)
-                try:
-                    await _cfg_router._push_mcp_auth_secret(config_manager.repl_auth_secret)
-                except Exception:
-                    pass
-
-        asyncio.create_task(_periodic_push_auth_secret())
+        # If MCP was not reachable at startup, start a self-healing retry loop that
+        # stops once the push succeeds (no perpetual heartbeat); the next Settings
+        # save re-triggers it if needed.
+        if not pushed:
+            await _cfg_router.ensure_auth_secret_retry_running()
 
         # Push the sandbox network policy on startup so an already-saved policy
         # reaches MCP even if the backend starts first. If MCP is not reachable

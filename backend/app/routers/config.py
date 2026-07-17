@@ -321,7 +321,7 @@ async def update_repl_auth(
     if len(secret) < 16:
         raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 至少 16 个字符")
     await config_manager.update({"repl_auth_secret": secret})
-    mcp_pushed = await _push_mcp_auth_secret(secret)
+    mcp_pushed = await notify_auth_secret_changed(secret)
     return {
         "message": "REPL_AUTH_SECRET 已更新，立即生效"
         + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
@@ -336,7 +336,7 @@ async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
     import secrets as _secrets
     new_secret = _secrets.token_hex(32)
     await config_manager.update({"repl_auth_secret": new_secret})
-    mcp_pushed = await _push_mcp_auth_secret(new_secret)
+    mcp_pushed = await notify_auth_secret_changed(new_secret)
     return {
         "message": "已生成新的 REPL_AUTH_SECRET，立即生效"
         + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
@@ -367,17 +367,82 @@ async def _push_mcp_auth_secret(secret: str) -> bool:
     return False
 
 
+# ── REPL auth-secret self-healing ──────────────────────────
+# Same "stop after success" pattern as the network policy: a background retry
+# loop runs ONLY while a push has not yet succeeded. After a successful push
+# the loop stops on its own (no perpetual 60s heartbeat); the next Settings
+# save (update/regenerate) re-triggers it if needed.
+_auth_secret_pending: bool = False
+_auth_secret_retry_task = None
+
+
 async def ensure_mcp_auth_secret_pushed(retries: int = 6, interval: float = 2.0) -> bool:
     """Startup helper: push the current secret to MCP, retrying because the
     MCP container may not be up yet when the backend starts.
 
+    On failure, marks a retry as pending so the self-heal loop can take over.
     Returns True once a push succeeds.
     """
+    global _auth_secret_pending
     secret = config_manager.repl_auth_secret
     for attempt in range(1, retries + 1):
         ok = await _push_mcp_auth_secret(secret)
         if ok:
+            _auth_secret_pending = False
             return True
         if attempt < retries:
             await asyncio.sleep(interval)
+    _auth_secret_pending = True
+    return False
+
+
+async def _auth_secret_retry_loop(interval: float = 60.0):
+    """Retry pushing the auth secret until a push succeeds, then stop.
+
+    Runs only while `_auth_secret_pending` is True. Started by either a failed
+    Settings save or a failed startup push; terminates itself on the first
+    success.
+    """
+    global _auth_secret_pending, _auth_secret_retry_task
+    _auth_secret_pending = True
+    while _auth_secret_pending:
+        try:
+            if await _push_mcp_auth_secret(config_manager.repl_auth_secret):
+                _auth_secret_pending = False
+                logger.info("REPL auth-secret self-heal succeeded; stopping retry loop")
+                _auth_secret_retry_task = None
+                return
+        except Exception as e:  # pragma: no cover
+            logger.warning("REPL auth-secret retry failed: %s", e)
+        await asyncio.sleep(interval)
+    _auth_secret_retry_task = None
+
+
+async def ensure_auth_secret_retry_running(interval: float = 60.0):
+    """Start the self-heal retry loop if it is not already running."""
+    global _auth_secret_retry_task
+    if _auth_secret_retry_task is not None and not _auth_secret_retry_task.done():
+        return
+    if not _auth_secret_pending:
+        return
+    _auth_secret_retry_task = asyncio.create_task(_auth_secret_retry_loop(interval))
+
+
+async def notify_auth_secret_changed(secret: str) -> bool:
+    """Push the auth secret immediately (called after a Settings save).
+
+    Returns True if the push succeeded. On failure, marks a retry as pending and
+    starts the self-heal loop so the secret is applied once MCP becomes reachable
+    — without a perpetual heartbeat.
+    """
+    global _auth_secret_pending, _auth_secret_retry_task
+    try:
+        if await _push_mcp_auth_secret(secret):
+            _auth_secret_pending = False
+            return True
+    except Exception as e:  # pragma: no cover
+        logger.warning("push auth-secret on save failed: %s", e)
+    _auth_secret_pending = True
+    if _auth_secret_retry_task is None or _auth_secret_retry_task.done():
+        _auth_secret_retry_task = asyncio.create_task(_auth_secret_retry_loop())
     return False
