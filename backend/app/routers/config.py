@@ -175,11 +175,10 @@ async def update_sandbox_network(
     if not patch:
         raise HTTPException(status_code=400, detail="没有提供任何可更新的字段")
     await config_manager.update(patch)
-    pushed_policy = await _push_mcp_policy()
-    mcp_pushed = pushed_policy
+    mcp_pushed = await notify_network_policy_changed()
     return {
         "message": "沙盒策略已更新，立即生效"
-        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        + ("" if mcp_pushed else "（MCP 暂不可达，请确认 mcp-repl 已启动后重新保存以应用；系统会每 60 秒自动重试）"),
         "config": {
             "sandbox_network_mode": config_manager.sandbox_network_mode,
             "sandbox_allow_domains": config_manager.sandbox_allow_domains,
@@ -216,6 +215,86 @@ async def _push_mcp_policy() -> bool:
     return False
 
 
+# ── Network-policy self-healing ─────────────────────────────
+# A background retry loop runs ONLY while a push has not yet succeeded (e.g.
+# MCP was unreachable at save/startup time). After a successful push the loop
+# stops on its own, so there is no perpetual 60s heartbeat. It is re-started by
+# the next Settings save that fails to push, or by a backend restart.
+_network_policy_pending: bool = False
+_network_policy_retry_task = None
+
+
+async def ensure_mcp_policy_pushed(retries: int = 6, interval: float = 2.0) -> bool:
+    """Startup helper: push the current network policy to MCP, retrying because
+    the MCP container may not be up yet when the backend starts.
+
+    On failure, marks a retry as pending so the self-heal loop can take over.
+    Returns True once a push succeeds.
+    """
+    global _network_policy_pending
+    for attempt in range(1, retries + 1):
+        ok = await _push_mcp_policy()
+        if ok:
+            _network_policy_pending = False
+            return True
+        if attempt < retries:
+            await asyncio.sleep(interval)
+    _network_policy_pending = True
+    return False
+
+
+async def _network_policy_retry_loop(interval: float = 60.0):
+    """Retry pushing the network policy until a push succeeds, then stop.
+
+    Runs only while `_network_policy_pending` is True. Started by either a
+    failed Settings save or a failed startup push; terminates itself on the
+    first success.
+    """
+    global _network_policy_pending, _network_policy_retry_task
+    _network_policy_pending = True
+    while _network_policy_pending:
+        try:
+            if await _push_mcp_policy():
+                _network_policy_pending = False
+                logger.info("network policy self-heal succeeded; stopping retry loop")
+                _network_policy_retry_task = None
+                return
+        except Exception as e:  # pragma: no cover
+            logger.warning("network policy retry failed: %s", e)
+        await asyncio.sleep(interval)
+    _network_policy_retry_task = None
+
+
+async def ensure_network_policy_retry_running(interval: float = 60.0):
+    """Start the self-heal retry loop if it is not already running."""
+    global _network_policy_retry_task
+    if _network_policy_retry_task is not None and not _network_policy_retry_task.done():
+        return
+    if not _network_policy_pending:
+        return
+    _network_policy_retry_task = asyncio.create_task(_network_policy_retry_loop(interval))
+
+
+async def notify_network_policy_changed() -> bool:
+    """Push the current network policy immediately (called after a Settings save).
+
+    Returns True if the push succeeded. On failure, marks a retry as pending and
+    starts the self-heal loop so the policy is applied once MCP becomes reachable
+    — without a perpetual heartbeat.
+    """
+    global _network_policy_pending, _network_policy_retry_task
+    try:
+        if await _push_mcp_policy():
+            _network_policy_pending = False
+            return True
+    except Exception as e:  # pragma: no cover
+        logger.warning("push policy on save failed: %s", e)
+    _network_policy_pending = True
+    if _network_policy_retry_task is None or _network_policy_retry_task.done():
+        _network_policy_retry_task = asyncio.create_task(_network_policy_retry_loop())
+    return False
+
+
 # ═══════════════════════════════════════════════════════════
 # REPL MCP identity secret (HMAC) — hot-reloadable
 # ═══════════════════════════════════════════════════════════
@@ -245,7 +324,7 @@ async def update_repl_auth(
     mcp_pushed = await _push_mcp_auth_secret(secret)
     return {
         "message": "REPL_AUTH_SECRET 已更新，立即生效"
-        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
         "repl_auth_secret": config_manager.repl_auth_secret,
         "mcp_pushed": mcp_pushed,
     }
@@ -260,7 +339,7 @@ async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
     mcp_pushed = await _push_mcp_auth_secret(new_secret)
     return {
         "message": "已生成新的 REPL_AUTH_SECRET，立即生效"
-        + ("" if mcp_pushed else "（MCP 热加载未成功，下次重启容器将自动应用）"),
+        + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
         "repl_auth_secret": config_manager.repl_auth_secret,
         "mcp_pushed": mcp_pushed,
     }

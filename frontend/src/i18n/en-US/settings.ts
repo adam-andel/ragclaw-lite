@@ -126,7 +126,7 @@ export default {
     configSaved: 'Configuration saved, takes effect immediately',
     saveFailed: 'Failed to save',
     sandboxSavedHot: 'Sandbox network policy saved and hot-reloaded, takes effect immediately',
-    sandboxSavedRestart: 'Saved (MCP hot-reload failed, takes effect after restarting the MCP container)',
+    sandboxSavedRestart: 'Saved (MCP unreachable; re-save after confirming mcp-repl is up, or it auto-retries every 60s)',
     loadReplAuthFailed: 'Failed to load REPL auth secret',
     replAuthSavedHot: 'REPL_AUTH_SECRET saved and hot-reloaded; per-user isolation takes effect immediately',
     replAuthGeneratedHot: 'New REPL_AUTH_SECRET generated and hot-reloaded, takes effect immediately',

@@ -126,7 +126,7 @@ export default {
     configSaved: '配置已保存，立即生效',
     saveFailed: '保存失败',
     sandboxSavedHot: '沙盒网络策略已保存并热加载，立即生效',
-    sandboxSavedRestart: '已保存（MCP 热加载未成功，重启 MCP 容器后生效）',
+    sandboxSavedRestart: '已保存（MCP 暂不可达，请确认 mcp-repl 已启动后重新保存以应用；系统会每 60 秒自动重试）',
     loadReplAuthFailed: '加载 REPL 密钥失败',
     replAuthSavedHot: 'REPL_AUTH_SECRET 已保存并热加载，按用户隔离立即生效',
     replAuthGeneratedHot: '已生成新的 REPL_AUTH_SECRET 并热加载，立即生效',

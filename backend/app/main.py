@@ -96,8 +96,18 @@ async def lifespan(app: FastAPI):
                     pass
 
         asyncio.create_task(_periodic_push_auth_secret())
+
+        # Push the sandbox network policy on startup so an already-saved policy
+        # reaches MCP even if the backend starts first. If MCP is not reachable
+        # yet, start a self-healing retry loop that stops once the push succeeds
+        # (no perpetual heartbeat); the next Settings save re-triggers it if needed.
+        pushed_policy = await _cfg_router.ensure_mcp_policy_pushed()
+        if not pushed_policy:
+            print("[startup] WARNING: could not push sandbox network policy to MCP — "
+                  "outbound policy in mcp-repl may be stale until you save it in Settings")
+            await _cfg_router.ensure_network_policy_retry_running()
     except Exception as e:
-        print(f"[startup] push REPL_AUTH_SECRET warning: {e}")
+        print(f"[startup] push MCP config warning: {e}")
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)
