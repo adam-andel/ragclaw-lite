@@ -139,10 +139,15 @@ async def _clear_pending_state(session, conv_id: str) -> None:
 # ── File reference expansion ──
 # The frontend inserts workspace file references into the user query as
 # `[[file:rel_path]]`. On send we resolve each reference against the user's
-# sandbox, read the text content, and splice it *in place* (preserving the
-# exact position of the original token) so the LLM sees the file content right
-# where the user put the reference. The original tokenised query is still stored
-# as the user message (so history stays compact and human-readable).
+# sandbox and expand it into the LLM prompt with an *adaptive* placement that
+# maximises how accurately the model understands the question:
+#   - short files  → spliced in place, right next to their reference (zero
+#     co-reference cost, content co-located with the instruction that uses it);
+#   - long / high-density / binary files → quarantined to a labelled appendix
+#     at the very TOP of the message, so they don't break the user's sentence
+#     or bury the instruction in the middle of the prompt.
+# The original tokenised query is still stored as the user message (so history
+# stays compact and human-readable); only the LLM sees the expanded version.
 
 # Match `[[file:some/relative/path]]` — capture the path (anything but `]`).
 FILE_REF_RE = re.compile(r"\[\[file:([^\]]+)\]\]")
@@ -150,6 +155,13 @@ FILE_REF_RE = re.compile(r"\[\[file:([^\]]+)\]\]")
 # Guardrails so a huge/binary file can't blow up the prompt or inject garbage.
 _MAX_FILE_CHARS = 40_000      # per-file content cap
 _MAX_TOTAL_CHARS = 120_000    # combined cap across all referenced files
+
+# Adaptive placement (see _expand_file_refs): short files are spliced in place
+# next to their reference; long / dense / binary files are quarantined to a
+# labelled appendix at the top of the message so they don't break the user's
+# sentence or bury the instruction in the middle of the prompt.
+_INLINE_MAX_CHARS = 1500       # a single file ≤ this → candidate for in-place
+_INLINE_BUDGET_CHARS = 6000    # cumulative in-place content cap; overflow → appendix
 
 
 def _looks_binary(text: str) -> bool:
@@ -164,6 +176,17 @@ def _looks_binary(text: str) -> bool:
         return False
     ctrl = sum(1 for ch in sample if ord(ch) < 9 or 13 < ord(ch) < 32)
     return ctrl / len(sample) > 0.1
+
+
+def _is_high_density(text: str) -> bool:
+    """One or a few very long unbroken lines (base64 blobs, minified bundles,
+    giant CSV rows). Valid text, but painful to read when spliced mid-sentence,
+    so we push it to the top appendix instead of inlining it.
+    """
+    if len(text) < 200:
+        return False
+    nl_ratio = text.count("\n") / max(1, len(text)) * 100  # newlines per 100 chars
+    return nl_ratio < 0.3
 
 
 async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, str | None]:
@@ -209,15 +232,25 @@ async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, st
     return text, None
 
 
-async def _expand_file_refs(query: str, uid: int | None) -> tuple[str, list[str]]:
-    """Replace every `[[file:path]]` token with the file's content, in place.
+async def _expand_file_refs(
+    query: str, uid: int | None
+) -> tuple[str, list[str], dict[str, int]]:
+    """Expand `[[file:path]]` references with *adaptive* placement.
 
-    Returns ``(expanded_query, errors)``. Unreadable files are replaced with a
-    short inline error note rather than aborting the whole request.
+    Returns ``(expanded_query, errors, summary)`` where ``summary`` reports how
+    many files ended up in-place vs in the top appendix vs failed to read.
+
+    Placement rules (tuned for LLM comprehension, not literal position):
+      - binary / high-density (one long unbroken line) → top appendix (note);
+      - else if ``len ≤ _INLINE_MAX_CHARS`` AND cumulative in-place content
+        ``≤ _INLINE_BUDGET_CHARS`` → in place, next to the reference;
+      - otherwise → top appendix, referenced from the question as ``文档N``.
+
+    Unreadable files fall back to a short inline note rather than aborting.
     """
     refs = FILE_REF_RE.findall(query)
     if not refs:
-        return query, []
+        return query, [], {"inline": 0, "prepend": 0, "failed": 0}
 
     # Deduplicate while preserving first-seen order.
     seen: set[str] = set()
@@ -227,39 +260,85 @@ async def _expand_file_refs(query: str, uid: int | None) -> tuple[str, list[str]
             seen.add(r)
             unique.append(r)
 
-    replacements: dict[str, str] = {}
-    errors: list[str] = []
-    total = 0
-
+    # Read every referenced file once.
+    raw: dict[str, tuple[str | None, str | None]] = {}
     for path in unique:
         if uid is None:
-            content, err = None, "用户沙箱未初始化"
+            raw[path] = (None, "用户沙箱未初始化")
         else:
-            content, err = await _read_workspace_file_text(uid, path)
+            raw[path] = await _read_workspace_file_text(uid, path)
 
+    resolution: dict[str, str] = {}   # path -> replacement used in the body
+    appendices: list[tuple[int, str, str]] = []  # (idx, path, block)
+    label_of: dict[str, int] = {}
+    inline_used = 0
+    total = 0
+    label_counter = 0
+    summary = {"inline": 0, "prepend": 0, "failed": 0}
+    errors: list[str] = []
+
+    for path in unique:
+        content, err = raw[path]
+
+        # 1) Read failure --------------------------------------------------
         if err or content is None:
-            msg = err or "读取失败"
-            replacements[path] = f"[文件 {path} 读取失败：{msg}]"
-            errors.append(f"{path}: {msg}")
+            if err and "二进制" in err:
+                # Binary: quarantine to the appendix with a clean note instead
+                # of inlining mojibake next to the user's question.
+                label_counter += 1
+                label_of[path] = label_counter
+                summary["prepend"] += 1
+                appendices.append(
+                    (label_counter, path,
+                     f"文档{label_counter} [{path}]:\n(该文件疑似二进制，无法以文本形式读取)\n")
+                )
+                resolution[path] = f"文档{label_counter}"
+                continue
+            resolution[path] = f"[文件 {path} 读取失败：{err or '读取失败'}]"
+            summary["failed"] += 1
+            errors.append(f"{path}: {err or '读取失败'}")
             continue
 
+        # 2) Cumulative guardrail ------------------------------------------
         if total + len(content) > _MAX_TOTAL_CHARS:
-            replacements[path] = (
+            resolution[path] = (
                 f"[文件 {path} 已跳过：累计内容超出 {_MAX_TOTAL_CHARS} 字符上限]"
             )
             errors.append(f"{path}: 累计超出字符上限")
             continue
 
-        total += len(content)
-        replacements[path] = (
-            f"\n=== 文件内容: {path} ===\n{content}\n=== 文件内容结束: {path} ===\n"
+        # 3) Classify placement -------------------------------------------
+        force_appendix = _is_high_density(content)
+        fits_inline = (
+            not force_appendix
+            and len(content) <= _INLINE_MAX_CHARS
+            and inline_used + len(content) <= _INLINE_BUDGET_CHARS
         )
 
-    def _sub(m: re.Match) -> str:
-        return replacements.get(m.group(1), m.group(0))
+        if fits_inline:
+            resolution[path] = (
+                f"\n=== 文件内容: {path} ===\n{content}\n=== 文件内容结束: {path} ===\n"
+            )
+            inline_used += len(content)
+            total += len(content)
+            summary["inline"] += 1
+        else:
+            label_counter += 1
+            label_of[path] = label_counter
+            summary["prepend"] += 1
+            appendices.append(
+                (label_counter, path, f"文档{label_counter} [{path}]:\n{content}\n")
+            )
+            resolution[path] = f"文档{label_counter}"
+            total += len(content)
 
-    expanded = FILE_REF_RE.sub(_sub, query)
-    return expanded, errors
+    def _sub(m: re.Match) -> str:
+        return resolution.get(m.group(1), m.group(0))
+
+    body = FILE_REF_RE.sub(_sub, query)
+    prefix = "\n\n".join(block for _, _, block in appendices)
+    expanded = (prefix + "\n\n" + body) if appendices else body
+    return expanded, errors, summary
 
 # Approach B: manual suspend/resume state repository.。# Persisted to the DB (pending_limit_states table); survives refresh / restart and supports multiple workers.。# Keep only transient runtime objects in memory (stripped by _snapshot_state); the snapshot body is persisted to the DB.。
 
@@ -460,21 +539,27 @@ async def chat_stream(
                             })
                             return
 
-                    # ── 1a. Expand [[file:rel_path]] references into inline content ──
+                    # ── 1a. Expand [[file:rel_path]] references (adaptive placement) ──
                     # The original tokenised query stays the cache/history key; only
-                    # the LLM sees the expanded version, with each file's content
-                    # spliced in at the exact position of its original token.
+                    # the LLM sees the expanded version. Short files are spliced in
+                    # place next to their reference; long / dense / binary files are
+                    # moved to a labelled appendix at the top of the message.
                     file_refs = FILE_REF_RE.findall(request.query)
                     expanded_query = request.query
                     file_read_errors: list[str] = []
+                    file_summary = {"inline": 0, "prepend": 0, "failed": 0}
                     if file_refs:
                         uid = await get_user_repl_uid(current_user.id)
-                        expanded_query, file_read_errors = await _expand_file_refs(request.query, uid)
-                        emit_agent_step(
-                            "file_context",
-                            f"已附加 {len(file_refs)} 个文件到上下文"
-                            + (f"（{len(file_read_errors)} 个读取失败）" if file_read_errors else ""),
+                        expanded_query, file_read_errors, file_summary = await _expand_file_refs(
+                            request.query, uid
                         )
+                        msg = (
+                            f"已附加 {len(file_refs)} 个文件"
+                            f"（内联 {file_summary['inline']}，置顶附录 {file_summary['prepend']}）"
+                        )
+                        if file_summary["failed"]:
+                            msg += f"；{file_summary['failed']} 个读取失败"
+                        emit_agent_step("file_context", msg)
 
                     initial_state = {
                         "query": expanded_query,
