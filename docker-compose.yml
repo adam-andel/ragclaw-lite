@@ -52,10 +52,13 @@ services:
       # optional initial value; it never disables auth.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
     # ── Container security hardening ──
+    # NOTE: /app/workspace is now a PERSISTENT named volume (erag_workspace),
+    # not tmpfs — user workspace files + REPL tool outputs survive mcp-repl
+    # restarts. It is mounted explicitly below (rw) and is fully isolated
+    # from the backend's erag_data volume.
     read_only: true
     tmpfs:
       - /tmp:size=256M,exec
-      - /app/workspace:size=512M,uid=1000,gid=1000
     security_opt:
       - no-new-privileges:true
       - seccomp:./mcp/seccomp.json
@@ -69,6 +72,12 @@ services:
       - SETUID
       - SETGID
       - CHOWN
+    # ── Persistent workspace volume ──
+    # erag_workspace is a dedicated named volume, isolated from the backend's
+    # erag_data. All user files + REPL tool outputs live here and persist
+    # across container restarts (unlike the old tmpfs).
+    volumes:
+      - erag_workspace:/app/workspace
     # ── Resource limits ──
     deploy:
       resources:
@@ -85,4 +94,6 @@ networks:
 
 volumes:
   erag_data:
+    driver: local
+  erag_workspace:
     driver: local

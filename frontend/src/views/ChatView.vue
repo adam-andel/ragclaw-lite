@@ -3,14 +3,16 @@ import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, useMessage } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NModal, NSpin, useMessage } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations } from '@/api/chat'
+import { listWorkspace, mkdirWorkspace } from '@/api/workspace'
+import type { WorkspaceEntry } from '@/api/workspace'
 import { useAuthStore } from '@/stores/auth'
 import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
@@ -49,6 +51,75 @@ const isLoadingOlder = ref(false)
 const hasMoreOlder = computed(() => currentPage.value > 1)
 const inputText = ref('')
 const isStreaming = ref(false)
+
+// ── Workspace directory selector (v2: user workspace == REPL tool dir) ──
+// workspaceDir: '' = user workspace ROOT (= default). Non-empty = chosen sub-dir.
+const workspaceDir = ref('')
+const showWsModal = ref(false)
+const wsCurrentPath = ref('')
+const wsDirs = ref<WorkspaceEntry[]>([])
+const wsLoading = ref(false)
+const wsNewName = ref('')
+
+// Breadcrumb segments derived from the current modal path (root + each nested part).
+const wsCrumbSegments = computed(() => {
+  if (!wsCurrentPath.value) return []
+  const parts = wsCurrentPath.value.split('/').filter(Boolean)
+  return parts.map((name, i) => ({
+    name,
+    path: parts.slice(0, i + 1).join('/'),
+  }))
+})
+
+async function wsLoadDirs() {
+  wsLoading.value = true
+  try {
+    const data = await listWorkspace(wsCurrentPath.value)
+    // Only show immediate subdirectories in the selector.
+    wsDirs.value = (data.entries || []).filter(e => e.type === 'dir')
+  } catch (e: any) {
+    nmessage.error(e?.message || t('workspace.errors.load'))
+    wsDirs.value = []
+  } finally {
+    wsLoading.value = false
+  }
+}
+
+async function openWsModal() {
+  wsCurrentPath.value = workspaceDir.value
+  wsNewName.value = ''
+  await wsLoadDirs()
+  showWsModal.value = true
+}
+
+function wsEnterDir(entry: WorkspaceEntry) {
+  wsCurrentPath.value = entry.rel_path
+  wsLoadDirs()
+}
+
+function wsCrumb(path: string) {
+  wsCurrentPath.value = path
+  wsLoadDirs()
+}
+
+async function wsCreateDir() {
+  const name = wsNewName.value.trim()
+  if (!name) return
+  const full = wsCurrentPath.value ? `${wsCurrentPath.value}/${name}` : name
+  try {
+    await mkdirWorkspace(full)
+    wsNewName.value = ''
+    await wsLoadDirs()
+  } catch (e: any) {
+    nmessage.error(e?.message || t('workspace.errors.create'))
+  }
+}
+
+function wsConfirmDir() {
+  workspaceDir.value = wsCurrentPath.value
+  showWsModal.value = false
+}
+
 const queuePosition = ref<number | null>(null)
 // Tracks the backend agent_step stage during streaming so the assistant bubble can show "检索中" vs "生成中".
 const assistantStage = ref<string | null>(null)
@@ -476,7 +547,7 @@ onMounted(() => {
   })
 })
 
-async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null) {
+async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
@@ -485,7 +556,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   assistantStage.value = t('chat.retrieving')
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
@@ -607,7 +678,7 @@ async function sendMessage() {
   await scrollToBottom()
   isStreaming.value = true
   await nextTick()
-  doStream(text, proxyMsg, userMsg.id)
+  doStream(text, proxyMsg, userMsg.id, false, null, workspaceDir.value)
 }
 
 async function regenerateAnswer(assistantMsgId: string) {
@@ -625,7 +696,7 @@ async function regenerateAnswer(assistantMsgId: string) {
   await scrollToBottom()
   isStreaming.value = true
   await nextTick()
-  doStream(userMsg.content, proxyMsg, userMsg.id, true)
+  doStream(userMsg.content, proxyMsg, userMsg.id, true, null, workspaceDir.value)
 }
 
 function stopStream() {
@@ -659,7 +730,7 @@ async function resumeRun(action: 'continue' | 'stop') {
   isPinnedToBottom.value = true
   await scrollToBottom()
   await nextTick()
-  doStream('', proxyMsg, msgId, false, action)
+  doStream('', proxyMsg, msgId, false, action, workspaceDir.value)
 }
 
 function continueResume() {
@@ -1055,6 +1126,12 @@ function handleKeydown(e: KeyboardEvent) {
         </div>
       </div>
       <div class="chat-input-area">
+        <div class="ws-toolbar">
+          <NButton size="small" tertiary @click="openWsModal" :disabled="isStreaming">
+            <template #icon><NIcon size="16"><FolderOpen /></NIcon></template>
+            {{ t('chat.workspaceDirBtn', { dir: workspaceDir ? workspaceDir : t('workspace.default') }) }}
+          </NButton>
+        </div>
         <NInput
           v-model:value="inputText"
           type="textarea"
@@ -1077,6 +1154,69 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon><Send /></NIcon></template>
         </NButton>
       </div>
+
+      <NModal
+        v-model:show="showWsModal"
+        preset="card"
+        :title="t('workspace.selectDirTitle')"
+        style="width: 520px; max-width: 92vw;"
+        :mask-closable="false"
+      >
+        <div class="ws-crumbs">
+          <NButton text size="small" :type="wsCurrentPath ? 'primary' : 'default'" @click="wsCrumb('')">
+            {{ t('workspace.breadcrumbRoot') }}
+          </NButton>
+          <template v-for="seg in wsCrumbSegments" :key="seg.path">
+            <span class="ws-sep">/</span>
+            <NButton
+              text
+              size="small"
+              :type="seg.path === wsCurrentPath ? 'default' : 'primary'"
+              @click="wsCrumb(seg.path)"
+            >{{ seg.name }}</NButton>
+          </template>
+        </div>
+
+        <NSpin :show="wsLoading">
+          <div class="ws-dir-list">
+            <div v-if="wsDirs.length === 0 && !wsLoading" class="ws-empty">
+              {{ t('workspace.noSubdir') }}
+            </div>
+            <div
+              v-for="d in wsDirs"
+              :key="d.rel_path"
+              class="ws-dir-row"
+              @click="wsEnterDir(d)"
+            >
+              <NIcon size="18" class="ws-folder"><Folder /></NIcon>
+              <span class="ws-dir-name">{{ d.name }}</span>
+              <span class="ws-enter">›</span>
+            </div>
+          </div>
+        </NSpin>
+
+        <div class="ws-create">
+          <NInput
+            v-model:value="wsNewName"
+            size="small"
+            :placeholder="t('workspace.subdirName')"
+            @keydown.enter="wsCreateDir"
+          />
+          <NButton size="small" type="primary" @click="wsCreateDir">
+            <template #icon><NIcon size="14"><Create /></NIcon></template>
+            {{ t('workspace.createSubdir') }}
+          </NButton>
+        </div>
+
+        <template #footer>
+          <div class="ws-footer">
+            <NButton @click="showWsModal = false">{{ t('workspace.cancel') }}</NButton>
+            <NButton type="primary" @click="wsConfirmDir">
+              {{ t('workspace.selectHere') }}
+            </NButton>
+          </div>
+        </template>
+      </NModal>
     </div>
   </div>
 </template>
@@ -1492,6 +1632,74 @@ function handleKeydown(e: KeyboardEvent) {
   gap: var(--space-2);
   padding: 0 0 var(--space-3);
   flex-shrink: 0;
+}
+
+/* ── Workspace directory selector (button above the input box) ── */
+.ws-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+.ws-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: var(--space-3);
+  font-size: 13px;
+}
+.ws-sep {
+  color: var(--color-text-muted, #999);
+  margin: 0 2px;
+}
+.ws-dir-list {
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: var(--space-2);
+}
+.ws-empty {
+  color: var(--color-text-muted, #999);
+  text-align: center;
+  padding: var(--space-5) 0;
+}
+.ws-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ws-dir-row:hover {
+  background: var(--color-hover, rgba(0, 0, 0, 0.04));
+}
+.ws-dir-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-folder {
+  color: var(--color-warning, #f0a020);
+}
+.ws-enter {
+  color: var(--color-text-muted, #999);
+  font-size: 18px;
+  line-height: 1;
+}
+.ws-create {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.ws-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
 }
 
 /* ── Inline suspension bubble (shown when the limit is hit, blends into the message stream) ── */

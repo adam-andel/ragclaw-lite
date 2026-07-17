@@ -144,38 +144,46 @@ def _acquire_slot(timeout: int = 5) -> bool:
 
 
 def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
-    """Create a workdir.
+    """Resolve a workdir for an execution call.
 
-    When isolated (acct set): workdir lives under _allow_dir/user_<name>/,
-    owned by that account with mode 700, so one user's code can neither be
-    read by nor read others' directories (each account dir is 700).
+    The workdir is always confined to the caller's sandbox root
+    ``_allow_dir/user_<name>/`` (``_ws_safe`` rejects traversal, so a caller
+    can never escape their own directory).
 
-    Otherwise original behaviour: a per-call UUID dir (or stable workspace_id
-    dir) directly under _allow_dir / tempdir.
+    Behaviour:
+      * ``workspace_id`` empty → the user's **root** directory
+        (``user_<name>/``). This is the default "工作空间" the user manages
+        through the UI; REPL tool outputs land here and persist.
+      * ``workspace_id`` set → a user-chosen **sub-directory** (nested paths
+        like ``myproject/data`` are allowed). Invalid/traversing values fall
+        back to the root instead of erroring.
+
+    In all cases the directory is created and chowned to the account (mode 700)
+    so one user's code can neither read nor be read by others' directories.
     """
     if acct is not None and _allow_dir:
         base = os.path.join(_allow_dir, "user_" + acct["name"])
         _ensure_dir_owned(base, acct, 0o700)
-        if workspace_id and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
-            workdir = os.path.join(base, workspace_id)
-            _ensure_dir_owned(workdir, acct, 0o700)
-            return workdir
-        call_uuid = str(uuid.uuid4())[:8]
-        workdir = os.path.join(base, call_uuid)
-        _ensure_dir_owned(workdir, acct, 0o700)
-        return workdir
+        if workspace_id:
+            target = _ws_safe(base, workspace_id)
+            if target is None:
+                target = base  # fall back to root on any unsafe input
+            _ensure_dir_owned(target, acct, 0o700)
+            return target
+        # No workspace_id → use the user's root directory directly.
+        return base
 
-    if _allow_dir and workspace_id:
-        # Sanitize: only safe chars, capped length, prevent traversal.
-        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", workspace_id):
-            workdir = os.path.join(_allow_dir, workspace_id)
-            os.makedirs(workdir, exist_ok=True)
-            return workdir
-    call_uuid = str(uuid.uuid4())[:8]
+    # Non-isolated fallback (no per-account chroot): still confine via _ws_safe.
     if _allow_dir:
-        workdir = os.path.join(_allow_dir, call_uuid)
-        os.makedirs(workdir, exist_ok=True)
-        return workdir
+        root = _allow_dir
+        if workspace_id:
+            target = _ws_safe(root, workspace_id)
+            if target is None:
+                target = root
+        else:
+            target = root
+        os.makedirs(target, exist_ok=True)
+        return target
     return tempfile.mkdtemp(prefix="repl_")
 
 
@@ -940,7 +948,9 @@ def _build_tools() -> list[dict]:
                 "code": {"type": "string", "description": "完整的 Python 代码"},
                 "workspace_id": {
                     "type": "string",
-                    "description": "可选：固定 workspace 目录名（仅允许 [A-Za-z0-9_-]，≤64 字符）。"
+                    "description": "可选：用户选定的工作子目录（相对路径，允许嵌套如 myproject/data；"
+                                   "由后端强制锁定在该用户自己的工作空间根目录内，无法越权访问他人文件）。"
+                                   "留空或不提供时，使用用户工作空间根目录。"
                                    "同一 workspace_id 的多次调用共享同一工作目录，便于在一个对话内先生成文件再处理它。",
                 },
                 "auth": {

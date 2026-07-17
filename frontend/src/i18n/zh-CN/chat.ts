@@ -49,6 +49,7 @@ export default {
   historyQuestionsTitle: '本对话的提问记录',
   noQuestions: '暂无提问记录',
   inputPlaceholder: '输入问题... (Enter 发送)',
+  workspaceDirBtn: '工作目录：{dir}',
   contextTokens: '上下文 ≈ {used} / {total}',
   contextTokensTip: '本次发送给 LLM 的请求体总 token 数（系统提示+历史+RAG+记忆+工具+问题）',
   configApiKey: '请先前往系统设置页面配置API KEY',

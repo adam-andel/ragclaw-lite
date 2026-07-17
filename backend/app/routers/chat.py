@@ -340,7 +340,10 @@ async def chat_stream(
                         "tenant_id": current_user.tenant_id,
                         "conversation_history": history,
                         "conversation_id": conv_id,
-                        "workspace_id": conv_id or ("run-" + str(uuid.uuid4())),
+                        # v2: user-selected workspace sub-directory ("" = root).
+                        # Replaces the old per-conversation <ws> (conv_id) so all of a
+                        # user's tool outputs land in their persistent workspace root.
+                        "workspace_id": request.workspace_dir or "",
                         "active_skill": None,
                         "available_tools": [],
                         "rag_context": "",
