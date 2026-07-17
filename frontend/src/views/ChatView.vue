@@ -8,7 +8,7 @@ import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace } from '@/api/workspace'
@@ -60,6 +60,85 @@ const wsCurrentPath = ref('')
 const wsDirs = ref<WorkspaceEntry[]>([])
 const wsLoading = ref(false)
 const wsNewName = ref('')
+
+// ── File picker modal: insert a [[file:rel_path]] reference into the input ──
+// Reuses the workspace listing API but shows files AND directories; clicking a
+// directory navigates, clicking a file selects it (its rel_path is inserted).
+const showFileModal = ref(false)
+const fpPath = ref('')
+const fpEntries = ref<WorkspaceEntry[]>([])
+const fpLoading = ref(false)
+// ref to the chat textarea so we can insert at the caret position
+const inputRef = ref<any>(null)
+
+const fpCrumbSegments = computed(() => {
+  if (!fpPath.value) return []
+  const parts = fpPath.value.split('/').filter(Boolean)
+  return parts.map((name, i) => ({
+    name,
+    path: parts.slice(0, i + 1).join('/'),
+  }))
+})
+
+async function fpLoadDirs() {
+  fpLoading.value = true
+  try {
+    const data = await listWorkspace(fpPath.value)
+    // Sort: directories first, then files; alphabetical within each group.
+    fpEntries.value = (data.entries || []).slice().sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+  } catch (e: any) {
+    nmessage.error(e?.message || t('workspace.errors.load'))
+    fpEntries.value = []
+  } finally {
+    fpLoading.value = false
+  }
+}
+
+async function openFileModal() {
+  fpPath.value = ''
+  await fpLoadDirs()
+  showFileModal.value = true
+}
+
+function fpEnterDir(entry: WorkspaceEntry) {
+  fpPath.value = entry.rel_path
+  fpLoadDirs()
+}
+
+function fpCrumb(path: string) {
+  fpPath.value = path
+  fpLoadDirs()
+}
+
+function insertAtCursor(token: string) {
+  // NInput exposes `textareaElRef` / `inputElRef` (Refs to the native elements).
+  const el = inputRef.value?.textareaElRef?.value || inputRef.value?.inputElRef?.value
+  const cur = inputText.value
+  if (el && typeof el.selectionStart === 'number') {
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    inputText.value = cur.slice(0, start) + token + cur.slice(end)
+    nextTick(() => {
+      const pos = start + token.length
+      el.focus()
+      el.setSelectionRange(pos, pos)
+    })
+  } else {
+    const sep = cur && !/\s$/.test(cur) ? ' ' : ''
+    inputText.value = cur + sep + token + ' '
+    nextTick(() => el?.focus())
+  }
+}
+
+function fpSelectFile(entry: WorkspaceEntry) {
+  if (entry.type !== 'file') return
+  insertAtCursor(`[[file:${entry.rel_path}]]`)
+  showFileModal.value = false
+}
+
 
 // Breadcrumb segments derived from the current modal path (root + each nested part).
 const wsCrumbSegments = computed(() => {
@@ -1130,7 +1209,16 @@ function handleKeydown(e: KeyboardEvent) {
         </div>
       </div>
       <div class="chat-input-area">
+        <NButton
+          class="attach-btn"
+          :disabled="isStreaming || isReadonly || !auth.llmConfigured"
+          :title="t('workspace.attachFile')"
+          @click="openFileModal"
+        >
+          <template #icon><NIcon size="20"><Add /></NIcon></template>
+        </NButton>
         <NInput
+          ref="inputRef"
           v-model:value="inputText"
           type="textarea"
           :placeholder="auth.llmConfigured ? t('chat.inputPlaceholder') : t('chat.configApiKey')"
@@ -1212,6 +1300,57 @@ function handleKeydown(e: KeyboardEvent) {
             <NButton type="primary" @click="wsConfirmDir">
               {{ t('workspace.selectHere') }}
             </NButton>
+          </div>
+        </template>
+      </NModal>
+
+      <NModal
+        v-model:show="showFileModal"
+        preset="card"
+        :title="t('workspace.pickFileTitle')"
+        style="width: 560px; max-width: 92vw;"
+        :mask-closable="false"
+      >
+        <p class="fp-hint">{{ t('workspace.pickFileHint') }}</p>
+        <div class="ws-crumbs">
+          <NButton text size="small" :type="fpPath ? 'primary' : 'default'" @click="fpCrumb('')">
+            {{ t('workspace.breadcrumbRoot') }}
+          </NButton>
+          <template v-for="seg in fpCrumbSegments" :key="seg.path">
+            <span class="ws-sep">/</span>
+            <NButton
+              text
+              size="small"
+              :type="seg.path === fpPath ? 'default' : 'primary'"
+              @click="fpCrumb(seg.path)"
+            >{{ seg.name }}</NButton>
+          </template>
+        </div>
+
+        <NSpin :show="fpLoading">
+          <div class="ws-dir-list">
+            <div v-if="fpEntries.length === 0 && !fpLoading" class="ws-empty">
+              {{ t('workspace.empty') }}
+            </div>
+            <div
+              v-for="e in fpEntries"
+              :key="e.rel_path"
+              class="ws-dir-row"
+              :class="{ 'ws-file-row': e.type === 'file' }"
+              @click="e.type === 'dir' ? fpEnterDir(e) : fpSelectFile(e)"
+            >
+              <NIcon v-if="e.type === 'dir'" size="18" class="ws-folder"><Folder /></NIcon>
+              <NIcon v-else size="18" class="ws-file-icon"><DocumentText /></NIcon>
+              <span class="ws-dir-name">{{ e.name }}</span>
+              <span v-if="e.type === 'file' && e.size != null" class="ws-file-size">{{ (e.size / 1024).toFixed(1) }} KB</span>
+              <span v-else class="ws-enter">›</span>
+            </div>
+          </div>
+        </NSpin>
+
+        <template #footer>
+          <div class="ws-footer">
+            <NButton @click="showFileModal = false">{{ t('workspace.cancel') }}</NButton>
           </div>
         </template>
       </NModal>
@@ -1693,6 +1832,36 @@ function handleKeydown(e: KeyboardEvent) {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
+}
+
+/* ── Attach ("+") button left of the input box ── */
+.attach-btn {
+  flex-shrink: 0;
+  align-self: flex-end;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.attach-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+/* ── File picker modal ── */
+.fp-hint {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.ws-file-icon {
+  color: var(--color-primary, #4098fc);
+}
+.ws-file-size {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-text-muted, #999);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ── Inline suspension bubble (shown when the limit is hit, blends into the message stream) ── */

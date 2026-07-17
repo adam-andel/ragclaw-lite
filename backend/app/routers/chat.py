@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import datetime
 
@@ -19,6 +20,7 @@ from app.models.conversation import Conversation, Message, PendingLimitState
 from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
+from app.services.repl_auth import get_user_repl_uid
 from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
@@ -132,6 +134,132 @@ async def _clear_pending_state(session, conv_id: str) -> None:
     if row:
         await session.delete(row)
         await session.commit()
+
+
+# ── File reference expansion ──
+# The frontend inserts workspace file references into the user query as
+# `[[file:rel_path]]`. On send we resolve each reference against the user's
+# sandbox, read the text content, and splice it *in place* (preserving the
+# exact position of the original token) so the LLM sees the file content right
+# where the user put the reference. The original tokenised query is still stored
+# as the user message (so history stays compact and human-readable).
+
+# Match `[[file:some/relative/path]]` — capture the path (anything but `]`).
+FILE_REF_RE = re.compile(r"\[\[file:([^\]]+)\]\]")
+
+# Guardrails so a huge/binary file can't blow up the prompt or inject garbage.
+_MAX_FILE_CHARS = 40_000      # per-file content cap
+_MAX_TOTAL_CHARS = 120_000    # combined cap across all referenced files
+
+
+def _looks_binary(text: str) -> bool:
+    """Heuristic: is this "text" actually binary garbage?
+
+    Decoding succeeded (so it's valid UTF-8), but a high ratio of control
+    characters strongly suggests a binary payload (PDF/zip/…) that would only
+    pollute the context.
+    """
+    sample = text[:2000]
+    if not sample:
+        return False
+    ctrl = sum(1 for ch in sample if ord(ch) < 9 or 13 < ord(ch) < 32)
+    return ctrl / len(sample) > 0.1
+
+
+async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, str | None]:
+    """Read a text file from the user's sandbox via the MCP REPL proxy.
+
+    Returns ``(content, None)`` on success or ``(None, error_message)`` on any
+    failure (missing sandbox, not found, binary, transport error, …).
+    """
+    from app.services.config_manager import config_manager
+
+    secret = config_manager.repl_auth_secret
+    if not secret:
+        return None, "REPL 认证未配置"
+    base = settings.mcp_repl_internal_url.rstrip("/")
+    url = f"{base}/workspace/{path.lstrip('/')}"
+    headers = {"X-Repl-Auth": secret, "X-Repl-Uid": str(uid)}
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.ConnectError:
+        return None, "MCP REPL 服务不可用"
+    except Exception as e:  # noqa: BLE001 - surface uniformly
+        return None, f"读取失败: {e}"
+
+    if resp.status_code == 404:
+        return None, "文件不存在"
+    if resp.status_code != 200:
+        return None, f"MCP 错误 {resp.status_code}"
+
+    try:
+        text = resp.content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "文件为二进制，无法作为文本插入"
+
+    if _looks_binary(text):
+        return None, "文件为二进制，无法作为文本插入"
+
+    if len(text) > _MAX_FILE_CHARS:
+        text = text[:_MAX_FILE_CHARS] + f"\n... (内容已截断，原文 {len(text)} 字符)"
+    return text, None
+
+
+async def _expand_file_refs(query: str, uid: int | None) -> tuple[str, list[str]]:
+    """Replace every `[[file:path]]` token with the file's content, in place.
+
+    Returns ``(expanded_query, errors)``. Unreadable files are replaced with a
+    short inline error note rather than aborting the whole request.
+    """
+    refs = FILE_REF_RE.findall(query)
+    if not refs:
+        return query, []
+
+    # Deduplicate while preserving first-seen order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for r in refs:
+        if r not in seen:
+            seen.add(r)
+            unique.append(r)
+
+    replacements: dict[str, str] = {}
+    errors: list[str] = []
+    total = 0
+
+    for path in unique:
+        if uid is None:
+            content, err = None, "用户沙箱未初始化"
+        else:
+            content, err = await _read_workspace_file_text(uid, path)
+
+        if err or content is None:
+            msg = err or "读取失败"
+            replacements[path] = f"[文件 {path} 读取失败：{msg}]"
+            errors.append(f"{path}: {msg}")
+            continue
+
+        if total + len(content) > _MAX_TOTAL_CHARS:
+            replacements[path] = (
+                f"[文件 {path} 已跳过：累计内容超出 {_MAX_TOTAL_CHARS} 字符上限]"
+            )
+            errors.append(f"{path}: 累计超出字符上限")
+            continue
+
+        total += len(content)
+        replacements[path] = (
+            f"\n=== 文件内容: {path} ===\n{content}\n=== 文件内容结束: {path} ===\n"
+        )
+
+    def _sub(m: re.Match) -> str:
+        return replacements.get(m.group(1), m.group(0))
+
+    expanded = FILE_REF_RE.sub(_sub, query)
+    return expanded, errors
 
 # Approach B: manual suspend/resume state repository.。# Persisted to the DB (pending_limit_states table); survives refresh / restart and supports multiple workers.。# Keep only transient runtime objects in memory (stripped by _snapshot_state); the snapshot body is persisted to the DB.。
 
@@ -332,8 +460,24 @@ async def chat_stream(
                             })
                             return
 
+                    # ── 1a. Expand [[file:rel_path]] references into inline content ──
+                    # The original tokenised query stays the cache/history key; only
+                    # the LLM sees the expanded version, with each file's content
+                    # spliced in at the exact position of its original token.
+                    file_refs = FILE_REF_RE.findall(request.query)
+                    expanded_query = request.query
+                    file_read_errors: list[str] = []
+                    if file_refs:
+                        uid = await get_user_repl_uid(current_user.id)
+                        expanded_query, file_read_errors = await _expand_file_refs(request.query, uid)
+                        emit_agent_step(
+                            "file_context",
+                            f"已附加 {len(file_refs)} 个文件到上下文"
+                            + (f"（{len(file_read_errors)} 个读取失败）" if file_read_errors else ""),
+                        )
+
                     initial_state = {
-                        "query": request.query,
+                        "query": expanded_query,
                         "kb_id": request.kb_id,
                         "skill_id": request.skill_id,
                         "user_id": current_user.id,
