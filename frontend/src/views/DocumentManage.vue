@@ -638,6 +638,9 @@ async function startUploads() {
       const item = uploadItems.value.find(i => i.status === 'pending')
       if (!item) break
       if (uploadPaused.value) {
+        // No in-flight uploads while paused: the pool can wind down instead of
+        // polling forever. Resuming re-spawns the pool via resumeUploads().
+        if (!uploadItems.value.some(i => i.status === 'uploading')) break
         await new Promise(r => setTimeout(r, 300))
         continue
       }
