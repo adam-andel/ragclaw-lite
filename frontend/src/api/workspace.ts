@@ -30,9 +30,6 @@ export const downloadWorkspace = (path: string) =>
 export const mkdirWorkspace = (name: string) =>
   client.post('/workspace', { action: 'mkdir', name }).then(r => r.data)
 
-export const createFileWorkspace = (name: string, contentBase64: string) =>
-  client.post('/workspace', { action: 'file', name, content: contentBase64 }).then(r => r.data)
-
 export const uploadWorkspace = (name: string, contentBase64: string) =>
   client.post('/workspace', { action: 'upload', name, content: contentBase64 }).then(r => r.data)
 

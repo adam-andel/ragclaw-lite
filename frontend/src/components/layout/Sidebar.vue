@@ -42,8 +42,8 @@ const menuOptions = computed<MenuOption[]>(() => {
   }
   return [
     { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
-    { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
     workspaceItem,
+    { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
     ...(auth.isAdmin ? [
       { label: t('nav.skills'), key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
       { label: t('nav.mcp'), key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },
