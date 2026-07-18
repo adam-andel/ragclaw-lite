@@ -1363,7 +1363,6 @@ function handleKeydown(e: KeyboardEvent) {
         preset="card"
         :title="t('workspace.selectDirTitle')"
         style="width: 520px; max-width: 92vw;"
-        :mask-closable="false"
       >
         <div class="ws-crumbs">
           <NButton text size="small" :type="wsCurrentPath ? 'primary' : 'default'" @click="wsCrumb('')">
@@ -1398,29 +1397,25 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </NSpin>
 
-        <div v-if="wsCreating" class="ws-create">
-          <NInput
-            v-model:value="wsNewName"
-            size="small"
-            :placeholder="t('workspace.subdirName')"
-            @keydown.enter="wsCreateDir"
-          />
-        </div>
-
         <template #footer>
           <div class="ws-footer">
-            <NButton @click="showWsModal = false">{{ t('workspace.cancel') }}</NButton>
-            <div class="ws-footer-right">
-              <NButton
-                @click="wsCreating ? wsCreateDir() : wsToggleCreate()"
-              >
-                <template v-if="!wsCreating" #icon><NIcon size="14"><Create /></NIcon></template>
-                {{ wsCreating ? t('workspace.create') : t('workspace.createSubdir') }}
-              </NButton>
-              <NButton type="primary" @click="wsConfirmDir">
-                {{ t('workspace.selectHere') }}
-              </NButton>
-            </div>
+            <NInput
+              v-if="wsCreating"
+              v-model:value="wsNewName"
+              size="small"
+              class="ws-create-input"
+              :placeholder="t('workspace.subdirName')"
+              @keydown.enter="wsCreateDir"
+            />
+            <NButton
+              @click="wsCreating ? wsCreateDir() : wsToggleCreate()"
+            >
+              <template v-if="!wsCreating" #icon><NIcon size="14"><Create /></NIcon></template>
+              {{ wsCreating ? t('workspace.create') : t('workspace.createSubdir') }}
+            </NButton>
+            <NButton type="primary" @click="wsConfirmDir">
+              {{ t('workspace.selectHere') }}
+            </NButton>
           </div>
         </template>
       </NModal>
@@ -1969,20 +1964,14 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: 18px;
   line-height: 1;
 }
-.ws-create {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
 .ws-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--space-2);
 }
-.ws-footer-right {
-  display: flex;
-  gap: var(--space-2);
+.ws-create-input {
+  width: 180px;
 }
 
 /* ── Attach ("+") button left of the input box ── */
