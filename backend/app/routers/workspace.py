@@ -83,7 +83,7 @@ async def create_or_update(
     user: User = Depends(get_current_user),
     body: dict = Body(...),
 ):
-    """Create/update: mkdir | file | upload | rename (action-driven)."""
+    """Create/update: mkdir | upload | rename (action-driven)."""
     uid = await _repl_uid_or_403(user)
     url = f"{_mcp_base()}/workspace/"
     return await _json_proxy("POST", url, headers=_ws_headers(uid), json_body=body)

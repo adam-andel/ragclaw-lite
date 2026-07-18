@@ -1422,7 +1422,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"created": rel})
             return
 
-        if action in ("file", "upload"):
+        if action == "upload":
             rel = _validate_rel(body.get("name", ""))
             if rel is None:
                 self._json_response(400, {"error": "invalid name"})
@@ -1435,9 +1435,6 @@ class MCPHandler(BaseHTTPRequestHandler):
                 data = base64.b64decode(body.get("content") or "")
             except Exception:
                 self._json_response(400, {"error": "invalid base64 content"})
-                return
-            if action == "file" and os.path.exists(target):
-                self._json_response(409, {"error": "already exists"})
                 return
             parent = os.path.dirname(target)
             _ensure_dir_owned(parent, acct, 0o770)

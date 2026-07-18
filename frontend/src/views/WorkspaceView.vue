@@ -7,13 +7,13 @@ import {
   type DataTableColumns,
 } from 'naive-ui'
 import {
-  FolderOpen, Folder, DocumentText, Create, Pencil, Trash,
+  FolderOpen, Folder, DocumentText, Pencil, Trash,
   Download, ArrowUp, Add, CloudUpload,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import type { WorkspaceEntry } from '@/api/workspace'
 import {
-  listWorkspace, downloadWorkspace, mkdirWorkspace, createFileWorkspace,
+  listWorkspace, downloadWorkspace, mkdirWorkspace,
   uploadWorkspace, renameWorkspace, deleteWorkspace, fileToBase64, triggerDownload,
 } from '@/api/workspace'
 
@@ -27,10 +27,6 @@ const loading = ref(false)
 
 const showFolderModal = ref(false)
 const newFolderName = ref('')
-
-const showFileModal = ref(false)
-const newFileName = ref('')
-const newFileContent = ref('')
 
 const renameTarget = ref<WorkspaceEntry | null>(null)
 const renameName = ref('')
@@ -68,10 +64,6 @@ function formatSize(bytes: number | null): string {
 
 function formatDate(mtime: number): string {
   return new Date(mtime * 1000).toLocaleString()
-}
-
-function utf8ToBase64(str: string): string {
-  return btoa(unescape(encodeURIComponent(str)))
 }
 
 // ── Columns ──
@@ -193,26 +185,6 @@ async function confirmFolder() {
   }
 }
 
-// File creation
-function openFileModal() {
-  newFileName.value = ''
-  newFileContent.value = ''
-  showFileModal.value = true
-}
-async function confirmFile() {
-  const name = newFileName.value.trim()
-  if (!name) { message.warning(t('workspace.nameEmpty')); return false }
-  const full = currentPath.value ? `${currentPath.value}/${name}` : name
-  try {
-    await createFileWorkspace(full, utf8ToBase64(newFileContent.value))
-    message.success(t('workspace.newFile') + ' ✓')
-    showFileModal.value = false
-    load()
-  } catch (e: any) {
-    message.error(e?.message || t('workspace.errors.create'))
-  }
-}
-
 // Upload
 function triggerUpload() {
   fileInput.value?.click()
@@ -273,17 +245,9 @@ onMounted(load)
   <div class="workspace-view">
     <PageHeader :title="t('workspace.title')" :subtitle="t('workspace.subtitle')" :icon="FolderOpen">
       <template #actions>
-        <NButton size="small" tertiary @click="navigateTo(breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2].path : '')" :disabled="breadcrumbs.length <= 1">
-          <template #icon><NIcon><ArrowUp /></NIcon></template>
-          {{ t('workspace.back') }}
-        </NButton>
         <NButton size="small" type="primary" @click="openFolderModal">
           <template #icon><NIcon><Add /></NIcon></template>
           {{ t('workspace.newFolder') }}
-        </NButton>
-        <NButton size="small" @click="openFileModal">
-          <template #icon><NIcon><Create /></NIcon></template>
-          {{ t('workspace.newFile') }}
         </NButton>
         <NButton size="small" @click="triggerUpload">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
@@ -293,16 +257,22 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <NBreadcrumb class="ws-breadcrumb">
-      <NBreadcrumbItem
-        v-for="(item, idx) in breadcrumbs"
-        :key="item.path || 'root'"
-        :clickable="idx !== breadcrumbs.length - 1"
-        @click="idx !== breadcrumbs.length - 1 && navigateTo(item.path)"
-      >
-        {{ item.label }}
-      </NBreadcrumbItem>
-    </NBreadcrumb>
+    <div class="ws-breadcrumb-row">
+      <NBreadcrumb class="ws-breadcrumb">
+        <NBreadcrumbItem
+          v-for="(item, idx) in breadcrumbs"
+          :key="item.path || 'root'"
+          :clickable="idx !== breadcrumbs.length - 1"
+          @click="idx !== breadcrumbs.length - 1 && navigateTo(item.path)"
+        >
+          {{ item.label }}
+        </NBreadcrumbItem>
+      </NBreadcrumb>
+      <NButton size="small" tertiary class="ws-breadcrumb-back" @click="navigateTo(breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2].path : '')" :disabled="breadcrumbs.length <= 1">
+        <template #icon><NIcon><ArrowUp /></NIcon></template>
+        {{ t('workspace.back') }}
+      </NButton>
+    </div>
 
     <NCard class="ws-card" :bordered="false">
       <NSpin :show="loading">
@@ -340,27 +310,6 @@ onMounted(load)
       <NInput v-model:value="newFolderName" :placeholder="t('workspace.folderName')" @keydown.enter="confirmFolder" />
     </NModal>
 
-    <!-- New file -->
-    <NModal
-      v-model:show="showFileModal"
-      preset="dialog"
-      :title="t('workspace.newFile')"
-      :positive-text="t('workspace.confirm')"
-      :negative-text="t('workspace.cancel')"
-      style="width: 520px"
-      @positive-click="confirmFile"
-    >
-      <NSpace vertical :size="10">
-        <NInput v-model:value="newFileName" :placeholder="t('workspace.fileName')" />
-        <NInput
-          v-model:value="newFileContent"
-          type="textarea"
-          :autosize="{ minRows: 4, maxRows: 12 }"
-          :placeholder="''"
-        />
-      </NSpace>
-    </NModal>
-
     <!-- Rename -->
     <NModal
       :show="!!renameTarget"
@@ -383,8 +332,17 @@ onMounted(load)
   flex-direction: column;
   height: 100%;
 }
+.ws-breadcrumb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .ws-breadcrumb {
   padding: 0 4px 12px;
+  flex-shrink: 0;
+}
+.ws-breadcrumb-back {
   flex-shrink: 0;
 }
 .ws-card {
