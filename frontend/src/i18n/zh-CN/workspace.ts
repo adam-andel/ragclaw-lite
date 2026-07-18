@@ -1,6 +1,5 @@
 export default {
   title: '工作空间',
-  subtitle: '管理你沙箱根目录下的文件与目录',
   breadcrumbRoot: '根目录',
   default: '默认',
   selectDirTitle: '选择工作目录',

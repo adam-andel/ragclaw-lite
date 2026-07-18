@@ -1,6 +1,5 @@
 export default {
   title: 'Workspace',
-  subtitle: 'Manage the files and folders in your sandbox root',
   breadcrumbRoot: 'Root',
   default: 'Default',
   selectDirTitle: 'Select workspace directory',

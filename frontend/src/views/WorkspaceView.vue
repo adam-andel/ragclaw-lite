@@ -243,7 +243,7 @@ onMounted(load)
 
 <template>
   <div class="workspace-view">
-    <PageHeader :title="t('workspace.title')" :subtitle="t('workspace.subtitle')" :icon="FolderOpen">
+    <PageHeader :title="t('workspace.title')" :icon="FolderOpen">
       <template #actions>
         <NButton size="small" type="primary" @click="openFolderModal">
           <template #icon><NIcon><Add /></NIcon></template>
