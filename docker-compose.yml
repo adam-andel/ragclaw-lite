@@ -63,6 +63,10 @@ services:
       # startup (auto-pushed + periodic re-push). This env var only seeds an
       # optional initial value; it never disables auth.
       - REPL_AUTH_SECRET=${REPL_AUTH_SECRET:-}
+      # Persisted auth secret (mirrors REPL_POLICY_FILE). mcp-repl writes the
+      # Backend-pushed secret here and reads it back at startup so the workspace
+      # API is ready immediately after a restart (no 403 window).
+      - REPL_AUTH_SECRET_FILE=/repl-auth/repl_auth_secret.txt
     # ── Container security hardening ──
     # NOTE: /app/workspace is now a PERSISTENT named volume (erag_workspace),
     # not tmpfs — user workspace files + REPL tool outputs survive mcp-repl
@@ -90,6 +94,7 @@ services:
     volumes:
       - erag_workspace:/app/workspace
       - erag_policy:/repl-policy
+      - erag_auth_secret:/repl-auth
     # ── Resource limits ──
     deploy:
       resources:
@@ -168,4 +173,8 @@ volumes:
     driver: local
   # Shared egress policy file between mcp-repl (writer) and erag-egress (reader).
   erag_policy:
+    driver: local
+  # Persisted REPL auth secret written by mcp-repl and read back at startup
+  # (mirrors erag_policy; removes the transient 403 window after a restart).
+  erag_auth_secret:
     driver: local
