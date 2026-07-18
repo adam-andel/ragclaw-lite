@@ -580,7 +580,7 @@ const contextRatioClass = computed(() => {
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
 
 const selectedKb = computed(() => kbs.value.find((k: any) => k.id === selectedKbId.value))
-const currentKbName = computed(() => selectedKb.value?.name || t('chat.selectKb'))
+const currentKbName = computed(() => selectedKb.value?.name || t('chat.noKb'))
 
 function selectAndClose(convId: string) {
   emptyMode.value = ''
@@ -589,7 +589,7 @@ function selectAndClose(convId: string) {
 }
 
 function onKbPick(id: string | null) {
-  if (id) selectedKbId.value = id
+  selectedKbId.value = id ?? ''
   showMoreKb.value = false
 }
 
@@ -614,8 +614,6 @@ onMounted(async () => {
     const kbFromQuery = route.query.kb as string | undefined
     if (kbFromQuery && kbs.value.find(k => k.id === kbFromQuery)) {
       selectedKbId.value = kbFromQuery
-    } else if (kbs.value.length > 0 && !selectedKbId.value) {
-      selectedKbId.value = kbs.value[0].id
     }
   } catch { /* noop */ }
 
@@ -997,6 +995,20 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
           <div class="center-panel-list">
+            <NCard size="small" class="kb-pick-card"
+              :class="{ active: !selectedKbId }"
+              role="button" tabindex="0"
+              @click="selectedKbId = ''"
+              @keydown.enter.prevent="selectedKbId = ''"
+              @keydown.space.prevent="selectedKbId = ''"
+            >
+              <div class="kb-pick-inner">
+                <div class="kb-pick-avatar kb-pick-avatar-none">🚫</div>
+                <div class="kb-pick-body">
+                  <strong class="kb-pick-name">{{ t('chat.noKb') }}</strong>
+                </div>
+              </div>
+            </NCard>
             <NCard v-for="kb in kbPreview" :key="kb.id" size="small" class="kb-pick-card"
               :class="{ active: kb.id === selectedKbId }"
               role="button" tabindex="0"
@@ -1032,7 +1044,7 @@ function handleKeydown(e: KeyboardEvent) {
             </div>
             <NSpace>
               <NButton v-if="conversations.length > 0" @click="emptyMode = 'conv'">{{ t('chat.back') }}</NButton>
-              <NButton type="primary" @click="emptyMode = ''" :disabled="!selectedKbId">{{ t('chat.startChat') }}</NButton>
+              <NButton type="primary" @click="emptyMode = ''">{{ t('chat.startChat') }}</NButton>
             </NSpace>
           </div>
         </div>
@@ -1209,6 +1221,9 @@ function handleKeydown(e: KeyboardEvent) {
       :kbs="kbs"
       :selected-id="selectedKbId"
       :show-all="false"
+      :show-none="true"
+      :none-label="t('chat.noKb')"
+      :none-active="!selectedKbId"
       :sortable="true"
       :page-size="12"
       @select="onKbPick"
@@ -1753,6 +1768,7 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: 18px;
   background: var(--color-primary-soft);
 }
+.kb-pick-avatar-none { background: var(--color-border); }
 .kb-pick-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .kb-pick-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-pick-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

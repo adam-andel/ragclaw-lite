@@ -21,6 +21,7 @@ export default {
   inputQuestionToStart: '在下方输入问题开始对话',
   changeKb: '更换知识库',
   selectKb: '选择知识库',
+  noKb: '未选择知识库',
   or: '或者',
   selectOrStart: '选择一个已有对话继续，或开始新的对话',
   selectConversation: '选择对话',

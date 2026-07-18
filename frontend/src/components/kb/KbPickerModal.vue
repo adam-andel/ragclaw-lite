@@ -23,6 +23,10 @@ const props = withDefaults(defineProps<{
   sortable?: boolean
   pageSize?: number
   searchPlaceholder?: string
+  /** Whether to show a "None / No KB selected" card to allow clearing the selection (chat page) */
+  showNone?: boolean
+  noneLabel?: string
+  noneActive?: boolean
 }>(), {
   selectedId: null,
   title: '',
@@ -34,6 +38,9 @@ const props = withDefaults(defineProps<{
   sortable: false,
   pageSize: 12,
   searchPlaceholder: '搜索知识库名称...',
+  showNone: false,
+  noneLabel: '',
+  noneActive: false,
 })
 
 const emit = defineEmits<{
@@ -109,6 +116,25 @@ function onAfterLeave() {
     </div>
 
     <div class="kb-picker-grid">
+      <NCard
+        v-if="showNone"
+        size="small"
+        class="kb-picker-card"
+        :class="{ active: noneActive }"
+        role="button"
+        tabindex="0"
+        @click="onCardClick(null)"
+        @keydown.enter.prevent="onCardClick(null)"
+        @keydown.space.prevent="onCardClick(null)"
+      >
+        <div class="kb-picker-inner">
+          <div class="kb-picker-avatar kb-picker-avatar-all">🚫</div>
+          <div class="kb-picker-body">
+            <strong class="kb-picker-name">{{ noneLabel || t('kb.noneKb') }}</strong>
+          </div>
+        </div>
+      </NCard>
+
       <NCard
         v-if="showAll"
         size="small"

@@ -8,4 +8,5 @@ export default {
   docUnit: 'documents',
   chunkUnit: 'chunks',
   noMatch: 'No matching knowledge bases',
+  noneKb: 'No KB selected',
 }

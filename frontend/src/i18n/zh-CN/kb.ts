@@ -8,4 +8,5 @@ export default {
   docUnit: '文档',
   chunkUnit: '分片',
   noMatch: '无匹配的知识库',
+  noneKb: '不选择知识库',
 }

@@ -21,6 +21,7 @@ export default {
   inputQuestionToStart: 'Type a question below to start chatting',
   changeKb: 'Change knowledge base',
   selectKb: 'Select knowledge base',
+  noKb: 'No KB selected',
   or: 'Or',
   selectOrStart: 'Select an existing conversation to continue, or start a new one',
   selectConversation: 'Select conversation',
