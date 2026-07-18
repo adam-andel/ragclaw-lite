@@ -22,7 +22,7 @@ import logging
 import threading
 import re
 import base64
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote, quote
 import ast as _ast_module
 import hmac as _hmac_module
 import hashlib as _hashlib_module
@@ -1162,8 +1162,14 @@ class MCPHandler(BaseHTTPRequestHandler):
                     elif os.path.isfile(target):
                         self.send_response(200)
                         self.send_header("Content-Type", "application/octet-stream")
-                        self.send_header("Content-Disposition",
-                                        f'attachment; filename="{os.path.basename(target)}"')
+                        # RFC 5987: percent-encode so spaces / non-ASCII don't
+                        # break the ASCII-only header; browsers use filename*.
+                        _fname = os.path.basename(target)
+                        self.send_header(
+                            "Content-Disposition",
+                            "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                            % (quote(_fname, safe=""), quote(_fname, safe="")),
+                        )
                         self.end_headers()
                         with open(target, "rb") as f:
                             self.wfile.write(f.read())
@@ -1328,7 +1334,10 @@ class MCPHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         # Download: GET /workspace/<rel>  (rel may contain '/')
         if parsed.path not in ("/workspace", "/workspace/"):
-            rel = parsed.path[len("/workspace"):].lstrip("/")
+            # self.path is the raw (percent-encoded) HTTP request target, so a
+            # filename with spaces / non-ASCII arrives as %20 / %E6%... and must
+            # be decoded before resolving — urlparse does NOT decode the path.
+            rel = unquote(parsed.path[len("/workspace"):].lstrip("/"))
             root = _workspace_root(uid)
             target = _ws_safe(root, rel)
             if target is None or not os.path.isfile(target):
@@ -1336,8 +1345,14 @@ class MCPHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Disposition",
-                             f'attachment; filename="{os.path.basename(target)}"')
+            # RFC 5987: percent-encode the filename so spaces / non-ASCII don't
+            # break the (ASCII-only) HTTP header; browsers decode filename*.
+            _fname = os.path.basename(target)
+            self.send_header(
+                "Content-Disposition",
+                "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                % (quote(_fname, safe=""), quote(_fname, safe="")),
+            )
             self.send_header("Content-Length", str(os.path.getsize(target)))
             self.end_headers()
             with open(target, "rb") as f:
@@ -1487,7 +1502,9 @@ class MCPHandler(BaseHTTPRequestHandler):
         if err:
             self._json_response(403, err)
             return
-        rel = self.path[len("/workspace/"):].lstrip("/")
+        # self.path is percent-encoded (spaces -> %20, non-ASCII -> %E6%...);
+        # decode so filenames with special chars resolve correctly.
+        rel = unquote(self.path[len("/workspace/"):].lstrip("/"))
         # Never allow deleting the user's whole sandbox root.
         if not rel:
             self._json_response(400, {"error": "cannot delete root"})

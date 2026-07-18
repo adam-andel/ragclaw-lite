@@ -110,31 +110,50 @@ async def download(
 
     uid = await _repl_uid_or_403(user)
     url = f"{_mcp_base()}/workspace/{path.lstrip('/')}"
+    # Open the upstream connection OUTSIDE any `async with` that would close
+    # it before StreamingResponse consumes the generator. The connection must
+    # stay alive until _gen finishes streaming, then is closed in `finally`.
+    client = httpx.AsyncClient(timeout=60.0)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "GET", url, headers=_ws_headers(uid)
-            ) as resp:
-                if resp.status_code == 404:
-                    raise HTTPException(404, detail="文件不存在")
-                if resp.status_code != 200:
-                    raise HTTPException(502, detail=f"MCP 错误 {resp.status_code}")
-
-                async def _gen():
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-
-                filename = path.rstrip("/").split("/")[-1] or "download"
-                return StreamingResponse(
-                    _gen(),
-                    media_type="application/octet-stream",
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{filename}"'
-                    },
-                )
-    except HTTPException:
-        raise
+        resp = await client.send(
+            httpx.Request("GET", url, headers=_ws_headers(uid)), stream=True
+        )
     except httpx.ConnectError:
+        await client.aclose()
         raise HTTPException(503, detail="MCP REPL 服务不可用")
     except Exception as e:  # noqa: BLE001
+        await client.aclose()
         raise HTTPException(502, detail=f"下载代理错误: {e}")
+
+    if resp.status_code == 404:
+        await client.aclose()
+        raise HTTPException(404, detail="文件不存在")
+    if resp.status_code != 200:
+        await client.aclose()
+        raise HTTPException(502, detail=f"MCP 错误 {resp.status_code}")
+
+    async def _gen():
+        try:
+            async for chunk in resp.aiter_bytes():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    # RFC 5987: percent-encode the filename so non-ASCII names (Chinese,
+    # spaces, ...) don't break the ASCII-only HTTP header. Starlette
+    # serialises headers as latin-1, so a raw Chinese name raises
+    # UnicodeEncodeError and surfaces as a 502. Browsers use the filename*
+    # slot to restore the real name.
+    from urllib.parse import quote
+
+    fname = path.rstrip("/").split("/")[-1] or "download"
+    disp = (
+        f'attachment; filename="{quote(fname, safe="")}";'
+        f" filename*=UTF-8''{quote(fname, safe='')}"
+    )
+    return StreamingResponse(
+        _gen(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": disp},
+    )
