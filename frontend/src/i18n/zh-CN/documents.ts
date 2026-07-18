@@ -53,6 +53,8 @@ export default {
   uploading: '上传中…',
   startUpload: '开始上传',
   startUploadCount: '开始上传 ({count})',
+  pause: '全部暂停',
+  resume: '继续上传',
   knowledgeBase: '知识库',
 
   // Filters / options
