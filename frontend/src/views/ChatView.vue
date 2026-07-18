@@ -61,6 +61,7 @@ const wsCurrentPath = ref('')
 const wsDirs = ref<WorkspaceEntry[]>([])
 const wsLoading = ref(false)
 const wsNewName = ref('')
+const wsCreating = ref(false)
 
 // ── File picker modal: insert a [[file:rel_path]] reference into the input ──
 // Reuses the workspace listing API but shows files AND directories; clicking a
@@ -261,6 +262,7 @@ async function wsLoadDirs() {
 async function openWsModal() {
   wsCurrentPath.value = workspaceDir.value
   wsNewName.value = ''
+  wsCreating.value = false
   await wsLoadDirs()
   showWsModal.value = true
 }
@@ -275,6 +277,10 @@ function wsCrumb(path: string) {
   wsLoadDirs()
 }
 
+function wsToggleCreate() {
+  wsCreating.value = !wsCreating.value
+}
+
 async function wsCreateDir() {
   const name = wsNewName.value.trim()
   if (!name) return
@@ -282,6 +288,8 @@ async function wsCreateDir() {
   try {
     await mkdirWorkspace(full)
     wsNewName.value = ''
+    wsCreating.value = false
+    wsCurrentPath.value = full
     await wsLoadDirs()
   } catch (e: any) {
     nmessage.error(e?.message || t('workspace.errors.create'))
@@ -1390,25 +1398,29 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </NSpin>
 
-        <div class="ws-create">
+        <div v-if="wsCreating" class="ws-create">
           <NInput
             v-model:value="wsNewName"
             size="small"
             :placeholder="t('workspace.subdirName')"
             @keydown.enter="wsCreateDir"
           />
-          <NButton size="small" type="primary" @click="wsCreateDir">
-            <template #icon><NIcon size="14"><Create /></NIcon></template>
-            {{ t('workspace.createSubdir') }}
-          </NButton>
         </div>
 
         <template #footer>
           <div class="ws-footer">
             <NButton @click="showWsModal = false">{{ t('workspace.cancel') }}</NButton>
-            <NButton type="primary" @click="wsConfirmDir">
-              {{ t('workspace.selectHere') }}
-            </NButton>
+            <div class="ws-footer-right">
+              <NButton
+                @click="wsCreating ? wsCreateDir() : wsToggleCreate()"
+              >
+                <template v-if="!wsCreating" #icon><NIcon size="14"><Create /></NIcon></template>
+                {{ wsCreating ? t('workspace.create') : t('workspace.createSubdir') }}
+              </NButton>
+              <NButton type="primary" @click="wsConfirmDir">
+                {{ t('workspace.selectHere') }}
+              </NButton>
+            </div>
           </div>
         </template>
       </NModal>
@@ -1964,7 +1976,12 @@ function handleKeydown(e: KeyboardEvent) {
 }
 .ws-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ws-footer-right {
+  display: flex;
   gap: var(--space-2);
 }
 

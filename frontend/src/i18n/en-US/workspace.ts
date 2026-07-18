@@ -18,6 +18,7 @@ export default {
   noSubdir: 'No subdirectories here',
   subdirName: 'Subdirectory name',
   createSubdir: 'New subdirectory',
+  create: 'Create',
   selectHere: 'Select this directory',
   loading: 'Loading…',
   empty: 'This folder is empty',

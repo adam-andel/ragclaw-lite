@@ -18,6 +18,7 @@ export default {
   noSubdir: '该目录下暂无子目录',
   subdirName: '子目录名称',
   createSubdir: '新建子目录',
+  create: '创建',
   selectHere: '选择此目录',
   loading: '加载中…',
   empty: '此目录为空',
