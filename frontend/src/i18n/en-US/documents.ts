@@ -53,6 +53,8 @@ export default {
   uploading: 'Uploading…',
   startUpload: 'Start Upload',
   startUploadCount: 'Start Upload ({count})',
+  pause: 'Pause All',
+  resume: 'Resume',
   knowledgeBase: 'Knowledge base',
 
   // Filters / options

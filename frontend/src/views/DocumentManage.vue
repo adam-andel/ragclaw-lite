@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -87,6 +87,7 @@ interface UploadFileItem {
 
 const uploadItems = ref<UploadFileItem[]>([])
 const uploadRunning = ref(false)
+const uploadPaused = ref(false)
 const dragOver = ref(false)
 
 function loadUploadItems() {
@@ -573,6 +574,10 @@ function addFiles(fileList: FileList) {
     })
   }
   saveUploadItems()
+  // Auto-start: newly queued files upload immediately (concurrency-limited pool).
+  // If a run is already in progress, its idle workers pick up the new items.
+  // Respects an active pause.
+  if (!uploadPaused.value && uploadItems.value.some(i => i.status === 'pending')) startUploads()
 }
 
 function removeUploadItem(itemId: string) {
@@ -593,45 +598,85 @@ function openUploadModal() {
   showUploadModal.value = true
 }
 
-async function startUploads() {
-  const pending = uploadItems.value.filter(i => i.status === 'pending')
-  if (pending.length === 0) return
-  uploadRunning.value = true
-  for (const item of pending) {
-    if (item.status !== 'pending') continue
-    item.status = 'uploading'
-    item.progress = 0
+const MAX_CONCURRENT_UPLOADS = 3
+
+// Upload a single queued item. The item's status must already be 'uploading'
+// (claimed by a worker) before calling this.
+async function uploadOne(item: UploadFileItem) {
+  const controller = new AbortController()
+  item.controller = controller
+  try {
+    const res = await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal, uploadTargetKb.value || undefined)
+    item.status = 'success'
+    item.progress = 100
+    item.docId = res.data.id
+  } catch (e: any) {
+    if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
+      item.status = 'cancelled'
+    } else {
+      item.status = 'error'
+      item.error = e?.response?.data?.detail || e.message
+    }
+  } finally {
+    item.controller = undefined
     saveUploadItems()
+  }
+}
 
-    const controller = new AbortController()
-    item.controller = controller
+async function startUploads() {
+  if (uploadRunning.value) return
+  if (!uploadItems.value.some(i => i.status === 'pending')) return
+  uploadRunning.value = true
 
-    try {
-      const res = await uploadDocument(item.file!, (pct) => { item.progress = pct; saveUploadItems() }, controller.signal, uploadTargetKb.value || undefined)
-      item.status = 'success'
-      item.progress = 100
-      item.docId = res.data.id
-    } catch (e: any) {
-      if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
-        item.status = 'cancelled'
-      } else {
-        item.status = 'error'
-        item.error = e?.response?.data?.detail || e.message
+  // Pool workers each atomically claim the next pending item (status flips to
+  // 'uploading' synchronously before awaiting), so newly added files are picked
+  // up by whichever worker becomes free. When paused, workers poll without
+  // claiming so in-flight uploads finish and the pool resumes on unpause.
+  // At most MAX_CONCURRENT_UPLOADS run at once.
+  async function worker() {
+    while (true) {
+      const item = uploadItems.value.find(i => i.status === 'pending')
+      if (!item) break
+      if (uploadPaused.value) {
+        await new Promise(r => setTimeout(r, 300))
+        continue
       }
-    } finally {
-      item.controller = undefined
+      item.status = 'uploading'
+      item.progress = 0
       saveUploadItems()
+      await uploadOne(item)
     }
   }
+
+  const poolSize = Math.min(MAX_CONCURRENT_UPLOADS, uploadItems.value.length)
+  await Promise.all(Array.from({ length: poolSize }, () => worker()))
+
   uploadRunning.value = false
   message.success(t('documents.uploadComplete'))
-  setTimeout(() => {
-    uploadItems.value = uploadItems.value.filter(i => i.status !== 'success')
-    saveUploadItems()
-  }, 5000)
   await loadDocs()
   await loadKBs()
 }
+
+function pauseUploads() {
+  uploadPaused.value = true
+}
+
+function resumeUploads() {
+  uploadPaused.value = false
+  if (!uploadRunning.value) startUploads()
+}
+
+function clearSuccessItems() {
+  const before = uploadItems.value.length
+  uploadItems.value = uploadItems.value.filter(i => i.status !== 'success')
+  if (uploadItems.value.length !== before) saveUploadItems()
+}
+
+// Clean successfully uploaded items when the upload modal is closed
+// (replaces the previous 5s auto-cleanup).
+watch(showUploadModal, (open) => {
+  if (!open) clearSuccessItems()
+})
 
 function cancelUpload(itemId: string) {
   const item = uploadItems.value.find(i => i.id === itemId)
@@ -645,6 +690,20 @@ function cancelUpload(itemId: string) {
 
 const pendingCount = computed(() => uploadItems.value.filter(i => i.status === 'pending' || i.status === 'uploading').length)
 const hasActiveUploads = computed(() => uploadRunning.value || uploadItems.value.some(i => i.status === 'uploading'))
+
+// Footer button is "Pause All" / "Resume" while uploads run, or a "Start Upload"
+// fallback for pending items that were restored from storage but never started.
+const buttonLabel = computed(() => {
+  if (uploadPaused.value) return t('documents.resume')
+  if (uploadRunning.value) return t('documents.pause')
+  return t('documents.startUpload')
+})
+
+function onUploadButtonClick() {
+  if (uploadPaused.value) resumeUploads()
+  else if (uploadRunning.value) pauseUploads()
+  else startUploads()
+}
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`
@@ -971,8 +1030,8 @@ async function loadSupportedTypes() {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton type="primary" :loading="hasActiveUploads" :disabled="pendingCount === 0" @click="startUploads">
-            {{ hasActiveUploads ? t('documents.uploading') : pendingCount > 0 ? t('documents.startUploadCount', { count: pendingCount }) : t('documents.startUpload') }}
+          <NButton type="primary" :disabled="pendingCount === 0" @click="onUploadButtonClick">
+            {{ buttonLabel }}
           </NButton>
         </NSpace>
       </template>
