@@ -3,7 +3,7 @@ import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NModal, NSpin, useMessage, useDialog } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NSpin, useMessage, useDialog } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -1358,11 +1358,10 @@ function handleKeydown(e: KeyboardEvent) {
         </NButton>
       </div>
 
-      <NModal
+      <AppModal
         v-model:show="showWsModal"
-        preset="card"
         :title="t('workspace.selectDirTitle')"
-        style="width: 520px; max-width: 92vw;"
+        size="detail"
       >
         <div class="ws-crumbs">
           <NButton text size="small" :type="wsCurrentPath ? 'primary' : 'default'" @click="wsCrumb('')">
@@ -1418,14 +1417,12 @@ function handleKeydown(e: KeyboardEvent) {
             </NButton>
           </div>
         </template>
-      </NModal>
+      </AppModal>
 
-      <NModal
+      <AppModal
         v-model:show="showFileModal"
-        preset="card"
         :title="t('workspace.pickFileTitle')"
-        style="width: 560px; max-width: 92vw;"
-        :mask-closable="false"
+        size="detail"
       >
         <div
           class="fp-dropzone"
@@ -1493,7 +1490,7 @@ function handleKeydown(e: KeyboardEvent) {
             <NButton @click="showFileModal = false">{{ t('workspace.cancel') }}</NButton>
           </div>
         </template>
-      </NModal>
+      </AppModal>
     </div>
   </div>
 </template>
