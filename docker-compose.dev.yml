@@ -1,0 +1,64 @@
+# docker-compose.dev.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMITTABLE DEV CONFIG — shared across the team (unlike the old auto-merged
+# docker-compose.override.yml, which was local-only and gitignored).
+#
+# Start the dev stack from the WSL project root (/home/adam/erag) with:
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# For PRODUCTION (immutable, baked-in image, no source mounts, no --reload),
+# use ONLY the base file:
+#     docker compose -f docker-compose.yml up
+#
+# What this file does:
+#   * erag  — bind-mounts ./backend over the image's /app/backend and switches
+#             uvicorn to --reload, so saving a .py file hot-restarts the server
+#             WITHOUT rebuilding the image. PYTHONPATH=/app/backend (Dockerfile)
+#             makes the mounted source what actually runs.
+#   * frontend-dev — a Vite dev server with HMR; source bind-mounted, /api
+#             proxied (see frontend/vite.config.*) to the `erag` service inside
+#             the docker network.
+#
+# IMPORTANT: run from the WSL project root (/home/adam/erag), NOT the Windows
+# D:\ path — otherwise ./backend resolves to the Windows disk and you lose the
+# ext4 speed + native inotify we migrated for.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  erag:
+    volumes:
+      # Overlay the host source on top of the image's /app/backend.
+      # PYTHONPATH=/app/backend (set in Dockerfile) points here and takes
+      # precedence over the pip-installed copy in site-packages, so the mounted
+      # source is what actually runs. No :cached needed — we're on ext4.
+      - ./backend:/app/backend
+    # Replace the image CMD with a reload-enabled uvicorn.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
+
+  # ── Frontend Vite dev server (HMR) ────────────────────────────────────────
+  # Runs `vite` with hot-module-replacement. Source is bind-mounted so edits on
+  # the WSL ext4 filesystem trigger instant HMR (native inotify, no 9P bridge).
+  # /api is proxied (see frontend/vite.config.*) to the backend service `erag`
+  # inside the docker network. Do NOT use this in production.
+  frontend-dev:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.dev
+    container_name: erag-frontend-dev
+    environment:
+      # inside the docker network the backend resolves as `erag`
+      - VITE_PROXY_TARGET=http://erag:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend
+      # keep the image-built node_modules (host has none) across the bind mount
+      - frontend_node_modules:/app/frontend/node_modules
+    networks:
+      - erag
+    depends_on:
+      - erag
+
+volumes:
+  # persists pnpm node_modules built inside the dev image (see Dockerfile.dev)
+  frontend_node_modules:
