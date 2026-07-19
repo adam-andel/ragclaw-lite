@@ -36,3 +36,6 @@ CLAUDE.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Local debugging override (bind mounts + uvicorn --reload) — never commit to prod.
+docker-compose.override.yml

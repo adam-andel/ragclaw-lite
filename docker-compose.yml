@@ -9,7 +9,8 @@ services:
     volumes:
       - erag_data:/app/data
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
       - PUBLIC_URL=${PUBLIC_URL:-}
