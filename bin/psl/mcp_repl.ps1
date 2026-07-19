@@ -1,5 +1,5 @@
 # ERAG REPL MCP Server Control Script (Python + Shell + JavaScript)
-# Usage: .\bin\mcp_repl.ps1 [start|stop|reload|status|build|logs]
+# Usage: .\bin\psl\mcp_repl.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
 # (erag-mcp-repl). Local Python venv execution is no longer supported — this
@@ -12,7 +12,7 @@
 
 param([string]$Action = "start")
 
-$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 $Port = 9200
 
@@ -318,7 +318,7 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\psl\mcp_repl.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start REPL server (build + up, container mode)"
         Write-Host "  stop        Stop REPL server"

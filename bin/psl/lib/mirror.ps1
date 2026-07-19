@@ -1,8 +1,8 @@
 # =====================================================================
-# Shared Docker registry-mirror helpers (dot-sourced by the bin/*.ps1 scripts)
+# Shared Docker registry-mirror helpers (dot-sourced by the bin/psl/*.ps1 scripts)
 # =====================================================================
 #
-# Usage (from a script in bin/):
+# Usage (from a script in bin/psl/):
 #   . (Join-Path $PSScriptRoot "lib\mirror.ps1")
 #   $mirror = Get-WorkingMirrorDomain -RequiredImages @(
 #       "library/python:3.12-slim", "library/node:22-alpine")

@@ -1,5 +1,5 @@
 # ERAG Backend Control Script
-# Usage: .\bin\backend.ps1 [start|stop|reload|status|build|logs]
+# Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the backend always runs as a Docker container (erag-lite).
 # Local Python / uvicorn execution is no longer supported — this project must
@@ -9,7 +9,7 @@
 
 param([string]$Action = "start")
 
-$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 $Port = 8000
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
@@ -231,7 +231,7 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\backend.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start backend (build + up, container mode)"
         Write-Host "  stop        Stop backend"

@@ -1,5 +1,5 @@
 # ERAG All-in-one Control Script
-# Usage: .\bin\start.ps1 [start|stop|reload|status]
+# Usage: .\bin\psl\start.ps1 [start|stop|reload|status]
 #
 # Container mode only: the backend runs containerized and serves the frontend
 # from the container — no local Vite / local Python is used. This project must
@@ -12,7 +12,7 @@
 param([string]$Action = "start")
 
 $BinDir      = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Root        = Split-Path -Parent $BinDir
+$Root        = Split-Path -Parent (Split-Path -Parent $BinDir)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 $Port        = 8000
 
@@ -178,6 +178,6 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\start.ps1 [start|stop|reload|status]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\psl\start.ps1 [start|stop|reload|status]" -ForegroundColor Yellow
     }
 }

@@ -1,5 +1,5 @@
 # ERAG Backend Full Test Suite (container mode)
-# Usage:   .\bin\run_all_tests.ps1
+# Usage:   .\bin\psl\run_all_tests.ps1
 #
 # Runs the pytest suite inside the 'erag-lite' Docker container. Local Python
 # execution is no longer supported — this project must run in container mode.
@@ -10,7 +10,7 @@
 $ErrorActionPreference = "Continue"
 
 $BinDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Root = Split-Path -Parent $BinDir
+$Root = Split-Path -Parent (Split-Path -Parent $BinDir)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
 function Test-Docker {
