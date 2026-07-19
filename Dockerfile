@@ -1,5 +1,8 @@
 # ===== Stage 1: Build Vue3 Frontend =====
-FROM node:22-alpine AS frontend-builder
+# REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
+#   docker compose build --build-arg REGISTRY=docker.m.daocloud.io
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/library/node:22-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -13,7 +16,7 @@ COPY frontend/ .
 RUN npx vite build
 
 # ===== Stage 2: Python Runtime =====
-FROM python:3.12-slim AS runtime
+FROM ${REGISTRY}/library/python:3.12-slim AS runtime
 
 WORKDIR /app
 

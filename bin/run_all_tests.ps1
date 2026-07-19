@@ -124,3 +124,16 @@ if ($failureLog.Count -gt 0) {
     $failureLog | ForEach-Object { Write-Host $_ }
     Write-Host "==========================================" -ForegroundColor Magenta
 }
+
+# ---- Cleanup: stop the erag container we started on demand ----
+# Set $env:ERAG_KEEP_CONTAINER=1 to leave it running (e.g. to inspect logs).
+if ($env:ERAG_KEEP_CONTAINER -eq "1") {
+    Write-Host "`nLeaving erag-lite running (ERAG_KEEP_CONTAINER=1)" -ForegroundColor Yellow
+}
+else {
+    Write-Host "`nStopping erag-lite container used for tests..." -ForegroundColor Yellow
+    docker compose -f $ComposeFile stop erag 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  erag-lite stopped" -ForegroundColor Green
+    }
+}

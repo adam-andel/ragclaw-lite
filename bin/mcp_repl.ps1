@@ -1,5 +1,5 @@
 # ERAG REPL MCP Server Control Script (Python + Shell + JavaScript)
-# Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]
+# Usage: .\bin\mcp_repl.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
 # (erag-mcp-repl). Local Python venv execution is no longer supported — this
@@ -16,11 +16,11 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 $Port = 9200
 
-# Mirror sources (China-friendly, tested in order)
-$MirrorList = @(
-    "https://docker.m.daocloud.io"
-    "https://docker.1ms.run"
-)
+# Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
+. (Join-Path $PSScriptRoot "lib\mirror.ps1")
+
+# Images the mcp-repl / egress Dockerfiles pull (python only).
+$RequiredImages = @("library/python:3.12-slim")
 
 # =====================================================================
 # Helpers
@@ -55,120 +55,49 @@ function Test-DockerRepl {
     catch { return $false }
 }
 
-# =====================================================================
-# Docker mirror helpers
-# =====================================================================
+function Test-DockerEgress {
+    if (-not (Test-Docker)) { return $false }
+    try {
+        $id = docker ps -q -f "name=erag-egress" 2>$null
+        return ($id -and $LASTEXITCODE -eq 0)
+    }
+    catch { return $false }
+}
 
-function Get-WorkingMirrorDomain {
+function Repair-EgressNetwork {
     <#
     .SYNOPSIS
-    Returns the first working registry domain, trying daemon.json mirrors first,
-    then docker.io, then the hardcoded $MirrorList as a last resort.
-    Respects user's daemon.json edits (add/remove/comment-out via JSON).
-    Returns $null if no mirror is reachable.
+    Frees the fixed egress IP (172.30.0.2) on the erag-internal network so a
+    subsequent `docker compose up` does not fail with "Address already in use".
+    .PARAMETER ForceNetwork
+    Also removes the erag-internal network itself (releasing the stuck IPAM
+    lease left behind by a prior `down`). Used on the retry attempt when a
+    stale container alone was not the cause.
     #>
-    $candidates = @(Get-ExistingMirrors)
-    foreach ($m in $candidates) {
-        $domain = $m -replace '^https?://', ''
-        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
-        if (-not (Test-Registry $m)) {
-            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
-            continue
-        }
-        $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        if ($imageOk) { return $domain }
-        Write-Host "    python:3.12-slim unavailable, trying next..." -ForegroundColor DarkYellow
-    }
-    Write-Host "  WARNING: No mirrors in daemon.json or no daemon.json mirror can serve python:3.12-slim, falling back to docker.io" -ForegroundColor DarkYellow
-    if (Test-Registry "https://hub.docker.com") { return "docker.io" }
-    Write-Host "  hub.docker.com NOT reachable, using backup mirrors" -ForegroundColor DarkYellow
+    param([switch]$ForceNetwork)
 
-    foreach ($m in $MirrorList) {
-        $domain = $m -replace '^https?://', ''
-        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
-        if (-not (Test-Registry $m)) {
-            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
-            continue
-        }
-        $imageOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        if (-not $imageOk) {
-            Write-Host "    python:3.12-slim unavailable, trying next..." -ForegroundColor DarkYellow
-            continue
-        }
-        return $domain
-    }
-    Write-Host "FAIL: no mirror reachable, check network" -ForegroundColor Red
-    return $null
-}
+    if (-not (Test-Docker)) { return }
 
-function Test-MirrorImage {
-    param([string]$Domain, [string]$Image, [string]$Tag)
-    # Check if mirror can serve a specific image manifest without 429 rate-limit
-    $url = "https://$Domain/v2/$Image/manifests/$Tag"
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.UserAgent = "ERAG-Mirror-Checker"
-        $req.Timeout = 8000
-        $req.AllowAutoRedirect = $false
-        $req.Method = "HEAD"
-        $req.Accept = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json"
-        $resp = $req.GetResponse()
-        $code = $resp.StatusCode.value__
-        $resp.Close()
-        # 200 = found, 401 = needs auth (but registry is alive)
-        return ($code -eq 200 -or $code -eq 401)
-    }
-    catch [System.Net.WebException] {
-        if ($_.Exception.Response) {
-            $code = $_.Exception.Response.StatusCode.value__
-            $_.Exception.Response.Close()
-            if ($code -eq 429) { return $false }  # rate-limited
-            if ($code -eq 401) { return $true }   # needs auth, but reachable
-            return ($code -eq 200)
+    # 1) Remove any stale (non-running) erag-egress container holding the IP.
+    $egressId = docker ps -a -q -f "name=erag-egress" 2>$null
+    if ($egressId) {
+        $running = docker ps -q -f "name=erag-egress" 2>$null
+        if (-not $running) {
+            Write-Host "  Removing stale erag-egress container to free its fixed IP..." -ForegroundColor DarkGray
+            docker compose -f $ComposeFile rm -f erag-egress 2>$null | Out-Null
         }
-        return $false
     }
-    catch { return $false }
-}
 
-function Test-Registry {
-    param([string]$Url)
-    # Docker Registry API v2: /v2/ returns 200 (no auth) or 401 (auth required).
-    # Both mean the registry is alive. Other codes or connection errors = unreachable.
-    $testUrl = $Url.TrimEnd('/') + "/v2/"
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($testUrl)
-        $req.UserAgent = "ERAG-Mirror-Checker"
-        $req.Timeout = 5000
-        $req.AllowAutoRedirect = $true
-        $req.Method = "GET"
-        $resp = $req.GetResponse()
-        $code = $resp.StatusCode.value__
-        $resp.Close()
-        return ($code -eq 200 -or $code -eq 401)
-    }
-    catch [System.Net.WebException] {
-        # WebException still carries the response on protocol errors
-        if ($_.Exception.Response) {
-            $code = $_.Exception.Response.StatusCode.value__
-            $_.Exception.Response.Close()
-            return ($code -eq 200 -or $code -eq 401)
-        }
-        return $false
-    }
-    catch { return $false }
-}
+    if (-not $ForceNetwork) { return }
 
-function Get-ExistingMirrors {
-    $cfgPath = "$env:USERPROFILE\.docker\daemon.json"
-    if (-not (Test-Path $cfgPath)) { return @() }
-    try {
-        $raw = Get-Content $cfgPath -Raw -ErrorAction Stop
-        $cfg = $raw | ConvertFrom-Json -ErrorAction Stop
-        if ($cfg.'registry-mirrors') { return @($cfg.'registry-mirrors') }
+    # 2) Force-remove any container still attached to erag-internal, then the
+    #    network itself. This releases the daemon's IPAM lease for 172.30.0.2.
+    $attached = docker network inspect erag-internal --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
+    if ($attached) {
+        $attached | ForEach-Object { if ($_) { docker rm -f $_ 2>$null | Out-Null } }
     }
-    catch { }
-    return @()
+    docker network rm erag-internal 2>$null | Out-Null
+    Write-Host "  Released erag-internal network IPAM lease; will recreate on up." -ForegroundColor DarkGray
 }
 
 # =====================================================================
@@ -190,7 +119,7 @@ function Start-DockerRepl {
     }
 
     # Find working mirror for build-time image pull (FROM line uses this)
-    $buildMirror = Get-WorkingMirrorDomain
+    $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
     if (-not $buildMirror) {
         Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
         return
@@ -204,9 +133,29 @@ function Start-DockerRepl {
 
     Write-Host ""
     Write-Host "=== Starting container ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile up -d mcp-repl
+    # erag-egress owns a fixed internal IP (172.30.0.2) on the erag-internal
+    # network. A stale, non-running egress container (or a stuck IPAM lease on
+    # the network left behind after a prior `down`) can keep that IP occupied
+    # and make `up` fail with "Address already in use". Clean both first.
+    Repair-EgressNetwork
+
+    docker compose -f $ComposeFile up -d mcp-repl erag-egress
+    if ($LASTEXITCODE -ne 0) {
+        # Second chance: the fixed egress IP is likely still leased on the
+        # erag-internal network. Tear the network down (releasing the IPAM
+        # lease) and retry the bring-up once.
+        Write-Host "  First attempt failed; releasing erag-internal network lease and retrying..." -ForegroundColor DarkYellow
+        Repair-EgressNetwork -ForceNetwork
+        docker compose -f $ComposeFile up -d mcp-repl erag-egress
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+        Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the" -ForegroundColor DarkYellow
+        Write-Host "       erag-internal network and could not be auto-recovered." -ForegroundColor DarkYellow
+        Write-Host "       Run these manually, then start again:" -ForegroundColor DarkYellow
+        Write-Host "         docker compose -f docker-compose.yml down" -ForegroundColor DarkYellow
+        Write-Host "         docker network rm erag-internal" -ForegroundColor DarkYellow
+        Write-Host "         docker compose -f docker-compose.yml up -d" -ForegroundColor DarkYellow
         return
     }
 
@@ -214,9 +163,15 @@ function Start-DockerRepl {
     if (Test-DockerRepl) {
         Write-Host "REPL server started (Docker)" -ForegroundColor Green
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-        Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
+        Write-Host "  Workspace: persistent volume erag_workspace (survives restart)" -ForegroundColor Gray
         Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
-        Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
+        Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
+        if (Test-DockerEgress) {
+            Write-Host "  Egress broker: running (erag-egress)" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "  Egress broker: NOT running (erag-egress)" -ForegroundColor DarkYellow
+        }
     }
     else {
         Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
@@ -224,7 +179,7 @@ function Start-DockerRepl {
 }
 
 function Stop-DockerRepl {
-    Write-Host "=== Stopping REPL server (Docker) ===" -ForegroundColor Cyan
+    Write-Host "=== Stopping REPL server + egress broker (Docker) ===" -ForegroundColor Cyan
     if (Test-DockerRepl) {
         docker compose -f $ComposeFile stop mcp-repl
         if ($LASTEXITCODE -eq 0) {
@@ -233,6 +188,16 @@ function Stop-DockerRepl {
     }
     else {
         Write-Host "REPL server not running (Docker)" -ForegroundColor Yellow
+    }
+
+    if (Test-DockerEgress) {
+        docker compose -f $ComposeFile stop erag-egress
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Egress broker stopped (Docker)" -ForegroundColor Green
+        }
+    }
+    else {
+        Write-Host "Egress broker not running (Docker)" -ForegroundColor Yellow
     }
 }
 
@@ -245,16 +210,28 @@ function Show-Status {
         Write-Host "  Status: running (erag-mcp-repl)" -ForegroundColor Green
         $startedAt = docker inspect erag-mcp-repl --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
-        return
-    }
-
-    if (Test-Docker) {
-        Write-Host "  Docker: available (not running)" -ForegroundColor Yellow
     }
     else {
-        Write-Host "  Docker: not installed" -ForegroundColor Yellow
+        Write-Host "  Status: REPL server NOT running" -ForegroundColor Red
     }
-    Write-Host "  Status: NOT running" -ForegroundColor Red
+
+    if (Test-DockerEgress) {
+        Write-Host "  Egress broker: running (erag-egress)" -ForegroundColor Green
+        $egressSince = docker inspect erag-egress --format '{{.State.StartedAt}}' 2>$null
+        if ($egressSince) { Write-Host "    Since:  $egressSince" -ForegroundColor Gray }
+    }
+    else {
+        Write-Host "  Egress broker: NOT running" -ForegroundColor DarkYellow
+    }
+
+    if (-not (Test-DockerRepl) -and -not (Test-DockerEgress)) {
+        if (Test-Docker) {
+            Write-Host "  Docker: available (nothing running)" -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "  Docker: not installed" -ForegroundColor Yellow
+        }
+    }
 }
 
 # =====================================================================
@@ -274,7 +251,7 @@ switch ($Action) {
 
     "build" {
         Assert-Docker
-        $buildMirror = Get-WorkingMirrorDomain
+        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
@@ -283,7 +260,7 @@ switch ($Action) {
         docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache mcp-repl
     }
 
-    "restart" {
+    "reload" {
         Assert-Docker
         if (-not (Test-ComposeAvailable $ComposeFile)) {
             Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
@@ -294,7 +271,7 @@ switch ($Action) {
             Stop-DockerRepl
         }
 
-        $buildMirror = Get-WorkingMirrorDomain
+        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
@@ -308,19 +285,27 @@ switch ($Action) {
 
         Write-Host ""
         Write-Host "=== Starting container ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile up -d mcp-repl
+        Repair-EgressNetwork
+        docker compose -f $ComposeFile up -d mcp-repl erag-egress
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  First attempt failed; releasing erag-internal network lease and retrying..." -ForegroundColor DarkYellow
+            Repair-EgressNetwork -ForceNetwork
+            docker compose -f $ComposeFile up -d mcp-repl erag-egress
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
+            Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the" -ForegroundColor DarkYellow
+            Write-Host "       erag-internal network. Run: docker compose down ; docker network rm erag-internal ; docker compose up -d" -ForegroundColor DarkYellow
             return
         }
 
         Start-Sleep 3
         if (Test-DockerRepl) {
-            Write-Host "REPL server restarted (Docker)" -ForegroundColor Green
+            Write-Host "REPL server reloaded (Docker)" -ForegroundColor Green
             Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-            Write-Host "  Workspace: tmpfs (512M, auto-cleaned on stop)" -ForegroundColor Gray
+            Write-Host "  Workspace: persistent volume erag_workspace (survives restart)" -ForegroundColor Gray
             Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
-            Write-Host "  Resources: memory=768M, cpus=2" -ForegroundColor Gray
+            Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
         }
         else {
             Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
@@ -333,11 +318,11 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\mcp_repl.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start REPL server (build + up, container mode)"
         Write-Host "  stop        Stop REPL server"
-        Write-Host "  restart     Stop, rebuild image (uses cache), and start REPL server"
+        Write-Host "  reload     Stop, rebuild image (uses cache), and start REPL server"
         Write-Host "  status      Show running status"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"

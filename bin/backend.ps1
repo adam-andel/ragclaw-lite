@@ -1,5 +1,5 @@
 # ERAG Backend Control Script
-# Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]
+# Usage: .\bin\backend.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the backend always runs as a Docker container (erag-lite).
 # Local Python / uvicorn execution is no longer supported — this project must
@@ -13,11 +13,11 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Port = 8000
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
-# Mirror sources (China-friendly, tested in order)
-$MirrorList = @(
-    "https://docker.m.daocloud.io"
-    "https://docker.1ms.run"
-)
+# Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
+. (Join-Path $PSScriptRoot "lib\mirror.ps1")
+
+# Images the erag Dockerfile pulls (multi-stage: node build + python runtime).
+$RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
 # =====================================================================
 # Helpers
@@ -61,119 +61,6 @@ function Test-Backend {
 }
 
 # =====================================================================
-# Docker mirror helpers
-# =====================================================================
-
-function Get-WorkingMirrorDomain {
-    <#
-    .SYNOPSIS
-    Returns the first working registry domain, trying daemon.json mirrors first,
-    then docker.io, then the hardcoded $MirrorList as a last resort.
-    Respects user's daemon.json edits (add/remove/comment-out via JSON).
-    Returns $null if no mirror is reachable.
-    #>
-    $candidates = @(Get-ExistingMirrors)
-    foreach ($m in $candidates) {
-        $domain = $m -replace '^https?://', ''
-        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
-        if (-not (Test-Registry $m)) {
-            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
-            continue
-        }
-        # Test both images the Dockerfile actually pulls (multi-stage build)
-        $pyOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        $nodeOk = Test-MirrorImage -Domain $domain -Image "library/node" -Tag "22-alpine"
-        if ($pyOk -and $nodeOk) { return $domain }
-        if (-not $pyOk)   { Write-Host "    python:3.12-slim unavailable" -ForegroundColor DarkYellow }
-        if (-not $nodeOk) { Write-Host "    node:22-alpine unavailable" -ForegroundColor DarkYellow }
-    }
-    Write-Host "  WARNING: No mirrors in daemon.json or no daemon.json mirror can serve python:3.12-slim + node:22-alpine, falling back to docker.io" -ForegroundColor DarkYellow
-    if (Test-Registry "https://hub.docker.com") { return "docker.io" }
-    Write-Host "  hub.docker.com NOT reachable, using backup mirrors" -ForegroundColor DarkYellow
-
-    foreach ($m in $MirrorList) {
-        $domain = $m -replace '^https?://', ''
-        Write-Host "  Testing $domain ..." -ForegroundColor DarkGray
-        if (-not (Test-Registry $m)) {
-            Write-Host "    /v2/ unreachable" -ForegroundColor DarkYellow
-            continue
-        }
-        $pyOk = Test-MirrorImage -Domain $domain -Image "library/python" -Tag "3.12-slim"
-        $nodeOk = Test-MirrorImage -Domain $domain -Image "library/node" -Tag "22-alpine"
-        if ($pyOk -and $nodeOk) { return $domain }
-        if (-not $pyOk)   { Write-Host "    python:3.12-slim unavailable" -ForegroundColor DarkYellow }
-        if (-not $nodeOk) { Write-Host "    node:22-alpine unavailable" -ForegroundColor DarkYellow }
-    }
-    Write-Host "FAIL: no mirror reachable, check network" -ForegroundColor Red
-    return $null
-}
-
-function Test-MirrorImage {
-    param([string]$Domain, [string]$Image, [string]$Tag)
-    $url = "https://$Domain/v2/$Image/manifests/$Tag"
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.UserAgent = "ERAG-Mirror-Checker"
-        $req.Timeout = 8000
-        $req.AllowAutoRedirect = $false
-        $req.Method = "HEAD"
-        $req.Accept = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json"
-        $resp = $req.GetResponse()
-        $code = $resp.StatusCode.value__
-        $resp.Close()
-        return ($code -eq 200 -or $code -eq 401)
-    }
-    catch [System.Net.WebException] {
-        if ($_.Exception.Response) {
-            $code = $_.Exception.Response.StatusCode.value__
-            $_.Exception.Response.Close()
-            if ($code -eq 429) { return $false }
-            if ($code -eq 401) { return $true }
-            return ($code -eq 200)
-        }
-        return $false
-    }
-    catch { return $false }
-}
-
-function Test-Registry {
-    param([string]$Url)
-    $testUrl = $Url.TrimEnd('/') + "/v2/"
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($testUrl)
-        $req.UserAgent = "ERAG-Mirror-Checker"
-        $req.Timeout = 5000
-        $req.AllowAutoRedirect = $true
-        $req.Method = "GET"
-        $resp = $req.GetResponse()
-        $code = $resp.StatusCode.value__
-        $resp.Close()
-        return ($code -eq 200 -or $code -eq 401)
-    }
-    catch [System.Net.WebException] {
-        if ($_.Exception.Response) {
-            $code = $_.Exception.Response.StatusCode.value__
-            $_.Exception.Response.Close()
-            return ($code -eq 200 -or $code -eq 401)
-        }
-        return $false
-    }
-    catch { return $false }
-}
-
-function Get-ExistingMirrors {
-    $cfgPath = "$env:USERPROFILE\.docker\daemon.json"
-    if (-not (Test-Path $cfgPath)) { return @() }
-    try {
-        $raw = Get-Content $cfgPath -Raw -ErrorAction Stop
-        $cfg = $raw | ConvertFrom-Json -ErrorAction Stop
-        if ($cfg.'registry-mirrors') { return @($cfg.'registry-mirrors') }
-    }
-    catch { }
-    return @()
-}
-
-# =====================================================================
 # Actions: Docker mode (container mode only)
 # =====================================================================
 
@@ -192,7 +79,7 @@ function Start-DockerBackend {
     }
 
     # Find working mirror for build-time image pull
-    $buildMirror = Get-WorkingMirrorDomain
+    $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
     if (-not $buildMirror) {
         Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
         return
@@ -283,7 +170,7 @@ switch ($Action) {
 
     "build" {
         Assert-Docker
-        $buildMirror = Get-WorkingMirrorDomain
+        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
@@ -292,7 +179,7 @@ switch ($Action) {
         docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache erag
     }
 
-    "restart" {
+    "reload" {
         Assert-Docker
         if (-not (Test-ComposeAvailable $ComposeFile)) {
             Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
@@ -303,7 +190,7 @@ switch ($Action) {
             Stop-DockerBackend
         }
 
-        $buildMirror = Get-WorkingMirrorDomain
+        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
         if (-not $buildMirror) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
@@ -344,11 +231,11 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\backend.ps1 [start|stop|restart|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\backend.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start backend (build + up, container mode)"
         Write-Host "  stop        Stop backend"
-        Write-Host "  restart     Stop, rebuild image (uses cache), and start backend"
+        Write-Host "  reload     Stop, rebuild image (uses cache), and start backend"
         Write-Host "  status      Show running status (Docker)"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"
