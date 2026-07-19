@@ -5,21 +5,41 @@
 
 ## 🚀 快速开始
 
-### 方式一：Docker 一键部署（推荐）
+本项目提供三种运行方式：**生产部署**（代码打包进镜像）、**开发模式**（Docker 热重载，推荐日常开发）、**纯本地**（不依赖 Docker）。
+
+### 方式一：生产部署（代码打包进镜像）
 
 ```bash
 # 1. 配置环境变量
 cp .env.example .env
 # 编辑 .env，填入你的 LLM_API_KEY
 
-# 2. 启动
-docker compose up -d
+# 2. 构建并启动（仅用 docker-compose.yml，源码随镜像构建打包）
+docker compose -f docker-compose.yml up -d
 
 # 3. 访问
 open http://localhost:8000
 ```
 
-### 方式二：本地开发
+> 生产模式只读取 `docker-compose.yml`：backend 通过 `PYTHONPATH=/app/backend` 加载、`frontend` 构建为静态 `dist` 由后端托管，全部打包进镜像，适合演示与生产环境。
+
+### 方式二：开发模式（Docker 热重载，推荐）⭐
+
+> **前提：把项目放在 WSL2 文件系统内运行**（如 `//wsl$/Ubuntu/home/adam/erag`）。
+> Windows 宿主机直接挂载会经 9P/gRPC-FUSE 转发，I/O 极慢；WSL2 内为原生 ext4，bind mount 性能最佳。
+
+```bash
+# 在 WSL2 终端进入项目根目录
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+- **后端 `:8000`** — 本地 `./backend` 以 bind mount 挂入容器，`uvicorn --reload` 监听改动自动重启 worker，**无需重建镜像**。
+- **前端 `:5173`** — 独立的 `frontend-dev` 容器运行 Vite HMR；`/api` 经 `VITE_PROXY_TARGET=http://erag:8000` 代理到后端（走 compose 网络，不是 `localhost`）。
+- 日常访问前端开发服务器：**http://localhost:5173**
+
+> `docker-compose.dev.yml` 仅作为叠加层；`docker-compose.yml` 中的 `erag` / `mcp-repl` / `erag-egress` 服务照常启动。详见下方「🛠️ 开发模式（热重载）」。
+
+### 方式三：纯本地（不依赖 Docker）
 
 ```bash
 # 后端
@@ -64,8 +84,10 @@ pnpm dev
 
 ```
 erag/
-├── docker-compose.yml          # 一键部署
-├── Dockerfile                  # 多阶段构建
+├── docker-compose.yml          # 生产部署（代码打包进镜像）
+├── docker-compose.dev.yml      # 开发叠加：bind mount + 热重载（与上面叠加使用）
+├── Dockerfile                  # 多阶段构建（生产镜像）
+├── frontend/Dockerfile.dev     # 前端开发镜像（Vite HMR）
 ├── .env.example                # 环境变量模板
 │
 ├── backend/                    # Python FastAPI
@@ -88,7 +110,8 @@ erag/
 │
 ├── frontend/                   # Vue3 + Vite
 │   ├── package.json
-│   ├── vite.config.ts
+│   ├── vite.config.ts          # Vite 配置（vite.config.js 优先，见下）
+│   ├── vite.config.js          # /api 代理目标读 VITE_PROXY_TARGET，回退 localhost:8000
 │   └── src/
 │       ├── views/              # 页面（含 SkillsView, McpServersView）
 │       ├── components/         # 组件
@@ -109,6 +132,53 @@ erag/
     └── uploads/                # 文档
 ```
 
+## 🛠️ 开发模式（热重载）
+
+日常开发推荐用 Docker 开发模式（`docker-compose.dev.yml` 叠加层），源码改动即时生效，无需反复重建镜像。
+
+### 为什么要在 WSL2 里跑
+
+Docker Desktop 使用 WSL2 后端。若项目位于 Windows 宿主机，bind mount 需经 9P/gRPC-FUSE 协议转发到 Linux 虚拟机，文件 I/O 明显变慢；而把项目放在 WSL2 发行版的文件系统内（原生 ext4）可直接挂载，性能接近本地，热重载体验最佳。
+
+> 推荐路径示例：`//wsl$/Ubuntu/home/adam/erag`
+
+### 启动
+
+```bash
+# 在 WSL2 终端进入项目根目录
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+- **后端 `:8000`** — `./backend` 以 bind mount 挂入 `/app/backend`，`uvicorn --reload --reload-dir backend` 监听改动并自动重启 worker。由于镜像中 `PYTHONPATH=/app/backend` 已优先于 `site-packages`，无需 editable 安装。
+- **前端 `:5173`** — `frontend-dev` 容器运行 Vite，`/api` 经 `VITE_PROXY_TARGET=http://erag:8000` 走 compose 网络代理到后端（容器内 `localhost` 指向自身，故必须用服务名 `erag`）。
+
+### 热重载行为
+
+- **后端**：修改 `backend/` 下任意 `.py` 文件，uvicorn 重启单个 worker（带去抖，批量改动不会连环重启）。
+- **前端**：修改 `frontend/src/` 下文件触发 Vite HMR，模块级热替换，整页刷新极少。
+
+### 新增依赖后如何处理
+
+- **后端**：Python 依赖装在镜像的 `site-packages`（不在挂载目录），改完 `backend/pyproject.toml` 后需重建镜像：
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml build erag
+  ```
+- **前端**：改完 `frontend/package.json` 后，在 `frontend-dev` 容器内执行 `pnpm install`，或直接重建该服务：
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend-dev
+  ```
+
+### 文件职责对照
+
+| 文件 | 用途 |
+|------|------|
+| `docker-compose.yml` | 生产部署，源码随镜像构建打包 |
+| `docker-compose.dev.yml` | 开发叠加层：后端 bind mount + 热重载、前端 `frontend-dev` 服务 |
+| `frontend/Dockerfile.dev` | 前端开发镜像（corepack + pnpm + Vite HMR） |
+| `vite.config.js` | `/api` 代理目标读 `VITE_PROXY_TARGET`，回退 `localhost:8000` |
+
+> 纯本地（不依赖 Docker）的开发方式见「快速开始 · 方式三」。
+
 ## 🛠️ 技术栈
 
 | 层级 | 技术 | 说明 |
@@ -123,7 +193,7 @@ erag/
 | 工具协议 | MCP（HTTP + stdio） | 外部工具集成 |
 | 前端 | Vue3 + TS + NaiveUI | 企业级管理后台 |
 | 构建 | Vite + UnoCSS | 秒级 HMR |
-| 部署 | Docker Compose | 一键启动 |
+| 部署 | Docker Compose | 生产打包进镜像；开发模式 `docker-compose.dev.yml` 叠加热重载 |
 
 ## 🗄️ 数据库构建（Database）
 
