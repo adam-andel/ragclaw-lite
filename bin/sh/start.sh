@@ -30,16 +30,21 @@ fi
 
 # start builds the whole stack; erag is multi-stage (node + python), the other
 # services are python-only, so the union is python:3.12-slim + node:22-alpine.
+# In dev mode, frontend-dev also pulls library/node:22-bookworm-slim.
 REQUIRED_IMAGES=("library/python:3.12-slim" "library/node:22-alpine")
+if is_dev_mode; then
+  REQUIRED_IMAGES+=("library/node:22-bookworm-slim")
+fi
 
 # ---- helpers ----
 build_stack() {  # $1 = mirror
   c_cyan "=== Building stack (registry: $1, mode: $(mode_label)) ==="
-  # Python services consume REGISTRY (base-image mirror); frontend-dev does not.
+  # All services consume REGISTRY (base-image mirror). frontend/Dockerfile.dev
+  # now declares ARG REGISTRY too, so it gets the same mirror as everything else.
   compose build --build-arg REGISTRY="$1" erag mcp-repl erag-egress || return 1
   if is_dev_mode; then
     c_cyan "=== Building frontend-dev (Vite HMR) ==="
-    compose build frontend-dev || return 1
+    compose build --build-arg REGISTRY="$1" frontend-dev || return 1
   fi
 }
 

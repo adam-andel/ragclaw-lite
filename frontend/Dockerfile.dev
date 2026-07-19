@@ -5,8 +5,11 @@
 # to have node_modules, and container restarts are fast. The actual frontend
 # source is bind-mounted at runtime via docker-compose.override.yml (./frontend),
 # so editing files on the WSL ext4 filesystem triggers instant HMR.
-
-FROM node:22-bookworm-slim
+#
+# REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
+#   docker compose build --build-arg REGISTRY=docker.m.daocloud.io
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/library/node:22-bookworm-slim
 
 # pnpm is the project's package manager (packageManager: pnpm@9.15.0)
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
