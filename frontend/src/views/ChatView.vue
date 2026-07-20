@@ -998,8 +998,8 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
 
       <!-- Centered panel: KB list preview -->
-      <div v-else-if="showPicker && emptyMode === 'kb'" class="center-panel">
-        <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' }">
+      <div v-else-if="(showPicker && emptyMode === 'kb') || (!showPicker && messages.length === 0 && !conversationId && !selectedKbId)" class="center-panel">
+        <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' || (!showPicker && !selectedKbId) }">
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
           <div v-if="kbs.length > 0" class="center-panel-list">
@@ -1046,15 +1046,6 @@ function handleKeydown(e: KeyboardEvent) {
               {{ t('chat.goCreateKb') }}
             </NButton>
           </div>
-          <div class="center-panel-actions">
-            <div class="picker-footer-hint">
-              {{ t('chat.selectedPrefix') }}<strong>{{ selectedKbId ? (kbs.find(k => k.id === selectedKbId)?.name ?? '...') : t('chat.notSelected') }}</strong>
-            </div>
-            <NSpace>
-              <NButton v-if="conversations.length > 0" @click="emptyMode = 'conv'">{{ t('chat.back') }}</NButton>
-              <NButton type="primary" @click="emptyMode = ''">{{ t('chat.startChat') }}</NButton>
-            </NSpace>
-          </div>
         </div>
       </div>
 
@@ -1069,21 +1060,6 @@ function handleKeydown(e: KeyboardEvent) {
             <NButton size="small" @click="emptyMode = 'kb'">{{ t('chat.changeKb') }}</NButton>
           </div>
         </template>
-      </div>
-
-      <!-- Fallback empty: no conversation, picker not yet opened -->
-      <div v-else-if="messages.length === 0 && !conversationId" class="empty-state">
-        <div class="empty-icon">💬</div>
-        <h3>{{ t('chat.startChat') }}</h3>
-        <p>{{ t('chat.selectOrStart') }}</p>
-        <div style="margin-top:8px">
-          <NButton type="primary" size="small" @click="emptyMode = 'conv'">
-            {{ t('chat.selectConversation') }}
-          </NButton>
-          <NButton type="primary" size="small" @click="emptyMode = 'kb'" style="margin-left:8px">
-            {{ t('chat.newConversation') }}
-          </NButton>
-        </div>
       </div>
 
       <!-- Edge case: conversation loaded but no messages -->
