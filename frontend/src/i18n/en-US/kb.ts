@@ -9,4 +9,5 @@ export default {
   chunkUnit: 'chunks',
   noMatch: 'No matching knowledge bases',
   noneKb: 'No KB selected',
+  noKbsYet: 'No knowledge bases yet',
 }

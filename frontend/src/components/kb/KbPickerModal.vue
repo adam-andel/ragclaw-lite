@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NCard, NInput, NSelect, NIcon, NEmpty } from 'naive-ui'
-import { Search } from '@vicons/ionicons5'
+import { NCard, NInput, NSelect, NIcon, NEmpty, NButton } from 'naive-ui'
+import { Search, Create } from '@vicons/ionicons5'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 
@@ -46,6 +46,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
   (e: 'select', id: string | null): void
+  (e: 'create'): void
 }>()
 
 // Resolve the title in setup scope: defineProps/withDefaults defaults cannot
@@ -136,7 +137,7 @@ function onAfterLeave() {
       </NCard>
 
       <NCard
-        v-if="showAll"
+        v-if="showAll && kbs.length > 0"
         size="small"
         class="kb-picker-card"
         :class="{ active: allActive }"
@@ -184,18 +185,28 @@ function onAfterLeave() {
       </NCard>
     </div>
 
-    <NEmpty v-if="filtered.length === 0" :description="t('kb.noMatch')" style="padding:16px 0" />
+    <NEmpty v-if="filtered.length === 0 && kbs.length > 0" :description="t('kb.noMatch')" style="padding:16px 0" />
     <AppPagination
+      v-if="kbs.length > 0"
       :page="page"
       :page-size="pageSize"
       :item-count="filtered.length"
       @update:page="(p: number) => page = p"
     />
+
+    <div v-if="kbs.length === 0" class="kb-picker-empty">
+      <NEmpty :description="t('kb.noKbsYet')" style="padding:16px 0" />
+      <NButton type="primary" @click="emit('create')">
+        <template #icon><NIcon><Create /></NIcon></template>
+        {{ t('documents.newKb') }}
+      </NButton>
+    </div>
   </AppModal>
 </template>
 
 <style scoped>
 .kb-picker-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.kb-picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0 4px; }
 .kb-picker-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

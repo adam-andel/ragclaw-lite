@@ -1239,6 +1239,7 @@ function handleKeydown(e: KeyboardEvent) {
       :sortable="true"
       :page-size="12"
       @select="onKbPick"
+      @create="() => router.push('/documents')"
     />
 
     <AppModal v-model:show="showSkillModal" :title="t('chat.selectSkill')"

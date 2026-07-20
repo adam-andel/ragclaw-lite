@@ -1360,6 +1360,7 @@ async function loadSupportedTypes() {
       :sortable="true"
       :page-size="12"
       @select="onKbFilterSelect"
+      @create="openCreateKb"
     />
 
     <!-- Share Modal -->
