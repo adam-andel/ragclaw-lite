@@ -41,7 +41,7 @@ test_compose_available() {
 
 test_docker_repl() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f name=ragclaw-mcp-repl 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f "name=$(proj_name)-mcp-repl" 2>/dev/null)" ]
 }
 
 # ---- actions ----
@@ -66,24 +66,24 @@ start_docker_repl() {
   compose build --build-arg REGISTRY="$build_mirror" mcp-repl || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
-  # ragclaw-egress owns a fixed internal IP (172.30.0.2) on ragclaw_ragclaw-internal.
+  # ragclaw-egress owns a fixed internal IP (172.30.0.2) on $(proj_name)_ragclaw-internal.
   # A stale, non-running egress container (or a stuck IPAM lease left behind
   # after a prior `down`) can keep that IP occupied and make `up` fail with
   # "Address already in use". Clean both first.
   repair_egress_network
   if ! compose up -d mcp-repl ragclaw-egress; then
     # Second chance: the fixed egress IP is likely still leased on the
-    # ragclaw_ragclaw-internal network. Tear the network down (releasing the IPAM
+    # $(proj_name)_ragclaw-internal network. Tear the network down (releasing the IPAM
     # lease) and retry the bring-up once.
-    c_yellow "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..."
+    c_yellow "  First attempt failed; releasing $(proj_name)_ragclaw-internal network lease and retrying..."
     repair_egress_network force
     if ! compose up -d mcp-repl ragclaw-egress; then
       c_red "ERROR: docker compose up failed"
       c_yellow "       The fixed egress IP (172.30.0.2) is still leased on the"
-      c_yellow "       ragclaw_ragclaw-internal network and could not be auto-recovered."
+      c_yellow "       $(proj_name)_ragclaw-internal network and could not be auto-recovered."
       c_yellow "       Run these manually, then start again:"
       c_yellow "         docker compose -f docker-compose.yml down"
-      c_yellow "         docker network rm ragclaw_ragclaw-internal"
+      c_yellow "         docker network rm $(proj_name)_ragclaw-internal"
       c_yellow "         docker compose -f docker-compose.yml up -d"
       return 1
     fi
@@ -102,7 +102,7 @@ start_docker_repl() {
       c_yellow "  Egress broker: NOT running (ragclaw-egress)"
     fi
   else
-    c_yellow "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl"
+    c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)-mcp-repl"
   fi
 }
 
@@ -127,7 +127,7 @@ show_status() {
   if test_docker_repl; then
     c_green "  Status: running (ragclaw-mcp-repl)"
     local since
-    since="$(docker inspect ragclaw-mcp-repl --format '{{.State.StartedAt}}' 2>/dev/null)"
+    since="$(docker inspect "$(proj_name)-mcp-repl" --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$since" ] && c_dim "  Since:  $since"
   else
     c_red "  Status: REPL server NOT running"
@@ -189,12 +189,12 @@ case "$ACTION" in
     c_cyan "=== Starting container ==="
     repair_egress_network
     if ! compose up -d mcp-repl ragclaw-egress; then
-      c_yellow "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..."
+      c_yellow "  First attempt failed; releasing $(proj_name)_ragclaw-internal network lease and retrying..."
       repair_egress_network force
       if ! compose up -d mcp-repl ragclaw-egress; then
         c_red "ERROR: docker compose up failed"
         c_yellow "       The fixed egress IP (172.30.0.2) is still leased on the"
-        c_yellow "       ragclaw_ragclaw-internal network. Run: docker compose down ; docker network rm ragclaw_ragclaw-internal ; docker compose up -d"
+        c_yellow "       $(proj_name)_ragclaw-internal network. Run: docker compose down ; docker network rm $(proj_name)_ragclaw-internal ; docker compose up -d"
         exit 1
       fi
     fi
@@ -206,7 +206,7 @@ case "$ACTION" in
       c_dim "  Mode: Docker container (ragclaw-mcp-repl)"
       c_dim "  Resources: memory=896M, cpus=2"
     else
-      c_yellow "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl"
+      c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)-mcp-repl"
     fi
     ;;
   logs)

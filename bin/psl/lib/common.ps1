@@ -20,3 +20,19 @@ function Get-RagclawPublishedPort {
     }
     return 8000
 }
+
+# ---- Resolve the Compose project name the SAME way `docker compose` does ----
+# ($COMPOSE_PROJECT_NAME > .env COMPOSE_PROJECT_NAME= > directory basename) and
+# return the project-scoped container-name prefix, e.g. "dev-egress" for a
+# COMPOSE_PROJECT_NAME=dev instance. The bash counterpart is proj_name() in
+# bin/sh/lib/common.sh. Used so these scripts work for ANY instance, not just
+# the default "ragclaw" project.
+function Get-ProjectName {
+    $p = $env:COMPOSE_PROJECT_NAME
+    if (-not $p) {
+        $envLine = Select-String -Path (Join-Path $Root ".env") -Pattern '^COMPOSE_PROJECT_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($envLine) { $p = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
+    }
+    if (-not $p) { $p = Split-Path -Leaf $Root }
+    return $p
+}

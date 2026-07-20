@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ragclaw-lite
+    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-lite
     ports:
       - "${RAGCLAW_PORT:+${RAGCLAW_PORT}:}8000"
     volumes:
@@ -34,14 +34,14 @@ services:
     networks:
       ragclaw: {}
       ragclaw-internal:
-        ipv4_address: 172.30.0.3
+        ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.3
 
   # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
     build:
       context: ./mcp
       dockerfile: Dockerfile
-    container_name: ragclaw-mcp-repl
+    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-mcp-repl
     # No host port mapping — MCP is internal-only, accessed via Docker network.
     # File downloads go through RAGClaw's /api/download/{file_path} proxy, where
     # file_path may be nested (user_u<uid>/<ws>/<file>) under per-user isolation.
@@ -58,7 +58,7 @@ services:
       # impossible at the routing layer. Children are forced through the broker
       # via HTTP(S)_PROXY (host = the broker's fixed internal IP); the broker
       # enforces the domain allowlist / deny policy on every request.
-      - REPL_EGRESS_HOST=172.30.0.2
+      - REPL_EGRESS_HOST=${RAGCLAW_INTERNAL_NET:-172.30.0}.2
       - REPL_EGRESS_PORT=1080
       # Policy file is shared with the ragclaw-egress broker via a named volume so
       # backend PUT /policy pushes are seen by the broker (hot-reload preserved).
@@ -115,7 +115,7 @@ services:
     # Fixed IP (.4) keeps it off .2 (egress broker) and .3 (backend).
     networks:
       ragclaw-internal:
-        ipv4_address: 172.30.0.4
+        ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.4
 
   # ── Egress broker (network-layer enforcement point) ──
   # Separate container, dual-attached:
@@ -130,10 +130,10 @@ services:
     build:
       context: ./mcp
       dockerfile: Dockerfile.egress
-    container_name: ragclaw-egress
+    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-egress
     user: "0"
     environment:
-      - REPL_EGRESS_HOST=172.30.0.2
+      - REPL_EGRESS_HOST=${RAGCLAW_INTERNAL_NET:-172.30.0}.2
       - REPL_EGRESS_PORT=1080
       - REPL_EGRESS_DNS=1
       - REPL_POLICY_FILE=/repl-policy/repl_network_policy.json
@@ -156,7 +156,7 @@ services:
     restart: unless-stopped
     networks:
       ragclaw-internal:
-        ipv4_address: 172.30.0.2
+        ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.2
       ragclaw: {}
 
 networks:
@@ -172,7 +172,7 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${RAGCLAW_INTERNAL_NET:-172.30.0}.0/24
 
 volumes:
   ragclaw_data:

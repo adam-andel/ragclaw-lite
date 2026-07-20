@@ -41,7 +41,7 @@ function Assert-Docker {
     }
 }
 
-# Free the fixed egress IP (172.30.0.2) on the ragclaw_ragclaw-internal network so `up`
+# Free the fixed egress IP (172.30.0.2) on the "$(Get-ProjectName)_ragclaw-internal" network so `up`
 # does not fail with "Address already in use". Removes a stale (non-running)
 # ragclaw-egress container, and with -ForceNetwork also tears down the network to
 # release a stuck Docker IPAM lease left behind by a prior `down`.
@@ -50,40 +50,36 @@ function Repair-EgressNetwork {
 
     if (-not (Test-Docker)) { return }
 
-    $egressId = docker ps -a -q -f "name=ragclaw-egress" 2>$null
+    # Resolve the project name the SAME way compose does, then derive the
+    # egress container name ("{project}-egress"). Never hardcode "ragclaw-egress"
+    # — a second instance (COMPOSE_PROJECT_NAME=dev) would otherwise never match.
+    $proj = Get-ProjectName
+    $egressName = "$proj-egress"
+
+    $egressId = docker ps -a -q -f "name=$egressName" 2>$null
     if ($egressId) {
-        $running = docker ps -q -f "name=ragclaw-egress" 2>$null
+        $running = docker ps -q -f "name=$egressName" 2>$null
         if (-not $running) {
-            Write-Host "  Removing stale ragclaw-egress container to free its fixed IP..." -ForegroundColor DarkGray
+            Write-Host "  Removing stale $egressName container to free its fixed IP..." -ForegroundColor DarkGray
             docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
         }
     }
 
     if (-not $ForceNetwork) { return }
 
-    # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw-internal.
-    # Resolve the project name the SAME way compose does (env > .env > directory
-    # basename) so this works for any COMPOSE_PROJECT_NAME (ragclaw here, erag before).
-    # A literal "ragclaw-internal" was a silent no-op, so the 172.30.0.2 IPAM lease
-    # was never released -> "Address already in use" on every retry.
-    $proj = $env:COMPOSE_PROJECT_NAME
-    if (-not $proj) {
-        $envLine = Select-String -Path (Join-Path $Root ".env") -Pattern '^COMPOSE_PROJECT_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($envLine) { $proj = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
-    }
-    if (-not $proj) { $proj = Split-Path -Leaf $Root }
     $net = "$proj`_ragclaw-internal"
-    # Force mode frees the egress IP (172.30.0.2) IPAM lease by removing the internal
-    # network. The backend (ragclaw-lite) and mcp-repl are NORMAL members of that network,
-    # so removing it requires detaching all endpoints first — but we must NOT `docker rm -f`
-    # them (that would take down the live backend). Delete ONLY the egress broker; merely
-    # `disconnect` every other container so the network can be removed; `up` reconnects them.
+    # Force mode frees the egress IP IPAM lease by removing the internal network.
+    # The backend ({project}-lite) and mcp-repl are NORMAL members of that network,
+    # so removing it requires detaching all endpoints first — but we must NOT
+    # `docker rm -f` them (that would take down the live backend). Delete ONLY the
+    # egress broker; merely `disconnect` every other container so the network can
+    # be removed; `up` reconnects them.
     $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
     if ($attached) {
         $attached | ForEach-Object {
             if (-not $_) { return }
             $name = (docker inspect --format '{{.Name}}' $_ 2>$null) -replace '^/',''
-            if ($name -eq 'ragclaw-egress' -or $_ -eq $egressId) {
+            if ($name -eq $egressName -or $_ -eq $egressId) {
                 docker rm -f $_ 2>$null | Out-Null                            # the broken broker — safe to delete
             } else {
                 docker network disconnect -f $net $_ 2>$null | Out-Null       # keep the container, just detach
@@ -122,16 +118,16 @@ function Up-Stack([switch]$ForceRecreate) {
     Repair-EgressNetwork
     docker compose -f $ComposeFile up -d $recreate
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..." -ForegroundColor DarkYellow
+        Write-Host "  First attempt failed; releasing "$(Get-ProjectName)_ragclaw-internal" network lease and retrying..." -ForegroundColor DarkYellow
         Repair-EgressNetwork -ForceNetwork
         docker compose -f $ComposeFile up -d $recreate
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
-        Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the ragclaw_ragclaw-internal" -ForegroundColor DarkYellow
+        Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the "$(Get-ProjectName)_ragclaw-internal"" -ForegroundColor DarkYellow
         Write-Host "       network and could not be auto-recovered. Run manually, then start again:" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml down" -ForegroundColor DarkYellow
-        Write-Host "         docker network rm ragclaw_ragclaw-internal" -ForegroundColor DarkYellow
+        Write-Host "         docker network rm "$(Get-ProjectName)_ragclaw-internal"" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml up -d" -ForegroundColor DarkYellow
         return $false
     }
@@ -206,7 +202,7 @@ switch ($Action) {
         Write-Host "=== RAGClaw Service Status ===" -ForegroundColor Cyan
         Write-Host "  Mode: Docker container" -ForegroundColor Cyan
         docker compose -f $ComposeFile ps
-        $running = docker ps -q -f "name=ragclaw-lite" 2>$null
+        $running = docker ps -q -f "name=$(Get-ProjectName)-lite" 2>$null
         if ($running) {
             $appPort = Get-RagclawPublishedPort
             $portSrc = if ($env:RAGCLAW_PORT) { $env:RAGCLAW_PORT } else { "<random>" }

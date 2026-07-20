@@ -48,47 +48,55 @@ is_dev_mode() { [ -n "${COMPOSE_DEV:-}" ]; }
 # Short label for banners: "dev" or "prod".
 mode_label() { is_dev_mode && echo "dev" || echo "prod"; }
 
-# ---- Free the fixed egress IP (172.30.0.2) on ragclaw-internal ----
+# Resolve the Compose project name the SAME way `docker compose` does:
+#   $COMPOSE_PROJECT_NAME  >  .env (COMPOSE_PROJECT_NAME=)  >  directory basename.
+# Used to derive project-scoped container names (e.g. "{proj}-egress") so the
+# helper scripts work for ANY instance, not just the default "ragclaw" project.
+proj_name() {
+  local p="${COMPOSE_PROJECT_NAME:-}"
+  if [ -z "$p" ] && [ -f "$ROOT/.env" ]; then
+    p="$(grep -E '^COMPOSE_PROJECT_NAME=' "$ROOT/.env" 2>/dev/null | head -n1 | cut -d= -f2-)"
+  fi
+  echo "${p:-$(basename "$ROOT")}"
+}
+
+# ---- Free the fixed egress IP on the internal network ----
 # Without this, `up` can fail with "Address already in use". Pass "force"
 # to ALSO tear down the network and release a stuck Docker IPAM lease.
 repair_egress_network() {
   test_docker || return 0
-  local egress_id running attached
-  egress_id="$(docker ps -a -q -f name=ragclaw-egress 2>/dev/null)"
+  local proj egress_name egress_id running attached name net
+  proj="$(proj_name)"
+  egress_name="${proj}-egress"
+  egress_id="$(docker ps -a -q -f "name=${egress_name}" 2>/dev/null)"
   if [ -n "$egress_id" ]; then
-    running="$(docker ps -q -f name=ragclaw-egress 2>/dev/null)"
+    running="$(docker ps -q -f "name=${egress_name}" 2>/dev/null)"
     if [ -z "$running" ]; then
-      c_dim "  Removing stale ragclaw-egress container to free its fixed IP..."
+      c_dim "  Removing stale ${egress_name} container to free its fixed IP..."
+      # `compose rm` operates on the SERVICE name (ragclaw-egress), which is
+      # project-scoped automatically — correct for any COMPOSE_PROJECT_NAME.
       compose rm -f ragclaw-egress >/dev/null 2>&1
     fi
   fi
   [ "${1:-}" = "force" ] || return 0
-  # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw-internal.
-  # Resolve the project name the SAME way compose does (env > .env > directory
-  # basename) so this works for any COMPOSE_PROJECT_NAME (ragclaw here, erag before).
-  # Do NOT hardcode the bare "ragclaw-internal": compose prefixes it with the
-  # project name, so a literal rm was a silent no-op and the 172.30.0.2 IPAM
-  # lease was never released -> "Address already in use" on every retry.
-  local proj="${COMPOSE_PROJECT_NAME:-}"
-  if [ -z "$proj" ] && [ -f "$ROOT/.env" ]; then
-    proj="$(grep -E '^COMPOSE_PROJECT_NAME=' "$ROOT/.env" 2>/dev/null | head -n1 | cut -d= -f2-)"
-  fi
-  proj="${proj:-$(basename "$ROOT")}"
-  local net="${proj}_ragclaw-internal"
-  # Force mode frees the egress IP (172.30.0.2) IPAM lease by removing the
-  # internal network. BUT the backend (ragclaw-lite) and mcp-repl are NORMAL
-  # members of that network — removing the network requires all endpoints to be
-  # detached first, and we must NOT `docker rm -f` them (that would take down the
-  # live backend). So: delete ONLY the egress broker container, and merely
-  # `disconnect` every other attached container so the network can be removed;
-  # `docker compose up` then recreates the network and reconnects them.
-  local attached name
+  # The internal network is named by compose as {project}_ragclaw-internal and the
+  # egress container as "{project}-egress" (see compose container_name). Match by
+  # the project-derived name — never a hardcoded "ragclaw-egress" — otherwise a
+  # SECOND instance (e.g. COMPOSE_PROJECT_NAME=dev) would never be matched and its
+  # stuck IPAM lease could not be released.
+  net="${proj}_ragclaw-internal"
+  # Force mode frees the egress IP IPAM lease by removing the internal network.
+  # BUT the backend ({project}-lite) and mcp-repl are NORMAL members of that
+  # network — removing it requires all endpoints detached first, and we must NOT
+  # `docker rm -f` them (that would take down the live backend). Delete ONLY the
+  # egress broker; merely `disconnect` every other attached container so the
+  # network can be removed; `docker compose up` recreates it and reconnects them.
   attached="$(docker network inspect "$net" --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>/dev/null)"
   if [ -n "$attached" ]; then
     while IFS= read -r id; do
       [ -n "$id" ] || continue
       name="$(docker inspect --format '{{.Name}}' "$id" 2>/dev/null | sed 's@^/@@')"
-      if [ "$name" = "ragclaw-egress" ] || [ "$id" = "$egress_id" ]; then
+      if [ "$name" = "$egress_name" ] || [ "$id" = "$egress_id" ]; then
         docker rm -f "$id" >/dev/null 2>&1                       # the broken broker — safe to delete
       else
         docker network disconnect -f "$net" "$id" >/dev/null 2>&1 # keep the container, just detach
@@ -102,7 +110,7 @@ repair_egress_network() {
 # ---- Egress broker running? ----
 test_docker_egress() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f name=ragclaw-egress 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f "name=$(proj_name)-egress" 2>/dev/null)" ]
 }
 
 # ---- Wait for backend /api/health (model load may take ~30s) ----
@@ -119,6 +127,6 @@ wait_for_backend() {
     [ $((i % 5)) -eq 0 ] && echo -n "."
   done
   echo " timeout!"
-  c_dim "  Check manually: docker logs ragclaw-lite"
+  c_dim "  Check manually: docker logs $(proj_name)-lite"
   return 1
 }

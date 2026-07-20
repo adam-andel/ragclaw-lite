@@ -41,13 +41,13 @@ function Test-ComposeAvailable {
     param([string]$ComposePath)
     if (-not (Test-Path $ComposePath)) { return $false }
     $yml = Get-Content $ComposePath -Raw
-    return $yml -match '(?m)^\s+ragclaw:' -and ($yml -match 'container_name:\s*ragclaw-lite')
+    return $yml -match '(?m)^\s+ragclaw:' -and ($yml -match 'container_name:\s*\S*-lite')
 }
 
 function Test-DockerBackend {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=ragclaw-lite" 2>$null
+        $id = docker ps -q -f "name=$(Get-ProjectName)-lite" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -144,7 +144,7 @@ function Show-Status {
         $realPort = Get-RagclawPublishedPort
         Write-Host "  Port: $realPort" -ForegroundColor Gray
         Write-Host "  Status: running (ragclaw-lite)" -ForegroundColor Green
-        $startedAt = docker inspect ragclaw-lite --format '{{.State.StartedAt}}' 2>$null
+        $startedAt = docker inspect "$(Get-ProjectName)-lite" --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
         return
     }
@@ -232,7 +232,7 @@ switch ($Action) {
     }
 
     "logs" {
-        if (Test-DockerBackend) { docker logs --tail=50 -f ragclaw-lite }
+        if (Test-DockerBackend) { docker logs --tail=50 -f "$(Get-ProjectName)-lite" }
         else { Write-Host "Backend not running in Docker mode" -ForegroundColor Yellow }
     }
 
