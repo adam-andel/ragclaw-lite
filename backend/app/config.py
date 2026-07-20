@@ -68,8 +68,10 @@ class Settings(BaseSettings):
 
     # --- REPL sandbox per-user UID allocation (random, DB-backed, unique) ---
     # Each user gets a dedicated Linux UID for their REPL sandbox isolation
-    # account. The UID is randomly assigned from [MIN, MAX) and stored on the
-    # user row with a unique constraint; collisions retry up to ALLOC_RETRIES.
+    # account. Regular users get a UID randomly assigned from [MIN+1, MAX); MIN
+    # itself is reserved for the bootstrap admin account (see database._seed_admin_user)
+    # so it is stable and never collides. UIDs are stored on the user row with a
+    # unique constraint; collisions retry up to ALLOC_RETRIES.
     # Capacity = MAX - MIN (e.g. 10000..110000 => 100k isolated users).
     # Expand MAX later to grow capacity WITHOUT affecting existing users
     # (their stored UIDs stay fixed; only new allocations use the wider range).

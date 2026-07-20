@@ -1,7 +1,6 @@
 """User management routes (admin/moderator)."""
 
 import uuid
-import secrets
 import logging
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import get_db
+from app.database import get_db, allocate_repl_uid
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UserListResponse, UserCreateRequest, UserUpdateRequest
 from app.services.auth import hash_password, get_current_staff, can_manage_user
@@ -102,8 +101,19 @@ async def create_user(
     last_err: Exception | None = None
     for _ in range(settings.repl_uid_alloc_retries):
         try:
-            cand = secrets.randbelow(settings.repl_uid_range_max - settings.repl_uid_range_min) \
-                + settings.repl_uid_range_min
+            taken = (await db.execute(select(User.repl_uid))).scalars().all()
+            taken_set = {u for u in taken if u is not None}
+            cand = allocate_repl_uid(taken_set)
+            # Regression guard: REPL_UID_RANGE_MIN is permanently reserved for the
+            # bootstrap admin (see app/database.py _seed_admin_user, which uses this
+            # fixed UID). A normal user must NEVER receive it, or it would collide
+            # with the admin's sandbox. allocate_repl_uid's contract only returns
+            # [MIN+1, MAX); if someone changes the range to include MIN, this
+            # assertion fails immediately.
+            assert cand != settings.repl_uid_range_min, (
+                f"allocate_repl_uid returned the admin-reserved UID "
+                f"({settings.repl_uid_range_min}); it must only hand out [MIN+1, MAX)"
+            )
             user = User(
                 id=str(uuid.uuid4()),
                 username=data.username,
