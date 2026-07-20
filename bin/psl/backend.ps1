@@ -10,11 +10,12 @@
 param([string]$Action = "start")
 
 $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
-$Port = 8000
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
 # Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
+# Shared helpers (Get-EragPublishedPort — real host port resolver)
+. (Join-Path $PSScriptRoot "lib\common.ps1")
 
 # Images the erag Dockerfile pulls (multi-stage: node build + python runtime).
 $RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
@@ -53,8 +54,9 @@ function Test-DockerBackend {
 }
 
 function Test-Backend {
+    $realPort = Get-EragPublishedPort
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$realPort/api/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
         return ($r.StatusCode -eq 200)
     }
     catch { return $false }
@@ -66,10 +68,11 @@ function Test-Backend {
 
 function Start-DockerBackend {
     Assert-Docker
-    Write-Host "=== ERAG Backend (Docker :$Port) ===" -ForegroundColor Cyan
+    Write-Host "=== ERAG Backend (Docker) ===" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
-        Write-Host "Backend already running on :$Port (Docker mode)" -ForegroundColor Yellow
+        $realPort = Get-EragPublishedPort
+        Write-Host "Backend already running on :$realPort (Docker mode)" -ForegroundColor Yellow
         return
     }
 
@@ -105,7 +108,8 @@ function Start-DockerBackend {
         Start-Sleep 1
         if (Test-Backend) {
             Write-Host " OK" -ForegroundColor Green
-            Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
+            $realPort = Get-EragPublishedPort
+            Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
             Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
             return
         }
@@ -134,10 +138,11 @@ function Stop-DockerBackend {
 
 function Show-Status {
     Write-Host "=== ERAG Backend Status ===" -ForegroundColor Cyan
-    Write-Host "  Port: $Port" -ForegroundColor Gray
     Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
+        $realPort = Get-EragPublishedPort
+        Write-Host "  Port: $realPort" -ForegroundColor Gray
         Write-Host "  Status: running (erag-lite)" -ForegroundColor Green
         $startedAt = docker inspect erag-lite --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
@@ -215,7 +220,8 @@ switch ($Action) {
             Start-Sleep 1
             if (Test-Backend) {
                 Write-Host " OK" -ForegroundColor Green
-                Write-Host "  Swagger: http://127.0.0.1:$Port/docs" -ForegroundColor Gray
+                $realPort = Get-EragPublishedPort
+                Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
                 Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
                 return
             }

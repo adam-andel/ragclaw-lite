@@ -14,10 +14,11 @@ param([string]$Action = "start")
 $BinDir      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root        = Split-Path -Parent (Split-Path -Parent $BinDir)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
-$Port        = 8000
 
 # Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
+# Shared helpers (Get-EragPublishedPort — real host port resolver)
+. (Join-Path $PSScriptRoot "lib\common.ps1")
 
 # start builds the whole stack; erag is multi-stage (node + python), the other
 # services are python-only, so the union is python:3.12-slim + node:22-alpine.
@@ -67,11 +68,12 @@ function Repair-EgressNetwork {
 }
 
 function Wait-ForBackend {
-    Write-Host "Waiting for backend (loading model, may take ~30s)..." -NoNewline
+    $realPort = Get-EragPublishedPort
+    Write-Host "Waiting for backend on :$realPort (loading model, may take ~30s)..." -NoNewline
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep 1
         try {
-            $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
+            $r = Invoke-WebRequest -Uri "http://127.0.0.1:$realPort/api/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
             if ($r.StatusCode -eq 200) { Write-Host " OK" -ForegroundColor Green; return $true }
         }
         catch { }
@@ -130,13 +132,14 @@ switch ($Action) {
         Write-Host "=== Starting stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack)) { return }
         Wait-ForBackend
+        $appPort = Get-EragPublishedPort
         Write-Host ""
         Write-Host "=== All services started (Docker mode) ===" -ForegroundColor Green
-        Write-Host "  App:     http://localhost:8000" -ForegroundColor Gray
-        Write-Host "  Swagger: http://127.0.0.1:8000/docs" -ForegroundColor Gray
+        Write-Host "  App:     http://localhost:$appPort" -ForegroundColor Gray
+        Write-Host "  Swagger: http://127.0.0.1:$appPort/docs" -ForegroundColor Gray
         Write-Host "  REPL:    http://127.0.0.1:9200/mcp  (if enabled)" -ForegroundColor Gray
         Start-Sleep 1
-        Start-Process "http://localhost:8000"
+        Start-Process "http://localhost:$appPort"
     }
 
     "reload" {
@@ -156,11 +159,12 @@ switch ($Action) {
         Write-Host "=== Recreating stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack -ForceRecreate)) { return }
         Wait-ForBackend
+        $appPort = Get-EragPublishedPort
         Write-Host ""
         Write-Host "=== Reload complete (Docker mode) ===" -ForegroundColor Green
-        Write-Host "  App: http://localhost:8000" -ForegroundColor Gray
+        Write-Host "  App: http://localhost:$appPort" -ForegroundColor Gray
         Start-Sleep 1
-        Start-Process "http://localhost:8000"
+        Start-Process "http://localhost:$appPort"
     }
 
     "stop" {
@@ -175,6 +179,12 @@ switch ($Action) {
         Write-Host "=== ERAG Service Status ===" -ForegroundColor Cyan
         Write-Host "  Mode: Docker container" -ForegroundColor Cyan
         docker compose -f $ComposeFile ps
+        $running = docker ps -q -f "name=erag-lite" 2>$null
+        if ($running) {
+            $appPort = Get-EragPublishedPort
+            $portSrc = if ($env:ERAG_PORT) { $env:ERAG_PORT } else { "<random>" }
+            Write-Host "  App URL: http://localhost:$appPort  (ERAG_PORT: $portSrc)" -ForegroundColor Gray
+        }
     }
 
     default {
