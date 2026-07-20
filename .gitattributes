@@ -1,5 +1,5 @@
-# 默认行为：自动检测文本/二进制文件
-* text=auto
+# 默认行为：自动检测文本/二进制文件，未单独列出的文本文件统一使用 LF 行尾符
+* text=auto eol=lf
 
 # 文本文件统一使用 LF 行尾符（避免 Windows CRLF 导致跨平台问题）
 *.ts   text eol=lf
