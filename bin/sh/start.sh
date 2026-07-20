@@ -12,7 +12,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PORT=8000
+CONTAINER_PORT=8000   # backend container port; host port = ERAG_PORT / .env / random
 
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
@@ -48,7 +48,7 @@ build_stack() {  # $1 = mirror
   fi
 }
 
-up_stack() {  # $1 = "force" to --force-recreate
+  up_stack() {  # $1 = "force" to --force-recreate
   local recreate=""
   [ "${1:-}" = "force" ] && recreate="--force-recreate"
   repair_egress_network
@@ -57,6 +57,15 @@ up_stack() {  # $1 = "force" to --force-recreate
     repair_egress_network force
     compose up -d
   fi
+}
+
+# Actual host port docker published for the erag container. Works for all three
+# cases uniformly: inline ERAG_PORT, .env ERAG_PORT, or a random ephemeral port.
+# Requires the container to be up (call after up_stack).
+erag_published_port() {
+  local p
+  p="$(compose port erag "$CONTAINER_PORT" 2>/dev/null | sed -E 's#.*:##')"
+  echo "${p:-$CONTAINER_PORT}"
 }
 
 # ---- actions ----
@@ -76,16 +85,17 @@ case "${1:-start}" in
     echo
     c_cyan "=== Starting stack ==="
     up_stack || exit 1
+    PORT="$(erag_published_port)"
     wait_for_backend
     echo
     c_green "=== All services started (Docker mode) ==="
-    c_dim "  App:     http://localhost:8000"
-    c_dim "  Swagger: http://127.0.0.1:8000/docs"
+    c_dim "  App:     http://localhost:$PORT"
+    c_dim "  Swagger: http://127.0.0.1:$PORT/docs"
     c_dim "  REPL:    http://127.0.0.1:9200/mcp  (if enabled)"
     if is_dev_mode; then
       c_dim "  Frontend (HMR): http://localhost:5173  (Vite dev server)"
     fi
-    open_url="http://localhost:8000"
+    open_url="http://localhost:$PORT"
     is_dev_mode && open_url="http://localhost:5173"
     sleep 1
     command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
@@ -106,11 +116,12 @@ case "${1:-start}" in
     echo
     c_cyan "=== Recreating stack ==="
     up_stack force || exit 1
+    PORT="$(erag_published_port)"
     wait_for_backend
     echo
     c_green "=== Reload complete (Docker mode) ==="
-    c_dim "  App: http://localhost:8000"
-    open_url="http://localhost:8000"
+    c_dim "  App: http://localhost:$PORT"
+    open_url="http://localhost:$PORT"
     is_dev_mode && open_url="http://localhost:5173"
     sleep 1
     command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
@@ -127,6 +138,10 @@ case "${1:-start}" in
     c_cyan "=== ERAG Service Status ==="
     c_cyan "  Mode: Docker container"
     compose ps
+    if [ -n "$(compose ps -q erag 2>/dev/null)" ]; then
+      PORT="$(erag_published_port)"
+      c_dim "  App URL: http://localhost:$PORT  (ERAG_PORT: ${ERAG_PORT:-<random>})"
+    fi
     ;;
 
   *)

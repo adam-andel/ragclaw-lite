@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: erag-lite
     ports:
-      - "${ERAG_PORT:-8000}:8000"
+      - "${ERAG_PORT:+${ERAG_PORT}:}8000"
     volumes:
       - erag_data:/app/data
     env_file:

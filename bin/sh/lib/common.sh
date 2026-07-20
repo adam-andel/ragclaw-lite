@@ -85,7 +85,7 @@ wait_for_backend() {
   local i code
   for i in $(seq 1 90); do
     sleep 1
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${PORT}/api/health" 2>/dev/null)"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${PORT:-8000}/api/health" 2>/dev/null)"
     if [ "$code" = "200" ]; then
       echo " OK"
       return 0
