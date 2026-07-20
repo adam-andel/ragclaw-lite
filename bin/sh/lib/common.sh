@@ -31,7 +31,8 @@ assert_docker() {
 # ---- compose() wrapper ----
 # Honors an optional COMPOSE_DEV overlay (docker-compose.dev.yml) when the
 # caller sets it. That file adds the dev experience: backend source bind-mounted
-# with uvicorn --reload, plus a Vite `frontend-dev` HMR server on :5173.
+# with uvicorn --reload, plus a Vite `frontend-dev` HMR server (host port via
+# RAGCLAW_FRONTEND_PORT, default 5173).
 # Dev mode is toggled per-script via the `--dev` CLI flag (or RAGCLAW_DEV=1 env).
 compose() {
   if [ -n "${COMPOSE_DEV:-}" ]; then

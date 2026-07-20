@@ -68,6 +68,16 @@ ragclaw_published_port() {
   echo "${p:-$CONTAINER_PORT}"
 }
 
+# Actual host port docker published for the Vite HMR frontend (frontend-dev).
+# When RAGCLAW_FRONTEND_PORT is set the port is pinned; when unset docker assigns
+# a RANDOM free host port, so we MUST ask docker rather than assume 5173. Only
+# meaningful in --dev mode (frontend-dev lives in the dev overlay).
+frontend_published_port() {
+  local p
+  p="$(compose port frontend-dev 5173 2>/dev/null | sed -E 's#.*:##')"
+  echo "${p:-5173}"
+}
+
 # ---- actions ----
 case "${1:-start}" in
   start)
@@ -93,10 +103,10 @@ case "${1:-start}" in
     c_dim "  Swagger: http://127.0.0.1:$PORT/docs"
     c_dim "  REPL:    http://127.0.0.1:9200/mcp  (if enabled)"
     if is_dev_mode; then
-      c_dim "  Frontend (HMR): http://localhost:5173  (Vite dev server)"
+      c_dim "  Frontend (HMR): http://localhost:$(frontend_published_port)  (Vite dev server)"
     fi
     open_url="http://localhost:$PORT"
-    is_dev_mode && open_url="http://localhost:5173"
+    is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
     sleep 1
     command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
     ;;
@@ -122,7 +132,7 @@ case "${1:-start}" in
     c_green "=== Reload complete (Docker mode) ==="
     c_dim "  App: http://localhost:$PORT"
     open_url="http://localhost:$PORT"
-    is_dev_mode && open_url="http://localhost:5173"
+    is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
     sleep 1
     command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
     ;;

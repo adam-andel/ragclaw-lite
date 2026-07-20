@@ -52,7 +52,15 @@ services:
       # inside the docker network the backend resolves as `ragclaw`
       - VITE_PROXY_TARGET=http://ragclaw:8000
     ports:
-      - "5173:5173"
+      # RAGCLAW_FRONTEND_PORT sets the host port the Vite HMR dev server is
+      # published on. Host ports are host-wide unique, so parallel clones must
+      # not share one or `up` fails with "port is already allocated".
+      #   set   -> published as "<RAGCLAW_FRONTEND_PORT>:5173" (pinned)
+      #   unset -> published as just "5173" -> docker picks a RANDOM free host
+      #            port for container :5173, so multiple clones can coexist with
+      #            zero config. Resolve the real port with `compose port
+      #            frontend-dev 5173` (start.sh prints it after a successful up).
+      - "${RAGCLAW_FRONTEND_PORT:+${RAGCLAW_FRONTEND_PORT}:}5173"
     volumes:
       - ./frontend:/app/frontend
       # keep the image-built node_modules (host has none) across the bind mount
