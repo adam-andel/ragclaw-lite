@@ -1,4 +1,4 @@
-"""EnterpriseRAG-Lite FastAPI application entry point."""
+"""RAGClaw-Lite FastAPI application entry point."""
 
 import asyncio as _asyncio
 import faulthandler
@@ -22,7 +22,7 @@ from app.models.system_setting import SystemSetting  # noqa: F401
 # almost always a deadlock or a sync blocking call on the loop thread. This
 # thread pings the loop every few seconds; if the loop stops responding we
 # dump every thread + asyncio coroutine stack to /tmp/loop_stall.txt so the
-# root cause can be read with `docker exec erag-lite cat /tmp/loop_stall.txt`.
+# root cause can be read with `docker exec ragclaw-lite cat /tmp/loop_stall.txt`.
 # ───────────────────────────────────────────────────────────────────────────
 _LOOP_STALL_PATH = "/tmp/loop_stall.txt"
 
@@ -219,7 +219,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="EnterpriseRAG-Lite",
+    title="RAGClaw-Lite",
     version="0.5.0",
     description="企业级 Agentic RAG 知识中台 · 精简版（多租户 · SKILL + MCP）",
     lifespan=lifespan,
@@ -259,14 +259,14 @@ async def health_check():
     from app.database import engine
     return {
         "status": "ok",
-        "service": "EnterpriseRAG-Lite",
+        "service": "RAGClaw-Lite",
         "version": "0.5.0",
         "llm_configured": config_manager.is_configured,
         "context_window": config_manager.context_window,
     }
 
 
-# --- Download proxy: relay MCP-generated files through ERAG ---
+# --- Download proxy: relay MCP-generated files through RAGClaw ---
 @app.get("/api/download/{file_path:path}")
 async def download_mcp_file(file_path: str):
     """Proxy file download from MCP REPL server.

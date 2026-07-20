@@ -1,4 +1,4 @@
-# ERAG All-in-one Control Script
+# RAGClaw All-in-one Control Script
 # Usage: .\bin\psl\start.ps1 [start|stop|reload|status]
 #
 # Container mode only: the backend runs containerized and serves the frontend
@@ -6,7 +6,7 @@
 # run in container mode.
 #
 # This script drives `docker compose` directly for the base stack
-# (erag / mcp-repl / erag-egress). It does NOT delegate to backend.ps1 or
+# (ragclaw / mcp-repl / ragclaw-egress). It does NOT delegate to backend.ps1 or
 # mcp_repl.ps1 — those remain available for per-service control.
 
 param([string]$Action = "start")
@@ -17,10 +17,10 @@ $ComposeFile = Join-Path $Root "docker-compose.yml"
 
 # Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
-# Shared helpers (Get-EragPublishedPort — real host port resolver)
+# Shared helpers (Get-RagclawPublishedPort — real host port resolver)
 . (Join-Path $PSScriptRoot "lib\common.ps1")
 
-# start builds the whole stack; erag is multi-stage (node + python), the other
+# start builds the whole stack; ragclaw is multi-stage (node + python), the other
 # services are python-only, so the union is python:3.12-slim + node:22-alpine.
 $RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
@@ -41,34 +41,46 @@ function Assert-Docker {
     }
 }
 
-# Free the fixed egress IP (172.30.0.2) on the erag-internal network so `up`
+# Free the fixed egress IP (172.30.0.2) on the ragclaw_ragclaw-internal network so `up`
 # does not fail with "Address already in use". Removes a stale (non-running)
-# erag-egress container, and with -ForceNetwork also tears down the network to
+# ragclaw-egress container, and with -ForceNetwork also tears down the network to
 # release a stuck Docker IPAM lease left behind by a prior `down`.
 function Repair-EgressNetwork {
     param([switch]$ForceNetwork)
 
     if (-not (Test-Docker)) { return }
 
-    $egressId = docker ps -a -q -f "name=erag-egress" 2>$null
+    $egressId = docker ps -a -q -f "name=ragclaw-egress" 2>$null
     if ($egressId) {
-        $running = docker ps -q -f "name=erag-egress" 2>$null
+        $running = docker ps -q -f "name=ragclaw-egress" 2>$null
         if (-not $running) {
-            Write-Host "  Removing stale erag-egress container to free its fixed IP..." -ForegroundColor DarkGray
-            docker compose -f $ComposeFile rm -f erag-egress 2>$null | Out-Null
+            Write-Host "  Removing stale ragclaw-egress container to free its fixed IP..." -ForegroundColor DarkGray
+            docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
         }
     }
 
     if (-not $ForceNetwork) { return }
 
-    $attached = docker network inspect erag-internal --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
+    # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw_ragclaw-internal.
+    # Resolve the project name the SAME way compose does (env > .env > directory
+    # basename) so this works for any COMPOSE_PROJECT_NAME (ragclaw here, erag before).
+    # A literal "ragclaw_ragclaw-internal" was a silent no-op, so the 172.30.0.2 IPAM lease
+    # was never released -> "Address already in use" on every retry.
+    $proj = $env:COMPOSE_PROJECT_NAME
+    if (-not $proj) {
+        $envLine = Select-String -Path (Join-Path $Root ".env") -Pattern '^COMPOSE_PROJECT_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($envLine) { $proj = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
+    }
+    if (-not $proj) { $proj = Split-Path -Leaf $Root }
+    $net = "$proj`_ragclaw-internal"
+    $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
     if ($attached) { $attached | ForEach-Object { if ($_) { docker rm -f $_ 2>$null | Out-Null } } }
-    docker network rm erag-internal 2>$null | Out-Null
-    Write-Host "  Released erag-internal network IPAM lease; will recreate on up." -ForegroundColor DarkGray
+    docker network rm $net 2>$null | Out-Null
+    Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
 }
 
 function Wait-ForBackend {
-    $realPort = Get-EragPublishedPort
+    $realPort = Get-RagclawPublishedPort
     Write-Host "Waiting for backend on :$realPort (loading model, may take ~30s)..." -NoNewline
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep 1
@@ -80,7 +92,7 @@ function Wait-ForBackend {
         if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
     }
     Write-Host " timeout!" -ForegroundColor Red
-    Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
+    Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
     return $false
 }
 
@@ -95,16 +107,16 @@ function Up-Stack([switch]$ForceRecreate) {
     Repair-EgressNetwork
     docker compose -f $ComposeFile up -d $recreate
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  First attempt failed; releasing erag-internal network lease and retrying..." -ForegroundColor DarkYellow
+        Write-Host "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..." -ForegroundColor DarkYellow
         Repair-EgressNetwork -ForceNetwork
         docker compose -f $ComposeFile up -d $recreate
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
-        Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the erag-internal" -ForegroundColor DarkYellow
+        Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the ragclaw_ragclaw-internal" -ForegroundColor DarkYellow
         Write-Host "       network and could not be auto-recovered. Run manually, then start again:" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml down" -ForegroundColor DarkYellow
-        Write-Host "         docker network rm erag-internal" -ForegroundColor DarkYellow
+        Write-Host "         docker network rm ragclaw_ragclaw-internal" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml up -d" -ForegroundColor DarkYellow
         return $false
     }
@@ -132,7 +144,7 @@ switch ($Action) {
         Write-Host "=== Starting stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack)) { return }
         Wait-ForBackend
-        $appPort = Get-EragPublishedPort
+        $appPort = Get-RagclawPublishedPort
         Write-Host ""
         Write-Host "=== All services started (Docker mode) ===" -ForegroundColor Green
         Write-Host "  App:     http://localhost:$appPort" -ForegroundColor Gray
@@ -159,7 +171,7 @@ switch ($Action) {
         Write-Host "=== Recreating stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack -ForceRecreate)) { return }
         Wait-ForBackend
-        $appPort = Get-EragPublishedPort
+        $appPort = Get-RagclawPublishedPort
         Write-Host ""
         Write-Host "=== Reload complete (Docker mode) ===" -ForegroundColor Green
         Write-Host "  App: http://localhost:$appPort" -ForegroundColor Gray
@@ -176,14 +188,14 @@ switch ($Action) {
     }
 
     "status" {
-        Write-Host "=== ERAG Service Status ===" -ForegroundColor Cyan
+        Write-Host "=== RAGClaw Service Status ===" -ForegroundColor Cyan
         Write-Host "  Mode: Docker container" -ForegroundColor Cyan
         docker compose -f $ComposeFile ps
-        $running = docker ps -q -f "name=erag-lite" 2>$null
+        $running = docker ps -q -f "name=ragclaw-lite" 2>$null
         if ($running) {
-            $appPort = Get-EragPublishedPort
-            $portSrc = if ($env:ERAG_PORT) { $env:ERAG_PORT } else { "<random>" }
-            Write-Host "  App URL: http://localhost:$appPort  (ERAG_PORT: $portSrc)" -ForegroundColor Gray
+            $appPort = Get-RagclawPublishedPort
+            $portSrc = if ($env:RAGCLAW_PORT) { $env:RAGCLAW_PORT } else { "<random>" }
+            Write-Host "  App URL: http://localhost:$appPort  (RAGCLAW_PORT: $portSrc)" -ForegroundColor Gray
         }
     }
 

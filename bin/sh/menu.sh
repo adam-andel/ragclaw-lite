@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ERAG Control Menu (WSL / Linux)
+# RAGClaw Control Menu (WSL / Linux)
 # Usage: bash bin/sh/menu.sh
 #
 # Interactive equivalent of bin/psl/menu.bat. Loops until the user picks [0].
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 while true; do
   echo
   echo "  ==================================="
-  echo "    EnterpriseRAG-Lite"
+  echo "    RAGClaw-Lite"
   echo "  ==================================="
   echo
   echo "    [1] Start All  (prod)"

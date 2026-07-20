@@ -74,10 +74,10 @@ class TestVectorStore:
         _skip_if_no_model()
         kb = _kid()
         try:
-            vector_store.add_chunks(kb, [_chunk(content="ERAG is an enterprise RAG platform")])
+            vector_store.add_chunks(kb, [_chunk(content="RAGClaw is an enterprise RAG platform")])
             results = vector_store.search(kb, "enterprise RAG", top_k=3)
             assert len(results) > 0
-            assert any("ERAG" in r.get("content", "") for r in results)
+            assert any("RAGClaw" in r.get("content", "") for r in results)
         finally:
             vector_store.delete_collection(kb)
 

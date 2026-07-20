@@ -1,4 +1,4 @@
-"""ERAG Agent Graph — LangGraph state machine for routing, retrieval, and tool calls.
+"""RAGClaw Agent Graph — LangGraph state machine for routing, retrieval, and tool calls.
 
 The graph handles everything up to LLM generation. chat.py reads the final
 state from the graph, then handles streaming LLM generation + SSE output + post-processing.
@@ -16,7 +16,7 @@ Graph topology:
 from langgraph.graph import StateGraph, END, START
 
 from app.services.config_manager import config_manager
-from app.services.agent_state import EragAgentState
+from app.services.agent_state import RagclawAgentState
 from app.services.agent_nodes import (
     entry_node,
     fanout_node,
@@ -34,14 +34,14 @@ from app.services.agent_nodes import (
 
 
 def _build_graph() -> StateGraph:
-    """Construct the ERAG agent state graph.
+    """Construct the RAGClaw agent state graph.
 
     skill_router_node (LLM call) and parallel_retrieval_node (I/O) run in
     PARALLEL after the cache gate, so retrieval no longer waits for the router's
     LLM latency. They converge at `join`, which then routes to skill_loader
     (if a skill was selected) or straight to tool_decision.
     """
-    workflow = StateGraph(EragAgentState)
+    workflow = StateGraph(RagclawAgentState)
 
     # Register nodes
     workflow.add_node("entry", entry_node)
@@ -160,12 +160,12 @@ def _build_graph() -> StateGraph:
     return workflow.compile()
 
 
-class EragAgentGraph:
-    """Public API for the ERAG agent graph.
+class RagclawAgentGraph:
+    """Public API for the RAGClaw agent graph.
 
     Usage from chat.py:
 
-        graph = EragAgentGraph()
+        graph = RagclawAgentGraph()
         state = await graph.run(initial_state)
 
         if state["cache_hit"]:
@@ -184,7 +184,7 @@ class EragAgentGraph:
     async def run(self, initial_state: dict) -> dict:
         """Run the graph from initial state to completion.
 
-        Returns the final EragAgentState with all fields populated.
+        Returns the final RagclawAgentState with all fields populated.
         """
         result = await self._graph.ainvoke(initial_state)
         return result
@@ -286,4 +286,4 @@ class EragAgentGraph:
 
 
 # Singleton
-erag_agent_graph = EragAgentGraph()
+ragclaw_agent_graph = RagclawAgentGraph()

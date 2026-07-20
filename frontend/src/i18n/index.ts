@@ -4,7 +4,7 @@ import enUS from './en-US'
 
 export type AppLocale = 'zh-CN' | 'en-US'
 
-const STORAGE_KEY = 'erag-locale'
+const STORAGE_KEY = 'ragclaw-locale'
 
 function detectDefaultLocale(): AppLocale {
   if (typeof navigator !== 'undefined') {

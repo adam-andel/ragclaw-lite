@@ -50,7 +50,7 @@ async function handleLogin() {
         <div class="brand-blob brand-blob-1" />
         <div class="brand-blob brand-blob-2" />
         <div class="brand-content">
-          <div class="brand-logo">🔍 ERAG</div>
+          <div class="brand-logo">🔍 RAGClaw</div>
           <h2 class="brand-title">{{ t('login.brandTitle') }}</h2>
           <p class="brand-subtitle">{{ t('login.brandSubtitle') }}</p>
           <ul class="brand-features">
@@ -59,7 +59,7 @@ async function handleLogin() {
             <li><span class="dot" />{{ t('login.featureRoles') }}</li>
           </ul>
         </div>
-        <p class="brand-footer">EnterpriseRAG · Lite</p>
+        <p class="brand-footer">RAGClaw · Lite</p>
       </aside>
 
       <!-- Form panel -->
@@ -116,7 +116,7 @@ async function handleLogin() {
           {{ t('login.noAccountHint') }}
         </p>
 
-        <p class="login-copy">© ERAG · {{ t('login.brandTitle') }}</p>
+        <p class="login-copy">© RAGClaw · {{ t('login.brandTitle') }}</p>
       </section>
     </div>
   </div>

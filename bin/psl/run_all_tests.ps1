@@ -1,10 +1,10 @@
-# ERAG Backend Full Test Suite (container mode)
+# RAGClaw Backend Full Test Suite (container mode)
 # Usage:   .\bin\psl\run_all_tests.ps1
 #
-# Runs the pytest suite inside the 'erag-lite' Docker container. Local Python
+# Runs the pytest suite inside the 'ragclaw-lite' Docker container. Local Python
 # execution is no longer supported — this project must run in container mode.
 #
-# The erag container is started on demand (docker compose up -d erag) and the
+# The ragclaw container is started on demand (docker compose up -d ragclaw) and the
 # tests are executed via `docker compose exec`.
 
 $ErrorActionPreference = "Continue"
@@ -23,17 +23,17 @@ if (-not (Test-Docker)) {
     exit 1
 }
 
-# Ensure the erag container is up (it is the test execution environment)
-Write-Host "Ensuring erag-lite container is running..." -ForegroundColor Yellow
-docker compose -f $ComposeFile up -d erag
+# Ensure the ragclaw container is up (it is the test execution environment)
+Write-Host "Ensuring ragclaw-lite container is running..." -ForegroundColor Yellow
+docker compose -f $ComposeFile up -d ragclaw
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: failed to start erag-lite container" -ForegroundColor Red
+    Write-Host "ERROR: failed to start ragclaw-lite container" -ForegroundColor Red
     exit 1
 }
 
 # Install test deps inside the container (idempotent, non-root image)
 Write-Host "[1/9] Installing dev dependencies in container (pytest, pytest-asyncio, pytest-html, httpx)..." -ForegroundColor Yellow
-docker compose -f $ComposeFile exec -T erag bash -c "pip install --break-system-packages -q pytest pytest-asyncio pytest-html httpx"
+docker compose -f $ComposeFile exec -T ragclaw bash -c "pip install --break-system-packages -q pytest pytest-asyncio pytest-html httpx"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "WARNING: pip install in container returned exit code $LASTEXITCODE" -ForegroundColor Red
 }
@@ -47,13 +47,13 @@ $errors  = 0
 $failureLog = @()
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  ERAG Backend Full Test Suite (container)" -ForegroundColor Cyan
+Write-Host "  RAGClaw Backend Full Test Suite (container)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # ---- Helper: run pytest batch (inside container) and tally ----
 function Run-Batch($label, $files) {
     Write-Host "`n[$label] Running..." -ForegroundColor Yellow
-    $output = docker compose -f $ComposeFile exec -T erag bash -c "cd /app/backend && PYTHONPATH=/app/backend pytest $files -v --tb=short" 2>&1
+    $output = docker compose -f $ComposeFile exec -T ragclaw bash -c "cd /app/backend && PYTHONPATH=/app/backend pytest $files -v --tb=short" 2>&1
     $output | ForEach-Object { Write-Host $_ }
 
     # Join output for regex matching
@@ -125,15 +125,15 @@ if ($failureLog.Count -gt 0) {
     Write-Host "==========================================" -ForegroundColor Magenta
 }
 
-# ---- Cleanup: stop the erag container we started on demand ----
-# Set $env:ERAG_KEEP_CONTAINER=1 to leave it running (e.g. to inspect logs).
-if ($env:ERAG_KEEP_CONTAINER -eq "1") {
-    Write-Host "`nLeaving erag-lite running (ERAG_KEEP_CONTAINER=1)" -ForegroundColor Yellow
+# ---- Cleanup: stop the ragclaw container we started on demand ----
+# Set $env:RAGCLAW_KEEP_CONTAINER=1 to leave it running (e.g. to inspect logs).
+if ($env:RAGCLAW_KEEP_CONTAINER -eq "1") {
+    Write-Host "`nLeaving ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)" -ForegroundColor Yellow
 }
 else {
-    Write-Host "`nStopping erag-lite container used for tests..." -ForegroundColor Yellow
-    docker compose -f $ComposeFile stop erag 2>$null
+    Write-Host "`nStopping ragclaw-lite container used for tests..." -ForegroundColor Yellow
+    docker compose -f $ComposeFile stop ragclaw 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  erag-lite stopped" -ForegroundColor Green
+        Write-Host "  ragclaw-lite stopped" -ForegroundColor Green
     }
 }

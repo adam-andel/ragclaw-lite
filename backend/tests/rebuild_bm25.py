@@ -1,6 +1,6 @@
 """Rebuild BM25 and test search."""
 import sys, asyncio
-sys.path.insert(0, r'D:\AI\Autoclaw\ERAG\erag\backend')
+sys.path.insert(0, r'D:\AI\Autoclaw\RAGClaw\ragclaw\backend')
 
 async def main():
     from app.database import async_session
@@ -23,8 +23,8 @@ async def main():
     print(f'BM25 rebuilt: {bm25_index.has_index(kb_id)}')
 
     # Test search
-    results = hybrid_search.search(kb_id, 'ERAG')
-    print(f'Search "ERAG": {len(results)} results')
+    results = hybrid_search.search(kb_id, 'RAGClaw')
+    print(f'Search "RAGClaw": {len(results)} results')
     for r in results[:3]:
         print(f'  fusion={r["fusion_score"]:.3f} vec={r["vector_score"]:.3f} bm25={r["bm25_score"]:.3f}')
         print(f'  content: {r["content"][:80]}')

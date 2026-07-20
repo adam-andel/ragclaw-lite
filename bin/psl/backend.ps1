@@ -1,11 +1,11 @@
-# ERAG Backend Control Script
+# RAGClaw Backend Control Script
 # Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs]
 #
-# Container mode only: the backend always runs as a Docker container (erag-lite).
+# Container mode only: the backend always runs as a Docker container (ragclaw-lite).
 # Local Python / uvicorn execution is no longer supported — this project must
 # run in container mode.
 #
-# Docker mode uses: docker compose -f docker-compose.yml up/down erag
+# Docker mode uses: docker compose -f docker-compose.yml up/down ragclaw
 
 param([string]$Action = "start")
 
@@ -14,10 +14,10 @@ $ComposeFile = Join-Path $Root "docker-compose.yml"
 
 # Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
-# Shared helpers (Get-EragPublishedPort — real host port resolver)
+# Shared helpers (Get-RagclawPublishedPort — real host port resolver)
 . (Join-Path $PSScriptRoot "lib\common.ps1")
 
-# Images the erag Dockerfile pulls (multi-stage: node build + python runtime).
+# Images the ragclaw Dockerfile pulls (multi-stage: node build + python runtime).
 $RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
 # =====================================================================
@@ -41,20 +41,20 @@ function Test-ComposeAvailable {
     param([string]$ComposePath)
     if (-not (Test-Path $ComposePath)) { return $false }
     $yml = Get-Content $ComposePath -Raw
-    return $yml -match '(?m)^\s+erag:' -and ($yml -match 'container_name:\s*erag-lite')
+    return $yml -match '(?m)^\s+ragclaw:' -and ($yml -match 'container_name:\s*ragclaw-lite')
 }
 
 function Test-DockerBackend {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=erag-lite" 2>$null
+        $id = docker ps -q -f "name=ragclaw-lite" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
 }
 
 function Test-Backend {
-    $realPort = Get-EragPublishedPort
+    $realPort = Get-RagclawPublishedPort
     try {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:$realPort/api/health" -TimeoutSec 2 -ErrorAction SilentlyContinue
         return ($r.StatusCode -eq 200)
@@ -68,16 +68,16 @@ function Test-Backend {
 
 function Start-DockerBackend {
     Assert-Docker
-    Write-Host "=== ERAG Backend (Docker) ===" -ForegroundColor Cyan
+    Write-Host "=== RAGClaw Backend (Docker) ===" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
-        $realPort = Get-EragPublishedPort
+        $realPort = Get-RagclawPublishedPort
         Write-Host "Backend already running on :$realPort (Docker mode)" -ForegroundColor Yellow
         return
     }
 
     if (-not (Test-ComposeAvailable $ComposeFile)) {
-        Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
+        Write-Host "ERROR: docker-compose.yml missing or lacks 'ragclaw' service" -ForegroundColor Red
         return
     }
 
@@ -88,7 +88,7 @@ function Start-DockerBackend {
         return
     }
     Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror erag
+    docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror ragclaw
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: build failed" -ForegroundColor Red
         return
@@ -96,7 +96,7 @@ function Start-DockerBackend {
 
     Write-Host ""
     Write-Host "=== Starting container ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile up -d erag
+    docker compose -f $ComposeFile up -d ragclaw
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
         return
@@ -108,21 +108,21 @@ function Start-DockerBackend {
         Start-Sleep 1
         if (Test-Backend) {
             Write-Host " OK" -ForegroundColor Green
-            $realPort = Get-EragPublishedPort
+            $realPort = Get-RagclawPublishedPort
             Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
-            Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
+            Write-Host "  Mode: Docker container (ragclaw-lite)" -ForegroundColor Gray
             return
         }
         if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
     }
     Write-Host " timeout!" -ForegroundColor Red
-    Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
+    Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
 }
 
 function Stop-DockerBackend {
     Write-Host "=== Stopping backend (Docker) ===" -ForegroundColor Cyan
     if (Test-DockerBackend) {
-        docker compose -f $ComposeFile stop erag
+        docker compose -f $ComposeFile stop ragclaw
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Backend stopped (Docker)" -ForegroundColor Green
         }
@@ -137,14 +137,14 @@ function Stop-DockerBackend {
 # =====================================================================
 
 function Show-Status {
-    Write-Host "=== ERAG Backend Status ===" -ForegroundColor Cyan
+    Write-Host "=== RAGClaw Backend Status ===" -ForegroundColor Cyan
     Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerBackend) {
-        $realPort = Get-EragPublishedPort
+        $realPort = Get-RagclawPublishedPort
         Write-Host "  Port: $realPort" -ForegroundColor Gray
-        Write-Host "  Status: running (erag-lite)" -ForegroundColor Green
-        $startedAt = docker inspect erag-lite --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Status: running (ragclaw-lite)" -ForegroundColor Green
+        $startedAt = docker inspect ragclaw-lite --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
         return
     }
@@ -180,14 +180,14 @@ switch ($Action) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
         }
-        Write-Host "Rebuilding erag image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
-        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache erag
+        Write-Host "Rebuilding ragclaw image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
+        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache ragclaw
     }
 
     "reload" {
         Assert-Docker
         if (-not (Test-ComposeAvailable $ComposeFile)) {
-            Write-Host "ERROR: docker-compose.yml missing or lacks 'erag' service" -ForegroundColor Red
+            Write-Host "ERROR: docker-compose.yml missing or lacks 'ragclaw' service" -ForegroundColor Red
             return
         }
 
@@ -201,7 +201,7 @@ switch ($Action) {
             return
         }
         Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror erag
+        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror ragclaw
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: build failed" -ForegroundColor Red
             return
@@ -209,7 +209,7 @@ switch ($Action) {
 
         Write-Host ""
         Write-Host "=== Starting container ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile up -d erag
+        docker compose -f $ComposeFile up -d ragclaw
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
             return
@@ -220,19 +220,19 @@ switch ($Action) {
             Start-Sleep 1
             if (Test-Backend) {
                 Write-Host " OK" -ForegroundColor Green
-                $realPort = Get-EragPublishedPort
+                $realPort = Get-RagclawPublishedPort
                 Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
-                Write-Host "  Mode: Docker container (erag-lite)" -ForegroundColor Gray
+                Write-Host "  Mode: Docker container (ragclaw-lite)" -ForegroundColor Gray
                 return
             }
             if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
         }
         Write-Host " timeout!" -ForegroundColor Red
-        Write-Host "  Check manually: docker logs erag-lite" -ForegroundColor Gray
+        Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
     }
 
     "logs" {
-        if (Test-DockerBackend) { docker logs --tail=50 -f erag-lite }
+        if (Test-DockerBackend) { docker logs --tail=50 -f ragclaw-lite }
         else { Write-Host "Backend not running in Docker mode" -ForegroundColor Yellow }
     }
 

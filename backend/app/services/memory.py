@@ -12,7 +12,7 @@ from mem0 import Memory
 from app.config import settings
 from app.services.config_manager import config_manager
 
-logger = logging.getLogger("erag")
+logger = logging.getLogger("ragclaw")
 
 # Dedicated thread pool for Mem0 (avoids blocking asyncio)
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mem0")
@@ -28,7 +28,7 @@ def _get_memory() -> Memory:
             "vector_store": {
                 "provider": "chroma",
                 "config": {
-                    "collection_name": "erag_memory",
+                    "collection_name": "ragclaw_memory",
                     "path": str(settings.chroma_path),
                 },
             },

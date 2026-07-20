@@ -17,7 +17,7 @@ from app.services.kb_service import get_kb_prompt
 from app.services.memory import add_memory
 from app.services.token_count import count_messages_tokens
 
-logger = logging.getLogger("erag")
+logger = logging.getLogger("ragclaw")
 
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:

@@ -28,7 +28,7 @@ from app.services.config_manager import config_manager
 from app.services.cron_parser import compute_next_run
 from app.services.llm_client import llm_client
 
-logger = logging.getLogger("erag.cron")
+logger = logging.getLogger("ragclaw.cron")
 
 
 # ── Tool schemas ──

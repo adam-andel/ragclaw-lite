@@ -1,6 +1,6 @@
 """Test: ChromaDB persistent vs ephemeral in FastAPI context."""
 import sys, uuid, asyncio
-sys.path.insert(0, r'D:\AI\Autoclaw\ERAG\erag\backend')
+sys.path.insert(0, r'D:\AI\Autoclaw\RAGClaw\ragclaw\backend')
 
 async def test_persistent():
     """Test that PersistentClient works in an async context (simulating server)."""

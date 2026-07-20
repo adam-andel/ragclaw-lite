@@ -185,7 +185,7 @@ def _relay_response(upstream, wfile) -> None:
 
 class EgressHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "ERAG-Egress/1.0"
+    server_version = "RAGCLAW-Egress/1.0"
 
     def _proxy_error(self, code: int, msg: str) -> None:
         body = msg.encode()

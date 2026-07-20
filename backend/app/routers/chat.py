@@ -492,7 +492,7 @@ async def chat_stream(
 
         async def producer():
             try:
-                from app.services.agent_graph import erag_agent_graph
+                from app.services.agent_graph import ragclaw_agent_graph
                 from app.services.llm_client import llm_client
                 from app.services.agent_nodes import _extract_download_links_from_state
 
@@ -626,7 +626,7 @@ async def chat_stream(
                # ── 2. Run the graph ───
                 async with llm_limiter.acquire(on_queue_position):
                     # Token acquired: build state and run agent graph.
-                    state = await erag_agent_graph.run(initial_state)
+                    state = await ragclaw_agent_graph.run(initial_state)
 
                    # ── 2b. Suspension detection: the graph requests user confirmation ───
                     if state.get("pending_limit"):
@@ -676,7 +676,7 @@ async def chat_stream(
 
                     # ── 3. Stream LLM generation ──
                     final_retr = state.get("retrieval_ms", 0)
-                    messages = erag_agent_graph.build_generation_messages(state)
+                    messages = ragclaw_agent_graph.build_generation_messages(state)
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
                     # Signal the final-generation phase so the frontend can show it honestly

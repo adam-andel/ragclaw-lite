@@ -1,7 +1,7 @@
 #!/bin/sh
 # REPL MCP Server entrypoint — Python / Shell / JavaScript sandbox
 mkdir -p /app/workspace
-# v2: /app/workspace is now a persistent named volume (erag_workspace) that may
+# v2: /app/workspace is now a persistent named volume (ragclaw_workspace) that may
 # be pre-populated from the image with mcpuser ownership. The server runs as
 # root (compose user:"0"), so ensure root owns the mountpoint — otherwise root is
 # denied write under Docker Desktop/WSL2 user-remap and cannot create per-user
@@ -9,8 +9,8 @@ mkdir -p /app/workspace
 chown root:root /app/workspace
 
 # ── Approach B (network-layer): the egress broker now runs in a SEPARATE
-# container (erag-egress) on the internal Docker network. This sandbox
-# container is attached ONLY to erag-internal (internal: true), which has NO
+# container (ragclaw-egress) on the internal Docker network. This sandbox
+# container is attached ONLY to ragclaw-internal (internal: true), which has NO
 # default route — so any direct egress to the internet fails at the routing
 # layer, regardless of client proxy compliance or the in-process guard.
 #

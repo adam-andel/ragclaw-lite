@@ -1,2 +1,2 @@
-# EnterpriseRAG-Lite
+# RAGClaw-Lite
 

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     project_root: Path = Path(__file__).resolve().parent.parent.parent
     data_dir: Path = project_root / "data"
     upload_dir: Path = data_dir / "uploads"
-    sqlite_path: Path = data_dir / "sqlite" / "erag.db"
+    sqlite_path: Path = data_dir / "sqlite" / "ragclaw.db"
     chroma_path: Path = data_dir / "chroma"
     skills_dir: Path = data_dir / "skills"
 

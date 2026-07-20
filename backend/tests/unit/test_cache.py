@@ -16,7 +16,7 @@ from app.services.cache import answer_cache, CacheEntry
 
 KB_A = "kb-aaaaaaaa"
 KB_B = "kb-bbbbbbbb"
-Q1 = "What is ERAG?"
+Q1 = "What is RAGClaw?"
 Q2 = "How does hybrid search work?"
 
 
@@ -26,10 +26,10 @@ class TestCacheBasic:
     """Put / get / miss / invalidate."""
 
     def test_put_then_get_returns_content(self):
-        answer_cache.put(Q1, KB_A, "ERAG is a platform", [])
+        answer_cache.put(Q1, KB_A, "RAGClaw is a platform", [])
         entry = answer_cache.get(Q1, KB_A)
         assert entry is not None
-        assert entry.answer == "ERAG is a platform"
+        assert entry.answer == "RAGClaw is a platform"
 
     def test_miss_returns_none(self):
         result = answer_cache.get("never asked this", KB_A)

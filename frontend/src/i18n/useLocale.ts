@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { i18n } from './index'
 import type { AppLocale } from './index'
 
-const STORAGE_KEY = 'erag-locale'
+const STORAGE_KEY = 'ragclaw-locale'
 
 function detectDefaultLocale(): AppLocale {
   if (typeof navigator !== 'undefined') {

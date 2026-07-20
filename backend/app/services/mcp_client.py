@@ -13,7 +13,7 @@ import httpx
 
 from app.services.repl_auth import build_auth_envelope, get_user_repl_uid, REPL_AUTH_TOOLS
 
-logger = logging.getLogger("erag.mcp")
+logger = logging.getLogger("ragclaw.mcp")
 
 
 async def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) -> dict:
@@ -268,7 +268,7 @@ class MCPClient:
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "erag", "version": "0.3.0"},
+                    "clientInfo": {"name": "ragclaw", "version": "0.3.0"},
                 },
             }) + "\n"
             proc.stdin.write(init_req.encode())

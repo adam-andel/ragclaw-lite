@@ -612,7 +612,7 @@ onMounted(async () => {
 
   // Load persisted conversation→KB mapping
   try {
-    const stored = localStorage.getItem('erag:conv-kb-map')
+    const stored = localStorage.getItem('ragclaw:conv-kb-map')
     if (stored) convKbMap.value = JSON.parse(stored)
   } catch { /* ignore */ }
 
@@ -648,7 +648,7 @@ onMounted(async () => {
 watch(selectedKbId, (newKbId) => {
   if (newKbId && conversationId.value && messages.value.length > 0) {
     convKbMap.value[conversationId.value] = newKbId
-    localStorage.setItem('erag:conv-kb-map', JSON.stringify(convKbMap.value))
+    localStorage.setItem('ragclaw:conv-kb-map', JSON.stringify(convKbMap.value))
   }
 })
 
@@ -713,7 +713,7 @@ async function loadConversation(id: string) {
 
 // Listen for reset-chat event from sidebar
 onMounted(() => {
-  window.addEventListener('erag:reset-chat', () => {
+  window.addEventListener('ragclaw:reset-chat', () => {
     isReadonly.value = false
     conversationId.value = undefined
     messages.value = []
@@ -805,10 +805,10 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         // Persist KB for newly created conversation
         if (!convKbMap.value[event.conversation_id]) {
           convKbMap.value[event.conversation_id] = selectedKbId.value
-          localStorage.setItem('erag:conv-kb-map', JSON.stringify(convKbMap.value))
+          localStorage.setItem('ragclaw:conv-kb-map', JSON.stringify(convKbMap.value))
         }
         router.replace(`/chat/${event.conversation_id}`)
-        window.dispatchEvent(new CustomEvent('erag:conversation-updated'))
+        window.dispatchEvent(new CustomEvent('ragclaw:conversation-updated'))
       }
     }
     proxyMsg.content = streamedText

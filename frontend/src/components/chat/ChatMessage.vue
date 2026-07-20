@@ -255,7 +255,7 @@ onBeforeUnmount(() => {
     <div class="message-col">
     <div class="message-body">
       <div class="message-meta">
-        <span class="role-label">{{ message.role === 'user' ? t('chat.you') : 'ERAG' }}</span>
+        <span class="role-label">{{ message.role === 'user' ? t('chat.you') : 'RAGClaw' }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
 

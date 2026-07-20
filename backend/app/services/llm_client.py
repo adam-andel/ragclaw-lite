@@ -17,7 +17,7 @@ import httpx
 
 from app.services.config_manager import config_manager
 
-logger = logging.getLogger("erag.llm")
+logger = logging.getLogger("ragclaw.llm")
 logger.setLevel(logging.INFO)
 
 

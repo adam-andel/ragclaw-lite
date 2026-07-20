@@ -111,7 +111,7 @@ def _seed_admin_user(raw):
     print("[seed] Checking default admin user...")
     import hashlib
 
-    admin_user_id = str(uuid.UUID(hashlib.md5(b"erag-default-admin-user").hexdigest()))
+    admin_user_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-admin-user").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
     from app.services.auth import hash_password
@@ -140,8 +140,8 @@ def _seed_defaults(raw):
     import hashlib
 
     # Deterministic UUIDs
-    mcp_id = str(uuid.UUID(hashlib.md5(b"erag-default-python-repl").hexdigest()))
-    skill_id = str(uuid.UUID(hashlib.md5(b"erag-default-doc-gen").hexdigest()))
+    mcp_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-python-repl").hexdigest()))
+    skill_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-doc-gen").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
     # Default MCP Server: Python executor

@@ -9,7 +9,7 @@ async def test_search_with_kb_id(client, admin_token, test_kb):
     """POST /api/retrieval/search — with kb_id → 200 + results."""
     # Upload a document first so there's something to retrieve
     files = {"file": ("search_test.txt",
-                      b"ERAG is an enterprise RAG platform built with FastAPI and Vue3.",
+                      b"RAGClaw is an enterprise RAG platform built with FastAPI and Vue3.",
                       "text/plain")}
     upload_res = await client.post("/api/documents/upload", files=files, data={
         "kb_id": test_kb["id"],
@@ -18,7 +18,7 @@ async def test_search_with_kb_id(client, admin_token, test_kb):
     assert upload_res.status_code in (200, 500)
 
     res = await client.post("/api/retrieval/search", json={
-        "query": "什么是ERAG",
+        "query": "什么是RAGClaw",
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert res.status_code == 200
@@ -102,14 +102,14 @@ async def test_search_threshold_max(client, admin_token, test_kb):
 async def test_search_vector_weight_zero_bm25_one(client, admin_token, test_kb):
     """POST /api/retrieval/search — vector_weight=0, bm25_weight=1 → 200."""
     files = {"file": ("bm25_test.txt",
-                      b"BM25-only search test document with specific keywords like ERAG platform retrieval.",
+                      b"BM25-only search test document with specific keywords like RAGClaw platform retrieval.",
                       "text/plain")}
     await client.post("/api/documents/upload", files=files, data={
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"}, timeout=30)
 
     res = await client.post("/api/retrieval/search", json={
-        "query": "ERAG retrieval",
+        "query": "RAGClaw retrieval",
         "kb_id": test_kb["id"],
         "vector_weight": 0.0,
         "bm25_weight": 1.0,

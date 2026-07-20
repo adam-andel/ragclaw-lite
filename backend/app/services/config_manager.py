@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives import hashes
 
 from app.config import settings
 
-_SEED = b"erag-llm-config-v2-seed-2026"
-_SALT = b"erag-config-salt-v2"
+_SEED = b"ragclaw-llm-config-v2-seed-2026"
+_SALT = b"ragclaw-config-salt-v2"
 
 DEFAULT_SYSTEM_PROMPT = """你是一个企业知识库助手。根据提供的文档内容回答问题。
 

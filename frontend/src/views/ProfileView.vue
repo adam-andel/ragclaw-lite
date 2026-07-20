@@ -16,7 +16,7 @@ const { t } = useI18n()
 
 // ── Avatar ──
 const avatarEmojis = ['👤', '😎', '🦊', '🐱', '🐶', '🐼', '🐨', '🦁', '🐯', '🐸', '🐙', '🦄', '🐳', '🦋', '🌸', '🔥']
-const storedAvatar = localStorage.getItem('erag:avatar')
+const storedAvatar = localStorage.getItem('ragclaw:avatar')
 const selectedAvatar = ref(storedAvatar || '👤')
 const showAvatarPicker = ref(false)
 const uploading = ref(false)
@@ -28,7 +28,7 @@ const avatarSrc = computed(() => auth.user?.avatar_url || undefined)
 
 function selectAvatar(emoji: string) {
   selectedAvatar.value = emoji
-  localStorage.setItem('erag:avatar', emoji)
+  localStorage.setItem('ragclaw:avatar', emoji)
   showAvatarPicker.value = false
 }
 

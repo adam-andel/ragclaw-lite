@@ -7,7 +7,7 @@ import { ref } from 'vue'
  * - isDark is a shared ref: App.vue uses it to drive NConfigProvider, and the sidebar switch uses it to toggle.
  */
 
-const STORAGE_KEY = 'erag-theme'
+const STORAGE_KEY = 'ragclaw-theme'
 
 type ThemeMode = 'light' | 'dark'
 

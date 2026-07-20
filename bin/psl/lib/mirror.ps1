@@ -49,7 +49,7 @@ function Test-Registry {
     $testUrl = $Url.TrimEnd('/') + "/v2/"
     try {
         $req = [System.Net.HttpWebRequest]::Create($testUrl)
-        $req.UserAgent = "ERAG-Mirror-Checker"
+        $req.UserAgent = "RAGCLAW-Mirror-Checker"
         $req.Timeout = 5000
         $req.AllowAutoRedirect = $true
         $req.Method = "GET"
@@ -80,7 +80,7 @@ function Test-MirrorImage {
     $url = "https://$Domain/v2/$Image/manifests/$Tag"
     try {
         $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.UserAgent = "ERAG-Mirror-Checker"
+        $req.UserAgent = "RAGCLAW-Mirror-Checker"
         $req.Timeout = 8000
         $req.AllowAutoRedirect = $false
         $req.Method = "HEAD"

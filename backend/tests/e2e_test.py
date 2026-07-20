@@ -9,7 +9,7 @@ kb = r.json()
 print(f'1. KB created: {kb["id"][:8]}... {kb["name"]}')
 
 # 2. Upload test doc
-files = {'file': ('test.md', '# ERAG\n\n## 概述\nERAG 是企业 RAG 平台。\n\n## 技术栈\nFastAPI + Vue3。'.encode('utf-8'), 'text/markdown')}
+files = {'file': ('test.md', '# RAGClaw\n\n## 概述\nRAGClaw 是企业 RAG 平台。\n\n## 技术栈\nFastAPI + Vue3。'.encode('utf-8'), 'text/markdown')}
 r = httpx.post(f'{base}/documents/upload', files=files, data={'kb_id': kb['id']}, timeout=120)
 doc = r.json()
 print(f'2. Doc: {doc["id"][:8]}... {doc["filename"]} status={doc["status"]} chunks={doc["chunk_count"]}')

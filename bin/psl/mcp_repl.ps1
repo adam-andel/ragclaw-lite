@@ -1,8 +1,8 @@
-# ERAG REPL MCP Server Control Script (Python + Shell + JavaScript)
+# RAGClaw REPL MCP Server Control Script (Python + Shell + JavaScript)
 # Usage: .\bin\psl\mcp_repl.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
-# (erag-mcp-repl). Local Python venv execution is no longer supported — this
+# (ragclaw-mcp-repl). Local Python venv execution is no longer supported — this
 # project must run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down mcp-repl
@@ -49,7 +49,7 @@ function Test-ComposeAvailable {
 function Test-DockerRepl {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=erag-mcp-repl" 2>$null
+        $id = docker ps -q -f "name=ragclaw-mcp-repl" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -58,7 +58,7 @@ function Test-DockerRepl {
 function Test-DockerEgress {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=erag-egress" 2>$null
+        $id = docker ps -q -f "name=ragclaw-egress" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -67,10 +67,10 @@ function Test-DockerEgress {
 function Repair-EgressNetwork {
     <#
     .SYNOPSIS
-    Frees the fixed egress IP (172.30.0.2) on the erag-internal network so a
+    Frees the fixed egress IP (172.30.0.2) on the ragclaw_ragclaw-internal network so a
     subsequent `docker compose up` does not fail with "Address already in use".
     .PARAMETER ForceNetwork
-    Also removes the erag-internal network itself (releasing the stuck IPAM
+    Also removes the ragclaw_ragclaw-internal network itself (releasing the stuck IPAM
     lease left behind by a prior `down`). Used on the retry attempt when a
     stale container alone was not the cause.
     #>
@@ -78,26 +78,36 @@ function Repair-EgressNetwork {
 
     if (-not (Test-Docker)) { return }
 
-    # 1) Remove any stale (non-running) erag-egress container holding the IP.
-    $egressId = docker ps -a -q -f "name=erag-egress" 2>$null
+    # 1) Remove any stale (non-running) ragclaw-egress container holding the IP.
+    $egressId = docker ps -a -q -f "name=ragclaw-egress" 2>$null
     if ($egressId) {
-        $running = docker ps -q -f "name=erag-egress" 2>$null
+        $running = docker ps -q -f "name=ragclaw-egress" 2>$null
         if (-not $running) {
-            Write-Host "  Removing stale erag-egress container to free its fixed IP..." -ForegroundColor DarkGray
-            docker compose -f $ComposeFile rm -f erag-egress 2>$null | Out-Null
+            Write-Host "  Removing stale ragclaw-egress container to free its fixed IP..." -ForegroundColor DarkGray
+            docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
         }
     }
 
     if (-not $ForceNetwork) { return }
 
-    # 2) Force-remove any container still attached to erag-internal, then the
-    #    network itself. This releases the daemon's IPAM lease for 172.30.0.2.
-    $attached = docker network inspect erag-internal --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
+    # 2) Force-remove any container still attached to the internal network, then
+    #    the network itself. This releases the daemon's IPAM lease for 172.30.0.2.
+    # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw_ragclaw-internal;
+    # resolve the project name the SAME way compose does (env > .env > dir basename)
+    # so a literal "ragclaw_ragclaw-internal" (a silent no-op) is never used.
+    $proj = $env:COMPOSE_PROJECT_NAME
+    if (-not $proj) {
+        $envLine = Select-String -Path (Join-Path $Root ".env") -Pattern '^COMPOSE_PROJECT_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($envLine) { $proj = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
+    }
+    if (-not $proj) { $proj = Split-Path -Leaf $Root }
+    $net = "$proj`_ragclaw-internal"
+    $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
     if ($attached) {
         $attached | ForEach-Object { if ($_) { docker rm -f $_ 2>$null | Out-Null } }
     }
-    docker network rm erag-internal 2>$null | Out-Null
-    Write-Host "  Released erag-internal network IPAM lease; will recreate on up." -ForegroundColor DarkGray
+    docker network rm $net 2>$null | Out-Null
+    Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
 }
 
 # =====================================================================
@@ -133,28 +143,28 @@ function Start-DockerRepl {
 
     Write-Host ""
     Write-Host "=== Starting container ===" -ForegroundColor Cyan
-    # erag-egress owns a fixed internal IP (172.30.0.2) on the erag-internal
+    # ragclaw-egress owns a fixed internal IP (172.30.0.2) on the ragclaw_ragclaw-internal
     # network. A stale, non-running egress container (or a stuck IPAM lease on
     # the network left behind after a prior `down`) can keep that IP occupied
     # and make `up` fail with "Address already in use". Clean both first.
     Repair-EgressNetwork
 
-    docker compose -f $ComposeFile up -d mcp-repl erag-egress
+    docker compose -f $ComposeFile up -d mcp-repl ragclaw-egress
     if ($LASTEXITCODE -ne 0) {
         # Second chance: the fixed egress IP is likely still leased on the
-        # erag-internal network. Tear the network down (releasing the IPAM
+        # ragclaw_ragclaw-internal network. Tear the network down (releasing the IPAM
         # lease) and retry the bring-up once.
-        Write-Host "  First attempt failed; releasing erag-internal network lease and retrying..." -ForegroundColor DarkYellow
+        Write-Host "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..." -ForegroundColor DarkYellow
         Repair-EgressNetwork -ForceNetwork
-        docker compose -f $ComposeFile up -d mcp-repl erag-egress
+        docker compose -f $ComposeFile up -d mcp-repl ragclaw-egress
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
         Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the" -ForegroundColor DarkYellow
-        Write-Host "       erag-internal network and could not be auto-recovered." -ForegroundColor DarkYellow
+        Write-Host "       ragclaw_ragclaw-internal network and could not be auto-recovered." -ForegroundColor DarkYellow
         Write-Host "       Run these manually, then start again:" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml down" -ForegroundColor DarkYellow
-        Write-Host "         docker network rm erag-internal" -ForegroundColor DarkYellow
+        Write-Host "         docker network rm ragclaw_ragclaw-internal" -ForegroundColor DarkYellow
         Write-Host "         docker compose -f docker-compose.yml up -d" -ForegroundColor DarkYellow
         return
     }
@@ -163,18 +173,18 @@ function Start-DockerRepl {
     if (Test-DockerRepl) {
         Write-Host "REPL server started (Docker)" -ForegroundColor Green
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-        Write-Host "  Workspace: persistent volume erag_workspace (survives restart)" -ForegroundColor Gray
-        Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
+        Write-Host "  Workspace: persistent volume ragclaw_workspace (survives restart)" -ForegroundColor Gray
+        Write-Host "  Mode: Docker container (ragclaw-mcp-repl)" -ForegroundColor Gray
         Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
         if (Test-DockerEgress) {
-            Write-Host "  Egress broker: running (erag-egress)" -ForegroundColor Gray
+            Write-Host "  Egress broker: running (ragclaw-egress)" -ForegroundColor Gray
         }
         else {
-            Write-Host "  Egress broker: NOT running (erag-egress)" -ForegroundColor DarkYellow
+            Write-Host "  Egress broker: NOT running (ragclaw-egress)" -ForegroundColor DarkYellow
         }
     }
     else {
-        Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
+        Write-Host "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl" -ForegroundColor Yellow
     }
 }
 
@@ -191,7 +201,7 @@ function Stop-DockerRepl {
     }
 
     if (Test-DockerEgress) {
-        docker compose -f $ComposeFile stop erag-egress
+        docker compose -f $ComposeFile stop ragclaw-egress
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Egress broker stopped (Docker)" -ForegroundColor Green
         }
@@ -207,8 +217,8 @@ function Show-Status {
     Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerRepl) {
-        Write-Host "  Status: running (erag-mcp-repl)" -ForegroundColor Green
-        $startedAt = docker inspect erag-mcp-repl --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Status: running (ragclaw-mcp-repl)" -ForegroundColor Green
+        $startedAt = docker inspect ragclaw-mcp-repl --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
     }
     else {
@@ -216,8 +226,8 @@ function Show-Status {
     }
 
     if (Test-DockerEgress) {
-        Write-Host "  Egress broker: running (erag-egress)" -ForegroundColor Green
-        $egressSince = docker inspect erag-egress --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Egress broker: running (ragclaw-egress)" -ForegroundColor Green
+        $egressSince = docker inspect ragclaw-egress --format '{{.State.StartedAt}}' 2>$null
         if ($egressSince) { Write-Host "    Since:  $egressSince" -ForegroundColor Gray }
     }
     else {
@@ -286,16 +296,16 @@ switch ($Action) {
         Write-Host ""
         Write-Host "=== Starting container ===" -ForegroundColor Cyan
         Repair-EgressNetwork
-        docker compose -f $ComposeFile up -d mcp-repl erag-egress
+        docker compose -f $ComposeFile up -d mcp-repl ragclaw-egress
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  First attempt failed; releasing erag-internal network lease and retrying..." -ForegroundColor DarkYellow
+            Write-Host "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..." -ForegroundColor DarkYellow
             Repair-EgressNetwork -ForceNetwork
-            docker compose -f $ComposeFile up -d mcp-repl erag-egress
+            docker compose -f $ComposeFile up -d mcp-repl ragclaw-egress
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
             Write-Host "       The fixed egress IP (172.30.0.2) is still leased on the" -ForegroundColor DarkYellow
-            Write-Host "       erag-internal network. Run: docker compose down ; docker network rm erag-internal ; docker compose up -d" -ForegroundColor DarkYellow
+            Write-Host "       ragclaw_ragclaw-internal network. Run: docker compose down ; docker network rm ragclaw_ragclaw-internal ; docker compose up -d" -ForegroundColor DarkYellow
             return
         }
 
@@ -303,17 +313,17 @@ switch ($Action) {
         if (Test-DockerRepl) {
             Write-Host "REPL server reloaded (Docker)" -ForegroundColor Green
             Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
-            Write-Host "  Workspace: persistent volume erag_workspace (survives restart)" -ForegroundColor Gray
-            Write-Host "  Mode: Docker container (erag-mcp-repl)" -ForegroundColor Gray
+            Write-Host "  Workspace: persistent volume ragclaw_workspace (survives restart)" -ForegroundColor Gray
+            Write-Host "  Mode: Docker container (ragclaw-mcp-repl)" -ForegroundColor Gray
             Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
         }
         else {
-            Write-Host "WARNING: Container not responding, check: docker logs erag-mcp-repl" -ForegroundColor Yellow
+            Write-Host "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl" -ForegroundColor Yellow
         }
     }
 
     "logs" {
-        if (Test-DockerRepl) { docker logs --tail=50 -f erag-mcp-repl }
+        if (Test-DockerRepl) { docker logs --tail=50 -f ragclaw-mcp-repl }
         else { Write-Host "REPL server not running in Docker mode" -ForegroundColor Yellow }
     }
 

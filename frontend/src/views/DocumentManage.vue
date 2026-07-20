@@ -69,7 +69,7 @@ const kbFormSaving = ref(false)
 const showUploadModal = ref(false)
 const uploadTargetKb = ref<string | null>(null)
 
-const UPLOAD_STORAGE_KEY = 'erag:upload:items'
+const UPLOAD_STORAGE_KEY = 'ragclaw:upload:items'
 const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000
 
 interface UploadFileItem {

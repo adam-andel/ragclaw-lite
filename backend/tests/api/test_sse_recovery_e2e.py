@@ -23,7 +23,7 @@ import app.database as _db_mod
 from app.database import async_session as _async_session  # noqa: F401
 from app.models.conversation import Conversation
 from app.models.conversation import PendingLimitState as _PLS
-from app.services.agent_graph import erag_agent_graph
+from app.services.agent_graph import ragclaw_agent_graph
 from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
 
 
@@ -126,7 +126,7 @@ async def test_sse_recovery_e2e(client, user_token, test_kb, monkeypatch):
     async def fake_run(initial_state: dict) -> dict:
         return _pending_state_payload() if behavior["mode"] == "pending" else _answer_state_payload()
 
-    monkeypatch.setattr(erag_agent_graph, "run", fake_run)
+    monkeypatch.setattr(ragclaw_agent_graph, "run", fake_run)
 
     # ── Phase 1: new question → durable pause ──
     res = await client.post("/api/chat/stream", json={

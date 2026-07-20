@@ -1,6 +1,6 @@
 """Test if the issue is path-length related."""
 import sys, uuid
-sys.path.insert(0, r'D:\AI\Autoclaw\ERAG\erag\backend')
+sys.path.insert(0, r'D:\AI\Autoclaw\RAGClaw\ragclaw\backend')
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings

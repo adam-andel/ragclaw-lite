@@ -131,7 +131,7 @@ def _sanitize_env() -> dict:
    # ── Approach B: force every child through the egress broker ───
     # All HTTP(S) clients (requests/urllib3/httpx sync+async, curl, wget...)
     # read HTTP_PROXY/HTTPS_PROXY, which closes the asyncio/httpx bypass.
-    # Internal ERAG traffic (mcp-repl <-> backend) stays direct via NO_PROXY.
+    # Internal RAGClaw traffic (mcp-repl <-> backend) stays direct via NO_PROXY.
     # In deny mode no proxy is injected — the in-process guard already blocks
     # everything, and there is nothing legitimate to proxy.
     if _network_mode != "deny":
@@ -140,8 +140,8 @@ def _sanitize_env() -> dict:
         env["HTTPS_PROXY"] = proxy
         env["http_proxy"] = proxy
         env["https_proxy"] = proxy
-        env["NO_PROXY"] = "localhost,127.0.0.1,mcp-repl,erag-lite"
-        env["no_proxy"] = "localhost,127.0.0.1,mcp-repl,erag-lite"
+        env["NO_PROXY"] = "localhost,127.0.0.1,mcp-repl,ragclaw-lite"
+        env["no_proxy"] = "localhost,127.0.0.1,mcp-repl,ragclaw-lite"
     return env
 
 
@@ -468,7 +468,7 @@ _G_EGRESS_HOST = _g_os.environ.get("REPL_EGRESS_HOST", "127.0.0.1")
 # independent of the domain allowlist. Without this, the connection to the
 # broker itself (a bare IP) would be rejected by the allowlist check below,
 # which would break allowlist-mode egress entirely. See network-layer plan A:
-# the broker runs in a separate erag-egress container on the internal network.
+# the broker runs in a separate ragclaw-egress container on the internal network.
 _G_ALLOW_IPS = {"127.0.0.1", "::1", "localhost"}
 try:
     if _G_EGRESS_HOST:

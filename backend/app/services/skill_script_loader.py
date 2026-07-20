@@ -24,7 +24,7 @@ from app.config import settings
 from app.services.mcp_client import mcp_client, ToolResult
 from app.services.skill_manager import get_skill_dir
 
-logger = logging.getLogger("erag.skill_script")
+logger = logging.getLogger("ragclaw.skill_script")
 
 # Cache: {folder_name: {"mtime": float, "tools": list[dict]}}
 _cache: dict[str, dict] = {}

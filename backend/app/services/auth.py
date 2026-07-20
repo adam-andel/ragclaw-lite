@@ -14,7 +14,7 @@ from app.database import get_db
 from app.models.user import User, UserRole
 
 # --- Config ---
-SECRET_KEY = "erag-jwt-secret-change-in-production"
+SECRET_KEY = "ragclaw-jwt-secret-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

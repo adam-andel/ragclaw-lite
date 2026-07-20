@@ -1,7 +1,7 @@
 """Regression tests for the egress broker (approach B) — allowlist & blocking.
 
 These tests guard the network-layer enforcement described in
-data/ERAG sandbox network security policy — egress proxy approach discussion.md (Phase 1):
+data/RAGClaw sandbox network security policy — egress proxy approach discussion.md (Phase 1):
 
   * egress_proxy policy primitives (_host_allowed / DNS parsing)
   * HTTP forward + HTTPS CONNECT allow/deny through a live proxy instance

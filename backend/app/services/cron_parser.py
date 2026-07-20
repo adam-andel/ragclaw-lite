@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pytz
 from croniter import croniter
 
-logger = logging.getLogger("erag.cron")
+logger = logging.getLogger("ragclaw.cron")
 
 
 def _strip_code_fences(text: str) -> str:

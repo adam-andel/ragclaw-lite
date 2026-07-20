@@ -7,7 +7,7 @@ UID (in ``X-Repl-Uid``), so the MCP server scopes all operations to that
 user's ``user_u<uid>`` root dir under ``_allow_dir``.
 
 This is the only way the Backend can reach those files: ``/app/workspace`` is a
-tmpfs living *inside* the mcp-repl container, not on the shared ``erag_data``
+tmpfs living *inside* the mcp-repl container, not on the shared ``ragclaw_data``
 volume the Backend mounts — hence the proxy, exactly like ``/api/download``.
 """
 from __future__ import annotations

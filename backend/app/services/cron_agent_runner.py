@@ -16,7 +16,7 @@ from app.services.cron_graph import run_cron_execution_subgraph
 from app.services.cron_parser import compute_next_run
 from app.services.notification import create_cron_job_notification
 
-logger = logging.getLogger("erag.cron")
+logger = logging.getLogger("ragclaw.cron")
 
 # ── Per-job concurrency guard ────────────────────────────────────────────────
 _job_locks: dict[str, asyncio.Lock] = {}

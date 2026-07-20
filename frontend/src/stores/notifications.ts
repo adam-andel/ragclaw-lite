@@ -130,7 +130,7 @@ export const useNotificationStore = defineStore('notifications', () => {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
     const instance = notifyBrowser(item.title, {
       body: item.content || '',
-      tag: `erag-notify-${item.id}`,
+      tag: `ragclaw-notify-${item.id}`,
     })
     if (instance) {
       instance.onclick = () => {

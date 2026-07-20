@@ -16,7 +16,7 @@ from app.database import async_session
 from app.models.skill import MCPServer
 from app.services.mcp_client import mcp_client, ToolDef
 
-logger = logging.getLogger("erag.tool_registry")
+logger = logging.getLogger("ragclaw.tool_registry")
 
 
 def _tool_to_openai(t: ToolDef, mcp_server_id: str | None = None) -> dict:

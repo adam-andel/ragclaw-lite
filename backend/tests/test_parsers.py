@@ -64,7 +64,7 @@ service UserService {
     # TXT test
     txt_path = TEST_DOCS_DIR / "test.txt"
     if not txt_path.exists():
-        txt_path.write_text("""ERAG 项目开发计划
+        txt_path.write_text("""RAGClaw 项目开发计划
 
 第一阶段：基础架构搭建
 完成 FastAPI 项目初始化、数据库模型设计、

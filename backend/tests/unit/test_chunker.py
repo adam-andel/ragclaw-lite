@@ -26,7 +26,7 @@ def _section(heading: str, content: str, level: int = 1, page: int | None = None
 
 def _long_text(words: int = 500) -> str:
     """Generate text that exceeds max_tokens."""
-    # English words average ~1.3 tokens each; 500 words ≈ 650 tokens.
+    # English words avragclawe ~1.3 tokens each; 500 words ≈ 650 tokens.
     # For Chinese, each char is ~2 tokens with cl100k_base → 400 chars ≈ 800 tokens.
     return " ".join(["word" + str(i) for i in range(words)])
 

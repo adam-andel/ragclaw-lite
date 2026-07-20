@@ -25,7 +25,7 @@ const { t } = useI18n()
 const { currentLocale, setLocale } = useLocale()
 
 const userAvatar = computed(() => auth.user?.avatar_url || '')
-const userEmoji = computed(() => localStorage.getItem('erag:avatar') || '👤')
+const userEmoji = computed(() => localStorage.getItem('ragclaw:avatar') || '👤')
 
 // ── Menu ──
 
@@ -67,7 +67,7 @@ const selectedKey = computed(() => {
 function handleMenuUpdate(key: string) {
   if (key === '/chat') {
     router.push('/chat').then(() => {
-      window.dispatchEvent(new CustomEvent('erag:reset-chat'))
+      window.dispatchEvent(new CustomEvent('ragclaw:reset-chat'))
     })
   } else {
     router.push(key)
@@ -83,7 +83,7 @@ function goToNotifications() {
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <span class="logo">🔍 ERAG</span>
+      <span class="logo">🔍 RAGClaw</span>
       <span class="version">Lite</span>
     </div>
 

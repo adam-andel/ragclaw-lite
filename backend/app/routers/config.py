@@ -15,7 +15,7 @@ from app.config import settings
 
 router = APIRouter(prefix="/api/config", tags=["Config"])
 
-logger = logging.getLogger("erag.config")
+logger = logging.getLogger("ragclaw.config")
 
 
 class LLMConfigUpdate(BaseModel):

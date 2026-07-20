@@ -1,6 +1,6 @@
 """Test ChromaDB directly."""
 import sys, uuid
-sys.path.insert(0, r'D:\AI\Autoclaw\ERAG\erag\backend')
+sys.path.insert(0, r'D:\AI\Autoclaw\RAGClaw\ragclaw\backend')
 
 # Test 1: import and init
 print("1. Importing ChromaDB...")

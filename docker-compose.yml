@@ -1,13 +1,13 @@
 services:
-  erag:
+  ragclaw:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: erag-lite
+    container_name: ragclaw-lite
     ports:
-      - "${ERAG_PORT:+${ERAG_PORT}:}8000"
+      - "${RAGCLAW_PORT:+${RAGCLAW_PORT}:}8000"
     volumes:
-      - erag_data:/app/data
+      - ragclaw_data:/app/data
     env_file:
       - path: .env
         required: false
@@ -28,17 +28,17 @@ services:
     # Backend keeps its public bridge (internet egress) AND joins the internal
     # sandbox network so it can still reach mcp-repl (which is internal-only).
     networks:
-      - erag
-      - erag-internal
+      - ragclaw
+      - ragclaw-internal
 
   # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
     build:
       context: ./mcp
       dockerfile: Dockerfile
-    container_name: erag-mcp-repl
+    container_name: ragclaw-mcp-repl
     # No host port mapping — MCP is internal-only, accessed via Docker network.
-    # File downloads go through ERAG's /api/download/{file_path} proxy, where
+    # File downloads go through RAGClaw's /api/download/{file_path} proxy, where
     # file_path may be nested (user_u<uid>/<ws>/<file>) under per-user isolation.
     # Run as root so the server can chown workdirs to per-user UIDs and
     # traverse/cleanup their 700 dirs; children are dropped to unprivileged
@@ -47,15 +47,15 @@ services:
     environment:
       - REPL_PUBLIC_URL=http://mcp-repl:9200
       # ── Egress broker (network-layer, approach B / plan A) ──
-      # The broker lives in a SEPARATE container (erag-egress) on erag-internal.
-      # This sandbox container is attached ONLY to erag-internal (internal:true),
+      # The broker lives in a SEPARATE container (ragclaw-egress) on ragclaw-internal.
+      # This sandbox container is attached ONLY to ragclaw-internal (internal:true),
       # which has NO default route — so direct egress to the internet is
       # impossible at the routing layer. Children are forced through the broker
       # via HTTP(S)_PROXY (host = the broker's fixed internal IP); the broker
       # enforces the domain allowlist / deny policy on every request.
       - REPL_EGRESS_HOST=172.30.0.2
       - REPL_EGRESS_PORT=1080
-      # Policy file is shared with the erag-egress broker via a named volume so
+      # Policy file is shared with the ragclaw-egress broker via a named volume so
       # backend PUT /policy pushes are seen by the broker (hot-reload preserved).
       - REPL_POLICY_FILE=/repl-policy/repl_network_policy.json
       # ── Per-user UID isolation (Backend-signed identity) ──
@@ -69,10 +69,10 @@ services:
       # API is ready immediately after a restart (no 403 window).
       - REPL_AUTH_SECRET_FILE=/repl-auth/repl_auth_secret.txt
     # ── Container security hardening ──
-    # NOTE: /app/workspace is now a PERSISTENT named volume (erag_workspace),
+    # NOTE: /app/workspace is now a PERSISTENT named volume (ragclaw_workspace),
     # not tmpfs — user workspace files + REPL tool outputs survive mcp-repl
     # restarts. It is mounted explicitly below (rw) and is fully isolated
-    # from the backend's erag_data volume.
+    # from the backend's ragclaw_data volume.
     read_only: true
     tmpfs:
       - /tmp:size=256M,exec
@@ -83,19 +83,19 @@ services:
       - ALL
     # Caps required for per-user isolation: SETUID/SETGID to drop children to
     # pool UIDs, CHOWN to own workdirs to those UIDs. (NET_BIND_SERVICE removed:
-    # the DNS broker moved to the separate erag-egress container.)
+    # the DNS broker moved to the separate ragclaw-egress container.)
     cap_add:
       - SETUID
       - SETGID
       - CHOWN
     # ── Persistent workspace volume ──
-    # erag_workspace is a dedicated named volume, isolated from the backend's
-    # erag_data. All user files + REPL tool outputs live here and persist
+    # ragclaw_workspace is a dedicated named volume, isolated from the backend's
+    # ragclaw_data. All user files + REPL tool outputs live here and persist
     # across container restarts (unlike the old tmpfs).
     volumes:
-      - erag_workspace:/app/workspace
-      - erag_policy:/repl-policy
-      - erag_auth_secret:/repl-auth
+      - ragclaw_workspace:/app/workspace
+      - ragclaw_policy:/repl-policy
+      - ragclaw_auth_secret:/repl-auth
     # ── Resource limits ──
     deploy:
       resources:
@@ -104,26 +104,26 @@ services:
           memory: 896M
     restart: unless-stopped
     depends_on:
-      - erag-egress
-    # Internal-only: no route to the internet, only to erag-internal peers
-    # (erag-egress broker + erag-lite backend).
+      - ragclaw-egress
+    # Internal-only: no route to the internet, only to ragclaw-internal peers
+    # (ragclaw-egress broker + ragclaw-lite backend).
     networks:
-      - erag-internal
+      - ragclaw-internal
 
   # ── Egress broker (network-layer enforcement point) ──
   # Separate container, dual-attached:
-  #   * erag-internal (fixed IP 172.30.0.2) — receives proxied requests from
+  #   * ragclaw-internal (fixed IP 172.30.0.2) — receives proxied requests from
   #     mcp-repl (which is internal-only and can ONLY reach the internet via
   #     this broker).
-  #   * erag (public bridge) — provides the broker's own default route so it
+  #   * ragclaw (public bridge) — provides the broker's own default route so it
   #     can forward allowed traffic to the internet.
   # The broker enforces the SAME /repl-policy/repl_network_policy.json that the
   # MCP server writes via PUT /policy (shared volume, mtime hot-reload).
-  erag-egress:
+  ragclaw-egress:
     build:
       context: ./mcp
       dockerfile: Dockerfile.egress
-    container_name: erag-egress
+    container_name: ragclaw-egress
     user: "0"
     environment:
       - REPL_EGRESS_HOST=172.30.0.2
@@ -131,7 +131,7 @@ services:
       - REPL_EGRESS_DNS=1
       - REPL_POLICY_FILE=/repl-policy/repl_network_policy.json
       # Real upstream resolvers the built-in DNS service forwards to. The broker
-      # container has a public default route (via erag), so these are reachable.
+      # container has a public default route (via ragclaw), so these are reachable.
       - REPL_DNS_UPSTREAM=8.8.8.8,1.1.1.1
     read_only: true
     tmpfs:
@@ -145,22 +145,22 @@ services:
     cap_add:
       - NET_BIND_SERVICE
     volumes:
-      - erag_policy:/repl-policy
+      - ragclaw_policy:/repl-policy
     restart: unless-stopped
     networks:
-      erag-internal:
+      ragclaw-internal:
         ipv4_address: 172.30.0.2
-      erag: {}
+      ragclaw: {}
 
 networks:
   # Public bridge: has a default gateway (NAT to internet). Hosts the backend
   # and the broker's egress side.
-  erag:
+  ragclaw:
     driver: bridge
   # Internal-only bridge: NO gateway, so containers attached ONLY here cannot
   # reach the internet directly. This is the cornerstone of plan A — mcp-repl
-  # lives here and can egress solely through erag-egress (which dual-attaches).
-  erag-internal:
+  # lives here and can egress solely through ragclaw-egress (which dual-attaches).
+  ragclaw-internal:
     driver: bridge
     internal: true
     ipam:
@@ -168,14 +168,14 @@ networks:
         - subnet: 172.30.0.0/24
 
 volumes:
-  erag_data:
+  ragclaw_data:
     driver: local
-  erag_workspace:
+  ragclaw_workspace:
     driver: local
-  # Shared egress policy file between mcp-repl (writer) and erag-egress (reader).
-  erag_policy:
+  # Shared egress policy file between mcp-repl (writer) and ragclaw-egress (reader).
+  ragclaw_policy:
     driver: local
   # Persisted REPL auth secret written by mcp-repl and read back at startup
-  # (mirrors erag_policy; removes the transient 403 window after a restart).
-  erag_auth_secret:
+  # (mirrors ragclaw_policy; removes the transient 403 window after a restart).
+  ragclaw_auth_secret:
     driver: local

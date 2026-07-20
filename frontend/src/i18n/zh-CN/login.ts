@@ -5,7 +5,7 @@ export default {
   featurePrivate: '私有化部署，数据不出域，全程本地化',
   featureRoles: '多角色权限管理，按知识库细粒度授权',
   welcomeBack: '欢迎回来',
-  welcomeSubtitle: '登录以继续使用 ERAG',
+  welcomeSubtitle: '登录以继续使用 RAGClaw',
   username: '用户名',
   usernamePlaceholder: '请输入用户名',
   enterUsername: '请输入用户名',

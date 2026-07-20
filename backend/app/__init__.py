@@ -1,1 +1,1 @@
-# EnterpriseRAG-Lite Backend
+# RAGClaw-Lite Backend

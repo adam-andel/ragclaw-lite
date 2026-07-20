@@ -1,5 +1,5 @@
 export default {
-  appName: 'ERAG',
+  appName: 'RAGClaw',
   confirm: 'Confirm',
   ok: 'OK',
   cancel: 'Cancel',

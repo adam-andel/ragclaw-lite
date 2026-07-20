@@ -1,4 +1,4 @@
-"""Integration test — ERAG Agentic RAG v0.5.0.
+"""Integration test — RAGClaw Agentic RAG v0.5.0.
 
 Tests the full Agentic RAG pipeline:
   Router → Retrieval → Tool Decision → Generation → Post-process

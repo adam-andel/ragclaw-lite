@@ -1,5 +1,5 @@
 # REPL egress broker — minimal Python image (Python stdlib only).
-# Runs as its own container (erag-egress) dual-attached to the internal
+# Runs as its own container (ragclaw-egress) dual-attached to the internal
 # sandbox network (receives proxied requests from mcp-repl) and the public
 # bridge (forwards allowed traffic to the internet). See network-layer plan A.
 ARG REGISTRY=docker.io

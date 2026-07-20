@@ -1,6 +1,6 @@
 """Test login directly."""
 import sys, asyncio, traceback
-sys.path.insert(0, r'D:\AI\Autoclaw\ERAG\erag\backend')
+sys.path.insert(0, r'D:\AI\Autoclaw\RAGClaw\ragclaw\backend')
 
 async def test():
     from app.database import async_session

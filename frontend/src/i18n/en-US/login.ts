@@ -5,7 +5,7 @@ export default {
   featurePrivate: 'On-premises deployment — data stays in your domain',
   featureRoles: 'Multi-role access control with per-knowledge-base permissions',
   welcomeBack: 'Welcome back',
-  welcomeSubtitle: 'Log in to continue using ERAG',
+  welcomeSubtitle: 'Log in to continue using RAGClaw',
   username: 'Username',
   usernamePlaceholder: 'Enter your username',
   enterUsername: 'Please enter your username',

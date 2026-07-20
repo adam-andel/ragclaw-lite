@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul
-title ERAG Control
+title RAGClaw Control
 
 cd /d "%~dp0..\.."
 
 echo.
 echo   ===================================
-echo     EnterpriseRAG-Lite
+echo     RAGClaw-Lite
 echo   ===================================
 echo.
 echo     [1] Start All

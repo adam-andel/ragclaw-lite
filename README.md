@@ -1,4 +1,4 @@
-# EnterpriseRAG-Lite（ERAG）
+# RAGClaw-Lite（RAGClaw）
 
 > 企业级 Agentic RAG 知识中台 · 精简版  
 > v0.5.0 · FastAPI + LangGraph + ChromaDB + SKILL + MCP
@@ -34,10 +34,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
 - **后端 `:8000`** — 本地 `./backend` 以 bind mount 挂入容器，`uvicorn --reload` 监听改动自动重启 worker，**无需重建镜像**。
-- **前端 `:5173`** — 独立的 `frontend-dev` 容器运行 Vite HMR；`/api` 经 `VITE_PROXY_TARGET=http://erag:8000` 代理到后端（走 compose 网络，不是 `localhost`）。
+- **前端 `:5173`** — 独立的 `frontend-dev` 容器运行 Vite HMR；`/api` 经 `VITE_PROXY_TARGET=http://ragclaw:8000` 代理到后端（走 compose 网络，不是 `localhost`）。
 - 日常访问前端开发服务器：**http://localhost:5173**
 
-> `docker-compose.dev.yml` 仅作为叠加层；`docker-compose.yml` 中的 `erag` / `mcp-repl` / `erag-egress` 服务照常启动。详见下方「🛠️ 开发模式（热重载）」。
+> `docker-compose.dev.yml` 仅作为叠加层；`docker-compose.yml` 中的 `ragclaw` / `mcp-repl` / `ragclaw-egress` 服务照常启动。详见下方「🛠️ 开发模式（热重载）」。
 
 ### 方式三：纯本地（不依赖 Docker）
 
@@ -83,7 +83,7 @@ pnpm dev
 ## 📂 项目结构
 
 ```
-erag/
+ragclaw/
 ├── docker-compose.yml          # 生产部署（代码打包进镜像）
 ├── docker-compose.dev.yml      # 开发叠加：bind mount + 热重载（与上面叠加使用）
 ├── Dockerfile                  # 多阶段构建（生产镜像）
@@ -150,7 +150,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
 - **后端 `:8000`** — `./backend` 以 bind mount 挂入 `/app/backend`，`uvicorn --reload --reload-dir backend` 监听改动并自动重启 worker。由于镜像中 `PYTHONPATH=/app/backend` 已优先于 `site-packages`，无需 editable 安装。
-- **前端 `:5173`** — `frontend-dev` 容器运行 Vite，`/api` 经 `VITE_PROXY_TARGET=http://erag:8000` 走 compose 网络代理到后端（容器内 `localhost` 指向自身，故必须用服务名 `erag`）。
+- **前端 `:5173`** — `frontend-dev` 容器运行 Vite，`/api` 经 `VITE_PROXY_TARGET=http://ragclaw:8000` 走 compose 网络代理到后端（容器内 `localhost` 指向自身，故必须用服务名 `ragclaw`）。
 
 ### 热重载行为
 
@@ -161,7 +161,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 - **后端**：Python 依赖装在镜像的 `site-packages`（不在挂载目录），改完 `backend/pyproject.toml` 后需重建镜像：
   ```bash
-  docker compose -f docker-compose.yml -f docker-compose.dev.yml build erag
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml build ragclaw
   ```
 - **前端**：改完 `frontend/package.json` 后，在 `frontend-dev` 容器内执行 `pnpm install`，或直接重建该服务：
   ```bash
@@ -206,7 +206,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 - **依赖**：`alembic` 已加入 `backend/pyproject.toml`。
 
 ### 全新安装
-删除 `data/sqlite/erag.db` 后启动后端，数据库与种子数据会自动重建（契合开源「全新项目」姿态）。
+删除 `data/sqlite/ragclaw.db` 后启动后端，数据库与种子数据会自动重建（契合开源「全新项目」姿态）。
 
 ### 演进 schema（标准流程）
 1. 修改 `app/models/` 下的 ORM 模型；
@@ -221,7 +221,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ### 既有开发库升级到本基线
 旧库若仍按历史机制构建，直接用 `alembic upgrade head` 会因子表已存在而报错。两种处理：
 - **保留数据**：先把旧库 schema 补齐到基线（缺失的表/列），再 `alembic stamp head` 标记为已到基线；
-- **重新开始**：直接删除 `data/sqlite/erag.db` 重建。
+- **重新开始**：直接删除 `data/sqlite/ragclaw.db` 重建。
 > 历史 `_migrations` 记录表可保留（无害），新机制改用 `alembic_version`。
 
 ## 🔑 核心亮点

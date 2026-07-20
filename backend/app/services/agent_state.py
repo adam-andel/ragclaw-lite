@@ -1,4 +1,4 @@
-"""EragAgentState — LangGraph state definition for the ERAG agent.
+"""RagclawAgentState — LangGraph state definition for the RAGClaw agent.
 
 Uses TypedDict with Annotated reducers. The graph handles routing,
 retrieval, and tool calls; LLM generation and SSE streaming happen
@@ -9,8 +9,8 @@ from typing import TypedDict, Annotated, Callable
 import operator
 
 
-class EragAgentState(TypedDict):
-    """State that flows through the ERAG agent graph.
+class RagclawAgentState(TypedDict):
+    """State that flows through the RAGClaw agent graph.
 
     Some fields use Annotated with operator.add for accumulation
     across multiple graph cycles (e.g. tool_results for multi-round tool calls).

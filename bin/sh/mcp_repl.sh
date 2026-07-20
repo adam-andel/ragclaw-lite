@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# ERAG REPL MCP Server Control Script (WSL / Linux)
+# RAGClaw REPL MCP Server Control Script (WSL / Linux)
 # Usage: bash bin/sh/mcp_repl.sh [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
-# (erag-mcp-repl). Local Python venv execution is not supported — this
+# (ragclaw-mcp-repl). Local Python venv execution is not supported — this
 # project must run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down mcp-repl
@@ -18,16 +18,16 @@ PORT=9200
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
 
-# Dev-mode toggle: optional leading --dev / --prod flag (env ERAG_DEV default).
+# Dev-mode toggle: optional leading --dev / --prod flag (env RAGCLAW_DEV default).
 # mcp-repl has no dev overlay of its own, but honoring the flag keeps its
 # `compose` file list in sync with a dev-mode backend stack.
-ERAG_DEV="${ERAG_DEV:-0}"
+RAGCLAW_DEV="${RAGCLAW_DEV:-0}"
 case "${1:-}" in
-  --dev)  ERAG_DEV=1; shift ;;
-  --prod) ERAG_DEV=0; shift ;;
+  --dev)  RAGCLAW_DEV=1; shift ;;
+  --prod) RAGCLAW_DEV=0; shift ;;
 esac
 COMPOSE_FILE="$ROOT/docker-compose.yml"
-if [ "$ERAG_DEV" = "1" ] && [ -f "$ROOT/docker-compose.dev.yml" ]; then
+if [ "$RAGCLAW_DEV" = "1" ] && [ -f "$ROOT/docker-compose.dev.yml" ]; then
   COMPOSE_DEV="$ROOT/docker-compose.dev.yml"
 fi
 
@@ -41,7 +41,7 @@ test_compose_available() {
 
 test_docker_repl() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f name=erag-mcp-repl 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f name=ragclaw-mcp-repl 2>/dev/null)" ]
 }
 
 # ---- actions ----
@@ -66,24 +66,24 @@ start_docker_repl() {
   compose build --build-arg REGISTRY="$build_mirror" mcp-repl || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
-  # erag-egress owns a fixed internal IP (172.30.0.2) on erag-internal.
+  # ragclaw-egress owns a fixed internal IP (172.30.0.2) on ragclaw_ragclaw-internal.
   # A stale, non-running egress container (or a stuck IPAM lease left behind
   # after a prior `down`) can keep that IP occupied and make `up` fail with
   # "Address already in use". Clean both first.
   repair_egress_network
-  if ! compose up -d mcp-repl erag-egress; then
+  if ! compose up -d mcp-repl ragclaw-egress; then
     # Second chance: the fixed egress IP is likely still leased on the
-    # erag-internal network. Tear the network down (releasing the IPAM
+    # ragclaw_ragclaw-internal network. Tear the network down (releasing the IPAM
     # lease) and retry the bring-up once.
-    c_yellow "  First attempt failed; releasing erag-internal network lease and retrying..."
+    c_yellow "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..."
     repair_egress_network force
-    if ! compose up -d mcp-repl erag-egress; then
+    if ! compose up -d mcp-repl ragclaw-egress; then
       c_red "ERROR: docker compose up failed"
       c_yellow "       The fixed egress IP (172.30.0.2) is still leased on the"
-      c_yellow "       erag-internal network and could not be auto-recovered."
+      c_yellow "       ragclaw_ragclaw-internal network and could not be auto-recovered."
       c_yellow "       Run these manually, then start again:"
       c_yellow "         docker compose -f docker-compose.yml down"
-      c_yellow "         docker network rm erag-internal"
+      c_yellow "         docker network rm ragclaw_ragclaw-internal"
       c_yellow "         docker compose -f docker-compose.yml up -d"
       return 1
     fi
@@ -93,16 +93,16 @@ start_docker_repl() {
   if test_docker_repl; then
     c_green "REPL server started (Docker)"
     c_dim "  Endpoint: http://127.0.0.1:$PORT/mcp"
-    c_dim "  Workspace: persistent volume erag_workspace (survives restart)"
-    c_dim "  Mode: Docker container (erag-mcp-repl)"
+    c_dim "  Workspace: persistent volume ragclaw_workspace (survives restart)"
+    c_dim "  Mode: Docker container (ragclaw-mcp-repl)"
     c_dim "  Resources: memory=896M, cpus=2"
     if test_docker_egress; then
-      c_dim "  Egress broker: running (erag-egress)"
+      c_dim "  Egress broker: running (ragclaw-egress)"
     else
-      c_yellow "  Egress broker: NOT running (erag-egress)"
+      c_yellow "  Egress broker: NOT running (ragclaw-egress)"
     fi
   else
-    c_yellow "WARNING: Container not responding, check: docker logs erag-mcp-repl"
+    c_yellow "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl"
   fi
 }
 
@@ -114,7 +114,7 @@ stop_docker_repl() {
     c_yellow "REPL server not running (Docker)"
   fi
   if test_docker_egress; then
-    compose stop erag-egress && c_green "Egress broker stopped (Docker)"
+    compose stop ragclaw-egress && c_green "Egress broker stopped (Docker)"
   else
     c_yellow "Egress broker not running (Docker)"
   fi
@@ -125,17 +125,17 @@ show_status() {
   c_dim "  Port: $PORT"
   c_cyan "  Mode: Docker container (container mode only)"
   if test_docker_repl; then
-    c_green "  Status: running (erag-mcp-repl)"
+    c_green "  Status: running (ragclaw-mcp-repl)"
     local since
-    since="$(docker inspect erag-mcp-repl --format '{{.State.StartedAt}}' 2>/dev/null)"
+    since="$(docker inspect ragclaw-mcp-repl --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$since" ] && c_dim "  Since:  $since"
   else
     c_red "  Status: REPL server NOT running"
   fi
   if test_docker_egress; then
-    c_green "  Egress broker: running (erag-egress)"
+    c_green "  Egress broker: running (ragclaw-egress)"
     local egress_since
-    egress_since="$(docker inspect erag-egress --format '{{.State.StartedAt}}' 2>/dev/null)"
+    egress_since="$(docker inspect ragclaw-egress --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$egress_since" ] && c_dim "    Since:  $egress_since"
   else
     c_yellow "  Egress broker: NOT running"
@@ -188,13 +188,13 @@ case "$ACTION" in
     echo
     c_cyan "=== Starting container ==="
     repair_egress_network
-    if ! compose up -d mcp-repl erag-egress; then
-      c_yellow "  First attempt failed; releasing erag-internal network lease and retrying..."
+    if ! compose up -d mcp-repl ragclaw-egress; then
+      c_yellow "  First attempt failed; releasing ragclaw_ragclaw-internal network lease and retrying..."
       repair_egress_network force
-      if ! compose up -d mcp-repl erag-egress; then
+      if ! compose up -d mcp-repl ragclaw-egress; then
         c_red "ERROR: docker compose up failed"
         c_yellow "       The fixed egress IP (172.30.0.2) is still leased on the"
-        c_yellow "       erag-internal network. Run: docker compose down ; docker network rm erag-internal ; docker compose up -d"
+        c_yellow "       ragclaw_ragclaw-internal network. Run: docker compose down ; docker network rm ragclaw_ragclaw-internal ; docker compose up -d"
         exit 1
       fi
     fi
@@ -202,16 +202,16 @@ case "$ACTION" in
     if test_docker_repl; then
       c_green "REPL server reloaded (Docker)"
       c_dim "  Endpoint: http://127.0.0.1:$PORT/mcp"
-      c_dim "  Workspace: persistent volume erag_workspace (survives restart)"
-      c_dim "  Mode: Docker container (erag-mcp-repl)"
+      c_dim "  Workspace: persistent volume ragclaw_workspace (survives restart)"
+      c_dim "  Mode: Docker container (ragclaw-mcp-repl)"
       c_dim "  Resources: memory=896M, cpus=2"
     else
-      c_yellow "WARNING: Container not responding, check: docker logs erag-mcp-repl"
+      c_yellow "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl"
     fi
     ;;
   logs)
     if test_docker_repl; then
-      compose logs --tail=50 -f erag-mcp-repl
+      compose logs --tail=50 -f ragclaw-mcp-repl
     else
       c_yellow "REPL server not running in Docker mode"
     fi

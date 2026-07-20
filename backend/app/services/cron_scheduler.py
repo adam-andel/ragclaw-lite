@@ -19,7 +19,7 @@ from app.database import async_session
 from app.models.cron_job import CronJob, CronJobStatus
 from app.services.cron_agent_runner import execute_and_record_cron_job
 
-logger = logging.getLogger("erag.cron")
+logger = logging.getLogger("ragclaw.cron")
 
 TICK_INTERVAL_SECONDS = 60
 

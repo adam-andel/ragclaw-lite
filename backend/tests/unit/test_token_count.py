@@ -60,7 +60,7 @@ class TestCountMessagesTokens:
 
     def test_single_user_message_overhead(self):
         """One message: 4 (overhead) + content + 3 (reply priming)."""
-        content = "What is ERAG?"
+        content = "What is RAGClaw?"
         msgs = [{"role": "user", "content": content}]
         expected = 4 + count_text_tokens(content) + 3
         assert count_messages_tokens(msgs) == expected
@@ -93,14 +93,14 @@ class TestCountMessagesTokens:
             "role": "assistant",
             "content": "",
             "tool_calls": [{
-                "function": {"name": "search_docs", "arguments": '{"query": "ERAG"}'},
+                "function": {"name": "search_docs", "arguments": '{"query": "RAGClaw"}'},
             }],
         }]
         expected = (
             4
             + count_text_tokens("")
             + count_text_tokens("search_docs")
-            + count_text_tokens('{"query": "ERAG"}')
+            + count_text_tokens('{"query": "RAGClaw"}')
             + 3
         )
         assert count_messages_tokens(msgs) == expected

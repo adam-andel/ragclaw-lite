@@ -1,4 +1,4 @@
-"""Agent graph nodes for the ERAG LangGraph state machine."""
+"""Agent graph nodes for the RAGClaw LangGraph state machine."""
 import asyncio, json, logging, time
 from datetime import datetime
 from sqlalchemy import select
@@ -20,7 +20,7 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 
-logger = logging.getLogger("erag.agent")
+logger = logging.getLogger("ragclaw.agent")
 logger.setLevel(logging.INFO)
 
 MAX_TOOL_ROUNDS = 5
@@ -119,7 +119,7 @@ def build_skill_switch_limit_message(name: str, switch_count: int, quota: int, l
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
     import re
-    _clog = logging.getLogger("erag.agent")
+    _clog = logging.getLogger("ragclaw.agent")
 
     # ── Step 0: strip [TOOL_CALL]...[/TOOL_CALL] wrappers (LLMs sometimes add these) ──
     tool_call_match = re.search(r'\[TOOL_CALL\]([\s\S]*?)\[/TOOL_CALL\]', content, re.IGNORECASE)
@@ -244,7 +244,7 @@ def _try_heuristic_code_extract(content: str) -> list[dict] | None:
     """
     import re as _hre
     import logging as _hlog
-    _clog = _hlog.getLogger("erag.agent")
+    _clog = _hlog.getLogger("ragclaw.agent")
 
     patterns = [
         r"""code\s*[:=]>\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$""",
@@ -271,7 +271,7 @@ def _try_heuristic_code_extract(content: str) -> list[dict] | None:
 def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list[dict] | None:
     """LLM output code blocks instead of JSON? Extract Python code and build run_python call."""
     import re, logging
-    _clog = logging.getLogger("erag.agent")
+    _clog = logging.getLogger("ragclaw.agent")
     _has_tool = any(t.get('function', {}).get('name') == 'run_python' for t in available_tools)
     if not _has_tool:
         _clog.info("code_extract: run_python tool not available, skip")
@@ -1039,8 +1039,8 @@ import re as _re
 def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
     """Ensure download links are present in tool result.
 
-    Generates download URLs pointing to ERAG's own /api/download/{uuid}/ proxy
-    endpoint, so the user only needs access to ERAG — the MCP server stays
+    Generates download URLs pointing to RAGClaw's own /api/download/{uuid}/ proxy
+    endpoint, so the user only needs access to RAGClaw — the MCP server stays
     fully internal with no host port exposure.
 
     ``uuid_dir`` is the full relative path under the sandbox's allow-dir, which
@@ -1058,7 +1058,7 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     proxy_prefix = f"{public_base}/api/download/{uuid_dir}" if public_base else f"/api/download/{uuid_dir}"
 
     if "[File]" in result:
-        # MCP server included [File] tags with its own URL — rewrite to ERAG proxy.
+        # MCP server included [File] tags with its own URL — rewrite to RAGClaw proxy.
         # uuid_dir may contain "/" (nested per-user path), so escape it.
         result = _re.sub(
             r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',

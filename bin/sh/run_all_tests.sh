@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ERAG Backend Full Test Suite (container mode) — WSL / Linux
+# RAGClaw Backend Full Test Suite (container mode) — WSL / Linux
 # Usage: bash bin/sh/run_all_tests.sh
 #
-# Runs the pytest suite inside the 'erag-lite' Docker container. Local Python
+# Runs the pytest suite inside the 'ragclaw-lite' Docker container. Local Python
 # execution is not supported — this project must run in container mode.
-# The erag container is started on demand (compose up -d erag) and the
+# The ragclaw container is started on demand (compose up -d ragclaw) and the
 # tests are executed via `compose exec`.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,34 +12,34 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Tests always run against the BASE (prod) config: the baked image plus the
 # deps we install inside it. The dev overlay (bind-mount + uvicorn --reload)
 # is irrelevant for `compose exec` and, if applied, would restart a live dev
-# session. Force prod mode regardless of ERAG_DEV / --dev.
-ERAG_DEV=0
+# session. Force prod mode regardless of RAGCLAW_DEV / --dev.
+RAGCLAW_DEV=0
 COMPOSE_FILE="$ROOT/docker-compose.yml"
 
 source "$SCRIPT_DIR/lib/common.sh"
 
-# Leave the erag container running after tests when set to 1.
-ERAG_KEEP_CONTAINER="${ERAG_KEEP_CONTAINER:-0}"
+# Leave the ragclaw container running after tests when set to 1.
+RAGCLAW_KEEP_CONTAINER="${RAGCLAW_KEEP_CONTAINER:-0}"
 
 if ! test_docker; then
   c_red "ERROR: Docker is not installed or not running. Container mode only."
   exit 1
 fi
 
-# Ensure the erag container is up (it is the test execution environment).
-c_yellow "Ensuring erag-lite container is running..."
-compose up -d erag || { c_red "ERROR: failed to start erag-lite container"; exit 1; }
+# Ensure the ragclaw container is up (it is the test execution environment).
+c_yellow "Ensuring ragclaw-lite container is running..."
+compose up -d ragclaw || { c_red "ERROR: failed to start ragclaw-lite container"; exit 1; }
 
 # Install test deps inside the container (idempotent, non-root image).
 c_yellow "[1/9] Installing dev dependencies in container (pytest, pytest-asyncio, pytest-html, httpx)..."
-compose exec -T erag bash -c "pip install --break-system-packages -q pytest pytest-asyncio pytest-html httpx"
+compose exec -T ragclaw bash -c "pip install --break-system-packages -q pytest pytest-asyncio pytest-html httpx"
 [ $? -ne 0 ] && c_red "WARNING: pip install in container returned exit code $?"
 
 passed=0; failed=0; errors=0
 declare -a failure_log
 
 c_cyan "=========================================="
-c_cyan "  ERAG Backend Full Test Suite (container)"
+c_cyan "  RAGClaw Backend Full Test Suite (container)"
 c_cyan "=========================================="
 
 # ---- Helper: run a pytest batch (inside container) and tally ----
@@ -48,7 +48,7 @@ run_batch() {
   local files="$*"
   c_yellow "[$label] Running..."
   local output
-  output="$(compose exec -T erag bash -c "cd /app/backend && PYTHONPATH=/app/backend pytest $files -v --tb=short" 2>&1)"
+  output="$(compose exec -T ragclaw bash -c "cd /app/backend && PYTHONPATH=/app/backend pytest $files -v --tb=short" 2>&1)"
   echo "$output"
 
   # Tally
@@ -109,10 +109,10 @@ if [ ${#failure_log[@]} -gt 0 ]; then
   c_magenta "=========================================="
 fi
 
-# ---- Cleanup: stop the erag container we started on demand ----
-if [ "$ERAG_KEEP_CONTAINER" = "1" ]; then
-  c_yellow "Leaving erag-lite running (ERAG_KEEP_CONTAINER=1)"
+# ---- Cleanup: stop the ragclaw container we started on demand ----
+if [ "$RAGCLAW_KEEP_CONTAINER" = "1" ]; then
+  c_yellow "Leaving ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)"
 else
-  c_yellow "Stopping erag-lite container used for tests..."
-  compose stop erag >/dev/null 2>&1 && c_green "  erag-lite stopped"
+  c_yellow "Stopping ragclaw-lite container used for tests..."
+  compose stop ragclaw >/dev/null 2>&1 && c_green "  ragclaw-lite stopped"
 fi

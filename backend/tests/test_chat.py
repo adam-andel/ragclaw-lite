@@ -22,7 +22,7 @@ print(f'Health: {r.json()}')
 print('\n=== SSE stream ===')
 with httpx.stream(
     'POST', f'{base}/chat/stream',
-    json={'query': '介绍ERAG的技术栈', 'kb_id': kb_id},
+    json={'query': '介绍RAGClaw的技术栈', 'kb_id': kb_id},
     timeout=60,
 ) as r:
     for line in r.iter_lines():

@@ -1,4 +1,4 @@
-"""Pytest fixtures for ERAG backend — isolated test environment.
+"""Pytest fixtures for RAGClaw backend — isolated test environment.
 
 Data isolation: every test gets its own tmp_path → SQLite + ChromaDB + uploads.
 Overrides settings at module level via monkeypatch before test runs.
@@ -59,7 +59,7 @@ def create_access_token(user_id, username, role, tenant_id):
 @pytest.fixture(autouse=True)
 def _isolate_data(monkeypatch, tmp_path):
     """Redirect all persistent stores into a unique tmp_path per test."""
-    test_dir = tmp_path / "erag_test"
+    test_dir = tmp_path / "ragclaw_test"
     uploads = test_dir / "uploads"
     chroma = test_dir / "chroma"
     sqlite_db = test_dir / "sqlite" / "test.db"

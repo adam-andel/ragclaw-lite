@@ -44,13 +44,13 @@ class TestBM25:
         kb = _kid()
         try:
             bm25_index.build(kb, _chunks("d1", [
-                "ERAG is an enterprise RAG platform with hybrid search",
+                "RAGClaw is an enterprise RAG platform with hybrid search",
                 "Python is a programming language for general purposes",
                 "FastAPI is a modern web framework for building APIs",
             ]))
-            results = bm25_index.search(kb, "ERAG RAG platform", top_k=3)
+            results = bm25_index.search(kb, "RAGClaw RAG platform", top_k=3)
             assert len(results) > 0
-            assert any("ERAG" in r["content"] for r in results)
+            assert any("RAGClaw" in r["content"] for r in results)
         finally:
             bm25_index.delete_kb(kb)
 
@@ -81,13 +81,13 @@ class TestBM25:
         kb = _kid()
         try:
             bm25_index.build(kb, [
-                {"id": "c1", "content": "important ERAG document", "doc_id": "doc_a", "heading": "H1", "page": 1},
+                {"id": "c1", "content": "important RAGClaw document", "doc_id": "doc_a", "heading": "H1", "page": 1},
                 {"id": "c2", "content": "irrelevant other content", "doc_id": "doc_b", "heading": "H1", "page": 1},
             ])
             bm25_index.remove_doc(kb, "doc_a")
-            results = bm25_index.search(kb, "ERAG document", top_k=5)
-            # doc_a chunks should be gone, so ERAG shouldn't match
-            assert not any("ERAG" in r["content"] for r in results)
+            results = bm25_index.search(kb, "RAGClaw document", top_k=5)
+            # doc_a chunks should be gone, so RAGClaw shouldn't match
+            assert not any("RAGClaw" in r["content"] for r in results)
         finally:
             bm25_index.delete_kb(kb)
 
@@ -102,11 +102,11 @@ class TestBM25:
         kb = _kid()
         try:
             bm25_index.build(kb, _chunks("d1", [
-                "ERAG ERAG ERAG ERAG ERAG",
-                "ERAG is a platform",
+                "RAGClaw RAGClaw RAGClaw RAGClaw RAGClaw",
+                "RAGClaw is a platform",
                 "something completely unrelated",
             ]))
-            results = bm25_index.search(kb, "ERAG", top_k=5)
+            results = bm25_index.search(kb, "RAGClaw", top_k=5)
             if len(results) >= 2:
                 scores = [r["score"] for r in results]
                 assert scores == sorted(scores, reverse=True), f"Scores not descending: {scores}"

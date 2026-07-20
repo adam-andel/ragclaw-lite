@@ -1,4 +1,4 @@
-"""Alembic environment for the ERAG backend (async SQLAlchemy).
+"""Alembic environment for the RAGClaw backend (async SQLAlchemy).
 
 Schema source of truth is ``app.database.Base.metadata``. The database URL is
 taken from the application config so it always matches ``app.database``.

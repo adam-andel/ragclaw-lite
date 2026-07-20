@@ -86,13 +86,13 @@ more content
 
 ```python
 def hello():
-    print("Hello ERAG")
+    print("Hello RAGClaw")
 ```
 """)
         doc = parser_service.parse(md, "md")
         full = "\n".join(s.content for s in doc.sections)
         assert "hello()" in full
-        assert "Hello ERAG" in full
+        assert "Hello RAGClaw" in full
 
     def test_empty_file_no_crash(self, tmp_path):
         """Empty markdown should not crash."""
@@ -117,7 +117,7 @@ class TestTxtParser:
 
     def test_txt_parses_sections(self, tmp_path):
         txt = tmp_path / "plan.txt"
-        txt.write_text("""ERAG 项目开发计划
+        txt.write_text("""RAGClaw 项目开发计划
 
 第一阶段：基础架构搭建
 完成 FastAPI 项目初始化、数据库模型设计。
@@ -244,14 +244,14 @@ class TestJsonParser:
     def test_parse_basic(self, tmp_path):
         json_file = tmp_path / "data.json"
         json_file.write_text(
-            json_lib.dumps({"name": "ERAG", "version": "1.0", "features": ["rag", "chat"]}),
+            json_lib.dumps({"name": "RAGClaw", "version": "1.0", "features": ["rag", "chat"]}),
             encoding="utf-8",
         )
         doc = parser_service.parse(json_file, "json")
         assert isinstance(doc, ParsedDocument)
         assert doc.file_type == "json"
         assert len(doc.sections) >= 1
-        assert "ERAG" in doc.full_text
+        assert "RAGClaw" in doc.full_text
 
     def test_empty_file_raises(self, tmp_path):
         """Empty file is invalid JSON — should raise ValueError via safe_parse()."""
@@ -323,7 +323,7 @@ class TestPptxParser:
         slide = prs.slides.add_slide(slide_layout)
         slide.shapes.title.text = "Test Slide"
         box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(2))
-        box.text_frame.text = "Hello ERAG"
+        box.text_frame.text = "Hello RAGClaw"
         prs.save(path)
         return path
 
@@ -333,7 +333,7 @@ class TestPptxParser:
         assert isinstance(doc, ParsedDocument)
         assert doc.file_type == "pptx"
         assert len(doc.sections) >= 1
-        assert "Hello ERAG" in doc.full_text or "Test Slide" in doc.full_text
+        assert "Hello RAGClaw" in doc.full_text or "Test Slide" in doc.full_text
 
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         pptx = tmp_path / "bad.pptx"

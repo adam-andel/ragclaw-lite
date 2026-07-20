@@ -1,5 +1,5 @@
 export default {
-  appName: 'ERAG',
+  appName: 'RAGClaw',
   confirm: '确定',
   ok: '知道了',
   cancel: '取消',

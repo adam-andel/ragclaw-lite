@@ -147,7 +147,7 @@ class TestUploadPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_document_status_completed(self, kb_id):
         _skip_if_no_model()
-        content = "# ERAG\n\n## Overview\n\nERAG is an enterprise RAG platform.\n\n## Features\n\nHybrid search, BM25, RRF fusion.\n"
+        content = "# RAGClaw\n\n## Overview\n\nRAGClaw is an enterprise RAG platform.\n\n## Features\n\nHybrid search, BM25, RRF fusion.\n"
         doc = await _run_pipeline(kb_id, "test_pipeline.md", content)
         assert doc.status == DocStatus.COMPLETED
         assert doc.chunk_count > 0
@@ -180,7 +180,7 @@ class TestUploadPipeline:
     @pytest.mark.asyncio
     async def test_bm25_index_built(self, kb_id):
         _skip_if_no_model()
-        content = "# BM25 Test\n\nERAG platform with keyword search capability.\n" * 10
+        content = "# BM25 Test\n\nRAGClaw platform with keyword search capability.\n" * 10
         await _run_pipeline(kb_id, "bm25_test.md", content)
 
         assert bm25_index.has_index(kb_id) is True
