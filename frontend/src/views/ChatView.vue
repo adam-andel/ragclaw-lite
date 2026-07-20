@@ -1002,7 +1002,7 @@ function handleKeydown(e: KeyboardEvent) {
         <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' }">
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
-          <div class="center-panel-list">
+          <div v-if="kbs.length > 0" class="center-panel-list">
             <NCard size="small" class="kb-pick-card"
               :class="{ active: !selectedKbId }"
               role="button" tabindex="0"
@@ -1076,10 +1076,14 @@ function handleKeydown(e: KeyboardEvent) {
         <div class="empty-icon">💬</div>
         <h3>{{ t('chat.startChat') }}</h3>
         <p>{{ t('chat.selectOrStart') }}</p>
-        <NButton type="primary" size="small" @click="emptyMode = 'conv'" style="margin-top:8px">
-          {{ t('chat.selectConversation') }}
-        </NButton>
-        <p class="fallback-hint">{{ t('chat.or') }}<NButton text size="tiny" type="primary" @click="emptyMode = 'kb'" style="padding:0 2px;height:auto;vertical-align:baseline">{{ t('chat.newConversation') }}</NButton></p>
+        <div style="margin-top:8px">
+          <NButton type="primary" size="small" @click="emptyMode = 'conv'">
+            {{ t('chat.selectConversation') }}
+          </NButton>
+          <NButton type="primary" size="small" @click="emptyMode = 'kb'" style="margin-left:8px">
+            {{ t('chat.newConversation') }}
+          </NButton>
+        </div>
       </div>
 
       <!-- Edge case: conversation loaded but no messages -->
@@ -1901,6 +1905,7 @@ function handleKeydown(e: KeyboardEvent) {
 /* KB / skill picker buttons above the input box: font size bumped slightly from tiny to 13px for better readability */
 .skill-selector-bar :deep(.n-button) {
   font-size: 13px;
+  font-weight: 400;
 }
 .chat-input-area {
   display: flex;
@@ -2240,7 +2245,6 @@ function handleKeydown(e: KeyboardEvent) {
   font-variant-numeric: tabular-nums;
 }
 .search-trigger-btn {
-  font-weight: 700;
 }
 .search-pop-enter-active,
 .search-pop-leave-active {
@@ -2258,7 +2262,6 @@ function handleKeydown(e: KeyboardEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 700;
 }
 
 /* ── Mobile: header wraps gracefully ── */
