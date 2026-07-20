@@ -44,7 +44,10 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile.dev
-    container_name: ragclaw-frontend-dev
+    # Prefix with the project name so a second clone (COMPOSE_PROJECT_NAME=dev)
+    # does not collide on the host-wide-unique container name. Resolves to
+    # ragclaw-frontend-dev for the default project (unchanged); dev-* for others.
+    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-frontend-dev
     environment:
       # inside the docker network the backend resolves as `ragclaw`
       - VITE_PROXY_TARGET=http://ragclaw:8000
