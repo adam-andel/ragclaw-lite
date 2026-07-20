@@ -27,9 +27,14 @@ services:
     restart: unless-stopped
     # Backend keeps its public bridge (internet egress) AND joins the internal
     # sandbox network so it can still reach mcp-repl (which is internal-only).
+    # NOTE: ragclaw-internal reserves a FIXED IP (.3) so it never races the
+    # egress broker for .2. Without this, the backend (started first by `up`)
+    # auto-claims 172.30.0.2, and ragclaw-egress's static 172.30.0.2 collides
+    # -> "failed to set up container networking: Address already in use".
     networks:
-      - ragclaw
-      - ragclaw-internal
+      ragclaw: {}
+      ragclaw-internal:
+        ipv4_address: 172.30.0.3
 
   # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
@@ -107,8 +112,10 @@ services:
       - ragclaw-egress
     # Internal-only: no route to the internet, only to ragclaw-internal peers
     # (ragclaw-egress broker + ragclaw-lite backend).
+    # Fixed IP (.4) keeps it off .2 (egress broker) and .3 (backend).
     networks:
-      - ragclaw-internal
+      ragclaw-internal:
+        ipv4_address: 172.30.0.4
 
   # ── Egress broker (network-layer enforcement point) ──
   # Separate container, dual-attached:

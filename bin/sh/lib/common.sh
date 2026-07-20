@@ -75,10 +75,24 @@ repair_egress_network() {
   fi
   proj="${proj:-$(basename "$ROOT")}"
   local net="${proj}_ragclaw-internal"
+  # Force mode frees the egress IP (172.30.0.2) IPAM lease by removing the
+  # internal network. BUT the backend (ragclaw-lite) and mcp-repl are NORMAL
+  # members of that network — removing the network requires all endpoints to be
+  # detached first, and we must NOT `docker rm -f` them (that would take down the
+  # live backend). So: delete ONLY the egress broker container, and merely
+  # `disconnect` every other attached container so the network can be removed;
+  # `docker compose up` then recreates the network and reconnects them.
+  local attached name
   attached="$(docker network inspect "$net" --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>/dev/null)"
   if [ -n "$attached" ]; then
     while IFS= read -r id; do
-      [ -n "$id" ] && docker rm -f "$id" >/dev/null 2>&1
+      [ -n "$id" ] || continue
+      name="$(docker inspect --format '{{.Name}}' "$id" 2>/dev/null | sed 's@^/@@')"
+      if [ "$name" = "ragclaw-egress" ] || [ "$id" = "$egress_id" ]; then
+        docker rm -f "$id" >/dev/null 2>&1                       # the broken broker — safe to delete
+      else
+        docker network disconnect -f "$net" "$id" >/dev/null 2>&1 # keep the container, just detach
+      fi
     done <<< "$attached"
   fi
   docker network rm "$net" >/dev/null 2>&1

@@ -61,10 +61,10 @@ function Repair-EgressNetwork {
 
     if (-not $ForceNetwork) { return }
 
-    # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw_ragclaw-internal.
+    # The internal network is named by compose as {COMPOSE_PROJECT_NAME}_ragclaw-internal.
     # Resolve the project name the SAME way compose does (env > .env > directory
     # basename) so this works for any COMPOSE_PROJECT_NAME (ragclaw here, erag before).
-    # A literal "ragclaw_ragclaw-internal" was a silent no-op, so the 172.30.0.2 IPAM lease
+    # A literal "ragclaw-internal" was a silent no-op, so the 172.30.0.2 IPAM lease
     # was never released -> "Address already in use" on every retry.
     $proj = $env:COMPOSE_PROJECT_NAME
     if (-not $proj) {
@@ -73,8 +73,23 @@ function Repair-EgressNetwork {
     }
     if (-not $proj) { $proj = Split-Path -Leaf $Root }
     $net = "$proj`_ragclaw-internal"
+    # Force mode frees the egress IP (172.30.0.2) IPAM lease by removing the internal
+    # network. The backend (ragclaw-lite) and mcp-repl are NORMAL members of that network,
+    # so removing it requires detaching all endpoints first — but we must NOT `docker rm -f`
+    # them (that would take down the live backend). Delete ONLY the egress broker; merely
+    # `disconnect` every other container so the network can be removed; `up` reconnects them.
     $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
-    if ($attached) { $attached | ForEach-Object { if ($_) { docker rm -f $_ 2>$null | Out-Null } } }
+    if ($attached) {
+        $attached | ForEach-Object {
+            if (-not $_) { return }
+            $name = (docker inspect --format '{{.Name}}' $_ 2>$null) -replace '^/',''
+            if ($name -eq 'ragclaw-egress' -or $_ -eq $egressId) {
+                docker rm -f $_ 2>$null | Out-Null                            # the broken broker — safe to delete
+            } else {
+                docker network disconnect -f $net $_ 2>$null | Out-Null       # keep the container, just detach
+            }
+        }
+    }
     docker network rm $net 2>$null | Out-Null
     Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
 }
