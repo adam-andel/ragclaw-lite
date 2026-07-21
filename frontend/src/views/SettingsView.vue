@@ -7,9 +7,9 @@ import {
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 
@@ -196,6 +196,23 @@ const selectedFailed = computed(() =>
   embeddingStatus.value.model === selectedModel.value,
 )
 
+const selectedPaused = computed(() =>
+  embeddingStatus.value.status === 'paused' &&
+  embeddingStatus.value.model === selectedModel.value,
+)
+
+const selectedCancelled = computed(() =>
+  embeddingStatus.value.status === 'cancelled' &&
+  embeddingStatus.value.model === selectedModel.value,
+)
+
+// "active" = a download is in progress (downloading or paused) for this model.
+// Used to decide whether to show pause/resume/cancel and suppress the separate
+// download button + model selector.
+const selectedActiveDownload = computed(() =>
+  selectedDownloading.value || selectedPaused.value,
+)
+
 async function loadEmbeddingStatus() {
   try {
     const s = await getEmbeddingModelStatus()
@@ -221,10 +238,11 @@ function startEmbeddingPolling() {
   embeddingPollTimer.value = window.setInterval(async () => {
     await loadEmbeddingStatus()
     const s = embeddingStatus.value.status
-    if (s === 'completed' || s === 'failed') {
+    if (s === 'completed' || s === 'failed' || s === 'cancelled') {
       stopEmbeddingPolling()
       if (s === 'completed') message.success(t('settings.embeddingModelMgmt.installedTip'))
-      else message.error(t('settings.embeddingModelMgmt.statusFailed') + '：' + embeddingStatus.value.error)
+      else if (s === 'failed') message.error(t('settings.embeddingModelMgmt.statusFailed') + '：' + embeddingStatus.value.error)
+      // cancelled: handled by the cancel action's own toast
     }
   }, 2000)
 }
@@ -246,11 +264,63 @@ async function handleDownloadEmbedding() {
   }
 }
 
-async function handleDeleteEmbedding() {
+function handleDeleteEmbedding() {
+  const model = selectedModel.value
+  // Deleting removes the local model files (and its install record) — require a
+  // second confirmation, just like the switch / rebuild flows.
+  dialog.warning({
+    title: t('settings.embeddingModelMgmt.deleteConfirmTitle'),
+    content: t('settings.embeddingModelMgmt.deleteConfirmContent', { model }),
+    positiveText: t('settings.embeddingModelMgmt.deleteConfirmOk'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => doDeleteEmbedding(),
+  })
+}
+
+async function doDeleteEmbedding() {
   try {
     await deleteEmbeddingModel(selectedModel.value || undefined)
     await loadEmbeddingStatus()
     message.success(t('settings.embeddingModelMgmt.deleted'))
+  } catch (e: any) {
+    message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
+// ── Download pause / resume / cancel ──
+async function handlePauseDownload() {
+  try {
+    const res = await pauseEmbeddingDownload()
+    if (res.paused) {
+      await loadEmbeddingStatus()
+      message.info(t('settings.embeddingModelMgmt.paused'))
+    }
+  } catch (e: any) {
+    message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
+async function handleResumeDownload() {
+  try {
+    const res = await resumeEmbeddingDownload()
+    if (res.resumed) {
+      await loadEmbeddingStatus()
+      startEmbeddingPolling()
+      message.info(t('settings.embeddingModelMgmt.resumed'))
+    }
+  } catch (e: any) {
+    message.error(e.message || t('settings.saveFailed'))
+  }
+}
+
+async function handleCancelDownload() {
+  try {
+    const res = await cancelEmbeddingDownload()
+    if (res.cancelled) {
+      await loadEmbeddingStatus()
+      stopEmbeddingPolling()
+      message.info(t('settings.embeddingModelMgmt.cancelled'))
+    }
   } catch (e: any) {
     message.error(e.message || t('settings.saveFailed'))
   }
@@ -852,7 +922,7 @@ async function handleTest() {
                 v-model:value="selectedModel"
                 :options="embeddingSelectOptions"
                 :placeholder="t('settings.embeddingModelMgmt.selectPlaceholder')"
-                :disabled="selectedDownloading"
+                :disabled="selectedActiveDownload"
                 style="flex: 1"
                 @update:value="onSelectModelChange"
               />
@@ -886,34 +956,80 @@ async function handleTest() {
           </NFormItem>
 
           <NFormItem v-if="selectedModel" :label="t('settings.embeddingModelMgmt.status')">
-            <NSpace align="center" :size="12">
-              <NTag v-if="selectedInstalled && !selectedDownloading" type="success" :bordered="false" round>
-                {{ t('settings.embeddingModelMgmt.statusInstalled') }}
-              </NTag>
-              <NTag v-else-if="selectedDownloading" type="warning" :bordered="false" round>
+            <!-- Active download row: status tag | progress | pause/cancel | info -->
+            <div v-if="selectedActiveDownload" style="display: flex; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap">
+              <NTag v-if="selectedDownloading" type="warning" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusDownloading') }}
+              </NTag>
+              <NTag v-else-if="selectedPaused" type="warning" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusPaused') }}
+              </NTag>
+              <NProgress
+                type="line"
+                :percentage="embeddingStatus.progress"
+                :show-indicator="true"
+                :processing="!selectedPaused"
+                style="width: 200px"
+              />
+              <NButton
+                v-if="selectedDownloading"
+                type="default"
+                :disabled="!selectedModel"
+                @click="handlePauseDownload"
+              >
+                <template #icon><NIcon><Pause /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.pause') }}
+              </NButton>
+              <NButton
+                v-if="selectedPaused"
+                type="primary"
+                :disabled="!selectedModel"
+                @click="handleResumeDownload"
+              >
+                <template #icon><NIcon><Play /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.resume') }}
+              </NButton>
+              <NButton
+                type="error"
+                secondary
+                :disabled="!selectedModel"
+                @click="handleCancelDownload"
+              >
+                <template #icon><NIcon><CloseCircle /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.cancel') }}
+              </NButton>
+              <span class="muted" style="font-size: 12px">{{ embeddingStatus.message }}</span>
+            </div>
+
+            <!-- Idle / completed / failed / cancelled: status tag | info | actions -->
+            <NSpace v-else align="center" :size="12">
+              <NTag v-if="selectedInstalled" type="success" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusInstalled') }}
               </NTag>
               <NTag v-else-if="selectedFailed" type="error" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusFailed') }}
+              </NTag>
+              <NTag v-else-if="selectedCancelled" type="default" :bordered="false" round>
+                {{ t('settings.embeddingModelMgmt.statusCancelled') }}
               </NTag>
               <NTag v-else type="default" :bordered="false" round>
                 {{ t('settings.embeddingModelMgmt.statusNotInstalled') }}
               </NTag>
 
               <span class="muted" style="font-size: 12px">
-                <template v-if="selectedDownloading">
-                  {{ embeddingStatus.message }}
-                </template>
-                <template v-else-if="selectedInstalled">
+                <template v-if="selectedInstalled">
                   {{ t('settings.embeddingModelMgmt.installedTip') }}
+                </template>
+                <template v-else-if="selectedCancelled">
+                  {{ t('settings.embeddingModelMgmt.cancelledTip') }}
                 </template>
                 <template v-else>
                   {{ t('settings.embeddingModelMgmt.notInstalledTip') }}
                 </template>
               </span>
-              
+
               <NButton
-                v-if="!selectedInstalled && !selectedDownloading"
+                v-if="!selectedInstalled && !selectedActiveDownload"
                 type="primary"
                 :disabled="!selectedModel"
                 @click="handleDownloadEmbedding"
@@ -923,7 +1039,7 @@ async function handleTest() {
               </NButton>
 
               <NButton
-                v-if="selectedInstalled"
+                v-if="selectedInstalled && !selectedActiveDownload"
                 type="error"
                 secondary
                 :disabled="selectedIsConfigured"
@@ -931,19 +1047,7 @@ async function handleTest() {
               >
                 {{ t('settings.embeddingModelMgmt.delete') }}
               </NButton>
-
             </NSpace>
-
-            <div v-if="selectedDownloading" style="margin-top: 10px">
-              <span class="muted" style="font-size: 12px; margin-right: 8px">{{ t('settings.embeddingModelMgmt.downloadProgress') }}</span>
-              <NProgress
-                type="line"
-                :percentage="embeddingStatus.progress"
-                :show-indicator="true"
-                :processing="true"
-                style="width: 200px"
-              />
-            </div>
           </NFormItem>
 
           <NFormItem

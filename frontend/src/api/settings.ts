@@ -102,7 +102,7 @@ export interface EmbeddingModelOption {
 }
 
 export interface EmbeddingModelStatus {
-  status: 'idle' | 'downloading' | 'completed' | 'failed'
+  status: 'idle' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled'
   progress: number
   message: string
   error: string
@@ -120,6 +120,21 @@ export async function getEmbeddingModelStatus(): Promise<EmbeddingModelStatus> {
 
 export async function downloadEmbeddingModel(model?: string): Promise<{ started: boolean; reason?: string; model: string }> {
   const res = await client.post('/embedding-model/download', model ? { model } : {})
+  return res.data
+}
+
+export async function pauseEmbeddingDownload(): Promise<{ paused: boolean }> {
+  const res = await client.post('/embedding-model/pause')
+  return res.data
+}
+
+export async function resumeEmbeddingDownload(): Promise<{ resumed: boolean }> {
+  const res = await client.post('/embedding-model/resume')
+  return res.data
+}
+
+export async function cancelEmbeddingDownload(): Promise<{ cancelled: boolean }> {
+  const res = await client.post('/embedding-model/cancel')
   return res.data
 }
 

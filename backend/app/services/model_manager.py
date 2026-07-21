@@ -30,8 +30,20 @@ from app.config import settings
 class _Status:
     IDLE = "idle"
     DOWNLOADING = "downloading"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DownloadCancelled(Exception):
+    """Raised inside the progress callback to abort an in-flight download.
+
+    huggingface_hub calls ``progress_callback`` frequently; raising here is the
+    only clean way to stop a download *mid-file* (the underlying HTTP fetch is
+    otherwise a single blocking call). The worker catches it and settles to the
+    CANCELLED state.
+    """
 
 
 class EmbeddingModelManager:
@@ -45,6 +57,14 @@ class EmbeddingModelManager:
         self._error = ""
         self._model = ""
         self._thread: threading.Thread | None = None
+        # Pause / cancel control for an in-flight download.
+        self._pause_cond = threading.Condition()
+        self._paused = False
+        self._cancel_event = threading.Event()
+        # Generation counter: each new download bumps it so a still-finishing
+        # superseded thread (e.g. right after a cancel) aborts at its next
+        # checkpoint instead of racing the new download for the same cache.
+        self._epoch = 0
         # Authoritative record of *successfully* downloaded models. None means
         # "not yet loaded from disk"; seeded once from the cache on first use.
         self._installed: set[str] | None = None
@@ -117,7 +137,7 @@ class EmbeddingModelManager:
 
     def start_download(self, model_name: str | None = None) -> dict:
         with self._lock:
-            if self._status == _Status.DOWNLOADING:
+            if self._status in (_Status.DOWNLOADING, _Status.PAUSED):
                 return {"started": False, "reason": "already_downloading",
                         "model": self._model}
             name = model_name or settings.embedding_model
@@ -126,21 +146,95 @@ class EmbeddingModelManager:
             self._message = f"开始下载 {name} …"
             self._error = ""
             self._model = name
+            # Bump the generation so any still-finishing previous thread (e.g.
+            # right after a cancel or delete) aborts at its next checkpoint
+            # instead of racing this new download for the same cache.
+            self._cancel_event.clear()
+            self._paused = False
+            self._epoch += 1
+            my_epoch = self._epoch
         self._thread = threading.Thread(
-            target=self._download_worker, args=(name,), daemon=True,
+            target=self._download_worker, args=(name, my_epoch), daemon=True,
             name="embedding-model-download",
         )
         self._thread.start()
         return {"started": True, "model": name}
+
+    # ── Pause / Resume / Cancel ──
+
+    def pause_download(self) -> bool:
+        """Freeze the download between files. A mid-file transfer is allowed to
+        finish first, so the cache stays consistent and resume is byte-safe."""
+        with self._lock:
+            if self._status != _Status.DOWNLOADING:
+                return False
+            self._status = _Status.PAUSED
+            self._paused = True
+            self._message = f"已暂停：{self._model}（已下载部分保留）"
+        return True
+
+    def resume_download(self) -> bool:
+        """Continue a paused download. The worker is already mid-flight; we just
+        release the pause gate and it picks up the next file."""
+        with self._lock:
+            if self._status != _Status.PAUSED:
+                return False
+            self._status = _Status.DOWNLOADING
+            self._paused = False
+            self._message = f"继续下载 {self._model} …"
+        with self._pause_cond:
+            self._pause_cond.notify_all()
+        return True
+
+    def cancel_download(self) -> bool:
+        """Abort the download and remove the partial cache entirely — a cancelled
+        download keeps nothing behind. Safe to call when idle — it then returns
+        False."""
+        with self._lock:
+            if self._status not in (_Status.DOWNLOADING, _Status.PAUSED):
+                return False
+            self._paused = False
+            self._cancel_event.set()
+            self._epoch += 1            # supersede the in-flight thread
+            self._status = _Status.CANCELLED
+            self._progress = 0.0
+            self._message = f"正在取消 {self._model} …"
+        # Wake the worker in case it is blocked on the pause gate.
+        with self._pause_cond:
+            self._pause_cond.notify_all()
+        # Wipe the partial download so nothing is left behind.
+        self._remove_cache(self._model)
+        return True
+
+    def _remove_cache(self, model_name: str) -> None:
+        """Delete the on-disk cache for a model (best-effort, idempotent)."""
+        cache_dir = self._hf_home()
+        norm = model_name.replace("/", "--")
+        target = cache_dir / f"models--{norm}"
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
 
     def delete(self, model_name: str | None = None) -> dict:
         name = model_name or settings.embedding_model
         cache_dir = self._hf_home()
         norm = name.replace("/", "--")
         target = cache_dir / f"models--{norm}"
+        # Capture whether anything existed *before* we stop the worker, since
+        # cancel_download() below wipes a partial download immediately.
+        existed = target.exists()
+        # Stop any in-flight download of this model so we don't race the rmtree
+        # (the worker writes into the very directory we are about to remove).
+        self.cancel_download()
+        # Supersede the dying thread via the epoch so its error path can't
+        # overwrite the IDLE state we set below.
+        with self._lock:
+            self._epoch += 1
         removed = False
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+        if existed:
+            # cancel_download may have already removed a partial download; make
+            # sure the directory is gone regardless.
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
             removed = True
         # Drop any loaded model instance so it reloads on next use.
         try:
@@ -154,6 +248,8 @@ class EmbeddingModelManager:
             self._progress = 0.0
             self._message = ""
             self._error = ""
+            self._paused = False
+            self._cancel_event.clear()
         return {"deleted": removed, "model": name}
 
     # ── Internals ──
@@ -186,41 +282,20 @@ class EmbeddingModelManager:
                 except Exception:
                     self._installed = set()
             else:
-                # First run (or manifest removed): seed from the on-disk cache,
-                # keeping only KNOWN models whose snapshot truly contains a weight
-                # file. This avoids mistaking a half-downloaded repo for a real
-                # install while preserving genuinely-installed models across an
-                # upgrade. Unrelated HF caches are ignored via is_known_model().
-                self._installed = self._seed_installed_from_cache()
+                # No manifest yet. The manifest is the SINGLE source of truth for
+                # "successfully installed" — it is written ONLY after a fully
+                # successful download (see _record_installed). We must NOT infer
+                # installation by scanning the on-disk cache: a paused or
+                # interrupted download leaves a partial cache (usually with a
+                # >1MB weight file already fetched) that would otherwise be
+                # wrongly reported as "installed". Start empty and persist it so
+                # we never re-scan and never poison the manifest with a
+                # half-downloaded model. A genuinely-installed model is always
+                # present in the manifest and survives restarts; a model
+                # downloaded by legacy code simply shows as "not installed" until
+                # its next (cache-resuming, near-instant) download records it.
+                self._installed = set()
                 self._save_installed(self._installed)
-
-    def _seed_installed_from_cache(self) -> set[str]:
-        from app.services.embedding_models import is_known_model
-        cache_dir = self._hf_home()
-        found: set[str] = set()
-        if not cache_dir.exists():
-            return found
-        for child in cache_dir.iterdir():
-            if not (child.is_dir() and child.name.startswith("models--")):
-                continue
-            repo = child.name[len("models--"):].replace("--", "/", 1)
-            if is_known_model(repo) and self._has_weight_file(child):
-                found.add(repo)
-        return found
-
-    @staticmethod
-    def _has_weight_file(model_dir: Path) -> bool:
-        # A real install has a weight file (safetensors/bin) in its snapshot.
-        # Snapshot entries are symlinks into blobs/; follows them so a dangling
-        # (interrupted-download) target is correctly treated as missing.
-        for pattern in ("*.safetensors", "*.bin"):
-            for p in model_dir.rglob(pattern):
-                try:
-                    if p.exists() and p.stat().st_size > 1024 * 1024:
-                        return True
-                except OSError:
-                    continue
-        return False
 
     def _save_installed(self, models: set[str]) -> None:
         try:
@@ -253,111 +328,274 @@ class EmbeddingModelManager:
             for k, v in kwargs.items():
                 setattr(self, f"_{k}", v)
 
-    def _on_progress(self, *args) -> None:
-        """Version-agnostic handler for huggingface_hub's progress_callback.
+    def _download_with_progress(self, fn, kwargs: dict, callback, epoch: int,
+                                 model_name: str) -> None:
+        """Call ``fn`` with ``progress_callback`` when the installed
+        huggingface_hub version supports it.
 
-        The callback convention changed across huggingface_hub versions, so we
-        accept *args and detect the actual shape at runtime:
-          * ~0.23+:  callback(task: str, progress)  where ``progress`` exposes
-                     .completed / .total (also tolerates .current / .downloaded
-                     aliases, since field names drift between releases)
+        Signature introspection alone is unreliable across versions (e.g.
+        ``hf_hub_download`` gained ``progress_callback`` in 0.16 but
+        ``snapshot_download`` only in 0.26, and decorators can make
+        ``inspect.signature`` lie) — so if the call still rejects the kwarg we
+        retry once WITHOUT it. The download always succeeds; only live progress
+        degrades gracefully on ancient installs. ``DownloadCancelled`` raised by
+        the callback propagates (it is not a TypeError)."""
+        if callback is not None:
+            try:
+                kw = dict(kwargs)
+                kw["progress_callback"] = callback
+                fn(**kw)
+                return
+            except TypeError as e:
+                if "progress_callback" in str(e):
+                    # Unsupported on this version — retry without progress.
+                    fn(**kwargs)
+                    return
+                raise
+        fn(**kwargs)
+
+    @staticmethod
+    def _parse_file_progress(args) -> float | None:
+        """Return the current file's download fraction (0..1) from a
+        huggingface_hub progress_callback invocation, handling every known
+        convention:
+          * ~0.26+:  callback(task: str, progress)  or  callback(progress),
+                     where ``progress`` is a ProgressInfo exposing a ready-made
+                     ``.progress`` fraction (0..1) and/or ``.completed``/``.total``
           * legacy:  callback(completed: int, total: int)
           * single:  callback(fraction: float)  — rare
-        Resolving it here keeps the UI progress bar moving on every version.
-        """
+        Returns None when the shape is unrecognised (caller falls back to a
+        per-file progress floor)."""
         try:
-            progress = None
-            completed = 0.0
-            total = 0.0
-            # Modern API: callback(task: str, progress)
-            if len(args) >= 2 and isinstance(args[0], str) and hasattr(args[1], "total"):
-                progress = args[1]
-            # Modern API variant: callback(progress) — single positional object
-            elif len(args) == 1 and hasattr(args[0], "total") and not isinstance(args[0], (int, float, str)):
-                progress = args[0]
-            # Legacy API: callback(completed: int, total: int)
-            elif len(args) >= 2 and isinstance(args[0], (int, float)) and isinstance(args[1], (int, float)):
-                completed, total = float(args[0]), float(args[1])
-            # Single numeric fraction in [0, 1]
-            elif len(args) == 1 and isinstance(args[0], (int, float)):
-                val = float(args[0])
-                if 0.0 <= val <= 1.0:
-                    self._set(progress=max(0.0, min(100.0, val * 100)))
-                return
-            else:
-                return
-
-            if progress is not None:
-                total = float(getattr(progress, "total", 0) or 0)
-                completed = (getattr(progress, "completed", None)
-                             or getattr(progress, "current", None)
-                             or getattr(progress, "downloaded", None)
-                             or 0)
+            obj = None
+            if len(args) >= 2 and isinstance(args[0], str) and not isinstance(args[1], (int, float, str)):
+                obj = args[1]
+            elif len(args) == 1 and not isinstance(args[0], (int, float, str)):
+                obj = args[0]
+            if obj is not None:
+                # Prefer the explicit 0..1 fraction when the build provides it —
+                # this is the most reliable signal and avoids divide-by-zero when
+                # ``.total`` is None (which previously left the bar stuck at 0).
+                prog = getattr(obj, "progress", None)
+                if isinstance(prog, (int, float)) and 0.0 <= float(prog) <= 1.0:
+                    return float(prog)
+                total = float(getattr(obj, "total", 0) or 0)
+                completed = (getattr(obj, "completed", None)
+                             or getattr(obj, "current", None)
+                             or getattr(obj, "downloaded", None) or 0)
                 completed = float(completed or 0)
-            if total:
-                self._set(progress=max(0.0, min(100.0, completed / total * 100)))
+                if total:
+                    return max(0.0, min(1.0, completed / total))
+                # total unknown: we cannot derive a fraction, but the transfer is
+                # alive; the caller falls back to a per-file floor.
+                return None
+            # legacy: callback(completed, total)
+            if len(args) >= 2 and isinstance(args[0], (int, float)) and isinstance(args[1], (int, float)):
+                total = float(args[1])
+                if total:
+                    return max(0.0, min(1.0, float(args[0]) / total))
+            # single numeric fraction in [0, 1]
+            if len(args) == 1 and isinstance(args[0], (int, float)):
+                val = float(args[0])
+                return val if 0.0 <= val <= 1.0 else None
         except Exception:
             pass
+        return None
 
-    def _download_worker(self, model_name: str) -> None:
+    def _check_abort(self, model_name: str, epoch: int) -> bool:
+        """Return True if this run should stop. An epoch mismatch means a newer
+        download superseded it — just return without touching state. An explicit
+        cancel settles to CANCELLED first."""
+        if self._epoch != epoch:
+            return True
+        if self._cancel_event.is_set():
+            self._after_cancel(model_name)
+            return True
+        return False
+
+    def _make_progress_callback(self, file_index, total_files, file_size, total_bytes, done_bytes, epoch):
+        """Build a per-file progress callback that rolls the current file's
+        fraction into an *overall* download percentage (0..100) and, crucially,
+        raises ``DownloadCancelled`` the instant the user hits cancel — aborting
+        the in-flight transfer immediately rather than only between files. Also
+        aborts if a newer download epoch superseded this run."""
+        def cb(*args):
+            if self._cancel_event.is_set() or self._epoch != epoch:
+                raise DownloadCancelled()
+            frac = self._parse_file_progress(args)
+            # If the fraction can't be parsed, fall back to a per-file floor so the
+            # bar still advances (it jumps at each file boundary). Without this, an
+            # unrecognised callback shape left progress pinned at 0 forever.
+            if frac is None:
+                frac = 0.0
+            if total_bytes:
+                overall = (done_bytes + frac * file_size) / total_bytes * 100
+            else:
+                overall = (file_index - 1 + frac) / total_files * 100
+            self._set(progress=max(0.0, min(100.0, overall)))
+        return cb
+
+    def _set_endpoint(self, endpoint: str) -> None:
+        if endpoint:
+            os.environ["HF_ENDPOINT"] = endpoint
+        elif "HF_ENDPOINT" in os.environ:
+            del os.environ["HF_ENDPOINT"]
+
+    def _list_repo_files(self, model_name: str) -> list[tuple[str, int]]:
+        """Return ``[(filename, size_bytes), ...]`` for the repo, best-effort.
+        Sizes drive accurate overall progress; when unavailable we fall back to
+        an index-based (file i of N) estimate, which is still correct, just
+        coarser."""
+        try:
+            from huggingface_hub import HfApi, list_repo_files
+            self._set_endpoint("")  # list from the official source first
+            try:
+                info = HfApi().model_info(model_name, files_metadata=True)
+                files = [
+                    (s.rfilename, int(getattr(s, "size", 0) or 0))
+                    for s in (info.siblings or [])
+                ]
+                if files:
+                    return files
+            except Exception:
+                pass
+            return [(f, 0) for f in list_repo_files(model_name)]
+        except Exception:
+            return []
+
+    def _record_success(self, model_name: str) -> None:
+        """Mark the model installed and pre-warm it (best-effort)."""
+        self._record_installed(model_name)
+        warmup_msg = ""
+        try:
+            from app.services.embedder import embedder_service
+            embedder_service._ensure_model()
+        except Exception as e:  # pragma: no cover - best effort
+            warmup_msg = f"（预热跳过：{e}）"
+        self._set(status=_Status.COMPLETED, progress=100.0,
+                  message=f"{model_name} 下载完成{warmup_msg}")
+
+    def _after_cancel(self, model_name: str) -> None:
+        """Settle to the CANCELLED terminal state. The partial cache is wiped so a
+        cancelled download leaves nothing behind, and the model is NOT recorded as
+        installed."""
+        self._remove_cache(model_name)
+        self._forget_installed(model_name)
+        self._set(status=_Status.CANCELLED,
+                  message=f"{model_name} 下载已取消（已删除未完成的下载）",
+                  progress=0.0)
+
+    def _download_via_snapshot(self, model_name: str, cache_dir: str, epoch: int) -> None:
+        """Fallback when the file list can't be enumerated: a single
+        ``snapshot_download``. Still cancel-capable (the progress callback can
+        raise ``DownloadCancelled``); pause is only effective between polls."""
+        from huggingface_hub import snapshot_download
+        dl_kwargs: dict = {"repo_id": model_name, "cache_dir": cache_dir}
+        self._download_with_progress(
+            snapshot_download, dl_kwargs,
+            self._make_progress_callback(1, 1, 0, 0, 0, epoch), epoch, model_name)
+
+    def _download_via_attempts_snapshot(self, model_name: str, cache_dir: str,
+                                        attempts: list[tuple[str, str]], epoch: int) -> None:
+        """Run ``_download_via_snapshot`` against each source in turn."""
+        last_err: Exception | None = None
+        for label, endpoint in attempts:
+            if self._check_abort(model_name, epoch):
+                return
+            self._set_endpoint(endpoint)
+            self._set(message=f"正在从{label}下载 {model_name} …")
+            try:
+                self._download_via_snapshot(model_name, cache_dir, epoch)
+                self._record_success(model_name)
+                return
+            except DownloadCancelled:
+                self._after_cancel(model_name)
+                return
+            except Exception as e:
+                last_err = e
+                continue
+        self._set(status=_Status.FAILED, error=str(last_err),
+                  message=f"所有源下载失败：{last_err}")
+
+    def _download_worker(self, model_name: str, epoch: int) -> None:
         cache_dir = str(self._hf_home())
+        prev = os.environ.get("HF_ENDPOINT")
         # Official source first, then the domestic mirror as a fallback.
         attempts = [
             ("官方源", ""),
             ("国内镜像 (hf-mirror.com)", "https://hf-mirror.com"),
         ]
-        last_err: Exception | None = None
-        for label, endpoint in attempts:
-            try:
-                self._set(message=f"正在从{label}下载 {model_name} …")
-                prev = os.environ.get("HF_ENDPOINT")
-                if endpoint:
-                    os.environ["HF_ENDPOINT"] = endpoint
-                elif "HF_ENDPOINT" in os.environ:
-                    del os.environ["HF_ENDPOINT"]
-                from huggingface_hub import snapshot_download
-                # `progress_callback` was only added to snapshot_download in
-                # huggingface_hub 0.26.0. Older installs reject it with a
-                # TypeError, which previously broke every model download. Only
-                # pass it when the installed signature actually supports it, so
-                # downloads keep working on any version (progress reporting just
-                # degrades gracefully on older installs).
-                dl_kwargs = {
-                    "repo_id": model_name,
-                    "cache_dir": cache_dir,
-                }
-                if "progress_callback" in inspect.signature(snapshot_download).parameters:
-                    dl_kwargs["progress_callback"] = self._on_progress
-                snapshot_download(**dl_kwargs)
-                # Mark as installed ONLY on a fully successful download — this is
-                # the authoritative signal for is_installed()/list_installed_models().
-                # A partial/failed download must never be reported as "installed".
-                self._record_installed(model_name)
-                # Success — restore HF_ENDPOINT to its pre-attempt value.
-                if prev is not None:
-                    os.environ["HF_ENDPOINT"] = prev
-                elif "HF_ENDPOINT" in os.environ:
-                    del os.environ["HF_ENDPOINT"]
-
-                # Pre-warm so the first embedding request against the newly
-                # downloaded model is fast.
-                warmup_msg = ""
-                try:
-                    from app.services.embedder import embedder_service
-                    embedder_service._ensure_model()
-                except Exception as e:  # pragma: no cover - best effort
-                    warmup_msg = f"（预热跳过：{e}）"
-                self._set(status=_Status.COMPLETED, progress=100.0,
-                          message=f"{model_name} 下载完成{warmup_msg}")
+        try:
+            files = self._list_repo_files(model_name)
+            if not files:
+                # Could not enumerate files → fall back to a single snapshot.
+                self._download_via_attempts_snapshot(model_name, cache_dir, attempts, epoch)
                 return
-            except Exception as e:
-                last_err = e
-                self._set(message=f"{label}下载失败，尝试下一个源")
-                if "HF_ENDPOINT" in os.environ:
-                    del os.environ["HF_ENDPOINT"]
-                continue
-        self._set(status=_Status.FAILED, error=str(last_err),
-                  message=f"所有源下载失败：{last_err}")
+
+            total_files = len(files)
+            total_bytes = sum(sz for _, sz in files) or 0
+            done_bytes = 0
+
+            for idx, (fname, fsize) in enumerate(files, start=1):
+                # ── Pause gate: only between files, so the cache stays valid ──
+                with self._pause_cond:
+                    while self._paused and not self._cancel_event.is_set():
+                        self._pause_cond.wait()
+                if self._check_abort(model_name, epoch):
+                    return
+
+                downloaded = False
+                last_err: Exception | None = None
+                for label, endpoint in attempts:
+                    if self._check_abort(model_name, epoch):
+                        return
+                    self._set_endpoint(endpoint)
+                    self._set(message=f"正在从{label}下载 {fname}（{idx}/{total_files}）")
+                    # Advance the progress floor to the start of this file so the
+                    # bar moves even if the progress callback never fires.
+                    self._set(progress=max(self._progress, (idx - 1) / total_files * 100))
+                    try:
+                        from huggingface_hub import hf_hub_download
+                        kwargs: dict = {
+                            "repo_id": model_name,
+                            "filename": fname,
+                            "cache_dir": cache_dir,
+                        }
+                        cb = self._make_progress_callback(
+                            idx, total_files, fsize, total_bytes, done_bytes, epoch)
+                        self._download_with_progress(hf_hub_download, kwargs, cb,
+                                                      epoch, model_name)
+                        downloaded = True
+                        break
+                    except DownloadCancelled:
+                        self._after_cancel(model_name)
+                        return
+                    except Exception as e:  # noqa: BLE001
+                        last_err = e
+                        continue
+                if not downloaded:
+                    self._set(status=_Status.FAILED, error=str(last_err),
+                              message=f"{fname} 下载失败：{last_err}")
+                    return
+                done_bytes += fsize
+                # Mark this file fully done in the progress floor.
+                self._set(progress=max(self._progress, idx / total_files * 100))
+
+            # All files retrieved → success.
+            self._record_success(model_name)
+        except DownloadCancelled:
+            self._after_cancel(model_name)
+        except Exception as e:  # noqa: BLE001
+            self._set(status=_Status.FAILED, error=str(e),
+                      message=f"下载失败：{e}")
+        finally:
+            self._cancel_event.clear()
+            with self._lock:
+                self._paused = False
+            if prev is not None:
+                os.environ["HF_ENDPOINT"] = prev
+            elif "HF_ENDPOINT" in os.environ:
+                del os.environ["HF_ENDPOINT"]
 
 
 # Module-level singleton

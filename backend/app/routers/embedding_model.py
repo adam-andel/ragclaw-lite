@@ -57,6 +57,24 @@ async def delete_embedding_model(
     return model_manager.delete(model)
 
 
+@router.post("/pause")
+async def pause_embedding_download(current_user=Depends(get_current_admin)):
+    """Pause an in-flight download (takes effect between files)."""
+    return {"paused": model_manager.pause_download()}
+
+
+@router.post("/resume")
+async def resume_embedding_download(current_user=Depends(get_current_admin)):
+    """Resume a paused download."""
+    return {"resumed": model_manager.resume_download()}
+
+
+@router.post("/cancel")
+async def cancel_embedding_download(current_user=Depends(get_current_admin)):
+    """Cancel an in-flight or paused download; partial cache is kept for resume."""
+    return {"cancelled": model_manager.cancel_download()}
+
+
 def _embedding_conflict(target: str) -> dict:
     """Decide whether switching to ``target`` would invalidate existing vectors.
 
