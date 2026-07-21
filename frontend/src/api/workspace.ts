@@ -42,6 +42,28 @@ export const downloadAndSave = async (path: string) => {
   triggerDownload(res.data, filename)
 }
 
+/**
+ * Bundle the given files/dirs into one zip (server keeps the directory
+ * structure) and trigger a single download. `root` optionally nests everything
+ * under one top-level folder inside the archive. Throws if the server returns
+ * an error document instead of a real zip.
+ */
+export const downloadZip = async (paths: string[], root = 'workspace') => {
+  const res = await client.post<Blob>('/workspace/download-zip', { paths, root }, {
+    responseType: 'blob',
+  })
+  const blob = res.data
+  // The server signals an upstream error by prefixing the body with
+  // "__RAGCLAW_ZIP_ERROR__" instead of returning a real zip. Detect that.
+  const head = await blob.slice(0, 21).text()
+  if (head.startsWith('__RAGCLAW_ZIP_ERROR__')) {
+    const text = await blob.text()
+    const msg = text.replace(/^__RAGCLAW_ZIP_ERROR__/, '').trim()
+    throw new Error(msg || '打包下载失败')
+  }
+  triggerDownload(blob, `${root}.zip`)
+}
+
 // ── Create / update / rename / delete ──
 
 export const mkdirWorkspace = (name: string) =>

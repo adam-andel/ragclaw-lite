@@ -12,6 +12,8 @@ volume the Backend mounts — hence the proxy, exactly like ``/api/download``.
 """
 from __future__ import annotations
 
+import io
+import zipfile
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -159,5 +161,125 @@ async def download(
     return StreamingResponse(
         _gen(),
         media_type="application/octet-stream",
+        headers={"Content-Disposition": disp},
+    )
+
+
+@router.post("/download-zip")
+async def download_zip(
+    user: User = Depends(get_current_user),
+    body: dict = Body(...),
+):
+    """Bundle the given files/dirs into a single zip, preserving the sandbox
+    directory structure. Directories are expanded recursively; each entry keeps
+    its relative path from the sandbox root as its archive path."""
+    import httpx
+    from urllib.parse import quote
+
+    src_paths = body.get("paths")
+    if not isinstance(src_paths, list) or not src_paths:
+        raise HTTPException(400, detail="缺少要下载的路径")
+    # Optional top-level folder name inside the archive.
+    root_dir = (str(body.get("root", "") or "")).strip("/")
+
+    uid = await _repl_uid_or_403(user)
+    base = _mcp_base()
+    headers = _ws_headers(uid)
+    client = httpx.AsyncClient(timeout=60.0)
+
+    async def _list(path: str) -> list:
+        """Return entries under `path` ('' = sandbox root) from the MCP server.
+        We build the query string inline (single percent-encode via `quote`,
+        safe='' keeps slashes) rather than passing `params=`, because httpx
+        would otherwise re-encode the already-encoded value and produce a
+        double-encoded path (e.g. `dir1%252Fsub`) that MCP can't resolve."""
+        qpath = quote(path, safe="") if path else ""
+        resp = await client.get(
+            f"{base}/workspace/?path={qpath}", headers=headers
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("entries", [])
+
+    async def _collect(path: str) -> list:
+        """Recursively collect every file (type != 'dir') under a DIRECTORY."""
+        out: list = []
+        for e in await _list(path):
+            if e.get("type") == "dir":
+                out.extend(await _collect(e["rel_path"]))
+            else:
+                out.append(e["rel_path"])
+        return out
+
+    async def _expand(src: str):
+        """Expand a selected path into (anchor, files).
+        `anchor` is the parent dir of `src`; it is the prefix we strip so the
+        zip keeps only the *internal* structure of the selection (a selected
+        dir becomes a top-level folder, a selected file becomes a bare name).
+        A file yields itself; a directory is recursed. We can't blindly `_list`
+        the path (listing a FILE makes MCP return 'no such directory'), so we
+        list its PARENT dir and look up its type first."""
+        src = str(src).strip("/")
+        parent = src.rsplit("/", 1)[0] if "/" in src else ""
+        entry = next(
+            (e for e in await _list(parent) if str(e.get("rel_path", "")).strip("/") == src),
+            None,
+        )
+        if entry is None:
+            raise HTTPException(404, detail=f"no such path: {src}")
+        if entry.get("type") == "dir":
+            files = await _collect(src)
+        else:
+            files = [src]
+        return parent, files
+
+    async def _gen():
+        buf = io.BytesIO()
+        try:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                used: set = set()
+                for src in src_paths:
+                    src = str(src).strip("/")
+                    anchor, files = await _expand(src)
+                    prefix = (anchor + "/") if anchor else ""
+                    for rel in files:
+                        rel = str(rel).strip("/")
+                        # Drop the anchor (parent) prefix so the archive holds
+                        # only the selection's internal structure: a selected
+                        # dir stays a top-level folder, a selected file a bare
+                        # name.
+                        arcname = rel[len(prefix):] if prefix and rel.startswith(prefix) else rel
+                        if not arcname:
+                            continue
+                        # Avoid duplicate archive paths (e.g. overlapping dirs).
+                        if arcname in used:
+                            continue
+                        used.add(arcname)
+                        resp = await client.get(
+                            f"{base}/workspace/{quote(rel, safe='')}", headers=headers
+                        )
+                        resp.raise_for_status()
+                        data = resp.content
+                        zf.writestr(arcname, data)
+            yield buf.getvalue()
+        except httpx.HTTPStatusError as e:
+            # Surface MCP/handler errors as an error doc instead of a corrupted
+            # zip. The client detects this via the magic-byte / prefix check.
+            yield b"__RAGCLAW_ZIP_ERROR__" + (e.response.text or "").encode("utf-8")
+        except HTTPException as e:
+            yield b"__RAGCLAW_ZIP_ERROR__" + str(e.detail).encode("utf-8")
+        except Exception as e:  # noqa: BLE001 - never emit a broken zip silently
+            yield b"__RAGCLAW_ZIP_ERROR__" + str(e).encode("utf-8")
+        finally:
+            await client.aclose()
+
+    disp_base = root_dir or "workspace"
+    disp = (
+        f'attachment; filename="{quote(disp_base + ".zip", safe="")}";'
+        f" filename*=UTF-8''{quote(disp_base + ".zip", safe='')}"
+    )
+    return StreamingResponse(
+        _gen(),
+        media_type="application/zip",
         headers={"Content-Disposition": disp},
     )
