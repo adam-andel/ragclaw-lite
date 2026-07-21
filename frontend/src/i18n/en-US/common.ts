@@ -18,6 +18,7 @@ export default {
   noData: 'No data',
   status: 'Status',
   type: 'Type',
+  allTypes: 'All Types',
   name: 'Name',
   all: 'All',
   enable: 'Enable',

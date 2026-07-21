@@ -14,6 +14,7 @@ import { streamChat, getConversation, getConversationMessages, getPendingLimit, 
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
 import { useAuthStore } from '@/stores/auth'
+import { useChatUnreadStore } from '@/stores/chatUnread'
 import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
 import { renderStreamingHtml } from '@/utils/think'
@@ -23,6 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const auth = useAuthStore()
+const chatUnread = useChatUnreadStore()
 const nmessage = useMessage()
 const dialog = useDialog()
 
@@ -476,7 +478,7 @@ const pagedConversations = computed(() => {
   return conversations.value.slice(start, start + convPageSize)
 })
 const convTotalPages = computed(() => Math.max(1, Math.ceil(conversations.value.length / convPageSize)))
-watch(showMoreConv, (v) => { if (v) convPage.value = 1 })
+watch(showMoreConv, (v) => { if (v) { convPage.value = 1; loadConversations() } })
 
 // ── History questions modal: user questions of the current conversation ──
 // Backend paginates by "round" (one Q&A = one round = 1 user + 1 assistant message),
@@ -593,6 +595,7 @@ const currentKbName = computed(() => selectedKb.value?.name || t('chat.noKb'))
 function selectAndClose(convId: string) {
   emptyMode.value = ''
   showMoreConv.value = false
+  chatUnread.clearConversation(convId)
   router.push(`/chat/${convId}`)
 }
 
@@ -641,6 +644,12 @@ onMounted(async () => {
   const id = route.params.id as string | undefined
   if (id) {
     await loadConversation(id)
+  } else if (chatUnread.hasUnread && chatUnread.lastConversationId) {
+    // An answer finished streaming while the user was away: open it now and
+    // clear the unread flag so the sidebar dot disappears.
+    const pendingId = chatUnread.lastConversationId
+    chatUnread.clearUnread()
+    await loadConversation(pendingId)
   }
 })
 
@@ -658,7 +667,14 @@ watch(() => route.params.id, async (id) => {
   if (cid && cid !== conversationId.value) {
     await loadConversation(cid)
   } else if (!cid) {
-    // Navigated to /chat without id — new conversation
+    // Navigated to /chat without id — new conversation, unless an answer just
+    // finished streaming while the user was away: open it and clear the dot.
+    if (chatUnread.hasUnread && chatUnread.lastConversationId) {
+      const pendingId = chatUnread.lastConversationId
+      chatUnread.clearUnread()
+      await loadConversation(pendingId)
+      return
+    }
     messages.value = []
     currentPage.value = 1
     totalPages.value = 1
@@ -676,6 +692,7 @@ async function loadConversation(id: string) {
     // Fetch only conversation metadata (no messages); messages are loaded via the server-side pagination API
     const conv = await getConversation(id, false)
     conversationId.value = id
+    chatUnread.clearConversation(id)
     // Restore the KB that was used with this conversation
     const savedKbId = convKbMap.value[id]
     if (savedKbId && kbs.value.find(k => k.id === savedKbId)) {
@@ -727,6 +744,9 @@ onMounted(() => {
 })
 
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
+  // KB id captured at stream start (so it stays correct even if the user
+  // switches to another conversation while this one is still streaming).
+  const streamKbId = selectedKbId.value
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
@@ -801,13 +821,25 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
         ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
         ;(proxyMsg as any)._llm = event.llm_ms || 0
-        conversationId.value = event.conversation_id
-        // Persist KB for newly created conversation
+        // Persist the KB used for this conversation (captured at stream start).
         if (!convKbMap.value[event.conversation_id]) {
-          convKbMap.value[event.conversation_id] = selectedKbId.value
+          convKbMap.value[event.conversation_id] = streamKbId
           localStorage.setItem('ragclaw:conv-kb-map', JSON.stringify(convKbMap.value))
         }
-        router.replace(`/chat/${event.conversation_id}`)
+        const currentView = conversationId.value
+        const onChat = route.path.startsWith('/chat')
+        if (onChat && (currentView === event.conversation_id || currentView === undefined)) {
+          // The answer finished for the conversation the user is currently viewing
+          // (or a brand-new one just created): keep the URL in sync.
+          conversationId.value = event.conversation_id
+          router.replace(`/chat/${event.conversation_id}`)
+        } else {
+          // The answer finished for a DIFFERENT conversation (the user switched to
+          // another chat while it was still streaming) or while the user is on
+          // another page: flag that conversation as having an unread answer
+          // instead of yanking them away.
+          chatUnread.markUnread(event.conversation_id)
+        }
         window.dispatchEvent(new CustomEvent('ragclaw:conversation-updated'))
       }
     }
@@ -952,10 +984,13 @@ function handleKeydown(e: KeyboardEvent) {
     <PageHeader :title="t('chat.title')" :icon="Chatbubbles">
       <template #actions>
         <NTag v-if="isReadonly" type="info">{{ t('chat.readonlyMode') }}</NTag>
-        <NButton size="small" @click="showMoreConv = true">
-          <template #icon><NIcon size="16"><List /></NIcon></template>
-          {{ t('chat.history') }}
-        </NButton>
+        <div class="history-btn-wrap">
+          <NButton size="small" @click="showMoreConv = true">
+            <template #icon><NIcon size="16"><List /></NIcon></template>
+            {{ t('chat.history') }}
+          </NButton>
+          <span v-if="chatUnread.hasUnread" class="history-unread-dot"></span>
+        </div>
         <NButton v-if="!isReadonly" size="small" type="primary" @click="newConversation">
           <template #icon><NIcon size="16"><Add /></NIcon></template>
           {{ t('chat.newConversation') }}
@@ -983,6 +1018,7 @@ function handleKeydown(e: KeyboardEvent) {
                 <div class="conv-row-meta">
                   <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
                   <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
+                  <span v-if="chatUnread.hasUnreadConversation(c.id)" class="conv-unread-badge">{{ t('chat.hasUnread') }}</span>
                 </div>
               </div>
             </div>
@@ -1158,6 +1194,7 @@ function handleKeydown(e: KeyboardEvent) {
             <div class="conv-row-meta">
               <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
               <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
+              <span v-if="chatUnread.hasUnreadConversation(c.id)" class="conv-unread-badge">{{ t('chat.hasUnread') }}</span>
             </div>
           </div>
         </div>
@@ -2289,5 +2326,33 @@ function handleKeydown(e: KeyboardEvent) {
 }
 @keyframes history-sentinel-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── Unread answer red dot on the history button ── */
+.history-btn-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.history-unread-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger, #e5484d);
+  border: 2px solid var(--color-surface);
+  box-sizing: content-box;
+  pointer-events: none;
+}
+/* ── Unread answer badge on a conversation row ── */
+.conv-unread-badge {
+  font-size: var(--text-xs);
+  color: #fff;
+  background: var(--color-danger, #e5484d);
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 </style>

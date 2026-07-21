@@ -32,8 +32,11 @@ const { t } = useI18n()
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 function formatTime(iso: string) {
-  // Backend stores UTC naive datetimes; treat as UTC and convert to local time.
-  const normalized = /[A-Z]|\+[0-9]{2}:[0-9]{2}$|-[0-9]{2}:[0-9]{2}$/.test(iso) ? iso : iso + 'Z'
+  // Backend stores UTC naive datetimes (e.g. "2026-07-20T10:30:00") without a
+  // timezone designator. Treat such values as UTC by appending 'Z', unless a
+  // timezone designator (Z or ±HH:MM / ±HHMM) is already present at the end.
+  const hasTimezone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso.trim())
+  const normalized = hasTimezone ? iso : iso + 'Z'
   const d = new Date(normalized)
   if (isNaN(d.getTime())) return '-'
   return new Intl.DateTimeFormat(currentLocale.value, {

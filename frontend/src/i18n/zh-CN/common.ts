@@ -18,6 +18,7 @@ export default {
   noData: '暂无数据',
   status: '状态',
   type: '类型',
+  allTypes: '全部类型',
   name: '名称',
   all: '全部',
   enable: '启用',

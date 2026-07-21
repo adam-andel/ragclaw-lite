@@ -2,20 +2,21 @@
 import { ref, computed, h, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput,
+  NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput, NSelect,
   NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import {
   FolderOpen, Folder, DocumentText, Pencil, Trash,
-  ArrowUp, Add, CloudUpload,
+  ArrowUp, Add, CloudUpload, Search, Create, ArrowForward, Download,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import type { WorkspaceEntry } from '@/api/workspace'
 import {
-  listWorkspace, downloadWorkspace, mkdirWorkspace,
-  uploadWorkspace, renameWorkspace, deleteWorkspace, fileToBase64, triggerDownload,
+  listWorkspace, downloadAndSave, downloadZip, mkdirWorkspace,
+  uploadWorkspace, renameWorkspace, deleteWorkspace, moveWorkspace,
+  fileToBase64, triggerDownload,
 } from '@/api/workspace'
 
 const { t } = useI18n()
@@ -25,6 +26,40 @@ const message = useMessage()
 const currentPath = ref('')            // relative path inside the user sandbox root
 const entries = ref<WorkspaceEntry[]>([])
 const loading = ref(false)
+const checkedRowKeys = ref<string[]>([])
+
+// ── Filename search (server-side, recursive within currentPath) ──
+const search = ref('')
+function onSearch() {
+  load()
+}
+function resetFilters() {
+  search.value = ''
+  filterType.value = 'all'
+  load()
+}
+
+// ── File-type filter (client-side by extension) ──
+const filterType = ref<string>('all')
+// Common office document formats first, then other frequently used types.
+const typeOptions = [
+  { label: t('common.allTypes'), value: 'all' },
+  { label: 'Word (.doc/.docx)', value: 'doc,docx' },
+  { label: 'Excel (.xls/.xlsx)', value: 'xls,xlsx' },
+  { label: 'PowerPoint (.ppt/.pptx)', value: 'ppt,pptx' },
+  { label: 'PDF (.pdf)', value: 'pdf' },
+  { label: 'Text (.txt)', value: 'txt' },
+  { label: 'CSV (.csv)', value: 'csv' },
+  { label: 'Markdown (.md)', value: 'md' },
+  { label: 'Image (.png/.jpg/.gif/.webp/.svg)', value: 'png,jpg,jpeg,gif,webp,bmp,svg' },
+  { label: 'Archive (.zip/.rar/.7z/.tar/.gz)', value: 'zip,rar,7z,tar,gz' },
+  { label: 'JSON (.json)', value: 'json' },
+]
+
+function extOf(name: string): string {
+  const idx = name.lastIndexOf('.')
+  return idx > 0 ? name.slice(idx + 1).toLowerCase() : ''
+}
 
 const showFolderModal = ref(false)
 const newFolderName = ref('')
@@ -44,12 +79,18 @@ const breadcrumbs = computed(() => {
   return items
 })
 
-const sortedEntries = computed(() =>
-  [...entries.value].sort((a, b) => {
+const sortedEntries = computed(() => {
+  let list = entries.value
+  if (filterType.value !== 'all') {
+    const exts = filterType.value.split(',')
+    // Only files are filtered by type; folders are hidden when a type is active.
+    list = list.filter(e => e.type !== 'dir' && exts.includes(extOf(e.name)))
+  }
+  return [...list].sort((a, b) => {
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
     return a.name.localeCompare(b.name)
-  }),
-)
+  })
+})
 
 function formatSize(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return '—'
@@ -67,6 +108,10 @@ function formatDate(mtime: number): string {
 
 // ── Columns ──
 const columns: DataTableColumns<WorkspaceEntry> = [
+  {
+    type: 'selection',
+    multiple: true,
+  },
   {
     title: t('workspace.columns.name'),
     key: 'name',
@@ -137,8 +182,9 @@ const columns: DataTableColumns<WorkspaceEntry> = [
 async function load() {
   loading.value = true
   try {
-    const data = await listWorkspace(currentPath.value)
+    const data = await listWorkspace(currentPath.value, search.value.trim())
     entries.value = data.entries || []
+    checkedRowKeys.value = []
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.load'))
   } finally {
@@ -148,6 +194,7 @@ async function load() {
 
 function navigateTo(path: string) {
   currentPath.value = path
+  search.value = ''
   load()
 }
 
@@ -158,8 +205,7 @@ function openEntry(row: WorkspaceEntry) {
 
 async function downloadEntry(row: WorkspaceEntry) {
   try {
-    const blob = await downloadWorkspace(row.rel_path)
-    triggerDownload(blob, row.name)
+    await downloadAndSave(row.rel_path)
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.download'))
   }
@@ -383,6 +429,132 @@ async function doDelete(row: WorkspaceEntry) {
   }
 }
 
+// ── Move modal (directory picker mirrors ChatView.vue) ──
+const showMoveModal = ref(false)
+const moveDirPath = ref('')                       // target dir being browsed
+const moveDirs = ref<WorkspaceEntry[]>([])        // subdirs of moveDirPath
+const moveLoading = ref(false)
+const moveNewName = ref('')
+const moveCreating = ref(false)
+const moveSubmitting = ref(false)
+// Snapshot of the selection captured when the modal opens, so later navigation
+// inside the picker doesn't affect what gets moved.
+const moveSources = ref<WorkspaceEntry[]>([])
+
+const moveCrumbSegments = computed(() => {
+  if (!moveDirPath.value) return []
+  const parts = moveDirPath.value.split('/').filter(Boolean)
+  return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
+})
+
+async function moveLoadDirs() {
+  moveLoading.value = true
+  try {
+    const data = await listWorkspace(moveDirPath.value)
+    moveDirs.value = (data.entries || []).filter(e => e.type === 'dir')
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.load'))
+    moveDirs.value = []
+  } finally {
+    moveLoading.value = false
+  }
+}
+
+function openMoveModal() {
+  moveSources.value = entries.value.filter(e => checkedRowKeys.value.includes(e.rel_path))
+  if (moveSources.value.length === 0) return
+  moveDirPath.value = currentPath.value
+  moveNewName.value = ''
+  moveCreating.value = false
+  showMoveModal.value = true
+  moveLoadDirs()
+}
+
+function moveEnterDir(entry: WorkspaceEntry) {
+  moveDirPath.value = entry.rel_path
+  moveLoadDirs()
+}
+function moveCrumb(path: string) {
+  moveDirPath.value = path
+  moveLoadDirs()
+}
+function moveToggleCreate() {
+  moveCreating.value = !moveCreating.value
+}
+async function moveCreateDir() {
+  const name = moveNewName.value.trim()
+  if (!name) return
+  const full = moveDirPath.value ? `${moveDirPath.value}/${name}` : name
+  try {
+    await mkdirWorkspace(full)
+    moveNewName.value = ''
+    moveCreating.value = false
+    moveDirPath.value = full
+    await moveLoadDirs()
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.create'))
+  }
+}
+
+async function confirmMove() {
+  const dest = moveDirPath.value
+  const sources = moveSources.value
+  if (sources.length === 0) return
+  // Reject moving a directory into itself or one of its own subdirectories.
+  // If any source fails this check, cancel ALL moves and warn.
+  for (const src of sources) {
+    if (src.type === 'dir' && (dest === src.rel_path || dest.startsWith(src.rel_path + '/'))) {
+      message.error(t('workspace.moveInvalidTarget'))
+      return
+    }
+  }
+  moveSubmitting.value = true
+  try {
+    const res = await moveWorkspace(sources.map(s => s.rel_path), dest)
+    const moved = res?.moved ?? 0
+    if (moved === 0) {
+      message.info(t('workspace.moveNoop'))
+    } else {
+      message.success(t('workspace.moveSuccess', { count: moved }))
+    }
+    showMoveModal.value = false
+    load()
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.move'))
+  } finally {
+    moveSubmitting.value = false
+  }
+}
+
+// ── Batch download (server bundles everything into one zip) ──
+const downloading = ref(false)
+
+async function batchDownload() {
+  const selected = entries.value.filter(e => checkedRowKeys.value.includes(e.rel_path))
+  if (selected.length === 0) return
+  downloading.value = true
+  try {
+    // When a single dir is selected, nest the archive under that dir's name;
+    // otherwise use the current folder name (or "workspace" at the root).
+    let root = 'workspace'
+    if (selected.length === 1 && selected[0].type === 'dir') {
+      root = selected[0].name
+    } else if (currentPath.value) {
+      root = currentPath.value.split('/').pop() || 'workspace'
+    }
+    await downloadZip(selected.map(s => s.rel_path), root)
+    message.success(
+      selected.length === 1
+        ? t('workspace.download') + ' ✓'
+        : t('workspace.downloadZipSuccess', { count: selected.length }),
+    )
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.download'))
+  } finally {
+    downloading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -390,11 +562,11 @@ onMounted(load)
   <div class="workspace-view">
     <PageHeader :title="t('workspace.title')" :icon="FolderOpen">
       <template #actions>
-        <NButton size="small" type="primary" @click="openFolderModal">
+        <NButton size="small" @click="openFolderModal">
           <template #icon><NIcon><Add /></NIcon></template>
           {{ t('workspace.newFolder') }}
         </NButton>
-        <NButton size="small" @click="openUploadModal">
+        <NButton size="small" type="primary" @click="openUploadModal">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
           {{ t('workspace.upload') }}
         </NButton>
@@ -412,9 +584,57 @@ onMounted(load)
           {{ item.label }}
         </NBreadcrumbItem>
       </NBreadcrumb>
-      <NButton size="small" tertiary class="ws-breadcrumb-back" @click="navigateTo(breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2].path : '')" :disabled="breadcrumbs.length <= 1">
-        <template #icon><NIcon><ArrowUp /></NIcon></template>
+      <span
+        class="ws-breadcrumb-back"
+        :class="{ 'ws-breadcrumb-back--disabled': breadcrumbs.length <= 1 }"
+        @click="breadcrumbs.length > 1 && navigateTo(breadcrumbs[breadcrumbs.length - 2].path)"
+      >
+        <NIcon><ArrowUp /></NIcon>
         {{ t('workspace.back') }}
+      </span>
+    </div>
+
+    <div class="ws-search-row">
+      <NInput
+        v-model:value="search"
+        :placeholder="t('common.searchFilename')"
+        clearable
+        size="small"
+        style="flex:1"
+        @keyup.enter="onSearch"
+        @clear="onSearch"
+      >
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
+      </NButton>
+      <NSelect
+        v-model:value="filterType"
+        :options="typeOptions"
+        :placeholder="t('common.type')"
+        size="small"
+        style="width:220px"
+      />
+      <NButton size="small" secondary @click="resetFilters">{{ t('common.reset') }}</NButton>
+      <NButton
+        size="small"
+        type="primary"
+        :disabled="checkedRowKeys.length === 0"
+        @click="openMoveModal"
+      >
+        <template #icon><NIcon><ArrowForward /></NIcon></template>
+        {{ t('workspace.move') }}
+      </NButton>
+      <NButton
+        size="small"
+        :disabled="checkedRowKeys.length === 0"
+        :loading="downloading"
+        @click="batchDownload"
+      >
+        <template #icon><NIcon><Download /></NIcon></template>
+        {{ t('workspace.downloadSelected') }}
       </NButton>
     </div>
 
@@ -432,6 +652,7 @@ onMounted(load)
 
         <NDataTable
           v-else
+          v-model:checked-row-keys="checkedRowKeys"
           :columns="columns"
           :data="sortedEntries"
           :row-key="(row: WorkspaceEntry) => row.rel_path"
@@ -467,6 +688,63 @@ onMounted(load)
     >
       <NInput v-model:value="renameName" :placeholder="t('workspace.newName')" @keydown.enter="confirmRename" />
     </NModal>
+
+    <!-- Move: directory picker (mirrors ChatView.vue) -->
+    <AppModal v-model:show="showMoveModal" :title="t('workspace.moveTitle')" size="detail">
+      <div class="ws-move-count">{{ t('workspace.moveSelectedCount', { count: moveSources.length }) }}</div>
+      <div class="ws-crumbs">
+        <NButton text size="small" :type="moveDirPath ? 'primary' : 'default'" @click="moveCrumb('')">
+          {{ t('workspace.breadcrumbRoot') }}
+        </NButton>
+        <template v-for="seg in moveCrumbSegments" :key="seg.path">
+          <span class="ws-sep">/</span>
+          <NButton
+            text
+            size="small"
+            :type="seg.path === moveDirPath ? 'default' : 'primary'"
+            @click="moveCrumb(seg.path)"
+          >{{ seg.name }}</NButton>
+        </template>
+      </div>
+
+      <NSpin :show="moveLoading">
+        <div class="ws-dir-list">
+          <div v-if="moveDirs.length === 0 && !moveLoading" class="ws-move-empty">
+            {{ t('workspace.noSubdir') }}
+          </div>
+          <div
+            v-for="d in moveDirs"
+            :key="d.rel_path"
+            class="ws-dir-row"
+            @click="moveEnterDir(d)"
+          >
+            <NIcon size="18" class="ws-folder"><Folder /></NIcon>
+            <span class="ws-dir-name">{{ d.name }}</span>
+            <span class="ws-enter">›</span>
+          </div>
+        </div>
+      </NSpin>
+
+      <template #footer>
+        <div class="ws-move-footer">
+          <NInput
+            v-if="moveCreating"
+            v-model:value="moveNewName"
+            size="small"
+            class="ws-create-input"
+            :placeholder="t('workspace.subdirName')"
+            @keydown.enter="moveCreateDir"
+          />
+          <NButton size="small" @click="moveCreating ? moveCreateDir() : moveToggleCreate()">
+            <template v-if="!moveCreating" #icon><NIcon size="14"><Create /></NIcon></template>
+            {{ moveCreating ? t('workspace.create') : t('workspace.createSubdir') }}
+          </NButton>
+          <NButton size="small" type="primary" :loading="moveSubmitting" @click="confirmMove">
+            {{ t('workspace.moveHere') }}
+          </NButton>
+        </div>
+      </template>
+    </AppModal>
 
     <!-- Upload Modal (mirrors DocumentManage.vue upload modal) -->
     <AppModal v-model:show="showUploadModal" :title="t('workspace.uploadFile')" size="detail">
@@ -544,6 +822,28 @@ onMounted(load)
 }
 .ws-breadcrumb-back {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 12px;
+  color: var(--color-primary, #18a058);
+  cursor: pointer;
+  font-size: 14px;
+  transition: opacity 0.2s;
+}
+.ws-breadcrumb-back:hover {
+  opacity: 0.75;
+}
+.ws-breadcrumb-back--disabled {
+  color: var(--color-text-muted, #999);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.ws-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 12px;
 }
 .ws-card {
   flex: 1;
@@ -575,4 +875,18 @@ onMounted(load)
 .upload-file-name { font-weight: 600; }
 .upload-file-size { font-size: 0.78rem; color: var(--color-text-muted); }
 .upload-file-error { font-size: 0.75rem; color: var(--color-danger, #ef4444); }
+
+/* Move modal (directory picker mirrors ChatView.vue) */
+.ws-move-count { font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 10px; }
+.ws-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
+.ws-sep { color: var(--color-text-muted); margin: 0 2px; }
+.ws-dir-list { min-height: 120px; max-height: 280px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+.ws-move-empty { padding: 24px; text-align: center; color: var(--color-text-muted); font-size: 0.85rem; }
+.ws-dir-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; transition: background .15s; }
+.ws-dir-row:hover { background: var(--color-hover, rgba(0, 0, 0, 0.04)); }
+.ws-folder { color: var(--color-primary); }
+.ws-dir-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-enter { color: var(--color-text-muted); font-size: 1.1rem; }
+.ws-move-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ws-create-input { flex: 1; }
 </style>

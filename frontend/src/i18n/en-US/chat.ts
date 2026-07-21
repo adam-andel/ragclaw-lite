@@ -6,6 +6,7 @@ export default {
   continueOrStart: 'Continue a recent conversation, or start a new one',
   untitledConversation: 'New Conversation',
   messageCount: '{count} messages',
+  hasUnread: 'Unread answer',
   moreConversations: 'More conversations ({count}) →',
   noConversations: 'No conversations yet',
   newConversationPickKb: 'New Conversation — Select Knowledge Base',

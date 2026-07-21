@@ -6,6 +6,7 @@ export default {
   continueOrStart: '从最近对话继续，或开启新的对话',
   untitledConversation: '新对话',
   messageCount: '{count} 条消息',
+  hasUnread: '有未读消息',
   moreConversations: '更多对话 ({count}) →',
   noConversations: '暂无对话记录',
   newConversationPickKb: '新建对话 — 选择知识库',
