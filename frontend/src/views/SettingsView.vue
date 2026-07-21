@@ -9,7 +9,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 
@@ -162,8 +162,14 @@ function startReindexPolling() {
   if (reindexPollTimer.value !== null) return
   reindexPollTimer.value = window.setInterval(async () => {
     await loadReindexStatus()
-    if (reindexStatus.value.status === 'completed' || reindexStatus.value.status === 'failed') {
+    const st = reindexStatus.value.status
+    if (st === 'completed' || st === 'failed') {
       stopReindexPolling()
+      if (st === 'completed') {
+        message.success(reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexDone'))
+      } else {
+        message.error(reindexStatus.value.error || reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexFailed'))
+      }
     }
   }, 2000)
 }
@@ -323,6 +329,45 @@ async function handleReindex() {
     return
   }
   await doReindex(target)
+}
+
+// "Re-index Now" = re-embed ALL documents (including chunked ones that were
+// saved before the model existed) against the currently installed & active
+// model, without switching models. This drives the dedicated POST
+// /documents/reindex endpoint, which was previously never wired to the UI —
+// so a user who installed the already-configured model had no way to vectorize
+// their chunked documents (the only other re-index trigger is the switch flow,
+// which is disabled when selecting the active model).
+async function handleRebuildIndex() {
+  if (reindexing.value) return
+  const model = embeddingStatus.value.configured_model || config.value.embedding_model
+  // Heavy, all-corpus operation (re-embeds every document + rebuilds every
+  // vector index) — require a second confirmation, just like the switch flow.
+  dialog.warning({
+    title: t('settings.embeddingModelMgmt.rebuildConfirmTitle'),
+    content: t('settings.embeddingModelMgmt.rebuildConfirmContent', { model }),
+    positiveText: t('settings.embeddingModelMgmt.rebuildConfirmOk'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => doRebuildIndex(),
+  })
+}
+
+async function doRebuildIndex() {
+  if (reindexing.value) return
+  try {
+    const res = await startReindex()
+    if (res.started) {
+      await loadReindexStatus()
+      startReindexPolling()
+      message.info(t('settings.embeddingModelMgmt.reindexStarted'))
+    } else if (res.reason === 'already_running') {
+      await loadReindexStatus()
+      startReindexPolling()
+      message.warning(t('settings.embeddingModelMgmt.reindexRunning'))
+    }
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
+  }
 }
 
 let observer: IntersectionObserver | null = null
@@ -811,7 +856,17 @@ async function handleTest() {
                 style="flex: 1"
                 @update:value="onSelectModelChange"
               />
-              <NTooltip :disabled="!switchBtnHint" placement="top">
+              <NButton
+                v-if="selectedInstalled && selectedIsConfigured"
+                type="primary"
+                :loading="reindexing"
+                :disabled="reindexing"
+                @click="handleRebuildIndex"
+              >
+                <template #icon><NIcon><Refresh /></NIcon></template>
+                {{ t('settings.embeddingModelMgmt.rebuildIndexBtn') }}
+              </NButton>
+              <NTooltip v-else :disabled="!switchBtnHint" placement="top">
                 <template #trigger>
                   <span style="display: inline-flex">
                     <NButton
@@ -909,30 +964,26 @@ async function handleTest() {
           </NFormItem>
 
           <NFormItem v-if="selectedFailed" :show-feedback="false">
-            <NAlert type="error" :bordered="false" :title="t('settings.embeddingModelMgmt.statusFailed')">
-              {{ embeddingStatus.error }}
+            <NAlert type="error" :bordered="false">
+              <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.statusFailed') }}：{{ embeddingStatus.error }}</div>
             </NAlert>
           </NFormItem>
 
-          <NFormItem v-if="reindexStatus.status !== 'idle'" :show-feedback="false">
+          <NFormItem v-if="reindexStatus.status === 'running'" :show-feedback="false">
             <NAlert
-              :type="reindexStatus.status === 'failed' ? 'error' : (reindexStatus.status === 'completed' ? 'success' : 'warning')"
+              type="warning"
               :bordered="false"
-              :title="t('settings.embeddingModelMgmt.reindexTitle')"
             >
-              <div style="font-size: 13px">
-                {{ reindexStatus.message || reindexStatus.error }}
-              </div>
-              <NProgress
-                v-if="reindexStatus.status === 'running'"
-                type="line"
-                :percentage="reindexStatus.progress"
-                :show-indicator="true"
-                :processing="true"
-                style="margin-top: 8px; max-width: 360px"
-              />
-              <div v-if="reindexStatus.status === 'running'" class="muted" style="font-size: 12px; margin-top: 4px">
-                {{ reindexStatus.current }} / {{ reindexStatus.total }}
+              <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap">
+                <span style="white-space: nowrap">{{ t('settings.embeddingModelMgmt.reindexTitle') }}：{{ reindexStatus.message || reindexStatus.error }}</span>
+                <NProgress
+                  type="line"
+                  :percentage="reindexStatus.progress"
+                  :show-indicator="true"
+                  :processing="true"
+                  style="flex: 1; min-width: 120px"
+                />
+                <span class="muted" style="font-size: 12px; white-space: nowrap">{{ reindexStatus.current }} / {{ reindexStatus.total }}</span>
               </div>
             </NAlert>
           </NFormItem>
@@ -941,10 +992,9 @@ async function handleTest() {
             v-if="dimensionConflict"
             type="warning"
             :bordered="false"
-            :title="t('settings.embeddingModelMgmt.conflictTitle')"
             style="margin-top: 8px"
           >
-            {{ dimensionConflict }}
+            <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.conflictTitle') }}：{{ dimensionConflict }}</div>
           </NAlert>
           
         </section>

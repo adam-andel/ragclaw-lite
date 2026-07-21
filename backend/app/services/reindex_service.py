@@ -14,6 +14,7 @@ import struct
 import threading
 
 from app.config import settings
+from app.models.document import DocStatus
 from app.services.embedder import embedder_service
 from app.services.vector_store import vector_store
 
@@ -93,9 +94,19 @@ class ReindexService:
 
         try:
             cur = conn.cursor()
+            # NOTE: SQLAlchemy persists the DocStatus *member name* (e.g. "CHUNKED"),
+            # not its value ("chunked"). Filter on the names to match the stored rows.
+            target_statuses = (
+                DocStatus.CHUNKED.name,
+                DocStatus.COMPLETED.name,
+                DocStatus.FAILED.name,
+                DocStatus.EMBEDDING.name,
+            )
+            placeholders = ",".join("?" for _ in target_statuses)
             cur.execute(
-                "SELECT id, filename FROM documents "
-                "WHERE status IN ('completed','failed','chunked')"
+                f"SELECT id, filename FROM documents "
+                f"WHERE status IN ({placeholders})",
+                target_statuses,
             )
             docs = cur.fetchall()
             total = len(docs)
@@ -108,8 +119,8 @@ class ReindexService:
                     self._reindex_doc(cur, conn, doc_id)
                 except Exception as e:
                     conn.execute(
-                        "UPDATE documents SET status='failed', error_message=?, progress=0 WHERE id=?",
-                        (str(e)[:500], doc_id),
+                        "UPDATE documents SET status=?, error_message=?, progress=0 WHERE id=?",
+                        (DocStatus.FAILED.name, str(e)[:500], doc_id),
                     )
                     conn.commit()
                 self._set(current=i,
@@ -127,8 +138,8 @@ class ReindexService:
     def _reindex_doc(self, cur, conn, doc_id: str) -> None:
         # Mark as in-progress so the UI reflects per-document activity.
         conn.execute(
-            "UPDATE documents SET status='embedding', progress=50, error_message='' WHERE id=?",
-            (doc_id,),
+            "UPDATE documents SET status=?, progress=50, error_message='' WHERE id=?",
+            (DocStatus.EMBEDDING.name, doc_id),
         )
         conn.commit()
 
@@ -140,8 +151,8 @@ class ReindexService:
         rows = cur.fetchall()
         if not rows:
             conn.execute(
-                "UPDATE documents SET status='completed', progress=100, chunk_count=0 WHERE id=?",
-                (doc_id,),
+                "UPDATE documents SET status=?, progress=100, chunk_count=0 WHERE id=?",
+                (DocStatus.COMPLETED.name, doc_id),
             )
             conn.commit()
             return
@@ -175,8 +186,8 @@ class ReindexService:
             vector_store.add_chunks_cached(kb_id, chunk_dicts)
 
         conn.execute(
-            "UPDATE documents SET status='completed', progress=100, chunk_count=? WHERE id=?",
-            (len(rows), doc_id),
+            "UPDATE documents SET status=?, progress=100, chunk_count=? WHERE id=?",
+            (DocStatus.COMPLETED.name, len(rows), doc_id),
         )
         conn.commit()
 
