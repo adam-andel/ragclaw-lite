@@ -11,7 +11,9 @@ Alembic revisions — there is no hand-rolled migration chain.
 """
 
 import asyncio
+import secrets
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -72,6 +74,28 @@ def _gen_uuid():
     return str(uuid.uuid4())
 
 
+def allocate_repl_uid(existing: Iterable[int]) -> int:
+    """Randomly allocate a UID in [repl_uid_range_min+1, repl_uid_range_max) not in ``existing``.
+
+    Pure function — does not touch the database. The caller is responsible for
+    passing in the currently occupied UIDs. MIN is reserved for the bootstrap
+    admin (see ``_seed_admin_user``), so regular-user allocation starts at MIN+1
+    and can never collide with the admin's fixed UID. Actual uniqueness is
+    ultimately guaranteed by the UNIQUE constraint on users.repl_uid plus a
+    commit-time retry (the pre-check may be stale under concurrency — see
+    routers/users.py create_user). Raises RuntimeError when the candidate space
+    is exhausted.
+    """
+    lo = settings.repl_uid_range_min + 1
+    hi = settings.repl_uid_range_max
+    taken = set(existing)
+    for _ in range(100):
+        cand = secrets.randbelow(hi - lo) + lo
+        if cand not in taken:
+            return cand
+    raise RuntimeError("repl_uid candidate space exhausted, cannot allocate a new UID")
+
+
 # ─── Public API ───
 
 async def init_db():
@@ -94,7 +118,7 @@ def _run_alembic_upgrade():
 
 
 def _seed_db():
-    """Seed idempotent default data (admin user, MCP server, doc-gen skill)."""
+    """Seed idempotent default data (admin user, default MCP server, doc-gen skill)."""
     import sqlite3
 
     raw = sqlite3.connect(str(settings.sqlite_path))
@@ -107,26 +131,30 @@ def _seed_db():
 
 
 def _seed_admin_user(raw):
-    """Seed default admin user (idempotent)."""
-    print("[seed] Checking default admin user...")
+    """Seed the default admin user (idempotent, atomic).
+
+    The admin gets a FIXED, reserved REPL sandbox UID (= ``repl_uid_range_min``)
+    so its workspace / code sandbox are initialised out of the box and the UID
+    is stable across restarts. Insertion is an idempotent upsert
+    (``ON CONFLICT(username) DO NOTHING``) — safe under concurrent bootstrap and
+    never raises if the admin row already exists.
+    """
     import hashlib
-
-    admin_user_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-admin-user").hexdigest()))
-    now = datetime.now(timezone.utc).isoformat()
-
     from app.services.auth import hash_password
     from app.models.user import UserRole
 
-    existing = raw.execute("SELECT id FROM users WHERE username = ?", ("admin",)).fetchone()
-    if not existing:
-        raw.execute(
-            "INSERT INTO users(id, username, hashed_password, display_name, role, is_active, created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (admin_user_id, "admin", hash_password("admin123"), "超级管理员", UserRole.ADMIN.value, 1, now),
-        )
-        print("[seed] Admin user 'admin' created")
-    else:
-        print("[seed] Admin user 'admin' already exists")
+    admin_repl_uid = settings.repl_uid_range_min
+    admin_user_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-admin-user").hexdigest()))
+    now = datetime.now(timezone.utc).isoformat()
+
+    raw.execute(
+        "INSERT INTO users(id, username, hashed_password, display_name, role, is_active, repl_uid, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(username) DO NOTHING",
+        (admin_user_id, "admin", hash_password("admin123"), "Administrator",
+         UserRole.ADMIN.value, 1, admin_repl_uid, now),
+    )
+    print("[seed] admin user ensured (admin / admin123)")
 
 
 def _seed_defaults(raw):

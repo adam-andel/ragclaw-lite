@@ -108,26 +108,7 @@ async def lifespan(app: FastAPI):
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)
-    # Seed default admin user on first launch (empty users table)
-    try:
-        from app.models.user import User
-        from app.services.auth import hash_password
-        from sqlalchemy import func, select
-        async with async_session() as db:
-            count = await db.scalar(select(func.count()).select_from(User))
-            if count == 0:
-                default_user = User(
-                    username="admin",
-                    hashed_password=hash_password("admin123"),
-                    display_name="Administrator",
-                    role="admin",
-                    is_active=True,
-                )
-                db.add(default_user)
-                await db.commit()
-                print(f"[seed] Default admin user created (admin / admin123)")
-    except Exception as e:
-        print(f"[seed] warning: {e}")
+    # Default admin user is now seeded in database._seed_db (fixed REPL UID + idempotent upsert).
     # Pre-warm BGE model to avoid cold-start on first request.
     # Only if the local model is already installed (do NOT auto-download at boot).
     try:
