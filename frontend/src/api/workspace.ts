@@ -16,8 +16,11 @@ export interface WorkspaceListResponse {
 
 // ── Listing & download ──
 
-export const listWorkspace = (path = '') =>
-  client.get<WorkspaceListResponse>('/workspace/list', { params: { path } }).then(r => r.data)
+export const listWorkspace = (path = '', search = '') => {
+  const params: Record<string, string> = { path }
+  if (search) params.search = search
+  return client.get<WorkspaceListResponse>('/workspace/list', { params }).then(r => r.data)
+}
 
 export const downloadWorkspace = (path: string) =>
   client.get<Blob>('/workspace/download', {

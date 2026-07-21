@@ -71,11 +71,15 @@ async def _json_proxy(method: str, url: str, *, headers: dict,
 async def list_dir(
     user: User = Depends(get_current_user),
     path: str = Query("", description="相对路径（在用户沙箱根目录内）"),
+    search: str = Query("", description="按文件名递归搜索（在当前路径范围内，不区分大小写）"),
 ):
     """List a directory inside the user's sandbox root."""
     uid = await _repl_uid_or_403(user)
     url = f"{_mcp_base()}/workspace/"
-    return await _json_proxy("GET", url, headers=_ws_headers(uid), params={"path": path})
+    params = {"path": path}
+    if search:
+        params["search"] = search
+    return await _json_proxy("GET", url, headers=_ws_headers(uid), params=params)
 
 
 @router.post("")

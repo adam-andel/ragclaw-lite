@@ -1373,6 +1373,39 @@ class MCPHandler(BaseHTTPRequestHandler):
         if not os.path.isdir(target):
             self._json_response(404, {"error": "no such directory"})
             return
+        search_term = (q.get("search", [""])[0] or "").strip()
+        if search_term:
+            # Recursive filename search: walk the subtree under `target` and
+            # return every dir/file whose name contains the (case-insensitive)
+            # term. Results are scoped to the requested path, not the whole
+            # sandbox. Capped to avoid pathological response sizes.
+            entries = []
+            term_lower = search_term.lower()
+            cap = 500
+            for dirpath, dirnames, filenames in os.walk(target):
+                dirnames.sort()
+                for name in sorted(dirnames) + sorted(filenames):
+                    if term_lower not in name.lower():
+                        continue
+                    full = os.path.join(dirpath, name)
+                    if not (os.path.isdir(full) or os.path.isfile(full)):
+                        continue
+                    is_dir = os.path.isdir(full)
+                    rel_path = os.path.relpath(full, root)
+                    entries.append({
+                        "name": name,
+                        "type": "dir" if is_dir else "file",
+                        "rel_path": rel_path,
+                        "size": None if is_dir else os.path.getsize(full),
+                        "mtime": os.path.getmtime(full),
+                        "download_url": f"/workspace/{rel_path}" if not is_dir else None,
+                    })
+                    if len(entries) >= cap:
+                        break
+                if len(entries) >= cap:
+                    break
+            self._json_response(200, {"path": rel, "entries": entries, "search": search_term})
+            return
         entries = []
         for name in sorted(os.listdir(target)):
             full = os.path.join(target, name)

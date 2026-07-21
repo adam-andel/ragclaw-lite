@@ -8,7 +8,7 @@ import {
 } from 'naive-ui'
 import {
   FolderOpen, Folder, DocumentText, Pencil, Trash,
-  ArrowUp, Add, CloudUpload,
+  ArrowUp, Add, CloudUpload, Search,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -25,6 +25,12 @@ const message = useMessage()
 const currentPath = ref('')            // relative path inside the user sandbox root
 const entries = ref<WorkspaceEntry[]>([])
 const loading = ref(false)
+
+// ── Filename search (server-side, recursive within currentPath) ──
+const search = ref('')
+function onSearch() {
+  load()
+}
 
 const showFolderModal = ref(false)
 const newFolderName = ref('')
@@ -137,7 +143,7 @@ const columns: DataTableColumns<WorkspaceEntry> = [
 async function load() {
   loading.value = true
   try {
-    const data = await listWorkspace(currentPath.value)
+    const data = await listWorkspace(currentPath.value, search.value.trim())
     entries.value = data.entries || []
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.load'))
@@ -148,6 +154,7 @@ async function load() {
 
 function navigateTo(path: string) {
   currentPath.value = path
+  search.value = ''
   load()
 }
 
@@ -412,9 +419,31 @@ onMounted(load)
           {{ item.label }}
         </NBreadcrumbItem>
       </NBreadcrumb>
-      <NButton size="small" tertiary class="ws-breadcrumb-back" @click="navigateTo(breadcrumbs.length > 1 ? breadcrumbs[breadcrumbs.length - 2].path : '')" :disabled="breadcrumbs.length <= 1">
-        <template #icon><NIcon><ArrowUp /></NIcon></template>
+      <span
+        class="ws-breadcrumb-back"
+        :class="{ 'ws-breadcrumb-back--disabled': breadcrumbs.length <= 1 }"
+        @click="breadcrumbs.length > 1 && navigateTo(breadcrumbs[breadcrumbs.length - 2].path)"
+      >
+        <NIcon><ArrowUp /></NIcon>
         {{ t('workspace.back') }}
+      </span>
+    </div>
+
+    <div class="ws-search-row">
+      <NInput
+        v-model:value="search"
+        :placeholder="t('common.searchFilename')"
+        clearable
+        size="small"
+        style="flex:1"
+        @keyup.enter="onSearch"
+        @clear="onSearch"
+      >
+        <template #prefix><NIcon><Search /></NIcon></template>
+      </NInput>
+      <NButton size="small" type="primary" @click="onSearch">
+        <template #icon><NIcon><Search /></NIcon></template>
+        {{ t('common.search') }}
       </NButton>
     </div>
 
@@ -544,6 +573,28 @@ onMounted(load)
 }
 .ws-breadcrumb-back {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 12px;
+  color: var(--color-primary, #18a058);
+  cursor: pointer;
+  font-size: 14px;
+  transition: opacity 0.2s;
+}
+.ws-breadcrumb-back:hover {
+  opacity: 0.75;
+}
+.ws-breadcrumb-back--disabled {
+  color: var(--color-text-muted, #999);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.ws-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 12px;
 }
 .ws-card {
   flex: 1;
