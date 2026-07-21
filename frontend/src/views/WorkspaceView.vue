@@ -2,7 +2,7 @@
 import { ref, computed, h, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput,
+  NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput, NSelect,
   NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
@@ -25,11 +25,39 @@ const message = useMessage()
 const currentPath = ref('')            // relative path inside the user sandbox root
 const entries = ref<WorkspaceEntry[]>([])
 const loading = ref(false)
+const checkedRowKeys = ref<string[]>([])
 
 // ── Filename search (server-side, recursive within currentPath) ──
 const search = ref('')
 function onSearch() {
   load()
+}
+function resetFilters() {
+  search.value = ''
+  filterType.value = 'all'
+  load()
+}
+
+// ── File-type filter (client-side by extension) ──
+const filterType = ref<string>('all')
+// Common office document formats first, then other frequently used types.
+const typeOptions = [
+  { label: t('common.allTypes'), value: 'all' },
+  { label: 'Word (.doc/.docx)', value: 'doc,docx' },
+  { label: 'Excel (.xls/.xlsx)', value: 'xls,xlsx' },
+  { label: 'PowerPoint (.ppt/.pptx)', value: 'ppt,pptx' },
+  { label: 'PDF (.pdf)', value: 'pdf' },
+  { label: 'Text (.txt)', value: 'txt' },
+  { label: 'CSV (.csv)', value: 'csv' },
+  { label: 'Markdown (.md)', value: 'md' },
+  { label: 'Image (.png/.jpg/.gif/.webp/.svg)', value: 'png,jpg,jpeg,gif,webp,bmp,svg' },
+  { label: 'Archive (.zip/.rar/.7z/.tar/.gz)', value: 'zip,rar,7z,tar,gz' },
+  { label: 'JSON (.json)', value: 'json' },
+]
+
+function extOf(name: string): string {
+  const idx = name.lastIndexOf('.')
+  return idx > 0 ? name.slice(idx + 1).toLowerCase() : ''
 }
 
 const showFolderModal = ref(false)
@@ -50,12 +78,18 @@ const breadcrumbs = computed(() => {
   return items
 })
 
-const sortedEntries = computed(() =>
-  [...entries.value].sort((a, b) => {
+const sortedEntries = computed(() => {
+  let list = entries.value
+  if (filterType.value !== 'all') {
+    const exts = filterType.value.split(',')
+    // Only files are filtered by type; folders are hidden when a type is active.
+    list = list.filter(e => e.type !== 'dir' && exts.includes(extOf(e.name)))
+  }
+  return [...list].sort((a, b) => {
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
     return a.name.localeCompare(b.name)
-  }),
-)
+  })
+})
 
 function formatSize(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return '—'
@@ -73,6 +107,10 @@ function formatDate(mtime: number): string {
 
 // ── Columns ──
 const columns: DataTableColumns<WorkspaceEntry> = [
+  {
+    type: 'selection',
+    multiple: true,
+  },
   {
     title: t('workspace.columns.name'),
     key: 'name',
@@ -145,6 +183,7 @@ async function load() {
   try {
     const data = await listWorkspace(currentPath.value, search.value.trim())
     entries.value = data.entries || []
+    checkedRowKeys.value = []
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.load'))
   } finally {
@@ -397,11 +436,11 @@ onMounted(load)
   <div class="workspace-view">
     <PageHeader :title="t('workspace.title')" :icon="FolderOpen">
       <template #actions>
-        <NButton size="small" type="primary" @click="openFolderModal">
+        <NButton size="small" @click="openFolderModal">
           <template #icon><NIcon><Add /></NIcon></template>
           {{ t('workspace.newFolder') }}
         </NButton>
-        <NButton size="small" @click="openUploadModal">
+        <NButton size="small" type="primary" @click="openUploadModal">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
           {{ t('workspace.upload') }}
         </NButton>
@@ -445,6 +484,14 @@ onMounted(load)
         <template #icon><NIcon><Search /></NIcon></template>
         {{ t('common.search') }}
       </NButton>
+      <NSelect
+        v-model:value="filterType"
+        :options="typeOptions"
+        :placeholder="t('common.type')"
+        size="small"
+        style="width:220px"
+      />
+      <NButton size="small" secondary @click="resetFilters">{{ t('common.reset') }}</NButton>
     </div>
 
     <NCard class="ws-card" :bordered="false">
@@ -461,6 +508,7 @@ onMounted(load)
 
         <NDataTable
           v-else
+          v-model:checked-row-keys="checkedRowKeys"
           :columns="columns"
           :data="sortedEntries"
           :row-key="(row: WorkspaceEntry) => row.rel_path"
