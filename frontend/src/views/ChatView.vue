@@ -1194,6 +1194,7 @@ function handleKeydown(e: KeyboardEvent) {
             <div class="conv-row-meta">
               <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
               <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
+              <span v-if="chatUnread.hasUnreadConversation(c.id)" class="conv-unread-badge">{{ t('chat.hasUnread') }}</span>
             </div>
           </div>
         </div>

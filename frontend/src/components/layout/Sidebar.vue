@@ -308,13 +308,15 @@ function goToNotifications() {
   font-weight: 600;
 }
 
-/* ── Unread answer red dot on the Chat menu label ── */
-.menu-label-with-dot {
+/* ── Unread answer red dot on the Chat menu label ──
+   The label is built with h() render functions, whose elements do NOT carry
+   the component's scoped-style attribute, so these rules must be global. */
+:global(.menu-label-with-dot) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.menu-unread-dot {
+:global(.menu-unread-dot) {
   display: inline-block;
   width: 8px;
   height: 8px;
