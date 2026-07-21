@@ -8,13 +8,13 @@ import {
 } from 'naive-ui'
 import {
   FolderOpen, Folder, DocumentText, Pencil, Trash,
-  ArrowUp, Add, CloudUpload, Search, Create, ArrowForward,
+  ArrowUp, Add, CloudUpload, Search, Create, ArrowForward, Download,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import type { WorkspaceEntry } from '@/api/workspace'
 import {
-  listWorkspace, downloadWorkspace, mkdirWorkspace,
+  listWorkspace, downloadWorkspace, downloadAndSave, mkdirWorkspace,
   uploadWorkspace, renameWorkspace, deleteWorkspace, moveWorkspace,
   fileToBase64, triggerDownload,
 } from '@/api/workspace'
@@ -205,8 +205,7 @@ function openEntry(row: WorkspaceEntry) {
 
 async function downloadEntry(row: WorkspaceEntry) {
   try {
-    const blob = await downloadWorkspace(row.rel_path)
-    triggerDownload(blob, row.name)
+    await downloadAndSave(row.rel_path)
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.download'))
   }
@@ -527,6 +526,62 @@ async function confirmMove() {
   }
 }
 
+// ── Batch download (recursively expand dirs into individual files) ──
+const downloading = ref(false)
+
+// Recursively collect every file (type !== 'dir') under `path`.
+async function collectFiles(path: string): Promise<string[]> {
+  const data = await listWorkspace(path)
+  const entries: WorkspaceEntry[] = data.entries || []
+  const files: string[] = []
+  for (const e of entries) {
+    if (e.type === 'dir') {
+      files.push(...(await collectFiles(e.rel_path)))
+    } else {
+      files.push(e.rel_path)
+    }
+  }
+  return files
+}
+
+async function batchDownload() {
+  const selected = entries.value.filter(e => checkedRowKeys.value.includes(e.rel_path))
+  if (selected.length === 0) return
+  downloading.value = true
+  try {
+    // Expand any selected directories into their contained files.
+    const targets = new Set<string>()
+    for (const e of selected) {
+      if (e.type === 'dir') {
+        const files = await collectFiles(e.rel_path)
+        files.forEach(f => targets.add(f))
+      } else {
+        targets.add(e.rel_path)
+      }
+    }
+    const list = [...targets]
+    if (list.length === 0) {
+      message.warning(t('workspace.downloadNoFiles'))
+      return
+    }
+    // Trigger one download per file. A tiny gap avoids the browser's
+    // multi-popup blocker firing on a tight loop.
+    for (const rel of list) {
+      await downloadAndSave(rel)
+      await new Promise(r => setTimeout(r, 400))
+    }
+    message.success(
+      list.length === 1
+        ? t('workspace.download') + ' ✓'
+        : t('workspace.downloadBatchSuccess', { count: list.length }),
+    )
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.download'))
+  } finally {
+    downloading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -598,6 +653,15 @@ onMounted(load)
       >
         <template #icon><NIcon><ArrowForward /></NIcon></template>
         {{ t('workspace.move') }}
+      </NButton>
+      <NButton
+        size="small"
+        :disabled="checkedRowKeys.length === 0"
+        :loading="downloading"
+        @click="batchDownload"
+      >
+        <template #icon><NIcon><Download /></NIcon></template>
+        {{ t('workspace.downloadSelected') }}
       </NButton>
     </div>
 

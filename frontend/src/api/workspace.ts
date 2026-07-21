@@ -28,6 +28,20 @@ export const downloadWorkspace = (path: string) =>
     responseType: 'blob',
   }).then(r => r.data)
 
+/** Download a file and trigger the browser "save" dialog, using the real
+ *  filename from the server's Content-Disposition header. */
+export const downloadAndSave = async (path: string) => {
+  const res = await client.get<Blob>('/workspace/download', {
+    params: { path },
+    responseType: 'blob',
+  })
+  const disp = res.headers['content-disposition'] || ''
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(disp) || /filename="?([^";]+)"?/i.exec(disp)
+  let filename = decodeURIComponent(m?.[1] || '')
+  if (!filename) filename = path.split('/').pop() || 'download'
+  triggerDownload(res.data, filename)
+}
+
 // ── Create / update / rename / delete ──
 
 export const mkdirWorkspace = (name: string) =>
