@@ -11,6 +11,7 @@ import {
 import type { MenuOption } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
+import { useChatUnreadStore } from '@/stores/chatUnread'
 import { useTheme } from '@/composables/useTheme'
 import { useLocale } from '@/i18n/useLocale'
 import { SUPPORTED_LOCALES } from '@/i18n'
@@ -23,6 +24,16 @@ const notificationStore = useNotificationStore()
 const { isDark, setDark } = useTheme()
 const { t } = useI18n()
 const { currentLocale, setLocale } = useLocale()
+const chatUnread = useChatUnreadStore()
+
+// Chat menu label with an optional red dot indicating an answer finished
+// streaming while the user was on another page.
+function chatLabel() {
+  return h('span', { class: 'menu-label-with-dot' }, [
+    h('span', t('nav.chat')),
+    chatUnread.hasUnread ? h('span', { class: 'menu-unread-dot' }) : null,
+  ])
+}
 
 const userAvatar = computed(() => auth.user?.avatar_url || '')
 const userEmoji = computed(() => localStorage.getItem('ragclaw:avatar') || '👤')
@@ -36,12 +47,12 @@ const menuOptions = computed<MenuOption[]>(() => {
   }
   if (!auth.isStaff) {
     return [
-      { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+      { label: () => chatLabel(), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
       workspaceItem,
     ]
   }
   return [
-    { label: t('nav.chat'), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
+    { label: () => chatLabel(), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     workspaceItem,
     { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
     ...(auth.isAdmin ? [
@@ -295,6 +306,21 @@ function goToNotifications() {
 /* The sidebar uses scoped styles; NMenu's internal nodes carry no scope attribute, so :deep() is needed to reach them */
 .sidebar :deep(.n-menu-item-content) {
   font-weight: 600;
+}
+
+/* ── Unread answer red dot on the Chat menu label ── */
+.menu-label-with-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.menu-unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-danger, #e5484d);
+  flex-shrink: 0;
 }
 
 /* ── Notification toast ── */
