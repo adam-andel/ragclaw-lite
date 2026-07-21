@@ -8,14 +8,15 @@ import {
 } from 'naive-ui'
 import {
   FolderOpen, Folder, DocumentText, Pencil, Trash,
-  ArrowUp, Add, CloudUpload, Search,
+  ArrowUp, Add, CloudUpload, Search, Create, ArrowForward,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import type { WorkspaceEntry } from '@/api/workspace'
 import {
   listWorkspace, downloadWorkspace, mkdirWorkspace,
-  uploadWorkspace, renameWorkspace, deleteWorkspace, fileToBase64, triggerDownload,
+  uploadWorkspace, renameWorkspace, deleteWorkspace, moveWorkspace,
+  fileToBase64, triggerDownload,
 } from '@/api/workspace'
 
 const { t } = useI18n()
@@ -429,6 +430,103 @@ async function doDelete(row: WorkspaceEntry) {
   }
 }
 
+// ── Move modal (directory picker mirrors ChatView.vue) ──
+const showMoveModal = ref(false)
+const moveDirPath = ref('')                       // target dir being browsed
+const moveDirs = ref<WorkspaceEntry[]>([])        // subdirs of moveDirPath
+const moveLoading = ref(false)
+const moveNewName = ref('')
+const moveCreating = ref(false)
+const moveSubmitting = ref(false)
+// Snapshot of the selection captured when the modal opens, so later navigation
+// inside the picker doesn't affect what gets moved.
+const moveSources = ref<WorkspaceEntry[]>([])
+
+const moveCrumbSegments = computed(() => {
+  if (!moveDirPath.value) return []
+  const parts = moveDirPath.value.split('/').filter(Boolean)
+  return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join('/') }))
+})
+
+async function moveLoadDirs() {
+  moveLoading.value = true
+  try {
+    const data = await listWorkspace(moveDirPath.value)
+    moveDirs.value = (data.entries || []).filter(e => e.type === 'dir')
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.load'))
+    moveDirs.value = []
+  } finally {
+    moveLoading.value = false
+  }
+}
+
+function openMoveModal() {
+  moveSources.value = entries.value.filter(e => checkedRowKeys.value.includes(e.rel_path))
+  if (moveSources.value.length === 0) return
+  moveDirPath.value = currentPath.value
+  moveNewName.value = ''
+  moveCreating.value = false
+  showMoveModal.value = true
+  moveLoadDirs()
+}
+
+function moveEnterDir(entry: WorkspaceEntry) {
+  moveDirPath.value = entry.rel_path
+  moveLoadDirs()
+}
+function moveCrumb(path: string) {
+  moveDirPath.value = path
+  moveLoadDirs()
+}
+function moveToggleCreate() {
+  moveCreating.value = !moveCreating.value
+}
+async function moveCreateDir() {
+  const name = moveNewName.value.trim()
+  if (!name) return
+  const full = moveDirPath.value ? `${moveDirPath.value}/${name}` : name
+  try {
+    await mkdirWorkspace(full)
+    moveNewName.value = ''
+    moveCreating.value = false
+    moveDirPath.value = full
+    await moveLoadDirs()
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.create'))
+  }
+}
+
+async function confirmMove() {
+  const dest = moveDirPath.value
+  const sources = moveSources.value
+  if (sources.length === 0) return
+  // Reject moving a directory into itself or one of its own subdirectories.
+  // If any source fails this check, cancel ALL moves and warn.
+  for (const src of sources) {
+    if (src.type === 'dir' && (dest === src.rel_path || dest.startsWith(src.rel_path + '/'))) {
+      message.error(t('workspace.moveInvalidTarget'))
+      return
+    }
+  }
+  moveSubmitting.value = true
+  try {
+    const res = await moveWorkspace(sources.map(s => s.rel_path), dest)
+    const moved = res?.moved ?? 0
+    if (moved === 0) {
+      message.info(t('workspace.moveNoop'))
+    } else {
+      message.success(t('workspace.moveSuccess', { count: moved }))
+    }
+    showMoveModal.value = false
+    load()
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.move'))
+  } finally {
+    moveSubmitting.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -492,6 +590,15 @@ onMounted(load)
         style="width:220px"
       />
       <NButton size="small" secondary @click="resetFilters">{{ t('common.reset') }}</NButton>
+      <NButton
+        size="small"
+        type="primary"
+        :disabled="checkedRowKeys.length === 0"
+        @click="openMoveModal"
+      >
+        <template #icon><NIcon><ArrowForward /></NIcon></template>
+        {{ t('workspace.move') }}
+      </NButton>
     </div>
 
     <NCard class="ws-card" :bordered="false">
@@ -544,6 +651,63 @@ onMounted(load)
     >
       <NInput v-model:value="renameName" :placeholder="t('workspace.newName')" @keydown.enter="confirmRename" />
     </NModal>
+
+    <!-- Move: directory picker (mirrors ChatView.vue) -->
+    <AppModal v-model:show="showMoveModal" :title="t('workspace.moveTitle')" size="detail">
+      <div class="ws-move-count">{{ t('workspace.moveSelectedCount', { count: moveSources.length }) }}</div>
+      <div class="ws-crumbs">
+        <NButton text size="small" :type="moveDirPath ? 'primary' : 'default'" @click="moveCrumb('')">
+          {{ t('workspace.breadcrumbRoot') }}
+        </NButton>
+        <template v-for="seg in moveCrumbSegments" :key="seg.path">
+          <span class="ws-sep">/</span>
+          <NButton
+            text
+            size="small"
+            :type="seg.path === moveDirPath ? 'default' : 'primary'"
+            @click="moveCrumb(seg.path)"
+          >{{ seg.name }}</NButton>
+        </template>
+      </div>
+
+      <NSpin :show="moveLoading">
+        <div class="ws-dir-list">
+          <div v-if="moveDirs.length === 0 && !moveLoading" class="ws-move-empty">
+            {{ t('workspace.noSubdir') }}
+          </div>
+          <div
+            v-for="d in moveDirs"
+            :key="d.rel_path"
+            class="ws-dir-row"
+            @click="moveEnterDir(d)"
+          >
+            <NIcon size="18" class="ws-folder"><Folder /></NIcon>
+            <span class="ws-dir-name">{{ d.name }}</span>
+            <span class="ws-enter">›</span>
+          </div>
+        </div>
+      </NSpin>
+
+      <template #footer>
+        <div class="ws-move-footer">
+          <NInput
+            v-if="moveCreating"
+            v-model:value="moveNewName"
+            size="small"
+            class="ws-create-input"
+            :placeholder="t('workspace.subdirName')"
+            @keydown.enter="moveCreateDir"
+          />
+          <NButton size="small" @click="moveCreating ? moveCreateDir() : moveToggleCreate()">
+            <template v-if="!moveCreating" #icon><NIcon size="14"><Create /></NIcon></template>
+            {{ moveCreating ? t('workspace.create') : t('workspace.createSubdir') }}
+          </NButton>
+          <NButton size="small" type="primary" :loading="moveSubmitting" @click="confirmMove">
+            {{ t('workspace.moveHere') }}
+          </NButton>
+        </div>
+      </template>
+    </AppModal>
 
     <!-- Upload Modal (mirrors DocumentManage.vue upload modal) -->
     <AppModal v-model:show="showUploadModal" :title="t('workspace.uploadFile')" size="detail">
@@ -674,4 +838,18 @@ onMounted(load)
 .upload-file-name { font-weight: 600; }
 .upload-file-size { font-size: 0.78rem; color: var(--color-text-muted); }
 .upload-file-error { font-size: 0.75rem; color: var(--color-danger, #ef4444); }
+
+/* Move modal (directory picker mirrors ChatView.vue) */
+.ws-move-count { font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 10px; }
+.ws-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; margin-bottom: 8px; }
+.ws-sep { color: var(--color-text-muted); margin: 0 2px; }
+.ws-dir-list { min-height: 120px; max-height: 280px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 6px; }
+.ws-move-empty { padding: 24px; text-align: center; color: var(--color-text-muted); font-size: 0.85rem; }
+.ws-dir-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; transition: background .15s; }
+.ws-dir-row:hover { background: var(--color-hover, rgba(0, 0, 0, 0.04)); }
+.ws-folder { color: var(--color-primary); }
+.ws-dir-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-enter { color: var(--color-text-muted); font-size: 1.1rem; }
+.ws-move-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ws-create-input { flex: 1; }
 </style>

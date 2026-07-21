@@ -39,6 +39,10 @@ export const uploadWorkspace = (name: string, contentBase64: string) =>
 export const renameWorkspace = (path: string, newName: string) =>
   client.post('/workspace', { action: 'rename', path, new_name: newName }).then(r => r.data)
 
+/** Move N files/dirs into a target directory (dest = '' means the sandbox root). */
+export const moveWorkspace = (paths: string[], dest: string) =>
+  client.post('/workspace', { action: 'move', paths, dest }).then(r => r.data)
+
 export const deleteWorkspace = (path: string) =>
   client.delete('/workspace', { params: { path } }).then(r => r.data)
 

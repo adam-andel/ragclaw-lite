@@ -1528,6 +1528,78 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"renamed": new_rel})
             return
 
+        if action == "move":
+            # Move N files/dirs into a target directory.
+            #   dest  : target directory rel path ("" = sandbox root)
+            #   paths : list of source rel paths to move
+            # All sources are validated up-front; if ANY check fails nothing is
+            # moved (atomic-ish, satisfies the "cancel all moves" requirement).
+            dest_raw = (body.get("dest") or "").strip("/")
+            paths = body.get("paths")
+            if not isinstance(paths, list) or not paths:
+                self._json_response(400, {"error": "no paths to move"})
+                return
+            # Resolve & validate destination directory.
+            if dest_raw:
+                dest_rel = _validate_rel(dest_raw)
+                if dest_rel is None:
+                    self._json_response(400, {"error": "invalid destination"})
+                    return
+                dest_dir = _ws_safe(root, dest_rel)
+            else:
+                dest_rel = ""
+                dest_dir = root
+            if dest_dir is None or not os.path.isdir(dest_dir):
+                self._json_response(400, {"error": "destination is not a directory"})
+                return
+            dest_real = os.path.realpath(dest_dir)
+
+            moves = []  # (src, dst) pairs to perform after full validation
+            for p in paths:
+                rel = _validate_rel(p)
+                if rel is None:
+                    self._json_response(400, {"error": f"invalid path: {p}"})
+                    return
+                src = _ws_safe(root, rel)
+                if src is None or not os.path.exists(src):
+                    self._json_response(404, {"error": f"no such path: {p}"})
+                    return
+                name = os.path.basename(rel)
+                new_rel = f"{dest_rel}/{name}" if dest_rel else name
+                dst = _ws_safe(root, new_rel)
+                if dst is None:
+                    self._json_response(400, {"error": f"invalid target for: {p}"})
+                    return
+                src_real = os.path.realpath(src)
+                # Reject moving a directory into itself or one of its own subdirs.
+                if os.path.isdir(src) and (
+                    dest_real == src_real
+                    or dest_real.startswith(src_real + os.sep)
+                ):
+                    self._json_response(
+                        400,
+                        {"error": "cannot move a directory into itself or its subdirectory"},
+                    )
+                    return
+                # Already inside the destination → skip (no-op), don't error.
+                if os.path.realpath(os.path.dirname(src)) == dest_real:
+                    continue
+                if os.path.exists(dst):
+                    self._json_response(409, {"error": f"target exists: {name}"})
+                    return
+                moves.append((src, dst))
+
+            for src, dst in moves:
+                os.rename(src, dst)
+                # Files get file-style ownership (root:gid, 0o660); directories
+                # must keep search/exec perms (0o770), like mkdir does.
+                if os.path.isdir(dst):
+                    _ensure_dir_owned(dst, acct, 0o770)
+                else:
+                    _chown(dst)
+            self._json_response(200, {"moved": len(moves)})
+            return
+
         self._json_response(400, {"error": f"unknown action: {action}"})
 
     def _handle_workspace_delete(self):
