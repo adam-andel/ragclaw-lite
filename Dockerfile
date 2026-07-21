@@ -35,6 +35,12 @@ RUN (apt-get update && \
 # download endpoint) is present. HF_HOME points into the persistent /app/data
 # volume so an installed model survives container restarts.
 ENV HF_HOME=/app/data/hf_cache
+# Disable the Xet CAS storage backend (default since huggingface_hub 0.26.0).
+# It reconstructs large files via cas-server.xethub.hf.co and often fails with
+# 401/503 on unstable networks / mirrors. Classic HTTP/LFS download is slower
+# but far more reliable. Set before python starts so huggingface_hub reads it
+# at import time (the flag is cached when the module is first imported).
+ENV HF_HUB_DISABLE_XET=1
 # Domestic PyPI mirror (overridable at build time via --build-arg PYPI_MIRROR=...);
 # used only as a fallback when the official index is unreachable.
 ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
@@ -44,8 +50,8 @@ ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 # rebuilds — even when this layer is invalidated (e.g. base image bump) pip
 # reuses cached wheels instead of re-downloading. Wheels live outside the image.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --quiet huggingface_hub || \
-    pip install --quiet --index-url ${PYPI_MIRROR} huggingface_hub
+    pip install --quiet "huggingface_hub>=0.26.0" || \
+    pip install --quiet --index-url ${PYPI_MIRROR} "huggingface_hub>=0.26.0"
 
 # ── Layer 3: Python deps (changes more often than model, less than code) ──
 # Single source of truth: backend/pyproject.toml. Avoids drift between

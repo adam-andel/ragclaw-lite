@@ -13,6 +13,12 @@ services:
         required: false
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
+      # Disable the Xet CAS storage backend (default since huggingface_hub 0.26.0).
+      # It reconstructs large files via cas-server.xethub.hf.co and frequently
+      # fails with 401/503 on unstable networks / mirrors. Falling back to the
+      # classic HTTP/LFS download is slower but far more reliable. Must be set
+      # BEFORE python imports huggingface_hub, so it lives here at container start.
+      - HF_HUB_DISABLE_XET=1
       - PUBLIC_URL=${PUBLIC_URL:-}
       # Shared HMAC secret for signing REPL sandbox user identity. Auth + per-user
       # isolation are mandatory. If unset, the Backend auto-generates a strong
