@@ -354,54 +354,6 @@ class EmbeddingModelManager:
                 raise
         fn(**kwargs)
 
-    @staticmethod
-    def _parse_file_progress(args) -> float | None:
-        """Return the current file's download fraction (0..1) from a
-        huggingface_hub progress_callback invocation, handling every known
-        convention:
-          * ~0.26+:  callback(task: str, progress)  or  callback(progress),
-                     where ``progress`` is a ProgressInfo exposing a ready-made
-                     ``.progress`` fraction (0..1) and/or ``.completed``/``.total``
-          * legacy:  callback(completed: int, total: int)
-          * single:  callback(fraction: float)  — rare
-        Returns None when the shape is unrecognised (caller falls back to a
-        per-file progress floor)."""
-        try:
-            obj = None
-            if len(args) >= 2 and isinstance(args[0], str) and not isinstance(args[1], (int, float, str)):
-                obj = args[1]
-            elif len(args) == 1 and not isinstance(args[0], (int, float, str)):
-                obj = args[0]
-            if obj is not None:
-                # Prefer the explicit 0..1 fraction when the build provides it —
-                # this is the most reliable signal and avoids divide-by-zero when
-                # ``.total`` is None (which previously left the bar stuck at 0).
-                prog = getattr(obj, "progress", None)
-                if isinstance(prog, (int, float)) and 0.0 <= float(prog) <= 1.0:
-                    return float(prog)
-                total = float(getattr(obj, "total", 0) or 0)
-                completed = (getattr(obj, "completed", None)
-                             or getattr(obj, "current", None)
-                             or getattr(obj, "downloaded", None) or 0)
-                completed = float(completed or 0)
-                if total:
-                    return max(0.0, min(1.0, completed / total))
-                # total unknown: we cannot derive a fraction, but the transfer is
-                # alive; the caller falls back to a per-file floor.
-                return None
-            # legacy: callback(completed, total)
-            if len(args) >= 2 and isinstance(args[0], (int, float)) and isinstance(args[1], (int, float)):
-                total = float(args[1])
-                if total:
-                    return max(0.0, min(1.0, float(args[0]) / total))
-            # single numeric fraction in [0, 1]
-            if len(args) == 1 and isinstance(args[0], (int, float)):
-                val = float(args[0])
-                return val if 0.0 <= val <= 1.0 else None
-        except Exception:
-            pass
-        return None
-
     def _check_abort(self, model_name: str, epoch: int) -> bool:
         """Return True if this run should stop. An epoch mismatch means a newer
         download superseded it — just return without touching state. An explicit
@@ -413,26 +365,17 @@ class EmbeddingModelManager:
             return True
         return False
 
-    def _make_progress_callback(self, file_index, total_files, file_size, total_bytes, done_bytes, epoch):
-        """Build a per-file progress callback that rolls the current file's
-        fraction into an *overall* download percentage (0..100) and, crucially,
-        raises ``DownloadCancelled`` the instant the user hits cancel — aborting
-        the in-flight transfer immediately rather than only between files. Also
-        aborts if a newer download epoch superseded this run."""
+    def _make_abort_callback(self, epoch):
+        """Progress is driven by on-disk byte polling (see _run_with_disk_progress),
+        so the huggingface_hub callback's ONLY job is instant cancellation: it
+        raises ``DownloadCancelled`` the moment the user hits cancel (or a newer
+        download epoch supersedes this run), aborting the in-flight transfer
+        mid-file instead of only between files. We no longer try to derive a
+        percentage from its args — that was fragile across versions/backends and
+        left the bar frozen (e.g. stuck at 50%)."""
         def cb(*args):
             if self._cancel_event.is_set() or self._epoch != epoch:
                 raise DownloadCancelled()
-            frac = self._parse_file_progress(args)
-            # If the fraction can't be parsed, fall back to a per-file floor so the
-            # bar still advances (it jumps at each file boundary). Without this, an
-            # unrecognised callback shape left progress pinned at 0 forever.
-            if frac is None:
-                frac = 0.0
-            if total_bytes:
-                overall = (done_bytes + frac * file_size) / total_bytes * 100
-            else:
-                overall = (file_index - 1 + frac) / total_files * 100
-            self._set(progress=max(0.0, min(100.0, overall)))
         return cb
 
     def _set_endpoint(self, endpoint: str) -> None:
@@ -452,7 +395,7 @@ class EmbeddingModelManager:
             try:
                 info = HfApi().model_info(model_name, files_metadata=True)
                 files = [
-                    (s.rfilename, int(getattr(s, "size", 0) or 0))
+                    (s.rfilename, self._sibling_size(s))
                     for s in (info.siblings or [])
                 ]
                 if files:
@@ -462,6 +405,76 @@ class EmbeddingModelManager:
             return [(f, 0) for f in list_repo_files(model_name)]
         except Exception:
             return []
+
+    @staticmethod
+    def _sibling_size(s) -> int:
+        """Best-effort byte size for a repo sibling. Big weight files are stored
+        via LFS, whose size sometimes lives in ``s.lfs`` (object or dict) rather
+        than ``s.size`` — missing it left total_bytes far too small and pinned
+        the bar at an index-based floor. Try ``size`` first, then LFS."""
+        sz = getattr(s, "size", 0) or 0
+        if sz:
+            return int(sz)
+        lfs = getattr(s, "lfs", None)
+        if lfs is not None:
+            if isinstance(lfs, dict):
+                return int(lfs.get("size", 0) or 0)
+            return int(getattr(lfs, "size", 0) or 0)
+        return 0
+
+    def _model_blobs_dir(self, model_name: str) -> Path:
+        """Path to the HF cache blobs dir for this model. Live downloads grow a
+        ``*.incomplete`` blob here; summing this dir gives true on-disk bytes."""
+        norm = model_name.replace("/", "--")
+        return self._hf_home() / f"models--{norm}" / "blobs"
+
+    @staticmethod
+    def _dir_size(path: Path) -> int:
+        total = 0
+        try:
+            for p in path.rglob("*"):
+                try:
+                    if p.is_file():
+                        total += p.stat().st_size
+                except OSError:
+                    continue
+        except Exception:
+            pass
+        return total
+
+    def _run_with_disk_progress(self, dl_callable, model_name: str,
+                                 total_bytes: int, epoch: int) -> None:
+        """Run a blocking HF download in a side thread while THIS thread polls the
+        model's on-disk blob bytes to drive a smooth, reliable progress bar —
+        independent of huggingface_hub's ``progress_callback`` shape or download
+        backend (xet / hf_transfer), which were the source of the bar freezing.
+
+        ``dl_callable`` should already carry an abort callback (raising
+        ``DownloadCancelled`` on cancel/epoch) for instant mid-file cancel; any
+        exception it raises is re-raised here so the worker handles it normally."""
+        blobs = self._model_blobs_dir(model_name)
+        done = threading.Event()
+        box: dict = {}
+
+        def run():
+            try:
+                dl_callable()
+            except BaseException as e:  # noqa: BLE001 - capture cancel + errors
+                box["err"] = e
+            finally:
+                done.set()
+
+        t = threading.Thread(target=run, daemon=True, name="hf-download-io")
+        t.start()
+        while not done.wait(0.4):
+            if total_bytes:
+                cur = self._dir_size(blobs)
+                # Cap at 99% so completion is only asserted after the call returns.
+                pct = min(99.0, cur / total_bytes * 100)
+                self._set(progress=max(self._progress, pct))
+        t.join()
+        if "err" in box:
+            raise box["err"]
 
     def _record_success(self, model_name: str) -> None:
         """Mark the model installed and pre-warm it (best-effort)."""
@@ -487,13 +500,14 @@ class EmbeddingModelManager:
 
     def _download_via_snapshot(self, model_name: str, cache_dir: str, epoch: int) -> None:
         """Fallback when the file list can't be enumerated: a single
-        ``snapshot_download``. Still cancel-capable (the progress callback can
-        raise ``DownloadCancelled``); pause is only effective between polls."""
+        ``snapshot_download``. Still cancel-capable (the abort callback raises
+        ``DownloadCancelled``); progress stays coarse here since total size is
+        unknown on this path."""
         from huggingface_hub import snapshot_download
         dl_kwargs: dict = {"repo_id": model_name, "cache_dir": cache_dir}
         self._download_with_progress(
             snapshot_download, dl_kwargs,
-            self._make_progress_callback(1, 1, 0, 0, 0, epoch), epoch, model_name)
+            self._make_abort_callback(epoch), epoch, model_name)
 
     def _download_via_attempts_snapshot(self, model_name: str, cache_dir: str,
                                         attempts: list[tuple[str, str]], epoch: int) -> None:
@@ -533,7 +547,11 @@ class EmbeddingModelManager:
                 return
 
             total_files = len(files)
-            total_bytes = sum(sz for _, sz in files) or 0
+            # Only trust byte-based (disk-polled) progress when EVERY file size is
+            # known; a partial total would make the bar rush ahead then freeze
+            # (e.g. stuck at 99%). Otherwise use the coarse index-based floor.
+            all_sizes_known = all(sz > 0 for _, sz in files)
+            total_bytes = sum(sz for _, sz in files) if all_sizes_known else 0
             done_bytes = 0
 
             for idx, (fname, fsize) in enumerate(files, start=1):
@@ -551,9 +569,12 @@ class EmbeddingModelManager:
                         return
                     self._set_endpoint(endpoint)
                     self._set(message=f"正在从{label}下载 {fname}（{idx}/{total_files}）")
-                    # Advance the progress floor to the start of this file so the
-                    # bar moves even if the progress callback never fires.
-                    self._set(progress=max(self._progress, (idx - 1) / total_files * 100))
+                    # When total size is unknown we can't poll a real %, so fall
+                    # back to an index-based floor (bar jumps at each file). With
+                    # known sizes, disk polling drives the real %, so we must NOT
+                    # apply this floor — it would wrongly jump the bar ahead.
+                    if not total_bytes:
+                        self._set(progress=max(self._progress, (idx - 1) / total_files * 100))
                     try:
                         from huggingface_hub import hf_hub_download
                         kwargs: dict = {
@@ -561,10 +582,14 @@ class EmbeddingModelManager:
                             "filename": fname,
                             "cache_dir": cache_dir,
                         }
-                        cb = self._make_progress_callback(
-                            idx, total_files, fsize, total_bytes, done_bytes, epoch)
-                        self._download_with_progress(hf_hub_download, kwargs, cb,
-                                                      epoch, model_name)
+                        cb = self._make_abort_callback(epoch)
+
+                        def _dl():
+                            self._download_with_progress(
+                                hf_hub_download, kwargs, cb, epoch, model_name)
+
+                        # Poll on-disk blob bytes for a smooth, backend-agnostic %.
+                        self._run_with_disk_progress(_dl, model_name, total_bytes, epoch)
                         downloaded = True
                         break
                     except DownloadCancelled:
@@ -578,8 +603,9 @@ class EmbeddingModelManager:
                               message=f"{fname} 下载失败：{last_err}")
                     return
                 done_bytes += fsize
-                # Mark this file fully done in the progress floor.
-                self._set(progress=max(self._progress, idx / total_files * 100))
+                # With unknown sizes, mark this file done via the index floor.
+                if not total_bytes:
+                    self._set(progress=max(self._progress, idx / total_files * 100))
 
             # All files retrieved → success.
             self._record_success(model_name)

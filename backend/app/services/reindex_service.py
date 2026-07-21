@@ -58,12 +58,24 @@ class ReindexService:
 
     # ── Control ──
 
-    def start(self) -> dict:
+    def start(self, clear_vectors: bool = False) -> dict:
         with self._lock:
             if self._status == _ReindexStatus.RUNNING:
                 return {"started": False, "reason": "already_running"}
+            # Surface the "deleting old vectors" phase immediately so the UI can
+            # show it right after the switch endpoint returns (before the worker
+            # thread actually performs the wipe). Only the embedding-model switch
+            # flow clears; the plain rebuild flow re-embeds in place instead.
+            if clear_vectors:
+                self._status = _ReindexStatus.RUNNING
+                self._progress = 0.0
+                self._message = "正在删除旧向量…"
+                self._error = ""
+                self._current = 0
+                self._total = 0
         self._thread = threading.Thread(
             target=self._worker, daemon=True, name="embedding-reindex",
+            args=(clear_vectors,),
         )
         self._thread.start()
         return {"started": True}
@@ -75,13 +87,28 @@ class ReindexService:
             for k, v in kwargs.items():
                 setattr(self, f"_{k}", v)
 
-    def _worker(self):
+    def _worker(self, clear_vectors: bool = False):
         from app.services.model_manager import model_manager
 
         if not model_manager.is_installed():
             self._set(status=_ReindexStatus.FAILED, error="模型尚未安装",
                       message="新 Embedding 模型尚未安装，无法重新向量化")
             return
+
+        # Optional first phase: wipe every existing vector collection. Used by the
+        # embedding-model switch flow, which re-embeds all documents against the
+        # new model. Reporting it up front lets the UI show "正在删除旧向量"
+        # immediately instead of only once re-embedding begins.
+        if clear_vectors:
+            self._set(status=_ReindexStatus.RUNNING, progress=0.0, current=0,
+                      total=0, error="", message="正在删除旧向量…")
+            try:
+                from app.services.vector_store import vector_store
+                vector_store.clear_all()
+            except Exception as e:
+                self._set(status=_ReindexStatus.FAILED, error=str(e),
+                          message=f"删除旧向量失败：{e}")
+                return
 
         import sqlite3
 

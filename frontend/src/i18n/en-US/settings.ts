@@ -59,6 +59,7 @@ export default {
     reindexTitle: 'Re-index Progress',
     reindexStarted: 'Background re-index task started',
     reindexRunning: 'Re-index is already running',
+    deletingVectors: 'Deleting old vectors…',
     reindexDone: 'Re-index complete',
     reindexFailed: 'Re-index failed',
     reindexPendingDownload: 'Re-index will start automatically once the model download finishes',

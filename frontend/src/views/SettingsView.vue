@@ -166,6 +166,10 @@ function startReindexPolling() {
     if (st === 'completed' || st === 'failed') {
       stopReindexPolling()
       if (st === 'completed') {
+        // The re-index (incl. the force/clear switch path) has rebuilt every
+        // vector against the now-configured model, so any prior dimension
+        // conflict is resolved — drop the stale inline warning for good.
+        dimensionConflict.value = ''
         message.success(reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexDone'))
       } else {
         message.error(reindexStatus.value.error || reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexFailed'))
@@ -353,30 +357,42 @@ async function onSelectModelChange(target: string) {
   }
 }
 
-async function onSwitched(res: { switched: boolean; model: string; installed: boolean; cleared_vectors: boolean; reindex_started: boolean }) {
-  config.value.embedding_model = res.model
-  await loadEmbeddingStatus()
-  if (res.cleared_vectors) {
-    message.warning(t('settings.embeddingModelMgmt.switchedCleared'))
-    await loadReindexStatus()
-    if (res.reindex_started) startReindexPolling()
-    else message.info(t('settings.embeddingModelMgmt.reindexPendingDownload'))
-  } else {
-    message.success(t('settings.embeddingModelMgmt.switched'))
-  }
-}
-
 // "Re-index All" = clear existing vector indexes, switch to the selected model,
 // and rebuild — i.e. switch(force=True). This only runs for an already-installed
 // model (the switch button is disabled otherwise); to use a new model the user
 // must download & install it first, then switch.
 async function doReindex(target: string) {
   switching.value = true
+  // Seed the deletion-phase panel the instant the confirm modal closes. The
+  // backend switch response is now fast (the model weights load lazily inside the
+  // re-index worker, not in the request), but we seed optimistically so the
+  // "正在删除旧向量…" line shows with zero wait even on a slow network round-trip.
+  reindexStatus.value = {
+    status: 'running',
+    progress: 0,
+    message: t('settings.embeddingModelMgmt.deletingVectors'),
+    current: 0,
+    total: 0,
+    error: '',
+  }
+  reindexing.value = true
   try {
     const res = await switchEmbeddingModel(target, true)
-    await onSwitched(res)
+    config.value.embedding_model = res.model
+    await loadEmbeddingStatus()
+    if (res.cleared_vectors && res.reindex_started) {
+      // Backend already reports "正在删除旧向量…" (set synchronously in
+      // reindex_service.start()); the poller keeps the panel in sync from here.
+      startReindexPolling()
+    } else {
+      // No vectors to clear (or reindex didn't start) — nothing to show.
+      reindexing.value = false
+    }
   } catch (e: any) {
     message.error(e?.response?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
+    stopReindexPolling()
+    reindexStatus.value = { status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0 }
+    reindexing.value = false
   } finally {
     switching.value = false
   }
@@ -394,7 +410,7 @@ async function handleReindex() {
       content: dimensionConflict.value,
       positiveText: t('settings.embeddingModelMgmt.conflictOk'),
       negativeText: t('common.cancel'),
-      onPositiveClick: () => doReindex(target),
+      onPositiveClick: () => { doReindex(target) },
     })
     return
   }
@@ -418,7 +434,7 @@ async function handleRebuildIndex() {
     content: t('settings.embeddingModelMgmt.rebuildConfirmContent', { model }),
     positiveText: t('settings.embeddingModelMgmt.rebuildConfirmOk'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => doRebuildIndex(),
+    onPositiveClick: () => { doRebuildIndex() },
   })
 }
 
@@ -1093,7 +1109,7 @@ async function handleTest() {
           </NFormItem>
 
           <NAlert
-            v-if="dimensionConflict"
+            v-if="dimensionConflict && reindexStatus.status !== 'running'"
             type="warning"
             :bordered="false"
             style="margin-top: 8px"

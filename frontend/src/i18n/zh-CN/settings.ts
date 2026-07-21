@@ -59,6 +59,7 @@ export default {
     reindexTitle: '重新向量化进度',
     reindexStarted: '已启动后台重新向量化任务',
     reindexRunning: '重新向量化正在进行中',
+    deletingVectors: '正在删除旧向量…',
     reindexDone: '重新向量化完成',
     reindexFailed: '重新向量化失败',
     reindexPendingDownload: '模型下载完成后将自动开始重新向量化',
