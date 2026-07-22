@@ -650,6 +650,11 @@ onMounted(async () => {
     const pendingId = chatUnread.lastConversationId
     chatUnread.clearUnread()
     await loadConversation(pendingId)
+  } else {
+    // No id and nothing unread: restore the last opened conversation so that
+    // leaving and re-entering the chat page preserves its state.
+    const lastConv = localStorage.getItem('ragclaw:last-conv')
+    if (lastConv) await loadConversation(lastConv)
   }
 })
 
@@ -683,6 +688,7 @@ watch(() => route.params.id, async (id) => {
     contextTokens.value = 0
     isReadonly.value = false
     emptyMode.value = 'conv'
+    localStorage.removeItem('ragclaw:last-conv')
     await loadConversations()
   }
 })
@@ -693,6 +699,9 @@ async function loadConversation(id: string) {
     const conv = await getConversation(id, false)
     conversationId.value = id
     chatUnread.clearConversation(id)
+    // Remember the currently open conversation so returning to the chat page
+    // from another page restores it (state is preserved across navigation).
+    localStorage.setItem('ragclaw:last-conv', id)
     // Restore the KB that was used with this conversation
     const savedKbId = convKbMap.value[id]
     if (savedKbId && kbs.value.find(k => k.id === savedKbId)) {
@@ -739,6 +748,7 @@ onMounted(() => {
     totalRounds.value = 0
     contextTokens.value = 0
     emptyMode.value = 'conv'
+    localStorage.removeItem('ragclaw:last-conv')
     loadConversations()
   })
 })
@@ -968,6 +978,8 @@ function newConversation() {
   contextTokens.value = 0
   isReadonly.value = false
   emptyMode.value = 'kb'
+  // Starting a fresh conversation clears the remembered open conversation.
+  localStorage.removeItem('ragclaw:last-conv')
   loadConversations()
   router.replace('/chat')
 }

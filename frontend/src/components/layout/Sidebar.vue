@@ -77,9 +77,20 @@ const selectedKey = computed(() => {
 
 function handleMenuUpdate(key: string) {
   if (key === '/chat') {
-    router.push('/chat').then(() => {
-      window.dispatchEvent(new CustomEvent('ragclaw:reset-chat'))
-    })
+    // Returning to the chat page must NOT reset its state. Restore the right
+    // conversation with the following priority:
+    //   1. An answer that finished streaming while the user was away (unread) —
+    //      opening it also clears the sidebar red dot.
+    //   2. Otherwise the last opened conversation, so leaving/entering the chat
+    //      page preserves the previously viewed conversation.
+    let target = '/chat'
+    if (chatUnread.hasUnread && chatUnread.lastConversationId) {
+      target = `/chat/${chatUnread.lastConversationId}`
+    } else {
+      const last = localStorage.getItem('ragclaw:last-conv')
+      if (last) target = `/chat/${last}`
+    }
+    router.push(target)
   } else {
     router.push(key)
   }
