@@ -15,6 +15,21 @@
 #             uvicorn to --reload, so saving a .py file hot-restarts the server
 #             WITHOUT rebuilding the image. PYTHONPATH=/app/backend (Dockerfile)
 #             makes the mounted source what actually runs.
+#   * mcp-repl — bind-mounts ./mcp over the image's /app, so editing the REPL
+#             sandbox server (.py) takes effect WITHOUT rebuilding the image.
+#             The base image still supplies Python + Node + pip deps; only the
+#             server source is overlaid by the bind mount. Unlike the backend,
+#             the MCP server has no uvicorn-style --reload. To get hot-reload in
+#             dev WITHOUT touching the image or prod, just start the dev stack —
+#             `--dev` automatically launches the host-side watcher in the
+#             background (no separate terminal needed):
+#               bash bin/sh/start.sh --dev start
+#             The watcher (`compose restart mcp-repl`) fires on any ./mcp source
+#             change. It is tracked by a PID file and cleaned up together with
+#             the stack via `bash bin/sh/start.sh stop`. (No watchdog in the
+#             image, prod untouched.) For a manual/opt-in alternative, run
+#             `bash bin/sh/watch_mcp.sh --dev` directly, or restart by hand with
+#             `docker compose restart mcp-repl` (cheap, no rebuild).
 #   * frontend-dev — a Vite dev server with HMR; source bind-mounted, /api
 #             proxied (see frontend/vite.config.*) to the `ragclaw` service inside
 #             the docker network.
@@ -34,6 +49,44 @@ services:
       - ./backend:/app/backend
     # Replace the image CMD with a reload-enabled uvicorn.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
+
+  # ── REPL MCP Server (dev: bind-mount local source) ───────────────────────────
+  # Mirror the `ragclaw` dev pattern: overlay ./mcp (host) on top of the image's
+  # /app so edits to the sandbox server take effect WITHOUT rebuilding the image.
+  # The base image (built from ./mcp) still supplies Python + Node + pip deps —
+  # only the server source is replaced by the bind mount.
+  #
+  # The named volumes ragclaw_workspace / ragclaw_policy / ragclaw_auth_secret
+  # (declared in the base file) continue to mount on /app/workspace,
+  # /repl-policy and /repl-auth, on top of this bind mount.
+  #
+  # NOTE: the host entrypoint.sh is *not* executable, so we can't rely on the
+  # image's `ENTRYPOINT ["./entrypoint.sh"]` under a bind mount (permission
+  # denied). We wrap it with `sh` instead — the script's setup (workspace chown
+  # + egress DNS via /etc/resolv.conf) still runs. PYTHONDONTWRITEBYTECODE=1 in
+  # the image keeps /app from being written.
+  mcp-repl:
+    volumes:
+      - ./mcp:/app
+    # The host entrypoint.sh is not executable, so bypass the image's
+    # `ENTRYPOINT ["./entrypoint.sh"]` (would fail with permission denied under
+    # the bind mount) by launching it via `sh`. Replicates the base CMD args.
+    entrypoint: ["sh"]
+    command:
+      - /app/entrypoint.sh
+      - "--port"
+      - "9200"
+      - "--allow-dir"
+      - "/app/workspace"
+      - "--no-network"
+      - "--max-memory-mb"
+      - "512"
+      - "--max-nproc"
+      - "64"
+      - "--max-concurrent"
+      - "4"
+      - "--enable-shell"
+      - "--enable-javascript"
 
   # ── Frontend Vite dev server (HMR) ────────────────────────────────────────
   # Runs `vite` with hot-module-replacement. Source is bind-mounted so edits on

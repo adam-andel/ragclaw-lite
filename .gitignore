@@ -22,6 +22,9 @@ data/uploads/*
 # Environment
 .env
 
+# Runtime state (watcher PID file / log)
+.run/
+
 # IDE
 .vscode/
 .idea/

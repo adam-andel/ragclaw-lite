@@ -17,15 +17,25 @@ CONTAINER_PORT=8000   # backend container port; host port = RAGCLAW_PORT / .env 
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
 
-# Dev-mode toggle: optional leading --dev / --prod flag (env RAGCLAW_DEV default).
+# Dev-mode toggle: optional leading --dev / --prod / --watch flags (env RAGCLAW_DEV default).
 RAGCLAW_DEV="${RAGCLAW_DEV:-0}"
-case "${1:-}" in
-  --dev)  RAGCLAW_DEV=1; shift ;;
-  --prod) RAGCLAW_DEV=0; shift ;;
-esac
+WATCH=0
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --dev)   RAGCLAW_DEV=1 ;;
+    --prod)  RAGCLAW_DEV=0 ;;
+    --watch) WATCH=1 ;;
+    *) c_yellow "Unknown flag: $1" ;;
+  esac
+  shift
+done
 COMPOSE_FILE="$ROOT/docker-compose.yml"
 if [ "$RAGCLAW_DEV" = "1" ] && [ -f "$ROOT/docker-compose.dev.yml" ]; then
   COMPOSE_DEV="$ROOT/docker-compose.dev.yml"
+fi
+# --dev implies the mcp-repl hot-reload watcher (Route B, watch_mcp.sh).
+if is_dev_mode; then
+  WATCH=1
 fi
 
 # start builds the whole stack; ragclaw is multi-stage (node + python), the other
@@ -35,6 +45,42 @@ REQUIRED_IMAGES=("library/python:3.12-slim" "library/node:22-alpine")
 if is_dev_mode; then
   REQUIRED_IMAGES+=("library/node:22-bookworm-slim")
 fi
+
+# ---- mcp-repl hot-reload watcher (Route B) ----
+# dev mode implies this is enabled; it is launched as a detached background
+# process and tracked by a PID file so `stop` can clean it up together with
+# the stack. It only ever does `compose restart mcp-repl` — no image rebuild,
+# no effect on production.
+RUN_DIR="$ROOT/.run"
+WATCH_PID="$RUN_DIR/watch_mcp.pid"
+WATCH_LOG="$RUN_DIR/watch_mcp.log"
+
+start_watcher() {
+  mkdir -p "$RUN_DIR"
+  if [ -f "$WATCH_PID" ] && kill -0 "$(cat "$WATCH_PID")" 2>/dev/null; then
+    c_yellow "  mcp-repl watcher already running (pid $(cat "$WATCH_PID")) — skipping."
+    return 0
+  fi
+  local devflag=""
+  is_dev_mode && devflag="--dev"
+  c_cyan "=== Starting mcp-repl hot-reload watcher ($(mode_label) mode) ==="
+  nohup bash "$SCRIPT_DIR/watch_mcp.sh" $devflag > "$WATCH_LOG" 2>&1 &
+  disown
+  echo $! > "$WATCH_PID"
+  c_dim "  watcher pid: $(cat "$WATCH_PID")   log: $WATCH_LOG"
+  c_dim "  stopped together with the stack via:  bash bin/sh/start.sh stop"
+}
+
+stop_watcher() {
+  if [ -f "$WATCH_PID" ]; then
+    local pid="$(cat "$WATCH_PID")"
+    if kill -0 "$pid" 2>/dev/null; then
+      c_dim "  stopping mcp-repl watcher (pid $pid)"
+      kill "$pid" 2>/dev/null
+    fi
+    rm -f "$WATCH_PID"
+  fi
+}
 
 # ---- helpers ----
 build_stack() {  # $1 = mirror
@@ -95,6 +141,7 @@ case "${1:-start}" in
     echo
     c_cyan "=== Starting stack ==="
     up_stack || exit 1
+    [ "$WATCH" = "1" ] && start_watcher
     PORT="$(ragclaw_published_port)"
     wait_for_backend
     echo
@@ -126,6 +173,7 @@ case "${1:-start}" in
     echo
     c_cyan "=== Recreating stack ==="
     up_stack force || exit 1
+    [ "$WATCH" = "1" ] && start_watcher
     PORT="$(ragclaw_published_port)"
     wait_for_backend
     echo
@@ -138,6 +186,7 @@ case "${1:-start}" in
     ;;
 
   stop)
+    stop_watcher
     c_cyan "=== Stopping all services ==="
     if compose stop; then
       c_green "All services stopped (Docker)"
@@ -156,5 +205,6 @@ case "${1:-start}" in
 
   *)
     c_yellow "Usage: bash bin/sh/start.sh [--dev|--prod] [start|stop|reload|status]"
+    c_yellow "  --dev  implies the mcp-repl hot-reload watcher (no separate terminal needed)"
     ;;
 esac
