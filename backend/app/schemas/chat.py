@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    query: str = Field(..., min_length=1)
+    # Empty string is allowed when resuming a suspended run (resume_action
+    # continue/stop): the real query is persisted in the suspension snapshot,
+    # not in the request body. A genuine new question must still be non-empty
+    # (validated in the endpoint).
+    query: str = Field(default="")
     kb_id: str = Field(...)             # Keep required: one KB per conversationB
     skill_id: str | None = None         # Optional: specify a SKILL; None means auto-route
     conversation_id: str | None = None

@@ -222,8 +222,10 @@ mcp_servers:
 
 ## Core rule (must follow)
 Your job is NOT to show code to the user — it is to actually operate on
-workspace files. For every request you MUST call the `run_python` tool to
-perform the file operation. Never just print code and stop.
+workspace files. For any request that requires a file operation, you MUST
+call the `run_python` tool to perform it (never just print code and stop).
+If a previous tool result has ALREADY fully satisfied the request, do NOT
+call run_python again — the task is complete.
 
 ## Operations
 - **Create**: write a new file with `open(path, "w", encoding="utf-8")`.

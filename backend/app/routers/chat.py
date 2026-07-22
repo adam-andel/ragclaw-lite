@@ -489,6 +489,13 @@ async def chat_stream(
         await db.commit()
         conv_id = conv.id
 
+    # Resume (continue/stop) may carry an empty body.query because the real
+    # query is persisted in the suspension snapshot. A genuine new question
+    # must carry a non-empty query.
+    is_resume = request.resume_action in ("continue", "stop")
+    if not is_resume and not request.query:
+        raise HTTPException(status_code=422, detail="query 不能为空")
+
     # Build conversation history (last N messages)
     result = await db.execute(
         select(Message)
@@ -502,15 +509,18 @@ async def chat_stream(
     # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
     kb_prompt = await get_kb_prompt(request.kb_id)
 
-    # Save user message
-    user_msg = Message(
-        id=str(uuid.uuid4()),
-        conversation_id=conv_id,
-        role="user",
-        content=request.query,
-        created_at=datetime.utcnow(),
-    )
-    db.add(user_msg)
+    # Save user message (skipped on resume: the original question is already
+    # in history and the snapshot carries the query — don't append a duplicate
+    # empty user bubble).
+    if not is_resume:
+        user_msg = Message(
+            id=str(uuid.uuid4()),
+            conversation_id=conv_id,
+            role="user",
+            content=request.query,
+            created_at=datetime.utcnow(),
+        )
+        db.add(user_msg)
 
     # Update conversation timestamp
     conv.updated_at = datetime.utcnow()
@@ -551,6 +561,12 @@ async def chat_stream(
                     else:
                        # User sends a new question (not continue/stop): treat as stop, discard the suspension, and answer the new question normally
                         await _clear_pending_state(db, conv_id)
+                elif is_resume:
+                    # Resume requested but no suspension snapshot exists
+                    # (e.g. it was already cleared). Cannot replay with an
+                    # empty query, so fail loudly instead of producing a blank answer.
+                    enqueue("error", {"message": "没有可恢复的对话状态，请重新发起提问。"})
+                    return
 
                 if resume_mode is None:
                    # ── 1. Normal new question (with cache) ───

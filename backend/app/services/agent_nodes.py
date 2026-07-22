@@ -81,16 +81,24 @@ def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
     """Forced tool-call JSON system prompt. lang='zh' reproduces the original behavior."""
     if lang == "en":
         return (
-            "# ⚠️ CRITICAL INSTRUCTION: Output a tool-call JSON\n\n"
-            "You MUST NOT reply to the user directly, invent file links, or fabricate "
-            "download URLs. You MUST immediately output a single pure JSON object to call a tool.\n\n"
+            "# ⚠️ CRITICAL INSTRUCTION: Decide whether to call a tool (or explicitly stop)\n\n"
+            "Your job is to decide whether another tool call is still needed.\n\n"
+            "## When to STOP calling tools (most important)\n"
+            "- If the prior tool results ALREADY fully satisfy the user's request "
+            "(e.g. the file was successfully created/modified, the computation is done), "
+            "do NOT call any tool again.\n"
+            "- Output ONLY an EMPTY object `{}` and the system will generate the final reply.\n"
+            "- NEVER call the same tool again just to 'confirm' a result, and NEVER repeat a "
+            "write/append that already achieved its goal.\n"
+            "- Only keep calling tools when further action is genuinely required.\n\n"
             "## When you MUST use a tool\n"
-            "- User asks to generate / create / write / save a file -> MUST call run_python\n"
+            "- User asks to generate / create / write / save / append / modify a file -> MUST call run_python\n"
             "- User asks to run code, do data processing, or compute -> MUST call run_python\n"
-            "- Any file read/write operation -> MUST call run_python\n\n"
+            "- Any file read/write operation that is NOT yet done -> MUST call run_python\n\n"
             "## Available tools\n" + tool_desc + "\n\n"
             "## Output format\n"
-            '{"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n\n'
+            'When a tool is still needed: {"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n'
+            'When the task is done (no tool needed): {}\n\n'
             "## Rules\n"
             "- Output ONLY the JSON object above, with no extra text.\n"
             '- You MUST use double quotes (") and MUST NOT use single quotes (\').\n'
@@ -98,28 +106,32 @@ def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
             "- Do NOT wrap the JSON in ``` code fences.\n"
             "- Do NOT output [TOOL_CALL] or <tool_call> tags.\n"
             '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
-            "- Do NOT output the final reply - that happens in the next stage.\n"
+            "- Do NOT output the final reply; if the task is done, output {} instead.\n"
             "- NEVER fabricate File, file paths, or UUIDs."
         )
     return (
-        "# ⚠️ 关键指令：输出工具调用 JSON\n\n"
-        "**绝对禁止**直接回复用户、编造文件链接或下载地址。"
-        "你必须立即输出一个纯 JSON 对象来调用工具。\n\n"
+        "# ⚠️ 关键指令：判断是否需要调用工具（或显式停止）\n\n"
+        "你的职责是判断「现在是否还需要继续调用工具」。\n\n"
+        "## 何时停止调用工具（最重要）\n"
+        "- 如果**之前的工具结果已经完整满足用户的需求**（例如：文件已成功创建/修改、计算已完成、数据已处理），**不要再调用任何工具**。\n"
+        "- 此时请只输出一个**空对象** `{}`，系统会据此生成最终回复给用户。\n"
+        "- **绝对不要**为了「确认结果」「再检查一次」而重复调用同一个工具；也不要重复执行一个已经达成目标的写入/追加操作（例如文件里已经有用户要的内容了，就不要再写一遍）。\n"
+        "- 只有当确实需要进一步操作（如「先读后写」、真正的多步流程）时，才继续调用工具。\n\n"
         "## 何时必须使用工具\n"
-        "- 用户要求「生成」「创建」「写入」「保存」文件 → **必须**调用 run_python\n"
+        "- 用户要求「生成」「创建」「写入」「保存」「追加」「修改」文件 → **必须**调用 run_python\n"
         "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
-        "- 任何读写文件的操作 → **必须**调用 run_python\n\n"
+        "- 任何**尚未完成**的读写文件操作 → **必须**调用 run_python\n\n"
         "## 可用工具\n" + tool_desc + "\n\n"
         "## 输出格式\n"
-        '{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n\n'
+        '还需要调用工具时：{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n'
+        '任务已完成、无需再调用工具时：{}\n\n'
         "## 规则\n"
-        "- 只输出上述 JSON 对象，不要附加任何文字\n"
+        "- 只输出上述 JSON 对象，不要附加任何多余文字\n"
         "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
         "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
         "- 不要用 ``` 包裹 JSON\n"
         "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
         "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
-        "- 不要输出最终回复——那是下一阶段的事\n"
         "- **绝对不要**编造File、文件路径或 uuid"
     )
 
@@ -1041,13 +1053,50 @@ def _build_memory_context(memories: list[dict]) -> str:
 
 # ── Tool Decision ──
 
+def _tool_call_signature(tc: dict) -> tuple:
+    """Normalized (name, args_json) signature for repeat detection across rounds."""
+    f = (tc or {}).get("function", {}) or {}
+    name = f.get("name")
+    try:
+        args = json.loads(f.get("arguments", "{}"))
+    except (json.JSONDecodeError, TypeError):
+        args = {}
+    return (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+
+
+def _same_tool_calls(a: list, b: list) -> bool:
+    """True if two tool-call lists are identical by normalized signature."""
+    if not a or not b or len(a) != len(b):
+        return False
+    return all(_tool_call_signature(x) == _tool_call_signature(y) for x, y in zip(a, b))
+
+
+def _looks_like_error(result: str) -> bool:
+    if not result:
+        return False
+    r = result.lower()
+    return "错误" in result or "异常" in result or "error" in r or "traceback" in r
+
+
+def _recent_assistant_tool_calls(tool_messages: list, window: int = 3) -> list:
+    """Most-recent-first list of assistant tool_calls (up to `window` rounds)."""
+    out = []
+    for m in reversed(tool_messages or []):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            out.append(m["tool_calls"])
+            if len(out) >= window:
+                break
+    return out
+
+
 async def tool_decision_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
     available_tools = state.get("available_tools", [])
     tool_round = state.get("tool_round", 0)
     prev_results = state.get("tool_results", [])
-    # ── Force WARNING for debugging: print state on every entry ──
+    # Intentionally logs every decision entry at WARNING level to aid debugging
+    # of tool-call loops (see the deterministic loop guard below). Keep this.
     logger.warning("🔍 tool_decision ENTER: round=%d tools=%d prev_results=%d cache=%s",
                    tool_round, len(available_tools), len(prev_results),
                    state.get("cache_hit"))
@@ -1266,6 +1315,41 @@ async def tool_decision_node(state: dict) -> dict:
                                    SELF_HEAL_MAX_RETRIES, intended)
 
         if tool_calls:
+            # ── Deterministic loop guard ──
+            # The model is unreliable at self-terminating: after a successful
+            # append/write it often re-issues the SAME tool call, producing an
+            # infinite loop that only pauses at the round quota (the "继续"
+            # button then recharges it). We enforce termination deterministically:
+            # if the chosen call is identical to a recent round AND that round
+            # succeeded, stop and let the graph emit the final answer.
+            prev_calls = _recent_assistant_tool_calls(state.get("tool_messages", []), window=3)
+            if prev_calls:
+                last_call = prev_calls[0]
+                exact_repeat = _same_tool_calls(tool_calls, last_call)
+                # Degenerate-loop case: the last up-to-3 rounds collapsed into a
+                # single repeated signature (a pure repeat loop, NOT a legit
+                # A/B/C cycle which would show >=2 distinct signatures).
+                recent_sigs = []
+                for calls in prev_calls:
+                    recent_sigs.extend(_tool_call_signature(tc) for tc in calls)
+                new_sigs = {_tool_call_signature(tc) for tc in tool_calls}
+                degenerate_loop = (
+                    len(recent_sigs) >= 2
+                    and len(set(recent_sigs)) == 1
+                    and new_sigs.issubset(set(recent_sigs))
+                )
+                if exact_repeat or degenerate_loop:
+                    prev_results = state.get("tool_results", [])
+                    last_result = prev_results[-1] if prev_results else ""
+                    if not _looks_like_error(last_result):
+                        logger.warning(
+                            "Tool decision: loop guard tripped (exact=%s degenerate=%s, round=%d) — forcing stop",
+                            exact_repeat, degenerate_loop, tool_round,
+                        )
+                        _emit(state, "tool_loop_guard",
+                              "已检测到重复调用相同工具，自动停止以避免死循环，并生成最终回复。")
+                        return {"tool_calls": None}
+
             # Strip any raw [TOOL_CALL] wrapper / --code fragments the model may
             # have dumped into content alongside native tool_calls, so they
             # never surface in the chat or pollute the tool-execution history.
