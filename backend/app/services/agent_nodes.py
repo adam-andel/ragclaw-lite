@@ -39,6 +39,11 @@ _FORCE_PY_KEYWORDS = (
     "运行代码", "执行代码", "跑一下", "计算", "数据处理", "画图", "绘图", "统计",
     "generate", "create", "write", "save", "export", "download",
     "run code", "execute", "compute", "plot", "chart", "csv", "excel", "txt",
+    # CRUD on workspace files (read / update / delete) -> force run_python too
+    "读取文件", "查看文件", "读文件", "修改文件", "更新文件", "编辑文件",
+    "改动文件", "删除文件", "删掉文件", "移除文件", "重命名", "移动文件",
+    "read file", "view file", "edit file", "update file", "modify file",
+    "delete file", "remove file", "rename", "move file",
 )
 
 
@@ -609,16 +614,16 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "use_skill",
                 "description": (
-                    "加载并使用另一个技能（例如「文档生成助手」）。加载后该技能的规则与工具立即生效，"
+                    "加载并使用另一个技能（例如「Document Manager」）。加载后该技能的规则与工具立即生效，"
                     "当前对话即可调用其能力。适用于当前技能无法直接完成的子任务"
-                    "（如「PPT美化」需要先有 PPT 文件，可临时 use_skill「文档生成助手」生成后再返回美化）。"
+                    "（如「PPT美化」需要先有 PPT 文件，可临时 use_skill「Document Manager」生成后再返回美化）。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "skill_name": {
                             "type": "string",
-                            "description": "要使用的技能名称，例如「文档生成助手」。可先调用 list_skills 查看可用技能。",
+                            "description": "要使用的技能名称，例如「Document Manager」。可先调用 list_skills 查看可用技能。",
                         },
                         "reason": {
                             "type": "string",
@@ -635,7 +640,7 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "done_skill",
                 "description": (
-                    "结束当前临时技能，返回到上一层技能（例如用「文档生成助手」生成文件后，"
+                    "结束当前临时技能，返回到上一层技能（例如用「Document Manager」生成文件后，"
                     "调用 done_skill 回到「PPT美化」继续美化）。无需返回时不必调用。"
                 ),
                 "parameters": {"type": "object", "properties": {}, "required": []},

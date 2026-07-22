@@ -202,7 +202,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 - **Schema 来源**：`migrations/versions/2624081b4b65_initial_schema.py`（单条 *initial schema* 基线，一次性建出全部 16 张业务表 + 约束/索引）。后续所有 schema 演进都通过新的迁移文件表达。
 - **构建入口**：`app/database.py` 的 `init_db()` 依次执行
   1. `alembic upgrade head`（应用全部迁移，已是最新则为空操作）；
-  2. 幂等 seed（写入默认管理员 `admin`、文档生成技能 `doc-gen`、Python 执行器 MCP Server）。
+  2. 幂等 seed（写入默认管理员 `admin`、文档管理技能 `doc-manager`、Python 执行器 MCP Server）。
 - **依赖**：`alembic` 已加入 `backend/pyproject.toml`。
 
 ### 全新安装
