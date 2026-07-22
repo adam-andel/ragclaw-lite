@@ -400,6 +400,29 @@ def _extract_intended_tool_name(content: str, available_tools: list[dict]) -> st
     return None
 
 
+def _strip_tool_call_noise(content: str) -> str:
+    """Strip raw [TOOL_CALL] wrapper text and stray --code / => fragments from an
+    assistant message's content.
+
+    When the model emits native tool_calls it sometimes ALSO dumps a raw
+    `[TOOL_CALL] ... [/TOOL_CALL]` block (or a `--code "..."` shell-style fragment)
+    into the content field. That text must never leak into the visible chat or the
+    tool-execution history, so we remove it here. Any clean preamble the model
+    added (e.g. "好的，我来生成文件") is preserved.
+    """
+    if not content:
+        return content
+    import re
+    cleaned = re.sub(r'\[TOOL_CALL\][\s\S]*?\[/TOOL_CALL\]', '', content, flags=re.IGNORECASE)
+    # Remove a leftover bare tool-call object like {tool => "run_python", args => {...}}
+    cleaned = re.sub(r'\{\s*tool\s*=>(?:\s*args)?\s*=>?\s*\{[\s\S]*?\}\s*\}', '', cleaned,
+                     flags=re.IGNORECASE)
+    # Remove stray --code / --flag "..." or '...' fragments (with or without a
+    # space/dash between the flag and its quoted value)
+    cleaned = re.sub(r'--?[A-Za-z_]+(?:\s*=\s*|\s+)?(?:"[^"]*"|\'[^\']*\')', '', cleaned)
+    return cleaned.strip()
+
+
 def build_selfheal_prompt(tool_name: str, bad_output: str, lang: str = "zh") -> str:
     """Layer 2: instruction that asks the LLM to rewrite a malformed tool call
     as strictly valid JSON. The prior bad output is fed back as context.
@@ -1238,7 +1261,11 @@ async def tool_decision_node(state: dict) -> dict:
                                    SELF_HEAL_MAX_RETRIES, intended)
 
         if tool_calls:
-            tool_msg = {"role": "assistant", "content": content or "", "tool_calls": tool_calls}
+            # Strip any raw [TOOL_CALL] wrapper / --code fragments the model may
+            # have dumped into content alongside native tool_calls, so they
+            # never surface in the chat or pollute the tool-execution history.
+            clean_content = _strip_tool_call_noise(content) if content else ""
+            tool_msg = {"role": "assistant", "content": clean_content, "tool_calls": tool_calls}
             _emit(state, "round", f"第 {tool_round + 1} 轮工具调用")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 

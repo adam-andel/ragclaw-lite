@@ -21,7 +21,7 @@ from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
-from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
+from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
 from app.services.llm_semaphore import llm_limiter
@@ -41,6 +41,46 @@ router = APIRouter(prefix="/api", tags=["Chat"])
 def _sse(event_type: str, payload: dict) -> str:
     """Format a single SSE data line."""
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
+
+
+# The model sometimes echoes a raw `[TOOL_CALL] ... [/TOOL_CALL]` block into its
+# final answer (it "restates" the tool call it just made). That text must never
+# reach the user — the pipeline has already executed the real tool call via the
+# proper tool-decision path. We intercept it here: anything inside a
+# [TOOL_CALL] span is withheld from the live stream and stripped from the saved
+# answer, so the call is effectively "consumed" by the pipeline, not dumped raw.
+_TOOL_CALL_SPAN_RE = re.compile(r'\[TOOL_CALL\].*?\[/TOOL_CALL\]', re.DOTALL | re.IGNORECASE)
+
+
+def _suppress_tool_call_span(buffer: str):
+    """Given an accumulating stream buffer, return the text that is safe to emit
+    (everything outside any `[TOOL_CALL] ... [/TOOL_CALL]` block) while holding
+    back any trailing *unclosed* `[TOOL_CALL]` span — including a partial open
+    tag that may be split across stream chunks — until its closing tag (or the
+    end of the stream) arrives.
+
+    Returns ``(text_to_emit, remaining_buffer_to_hold)``.
+    """
+    out = ""
+    pos = 0
+    for m in _TOOL_CALL_SPAN_RE.finditer(buffer):
+        out += buffer[pos:m.start()]
+        pos = m.end()
+    rest = buffer[pos:]
+    # Intact, unclosed open tag → hold from there.
+    open_pos = rest.find("[TOOL_CALL]")
+    if open_pos != -1:
+        out += rest[:open_pos]
+        return out, rest[open_pos:]
+    # No intact open tag, but a partial open tag may be split across chunks
+    # (e.g. "[TOOL_CA" + "LL]..."). Hold back from the last "[" if what follows
+    # is a prefix of the literal open tag "[TOOL_CALL]".
+    bi = rest.rfind("[")
+    if bi != -1 and "[TOOL_CALL]".startswith(rest[bi:]):
+        out += rest[:bi]
+        return out, rest[bi:]
+    out += rest
+    return out, ""
 
 
 async def _save_assistant_message(
@@ -684,10 +724,30 @@ async def chat_stream(
                     emit_agent_step("generating", "生成回答中…")
                     collected_content = ""
                     collected_citations = []
+                    _stream_buf = ""  # holds back [TOOL_CALL] spans from live display
 
                     async for token in llm_client.chat_stream(messages, conversation_id=conv_id):
                         collected_content += token
-                        enqueue("token", {"content": token})
+                        _stream_buf += token
+                        emit_text, _stream_buf = _suppress_tool_call_span(_stream_buf)
+                        if emit_text:
+                            enqueue("token", {"content": emit_text})
+
+                    # Flush any trailing buffer (e.g. an unclosed [TOOL_CALL] span)
+                    # and strip it so it never reaches the visible answer.
+                    if _stream_buf:
+                        flush = _strip_tool_call_noise(
+                            re.sub(r'\[TOOL_CALL\][\s\S]*', '', _stream_buf, flags=re.IGNORECASE)
+                        )
+                        if flush:
+                            enqueue("token", {"content": flush})
+
+                    # Clean the persisted answer: the raw [TOOL_CALL] span (and any
+                    # dangling tail) must never be stored or shown to the user. The
+                    # real tool call was already executed via the tool-decision path.
+                    collected_content = _strip_tool_call_noise(
+                        re.sub(r'\[TOOL_CALL\][\s\S]*', '', collected_content, flags=re.IGNORECASE)
+                    )
 
                     # Inject download links from tool results
                     dl_links = _extract_download_links_from_state(state)
