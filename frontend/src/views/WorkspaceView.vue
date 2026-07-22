@@ -3,7 +3,7 @@ import { ref, computed, h, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput, NSelect,
-  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, useMessage,
+  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, NTooltip, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import {
@@ -157,20 +157,40 @@ const columns: DataTableColumns<WorkspaceEntry> = [
     width: 200,
     render: (row) => h(NSpace, { size: 4, wrap: false }, {
       default: () => [
-        h(NButton, {
-          size: 'tiny', quaternary: true,
-          onClick: () => openEntry(row),
-        }, { default: () => t(row.type === 'dir' ? 'workspace.open' : 'workspace.download') }),
-        h(NButton, {
-          size: 'tiny', quaternary: true,
-          onClick: () => startRename(row),
-        }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Pencil) }) }),
+        h(NTooltip, { placement: 'top' }, {
+          trigger: () => h(NButton, {
+            size: 'tiny', quaternary: true,
+            onClick: () => openEntry(row),
+          }, {
+            icon: () => h(NIcon, { size: 14 }, {
+              default: () => h(row.type === 'dir' ? FolderOpen : Download),
+            }),
+          }),
+          default: () => t(row.type === 'dir' ? 'workspace.open' : 'workspace.download'),
+        }),
+        h(NTooltip, { placement: 'top' }, {
+          trigger: () => h(NButton, {
+            size: 'tiny', quaternary: true,
+            onClick: () => startRename(row),
+          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Pencil) }) }),
+          default: () => t('workspace.rename'),
+        }),
+        h(NTooltip, { placement: 'top' }, {
+          trigger: () => h(NButton, {
+            size: 'tiny', quaternary: true,
+            onClick: () => moveRow(row),
+          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(ArrowForward) }) }),
+          default: () => t('workspace.move'),
+        }),
         h(NPopconfirm, {
           onPositiveClick: () => doDelete(row),
         }, {
-          trigger: () => h(NButton, {
-            size: 'tiny', quaternary: true, type: 'error',
-          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Trash) }) }),
+          trigger: () => h(NTooltip, { placement: 'top' }, {
+            trigger: () => h(NButton, {
+              size: 'tiny', quaternary: true, type: 'error',
+            }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Trash) }) }),
+            default: () => t('workspace.delete'),
+          }),
           default: () => t('workspace.deleteWarning', { name: row.name }),
         }),
       ],
@@ -470,6 +490,15 @@ function openMoveModal() {
   moveLoadDirs()
 }
 
+function moveRow(row: WorkspaceEntry) {
+  moveSources.value = [row]
+  moveDirPath.value = currentPath.value
+  moveNewName.value = ''
+  moveCreating.value = false
+  showMoveModal.value = true
+  moveLoadDirs()
+}
+
 function moveEnterDir(entry: WorkspaceEntry) {
   moveDirPath.value = entry.rel_path
   moveLoadDirs()
@@ -598,27 +627,6 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <div class="ws-breadcrumb-row">
-      <NBreadcrumb class="ws-breadcrumb">
-        <NBreadcrumbItem
-          v-for="(item, idx) in breadcrumbs"
-          :key="item.path || 'root'"
-          :clickable="idx !== breadcrumbs.length - 1"
-          @click="idx !== breadcrumbs.length - 1 && navigateTo(item.path)"
-        >
-          {{ item.label }}
-        </NBreadcrumbItem>
-      </NBreadcrumb>
-      <span
-        class="ws-breadcrumb-back"
-        :class="{ 'ws-breadcrumb-back--disabled': breadcrumbs.length <= 1 }"
-        @click="breadcrumbs.length > 1 && navigateTo(breadcrumbs[breadcrumbs.length - 2].path)"
-      >
-        <NIcon><ArrowUp /></NIcon>
-        {{ t('workspace.back') }}
-      </span>
-    </div>
-
     <div class="ws-search-row">
       <NInput
         v-model:value="search"
@@ -654,6 +662,7 @@ onMounted(load)
       </NButton>
       <NButton
         size="small"
+        type="primary"
         :disabled="checkedRowKeys.length === 0"
         :loading="downloading"
         @click="batchDownload"
@@ -671,6 +680,27 @@ onMounted(load)
         <template #icon><NIcon><Trash /></NIcon></template>
         {{ t('workspace.deleteSelected') }}
       </NButton>
+    </div>
+
+    <div class="ws-breadcrumb-row">
+      <NBreadcrumb class="ws-breadcrumb">
+        <NBreadcrumbItem
+          v-for="(item, idx) in breadcrumbs"
+          :key="item.path || 'root'"
+          :clickable="idx !== breadcrumbs.length - 1"
+          @click="idx !== breadcrumbs.length - 1 && navigateTo(item.path)"
+        >
+          {{ item.label }}
+        </NBreadcrumbItem>
+      </NBreadcrumb>
+      <span
+        class="ws-breadcrumb-back"
+        :class="{ 'ws-breadcrumb-back--disabled': breadcrumbs.length <= 1 }"
+        @click="breadcrumbs.length > 1 && navigateTo(breadcrumbs[breadcrumbs.length - 2].path)"
+      >
+        <NIcon><ArrowUp /></NIcon>
+        {{ t('workspace.back') }}
+      </span>
     </div>
 
     <NCard class="ws-card" :bordered="false">
@@ -866,6 +896,7 @@ onMounted(load)
 .ws-breadcrumb {
   padding: 0 4px 12px;
   flex-shrink: 0;
+  font-size: 14px;
 }
 .ws-breadcrumb-back {
   flex-shrink: 0;
