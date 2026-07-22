@@ -247,65 +247,6 @@ async def health_check():
     }
 
 
-# --- Download proxy: relay MCP-generated files through RAGClaw ---
-@app.get("/api/download/{file_path:path}")
-async def download_mcp_file(file_path: str):
-    """Proxy file download from MCP REPL server.
-
-    Fetches the file from the MCP server's internal /files/ endpoint and
-    returns it to the client. This keeps the MCP server isolated — no
-    host port mapping needed, and no localhost-dependent URLs.
-
-    The ``file_path`` carries the nested allow-dir-relative path, which may
-    include a per-user prefix (e.g. ``user_u2001/<ws>/<file>``) when sandbox
-    isolation is active. Slashes are preserved; path traversal is blocked.
-    """
-    from fastapi import HTTPException
-    from fastapi.responses import Response
-    import httpx
-    import mimetypes
-    import posixpath
-
-    # Reconstruct the nested allow-dir-relative path and block traversal.
-    # Slashes inside file_path are kept so per-user isolation paths survive.
-    norm = posixpath.normpath(file_path.replace("\\", "/").strip("/"))
-    if not norm or ".." in norm.split("/"):
-        raise HTTPException(400, detail="Invalid download path")
-    parts = norm.split("/")
-    if len(parts) < 2:
-        raise HTTPException(400, detail="Invalid download path")
-    safe_uuid = "/".join(parts[:-1])
-    safe_filename = parts[-1]
-    if not safe_filename or "/" in safe_filename or ".." in safe_filename:
-        raise HTTPException(400, detail="Invalid filename")
-
-    mcp_base = settings.mcp_repl_internal_url.rstrip("/")
-    mcp_url = f"{mcp_base}/files/{safe_uuid}/{safe_filename}"
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(mcp_url)
-            resp.raise_for_status()
-            body = resp.content  # read full body before client exits
-    except httpx.ConnectError:
-        raise HTTPException(503, detail="MCP REPL server unreachable")
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(404, detail="File not found or expired")
-        raise HTTPException(502, detail=f"MCP server error: {e.response.status_code}")
-    except Exception as e:
-        raise HTTPException(502, detail=f"Download proxy error: {str(e)}")
-
-    mime_type, _ = mimetypes.guess_type(safe_filename)
-    media_type = mime_type or "application/octet-stream"
-
-    return Response(
-        content=body,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
-    )
-
-
 # --- Workspace static files (user-accessible download) ---
 workspace_dir = settings.project_root / "data" / "workspace"
 workspace_dir.mkdir(parents=True, exist_ok=True)

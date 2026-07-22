@@ -8,7 +8,8 @@ user's ``user_u<uid>`` root dir under ``_allow_dir``.
 
 This is the only way the Backend can reach those files: ``/app/workspace`` is a
 tmpfs living *inside* the mcp-repl container, not on the shared ``ragclaw_data``
-volume the Backend mounts — hence the proxy, exactly like ``/api/download``.
+volume the Backend mounts — hence the proxy, exactly like the chat download
+links which now also route through ``/api/workspace/download``.
 """
 from __future__ import annotations
 

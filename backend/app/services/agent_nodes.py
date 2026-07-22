@@ -1377,13 +1377,18 @@ import re as _re
 def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
     """Ensure download links are present in tool result.
 
-    Generates download URLs pointing to RAGClaw's own /api/download/{uuid}/ proxy
+    Generates download URLs pointing to RAGClaw's own ``/api/workspace/download``
     endpoint, so the user only needs access to RAGClaw — the MCP server stays
-    fully internal with no host port exposure.
+    fully internal with no host port exposure. The uid is resolved server-side
+    from the caller's session, so the per-user Linux uid (``user_uNNNN``) is
+    NEVER included in the URL.
 
     ``uuid_dir`` is the full relative path under the sandbox's allow-dir, which
     may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
+    Only the sandbox-relative part (uid prefix stripped) goes into the link.
     """
+    from urllib.parse import quote
+
     m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
     if not m:
         return result
@@ -1391,29 +1396,62 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     if not uuid_dir:
         return result
 
+    # Do NOT leak the per-user Linux uid in the URL. The workspace proxy
+    # resolves the uid server-side from the caller's session, so only the
+    # sandbox-relative path (uid prefix stripped) belongs in the link.
+    # The uid may be a bare root (user_u10000) or nested (user_u10000/<ws>),
+    # so strip the trailing slash optionally.
+    rel = _re.sub(r'^user_u\d+/?', '', uuid_dir)
     from app.config import settings
     public_base = settings.public_url.rstrip("/") if settings.public_url else ""
-    proxy_prefix = f"{public_base}/api/download/{uuid_dir}" if public_base else f"/api/download/{uuid_dir}"
+    # Build the query path WITHOUT a leading slash (bare root -> "" so the file
+    # segment is appended directly). The workspace endpoint lstrip()s a leading
+    # slash anyway, but keeping it consistent avoids two shapes of the same link.
+    query_path = quote(rel) + ("/" if rel else "")
+    proxy_prefix = f"{public_base}/api/workspace/download?path={query_path}"
 
     if "[File]" in result:
-        # MCP server included [File] tags with its own URL — rewrite to RAGClaw proxy.
-        # uuid_dir may contain "/" (nested per-user path), so escape it.
+        # MCP server included [File] tags with its own URL — rewrite to the
+        # RAGClaw workspace download endpoint. uuid_dir may contain "/" (nested
+        # per-user path), so escape it. The captured group is the file path
+        # under uuid_dir; encode it so spaces/Unicode stay valid in the URL.
         result = _re.sub(
             r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',
-            f'{proxy_prefix}/\\1',
+            lambda mo: f"{proxy_prefix}/{quote(mo.group(1))}",
             result
         )
+    # The [workspace: <uuid>/] tag carries the per-user Linux uid and is only
+    # needed above to rewrite [File] links — strip it so the uid never persists
+    # in tool results / conversation history.
+    result = _re.sub(r'\[workspace:\s*[\w/-]+/\]', '', result)
+
     # If MCP didn't generate [File] links (missing REPL_PUBLIC_URL),
     # we don't fabricate broken links — let the result speak for itself.
 
     return result
+
+
+def _normalize_download_url(url: str) -> str:
+    """Rewrite the legacy public download proxy (/api/download/<uid>/...) to the
+    workspace endpoint so the per-user Linux uid is never exposed in a URL.
+
+    Legacy links can survive in model output (copied from earlier turns that used
+    the old route) or in persisted history. Normalizing keeps every visible link
+    uid-free and lets the idempotent injection drop duplicates instead of
+    appending a second, differently-shaped link.
+    """
+    m = _re.match(r'^/api/download/user_u\d+/(.*)$', url)
+    if m:
+        return f"/api/workspace/download?path={m.group(1)}"
+    return url
+
 
 def _extract_download_links_from_state(state: dict) -> str:
     """Scan tool results for download links and format them for final display.
 
     This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
     Formats [File] tags as clickable Markdown links the frontend can render.
-    Supports both absolute (https://...) and relative (/api/download/...) URLs.
+    Supports both absolute (https://...) and relative (/api/workspace/download?path=...) URLs.
     """
     tool_results = state.get("tool_results", [])
     links = []
@@ -1421,13 +1459,18 @@ def _extract_download_links_from_state(state: dict) -> str:
     for r in tool_results:
         # Match both absolute and relative [File] URLs
         for url_match in _re.finditer(
-            r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r
+            r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', r
         ):
-            url = url_match.group(1)
-            if url not in seen:
-                seen.add(url)
-                filename = url.rstrip("/").rsplit("/", 1)[-1]
-                links.append(f"- [📥 {filename}]({url})")
+            url = _normalize_download_url(url_match.group(1))
+            filename = url.rstrip("/").rsplit("/", 1)[-1]
+            # Dedupe by the RENDERED line, not just the raw URL: a proxy URL
+            # and a raw REPL URL (or a trailing-slash variant) may render
+            # identically yet differ as strings, which a raw-URL dedup would
+            # miss and would surface as two duplicate download links.
+            line = f"- [📥 {filename}]({url})"
+            if line not in seen:
+                seen.add(line)
+                links.append(line)
     if links:
         return "\n\n---\n" + "\n".join(links)
     return ""
@@ -1553,7 +1596,7 @@ async def tool_executor_node(state: dict) -> dict:
 
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
-        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r)
+        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/workspace/download\S+))', r)
         if fm:
             fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
             tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
