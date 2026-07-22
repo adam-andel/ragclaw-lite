@@ -216,7 +216,7 @@ class LLMClient:
         tools: list[dict],
         temperature: float | None = None,
         max_tokens: int | None = None,
-        tool_choice: str = "auto",
+        tool_choice: str | dict = "auto",
         conversation_id: str | None = None,
     ) -> dict:
         """Non-streaming chat with tool calling support.
@@ -226,7 +226,10 @@ class LLMClient:
             tools: List of tool definitions in OpenAI function-calling format
             temperature: Override default temperature
             max_tokens: Override default max tokens
-            tool_choice: "auto" | "required" | "none" (default "auto")
+            tool_choice: "auto" | "required" | "none", OR a named-tool dict
+                {"type": "function", "function": {"name": "<tool>"}} to force a
+                specific tool. TokenHub/MiniMax-M2.5 does NOT support "required"
+                (400/502), but the named-tool dict form IS supported.
             conversation_id: Conversation-scoped id (enables Tencent TokenHub cache key)
 
         Returns:

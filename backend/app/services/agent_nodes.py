@@ -26,6 +26,21 @@ logger.setLevel(logging.INFO)
 MAX_TOOL_ROUNDS = 5
 MAX_SKILL_SWITCHES = 4  # Route D: cap on use_skill pushes to prevent runaway chaining
 
+# ── Tool-call robustness (3-layer defense against malformed tool calls) ──
+# Layer 1: force a named tool via tool_choice dict when intent is unambiguous.
+# Layer 2: self-heal retry — on parse failure, ask the LLM to rewrite as valid JSON.
+# Layer 3: regex fallback parser (see _try_parse_tool_call / _try_heuristic_code_extract).
+SELF_HEAL_MAX_RETRIES = 2          # max self-heal rewrite attempts on parse failure
+TRANSIENT_RETRY_MAX = 3            # max retries on transient upstream errors (502)
+TRANSIENT_BACKOFF_BASE = 0.5       # seconds; exponential backoff base for 502 retries
+# Keywords that strongly imply a run_python call (file generation / code / compute).
+_FORCE_PY_KEYWORDS = (
+    "生成", "创建", "写入", "保存", "导出", "输出文件", "下载",
+    "运行代码", "执行代码", "跑一下", "计算", "数据处理", "画图", "绘图", "统计",
+    "generate", "create", "write", "save", "export", "download",
+    "run code", "execute", "compute", "plot", "chart", "csv", "excel", "txt",
+)
+
 
 # ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
 # zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
@@ -247,8 +262,16 @@ def _try_heuristic_code_extract(content: str) -> list[dict] | None:
     _clog = _hlog.getLogger("ragclaw.agent")
 
     patterns = [
-        r"""code\s*[:=]>\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$""",
+        # --code "VALUE" / code "VALUE" — LLMs sometimes emit a --code flag
+        # with unescaped inner quotes. VALUE is the last quoted field before the
+        # closing braces, so capture greedily up to the final quote.
+        r'(?:--code|code)\s*[:=]?>?\s*"([\s\S]+)"\s*\}?\s*\}?\s*$',
+        r"(?:--code|code)\s*[:=]?>?\s*'([\s\S]+)'\s*\}?\s*\}?\s*$",
+        # code => "VALUE" / code => 'VALUE' (arrow syntax)
         r'code\s*[:=]>\s*"([\s\S]+?)"\s*\}?\s*\}?\s*$',
+        r"""code\s*[:=]>\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$""",
+        # "code": "VALUE"
+        r'"code"\s*:\s*"([\s\S]+?)"\s*\}?\s*\}?\s*$',
         r'''''"code"\s*:\s*'([\s\S]+?)'\s*\}?\s*\}?\s*$''''',
     ]
 
@@ -318,6 +341,150 @@ def _try_extract_code_as_tool(content: str, available_tools: list[dict]) -> list
 
     _clog.info("code_extract: no code found in content=%.200s", content[:200])
     return None
+
+
+# ── Tool-call robustness helpers (Layer 1 + Layer 2) ──
+
+def _tool_names(available_tools: list[dict]) -> list[str]:
+    """Return the list of callable tool names from an OpenAI-format tool list."""
+    names = []
+    for t in available_tools:
+        n = t.get("function", {}).get("name")
+        if n:
+            names.append(n)
+    return names
+
+
+def _infer_forced_tool(query: str, available_tools: list[dict],
+                       active_skill: dict | None) -> str | None:
+    """Layer 1: decide whether to force a specific tool via tool_choice dict.
+
+    Returns a tool name to force, or None to keep tool_choice="auto".
+
+    Priority:
+      1. Skill-declared force_tool (active_skill["force_tool"]) if that tool is available.
+      2. Keyword inference: file-generation / code / compute intent -> run_python.
+
+    Forcing is intentionally conservative: it only fires when the tool is
+    actually available AND the intent is unambiguous, so pure chit-chat still
+    goes through tool_choice="auto".
+    """
+    names = set(_tool_names(available_tools))
+    if not names:
+        return None
+    # 1. Skill-declared preference
+    if active_skill:
+        ft = active_skill.get("force_tool")
+        if ft and ft in names:
+            return ft
+    # 2. Keyword inference -> run_python
+    if "run_python" in names:
+        q = (query or "").lower()
+        if any(kw.lower() in q for kw in _FORCE_PY_KEYWORDS):
+            return "run_python"
+    return None
+
+
+def _extract_intended_tool_name(content: str, available_tools: list[dict]) -> str | None:
+    """Layer 2: from malformed output, guess which tool the LLM intended to call.
+
+    Even when the JSON/format is broken, the tool name is usually present as a
+    substring (e.g. `{tool => "run_python", ...}`). Return the first available
+    tool name found in the content, or None.
+    """
+    if not content:
+        return None
+    for name in _tool_names(available_tools):
+        if name and name in content:
+            return name
+    return None
+
+
+def _strip_tool_call_noise(content: str) -> str:
+    """Strip raw [TOOL_CALL] wrapper text and stray --code / => fragments from an
+    assistant message's content.
+
+    When the model emits native tool_calls it sometimes ALSO dumps a raw
+    `[TOOL_CALL] ... [/TOOL_CALL]` block (or a `--code "..."` shell-style fragment)
+    into the content field. That text must never leak into the visible chat or the
+    tool-execution history, so we remove it here. Any clean preamble the model
+    added (e.g. "好的，我来生成文件") is preserved.
+    """
+    if not content:
+        return content
+    import re
+    cleaned = re.sub(r'\[TOOL_CALL\][\s\S]*?\[/TOOL_CALL\]', '', content, flags=re.IGNORECASE)
+    # Remove a leftover bare tool-call object like {tool => "run_python", args => {...}}
+    cleaned = re.sub(r'\{\s*tool\s*=>(?:\s*args)?\s*=>?\s*\{[\s\S]*?\}\s*\}', '', cleaned,
+                     flags=re.IGNORECASE)
+    # Remove stray --code / --flag "..." or '...' fragments (with or without a
+    # space/dash between the flag and its quoted value)
+    cleaned = re.sub(r'--?[A-Za-z_]+(?:\s*=\s*|\s+)?(?:"[^"]*"|\'[^\']*\')', '', cleaned)
+    return cleaned.strip()
+
+
+def build_selfheal_prompt(tool_name: str, bad_output: str, lang: str = "zh") -> str:
+    """Layer 2: instruction that asks the LLM to rewrite a malformed tool call
+    as strictly valid JSON. The prior bad output is fed back as context.
+    """
+    snippet = (bad_output or "")[:1500]
+    if lang == "en":
+        return (
+            "Your previous tool call was NOT valid JSON and could not be parsed. "
+            f"You MUST call the tool `{tool_name}` now.\n\n"
+            "## Your previous (invalid) output\n" + snippet + "\n\n"
+            "## Requirements\n"
+            f'- Output ONLY a single pure JSON object: {{"tool": "{tool_name}", "arguments": {{...}}}}\n'
+            "- Use double quotes (\") only. NEVER use single quotes, `=>`, `--code`, "
+            "or [TOOL_CALL] tags.\n"
+            '- Escape any double quotes inside string values as \\", and newlines as \\n.\n'
+            "- Do NOT add any explanation before or after the JSON."
+        )
+    return (
+        "你上一次的工具调用不是合法 JSON，无法被解析。"
+        f"你现在必须调用工具 `{tool_name}`。\n\n"
+        "## 你上一次的（非法）输出\n" + snippet + "\n\n"
+        "## 要求\n"
+        f'- 只输出一个纯 JSON 对象：{{"tool": "{tool_name}", "arguments": {{...}}}}\n'
+        "- 只能使用双引号（\"）；绝对不要使用单引号、`=>`、`--code` 或 [TOOL_CALL] 标签\n"
+        "- 字符串值内部的双引号用 \\\" 转义，换行用 \\n\n"
+        "- JSON 前后不要附加任何解释文字"
+    )
+
+
+async def _chat_with_tools_resilient(
+    messages: list[dict], tools: list[dict], tool_choice,
+    temperature: float, max_tokens: int,
+) -> dict:
+    """Call chat_with_tools with exponential backoff on transient upstream
+    errors (HTTP 502 / 502001). Non-transient errors (e.g. 400) are re-raised
+    immediately so the caller can fall back (e.g. drop a forced tool_choice).
+    """
+    import httpx
+    last_err = None
+    for attempt in range(TRANSIENT_RETRY_MAX):
+        try:
+            return await llm_client.chat_with_tools(
+                messages=messages, tools=tools,
+                temperature=temperature, max_tokens=max_tokens,
+                tool_choice=tool_choice,
+            )
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else 0
+            last_err = e
+            if code == 502 and attempt < TRANSIENT_RETRY_MAX - 1:
+                delay = TRANSIENT_BACKOFF_BASE * (2 ** attempt)
+                logger.warning("chat_with_tools 502 (attempt %d/%d), backing off %.1fs",
+                               attempt + 1, TRANSIENT_RETRY_MAX, delay)
+                await asyncio.sleep(delay)
+                continue
+            raise
+        except Exception as e:
+            last_err = e
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("chat_with_tools_resilient: exhausted retries")
 
 
 # ── Router (Layer 1: name + description only) ──
@@ -976,21 +1143,49 @@ async def tool_decision_node(state: dict) -> dict:
         tool_calls = None
         content = ""
 
+        # ── Layer 1: force a named tool when intent is unambiguous ──
+        # Only on the first round (no prior results) so we never lock the LLM
+        # into a tool during multi-round reasoning. TokenHub does not support
+        # tool_choice="required", but the named-tool dict form IS supported.
+        forced_tool = None
+        if tool_round == 0 and not prev_results:
+            forced_tool = _infer_forced_tool(state.get("query", ""), available_tools, active)
+        tool_choice = (
+            {"type": "function", "function": {"name": forced_tool}}
+            if forced_tool else "auto"
+        )
+
         try:
-            logger.warning("Tool decision: trying chat_with_tools (native), %d tools, round=%d",
-                       len(available_tools), tool_round)
-            response = await llm_client.chat_with_tools(
-                messages=messages, tools=available_tools,
-                temperature=0.1, max_tokens=config_manager.agent_max_tokens, tool_choice="auto",
+            logger.warning("Tool decision: trying chat_with_tools (native), %d tools, round=%d, forced=%s",
+                       len(available_tools), tool_round, forced_tool)
+            response = await _chat_with_tools_resilient(
+                messages, available_tools, tool_choice,
+                temperature=0.1, max_tokens=config_manager.agent_max_tokens,
             )
             tool_calls = response.get("tool_calls")
             content = response.get("content") or ""
             logger.warning("Tool decision: native_tool_calls=%s content_preview=%.200s",
                        bool(tool_calls), content[:200])
         except Exception as native_err:
-            logger.warning("Tool decision: chat_with_tools failed (%s), falling back to text mode", str(native_err)[:200])
-            content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
-            logger.warning("Tool decision: text mode content_preview=%.200s", content[:200])
+            # A forced tool_choice dict may 400 on an incompatible model — retry
+            # once with "auto" before falling all the way back to plain text mode.
+            logger.warning("Tool decision: chat_with_tools failed (%s)", str(native_err)[:200])
+            if forced_tool:
+                try:
+                    logger.warning("Tool decision: retrying with tool_choice=auto (forced tool rejected)")
+                    response = await _chat_with_tools_resilient(
+                        messages, available_tools, "auto",
+                        temperature=0.1, max_tokens=config_manager.agent_max_tokens,
+                    )
+                    tool_calls = response.get("tool_calls")
+                    content = response.get("content") or ""
+                except Exception as retry_err:
+                    logger.warning("Tool decision: auto retry failed (%s), text mode", str(retry_err)[:200])
+                    content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
+            else:
+                logger.warning("Tool decision: falling back to text mode")
+                content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
+            logger.warning("Tool decision: fallback content_preview=%.200s", content[:200])
 
         if not content and not tool_calls:
             logger.warning("Tool decision: LLM returned empty content and no tool_calls")
@@ -1015,8 +1210,62 @@ async def tool_decision_node(state: dict) -> dict:
             else:
                 logger.info("Tool decision: code extraction yielded nothing (round %d)", tool_round)
 
+        # ── Layer 2: self-heal retry ──
+        # Parsing failed but the LLM emitted text that names an available tool —
+        # it clearly INTENDED to call a tool, just botched the format. Ask it to
+        # rewrite as valid JSON (forcing that tool), feeding back the bad output.
+        if not tool_calls and content:
+            intended = _extract_intended_tool_name(content, available_tools)
+            if intended:
+                logger.warning("Tool decision: entering self-heal for tool '%s' (round %d)", intended, tool_round)
+                heal_choice = {"type": "function", "function": {"name": intended}}
+                bad_output = content
+                for attempt in range(SELF_HEAL_MAX_RETRIES):
+                    heal_messages = messages + [
+                        {"role": "assistant", "content": bad_output},
+                        {"role": "user", "content": build_selfheal_prompt(
+                            intended, bad_output, lang=config_manager.prompt_language)},
+                    ]
+                    try:
+                        heal_resp = await _chat_with_tools_resilient(
+                            heal_messages, available_tools, heal_choice,
+                            temperature=0.0, max_tokens=config_manager.agent_max_tokens,
+                        )
+                    except Exception as heal_err:
+                        # Forced dict may be rejected on retry — try once with auto.
+                        logger.warning("Tool decision: self-heal attempt %d failed (%s), trying auto",
+                                       attempt + 1, str(heal_err)[:150])
+                        try:
+                            heal_resp = await _chat_with_tools_resilient(
+                                heal_messages, available_tools, "auto",
+                                temperature=0.0, max_tokens=config_manager.agent_max_tokens,
+                            )
+                        except Exception as heal_err2:
+                            logger.warning("Tool decision: self-heal auto also failed (%s)", str(heal_err2)[:150])
+                            break
+                    heal_tc = heal_resp.get("tool_calls")
+                    heal_content = heal_resp.get("content") or ""
+                    if not heal_tc and heal_content:
+                        heal_tc = (_try_parse_tool_call(heal_content, available_tools)
+                                   or _try_extract_code_as_tool(heal_content, available_tools))
+                    if heal_tc:
+                        logger.warning("Tool decision: self-heal SUCCESS on attempt %d (tool '%s')",
+                                       attempt + 1, intended)
+                        tool_calls = heal_tc
+                        content = ""
+                        break
+                    # Feed forward the latest (still-bad) output for the next attempt.
+                    bad_output = heal_content or bad_output
+                if not tool_calls:
+                    logger.warning("Tool decision: self-heal exhausted %d attempts for '%s'",
+                                   SELF_HEAL_MAX_RETRIES, intended)
+
         if tool_calls:
-            tool_msg = {"role": "assistant", "content": content or "", "tool_calls": tool_calls}
+            # Strip any raw [TOOL_CALL] wrapper / --code fragments the model may
+            # have dumped into content alongside native tool_calls, so they
+            # never surface in the chat or pollute the tool-execution history.
+            clean_content = _strip_tool_call_noise(content) if content else ""
+            tool_msg = {"role": "assistant", "content": clean_content, "tool_calls": tool_calls}
             _emit(state, "round", f"第 {tool_round + 1} 轮工具调用")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
