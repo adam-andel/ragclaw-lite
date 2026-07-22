@@ -529,6 +529,31 @@ async function confirmMove() {
 // ── Batch download (server bundles everything into one zip) ──
 const downloading = ref(false)
 
+// ── Batch delete ──
+const deleting = ref(false)
+const showDeleteModal = ref(false)
+
+function openDeleteBatch() {
+  if (checkedRowKeys.value.length === 0) return
+  showDeleteModal.value = true
+}
+
+async function confirmDeleteBatch() {
+  const paths = [...checkedRowKeys.value]
+  deleting.value = true
+  try {
+    await Promise.all(paths.map(p => deleteWorkspace(p)))
+    message.success(t('workspace.delete') + ' ✓')
+    checkedRowKeys.value = []
+    showDeleteModal.value = false
+    load()
+  } catch (e: any) {
+    message.error(e?.message || t('workspace.errors.delete'))
+  } finally {
+    deleting.value = false
+  }
+}
+
 async function batchDownload() {
   const selected = entries.value.filter(e => checkedRowKeys.value.includes(e.rel_path))
   if (selected.length === 0) return
@@ -636,6 +661,16 @@ onMounted(load)
         <template #icon><NIcon><Download /></NIcon></template>
         {{ t('workspace.downloadSelected') }}
       </NButton>
+      <NButton
+        size="small"
+        type="error"
+        :disabled="checkedRowKeys.length === 0"
+        :loading="deleting"
+        @click="openDeleteBatch"
+      >
+        <template #icon><NIcon><Trash /></NIcon></template>
+        {{ t('workspace.deleteSelected') }}
+      </NButton>
     </div>
 
     <NCard class="ws-card" :bordered="false">
@@ -688,6 +723,18 @@ onMounted(load)
     >
       <NInput v-model:value="renameName" :placeholder="t('workspace.newName')" @keydown.enter="confirmRename" />
     </NModal>
+
+    <!-- Batch delete: second confirmation -->
+    <NModal
+      v-model:show="showDeleteModal"
+      preset="dialog"
+      :title="t('workspace.deleteSelected')"
+      :content="t('workspace.deleteBatchWarning', { count: checkedRowKeys.length })"
+      :positive-text="t('workspace.confirmDelete')"
+      :negative-text="t('workspace.cancel')"
+      :positive-button-props="{ type: 'error' }"
+      @positive-click="confirmDeleteBatch"
+    />
 
     <!-- Move: directory picker (mirrors ChatView.vue) -->
     <AppModal v-model:show="showMoveModal" :title="t('workspace.moveTitle')" size="detail">

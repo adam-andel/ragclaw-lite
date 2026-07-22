@@ -57,6 +57,8 @@ export default {
   move: 'Move to',
   downloadSelected: 'Download as zip',
   downloadZipSuccess: 'Bundled {count} item(s) and downloaded',
+  deleteSelected: 'Delete selected',
+  deleteBatchWarning: 'This will permanently delete the {count} selected item(s) and cannot be undone.',
   moveTitle: 'Move to folder',
   moveHere: 'Move here',
   moveSelectedCount: '{count} item(s) selected',

@@ -57,6 +57,8 @@ export default {
   move: '移动至',
   downloadSelected: '打包下载',
   downloadZipSuccess: '已打包 {count} 项并下载',
+  deleteSelected: '批量删除',
+  deleteBatchWarning: '此操作将永久删除选中的 {count} 个项目，且不可恢复。',
   moveTitle: '移动到目录',
   moveHere: '移动到此处',
   moveSelectedCount: '已选择 {count} 项',
