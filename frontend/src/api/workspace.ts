@@ -12,6 +12,7 @@ export interface WorkspaceEntry {
 export interface WorkspaceListResponse {
   path: string
   entries: WorkspaceEntry[]
+  truncated?: boolean
 }
 
 // ── Listing & download ──

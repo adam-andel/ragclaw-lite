@@ -3,7 +3,8 @@ import { ref, computed, h, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput, NSelect,
-  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, NTooltip, NCheckbox, useMessage,
+  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, NTooltip, NCheckbox,
+  NPagination, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import {
@@ -30,12 +31,17 @@ const checkedRowKeys = ref<string[]>([])
 
 // ── Filename search (server-side, recursive within currentPath) ──
 const search = ref('')
+// 后端递归搜索命中超过上限时被截断（响应里 truncated 标记）。
+const searchTruncated = ref(false)
 function onSearch() {
+  page.value = 1
   load()
 }
 function resetFilters() {
   search.value = ''
   filterType.value = 'all'
+  sortOrder.value = 'mtime-desc'
+  page.value = 1
   load()
 }
 
@@ -86,11 +92,46 @@ const sortedEntries = computed(() => {
     // Only files are filtered by type; folders are hidden when a type is active.
     list = list.filter(e => e.type !== 'dir' && exts.includes(extOf(e.name)))
   }
-  return [...list].sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
-    return a.name.localeCompare(b.name)
-  })
+  const cmp = SORTERS[sortOrder.value] ?? SORTERS['mtime-desc']
+  return [...list].sort(cmp)
 })
+
+// 排序选项（目录与文件一视同仁，不再把文件夹强制排前）。
+type SortKey = 'mtime-desc' | 'mtime-asc' | 'name-desc' | 'name-asc' | 'size-desc' | 'size-asc' | 'type-desc' | 'type-asc'
+const SORTERS: Record<SortKey, (a: WorkspaceEntry, b: WorkspaceEntry) => number> = {
+  'mtime-desc': (a, b) => b.mtime - a.mtime,
+  'mtime-asc': (a, b) => a.mtime - b.mtime,
+  'name-desc': (a, b) => b.name.localeCompare(a.name),
+  'name-asc': (a, b) => a.name.localeCompare(b.name),
+  'size-desc': (a, b) => (b.size ?? 0) - (a.size ?? 0),
+  'size-asc': (a, b) => (a.size ?? 0) - (b.size ?? 0),
+  'type-desc': (a, b) => b.type.localeCompare(a.type),
+  'type-asc': (a, b) => a.type.localeCompare(a.type),
+}
+const sortOrder = ref<SortKey>('mtime-desc')
+const sortOptions = [
+  { label: t('workspace.sort.mtimeDesc'), value: 'mtime-desc' },
+  { label: t('workspace.sort.mtimeAsc'), value: 'mtime-asc' },
+  { label: t('workspace.sort.nameDesc'), value: 'name-desc' },
+  { label: t('workspace.sort.nameAsc'), value: 'name-asc' },
+  { label: t('workspace.sort.sizeDesc'), value: 'size-desc' },
+  { label: t('workspace.sort.sizeAsc'), value: 'size-asc' },
+  { label: t('workspace.sort.typeDesc'), value: 'type-desc' },
+  { label: t('workspace.sort.typeAsc'), value: 'type-asc' },
+]
+
+// ── 前端分页 ──
+const page = ref(1)
+const pageSize = ref(100)
+const total = computed(() => sortedEntries.value.length)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const pagedEntries = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return sortedEntries.value.slice(start, start + pageSize.value)
+})
+// 排序/筛选变化时回到第 1 页；数据变少导致当前页越界时自动收敛。
+watch([sortOrder, filterType], () => { page.value = 1 })
+watch(totalPages, (tp) => { if (page.value > tp) page.value = tp })
 
 function formatSize(bytes: number | null): string {
   if (bytes === null || bytes === undefined) return '—'
@@ -213,6 +254,7 @@ async function load() {
   try {
     const data = await listWorkspace(currentPath.value, search.value.trim())
     entries.value = data.entries || []
+    searchTruncated.value = !!data.truncated
     checkedRowKeys.value = []
   } catch (e: any) {
     message.error(e?.message || t('workspace.errors.load'))
@@ -224,6 +266,7 @@ async function load() {
 function navigateTo(path: string) {
   currentPath.value = path
   search.value = ''
+  page.value = 1
   load()
 }
 
@@ -677,6 +720,12 @@ onMounted(load)
         size="small"
         style="width:220px"
       />
+      <NSelect
+        v-model:value="sortOrder"
+        :options="sortOptions"
+        size="small"
+        style="width:200px"
+      />
       <NButton size="small" secondary @click="resetFilters">{{ t('common.reset') }}</NButton>
       <NButton
         size="small"
@@ -754,7 +803,7 @@ onMounted(load)
           v-else-if="viewMode === 'list'"
           v-model:checked-row-keys="checkedRowKeys"
           :columns="columns"
-          :data="sortedEntries"
+          :data="pagedEntries"
           :row-key="(row: WorkspaceEntry) => row.rel_path"
           :row-class-name="rowClassName"
           :bordered="false"
@@ -764,7 +813,7 @@ onMounted(load)
 
         <div v-else class="ws-grid">
           <div
-            v-for="row in sortedEntries"
+            v-for="row in pagedEntries"
             :key="row.rel_path"
             class="ws-grid-card"
             :class="{ 'ws-grid-card--selected': checkedRowKeys.includes(row.rel_path) }"
@@ -796,6 +845,19 @@ onMounted(load)
         </div>
       </NSpin>
     </NCard>
+
+    <div v-if="total > 0" class="ws-pagination">
+      <NPagination
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :item-count="total"
+        show-size-picker
+        :page-sizes="[20, 50, 100]"
+        @update:page-size="page = 1"
+      />
+      <span class="ws-pagination-info" v-if="searchTruncated">匹配结果超过上限，未能全部展示</span>
+      <span class="ws-pagination-info" v-else>共 {{ total }} 项</span>
+    </div>
 
     <!-- New folder -->
     <NModal
@@ -996,6 +1058,18 @@ onMounted(load)
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+.ws-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 4px 0;
+  flex-wrap: wrap;
+}
+.ws-pagination-info {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
 }
 .ws-table {
   --n-th-text-color: var(--color-text-muted);

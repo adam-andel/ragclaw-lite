@@ -1409,7 +1409,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             # sandbox. Capped to avoid pathological response sizes.
             entries = []
             term_lower = search_term.lower()
-            cap = 500
+            cap = 2000
             for dirpath, dirnames, filenames in os.walk(target):
                 dirnames.sort()
                 for name in sorted(dirnames) + sorted(filenames):
@@ -1432,7 +1432,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                         break
                 if len(entries) >= cap:
                     break
-            self._json_response(200, {"path": rel, "entries": entries, "search": search_term})
+            self._json_response(200, {"path": rel, "entries": entries, "search": search_term, "truncated": len(entries) >= cap})
             return
         entries = []
         for name in sorted(os.listdir(target)):
