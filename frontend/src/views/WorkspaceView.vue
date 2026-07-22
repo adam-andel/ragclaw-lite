@@ -3,11 +3,11 @@ import { ref, computed, h, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NDataTable, NCard, NSpace, NButton, NIcon, NTag, NModal, NInput, NSelect,
-  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, NTooltip, useMessage,
+  NProgress, NEmpty, NSpin, NBreadcrumb, NBreadcrumbItem, NPopconfirm, NTooltip, NCheckbox, useMessage,
   type DataTableColumns,
 } from 'naive-ui'
 import {
-  FolderOpen, Folder, DocumentText, Pencil, Trash,
+  FolderOpen, Folder, DocumentText, Pencil, Trash, Grid, List,
   ArrowUp, Add, CloudUpload, Search, Create, ArrowForward, Download,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -156,47 +156,56 @@ const columns: DataTableColumns<WorkspaceEntry> = [
     key: 'actions',
     width: 200,
     render: (row) => h(NSpace, { size: 4, wrap: false }, {
-      default: () => [
-        h(NTooltip, { placement: 'top' }, {
-          trigger: () => h(NButton, {
-            size: 'tiny', quaternary: true,
-            onClick: () => openEntry(row),
-          }, {
-            icon: () => h(NIcon, { size: 14 }, {
-              default: () => h(row.type === 'dir' ? FolderOpen : Download),
-            }),
-          }),
-          default: () => t(row.type === 'dir' ? 'workspace.open' : 'workspace.download'),
-        }),
-        h(NTooltip, { placement: 'top' }, {
-          trigger: () => h(NButton, {
-            size: 'tiny', quaternary: true,
-            onClick: () => startRename(row),
-          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Pencil) }) }),
-          default: () => t('workspace.rename'),
-        }),
-        h(NTooltip, { placement: 'top' }, {
-          trigger: () => h(NButton, {
-            size: 'tiny', quaternary: true,
-            onClick: () => moveRow(row),
-          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(ArrowForward) }) }),
-          default: () => t('workspace.move'),
-        }),
-        h(NPopconfirm, {
-          onPositiveClick: () => doDelete(row),
-        }, {
-          trigger: () => h(NTooltip, { placement: 'top' }, {
-            trigger: () => h(NButton, {
-              size: 'tiny', quaternary: true, type: 'error',
-            }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Trash) }) }),
-            default: () => t('workspace.delete'),
-          }),
-          default: () => t('workspace.deleteWarning', { name: row.name }),
-        }),
-      ],
+      default: () => rowActions(row),
     }),
   },
 ]
+
+// Reusable row actions (used by both the table column and the grid cards).
+function rowActions(row: WorkspaceEntry) {
+  return [
+    h(NTooltip, { placement: 'top' }, {
+      trigger: () => h(NButton, {
+        size: 'tiny', quaternary: true,
+        onClick: () => openEntry(row),
+      }, {
+        icon: () => h(NIcon, { size: 14 }, {
+          default: () => h(row.type === 'dir' ? FolderOpen : Download),
+        }),
+      }),
+      default: () => t(row.type === 'dir' ? 'workspace.open' : 'workspace.download'),
+    }),
+    h(NTooltip, { placement: 'top' }, {
+      trigger: () => h(NButton, {
+        size: 'tiny', quaternary: true,
+        onClick: () => startRename(row),
+      }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Pencil) }) }),
+      default: () => t('workspace.rename'),
+    }),
+    h(NTooltip, { placement: 'top' }, {
+      trigger: () => h(NButton, {
+        size: 'tiny', quaternary: true,
+        onClick: () => moveRow(row),
+      }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(ArrowForward) }) }),
+      default: () => t('workspace.move'),
+    }),
+    h(NPopconfirm, {
+      onPositiveClick: () => doDelete(row),
+    }, {
+      trigger: () => h(NTooltip, { placement: 'top' }, {
+        trigger: () => h(NButton, {
+          size: 'tiny', quaternary: true, type: 'error',
+        }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(Trash) }) }),
+        default: () => t('workspace.delete'),
+      }),
+      default: () => t('workspace.deleteWarning', { name: row.name }),
+    }),
+  ]
+}
+
+// Functional component so the same actions can be rendered inside grid cards.
+const RowActions = (props: { row: WorkspaceEntry }) =>
+  h(NSpace, { size: 4, wrap: false }, { default: () => rowActions(props.row) })
 
 // ── Actions ──
 async function load() {
@@ -562,6 +571,24 @@ const downloading = ref(false)
 const deleting = ref(false)
 const showDeleteModal = ref(false)
 
+// ── View mode: 'list' (table) or 'grid' (cards) ──
+const viewMode = ref<'list' | 'grid'>('grid')
+
+function rowClassName(row: WorkspaceEntry): string {
+  return checkedRowKeys.value.includes(row.rel_path) ? 'ws-row-selected' : ''
+}
+
+function toggleViewMode() {
+  viewMode.value = viewMode.value === 'list' ? 'grid' : 'list'
+}
+
+function toggleCardCheck(rel: string, val: boolean) {
+  const set = new Set(checkedRowKeys.value)
+  if (val) set.add(rel)
+  else set.delete(rel)
+  checkedRowKeys.value = [...set]
+}
+
 function openDeleteBatch() {
   if (checkedRowKeys.value.length === 0) return
   showDeleteModal.value = true
@@ -653,12 +680,11 @@ onMounted(load)
       <NButton size="small" secondary @click="resetFilters">{{ t('common.reset') }}</NButton>
       <NButton
         size="small"
-        type="primary"
-        :disabled="checkedRowKeys.length === 0"
-        @click="openMoveModal"
+        secondary
+        :title="t('workspace.toggleView')"
+        @click="toggleViewMode"
       >
-        <template #icon><NIcon><ArrowForward /></NIcon></template>
-        {{ t('workspace.move') }}
+        <template #icon><NIcon><component :is="viewMode === 'list' ? Grid : List" /></NIcon></template>
       </NButton>
       <NButton
         size="small"
@@ -669,6 +695,15 @@ onMounted(load)
       >
         <template #icon><NIcon><Download /></NIcon></template>
         {{ t('workspace.downloadSelected') }}
+      </NButton>
+      <NButton
+        size="small"
+        type="primary"
+        :disabled="checkedRowKeys.length === 0"
+        @click="openMoveModal"
+      >
+        <template #icon><NIcon><ArrowForward /></NIcon></template>
+        {{ t('workspace.move') }}
       </NButton>
       <NButton
         size="small"
@@ -703,7 +738,7 @@ onMounted(load)
       </span>
     </div>
 
-    <NCard class="ws-card" :bordered="false">
+    <NCard class="ws-card" :bordered="false" :content-style="{ padding: '4px 12px 12px' }">
       <NSpin :show="loading">
         <NEmpty
           v-if="!loading && sortedEntries.length === 0"
@@ -716,15 +751,49 @@ onMounted(load)
         </NEmpty>
 
         <NDataTable
-          v-else
+          v-else-if="viewMode === 'list'"
           v-model:checked-row-keys="checkedRowKeys"
           :columns="columns"
           :data="sortedEntries"
           :row-key="(row: WorkspaceEntry) => row.rel_path"
+          :row-class-name="rowClassName"
           :bordered="false"
           size="small"
           class="ws-table"
         />
+
+        <div v-else class="ws-grid">
+          <div
+            v-for="row in sortedEntries"
+            :key="row.rel_path"
+            class="ws-grid-card"
+            :class="{ 'ws-grid-card--selected': checkedRowKeys.includes(row.rel_path) }"
+            @click="openEntry(row)"
+          >
+            <div class="ws-grid-check" @click.stop>
+              <NCheckbox
+                :checked="checkedRowKeys.includes(row.rel_path)"
+                @update:checked="(v: boolean) => toggleCardCheck(row.rel_path, v)"
+              />
+            </div>
+            <div class="ws-grid-head">
+              <div class="ws-grid-icon">
+                <NIcon size="18">
+                  <component :is="row.type === 'dir' ? Folder : DocumentText" />
+                </NIcon>
+              </div>
+              <div class="ws-grid-name" :title="row.name">{{ row.name }}</div>
+            </div>
+            <div class="ws-grid-meta">
+              <span>{{ t(row.type === 'dir' ? 'workspace.dir' : 'workspace.file') }}</span>
+              <span>{{ formatSize(row.size) }}</span>
+              <span>{{ formatDate(row.mtime) }}</span>
+            </div>
+            <div class="ws-grid-actions" @click.stop>
+              <RowActions :row="row" />
+            </div>
+          </div>
+        </div>
       </NSpin>
     </NCard>
 
@@ -894,7 +963,7 @@ onMounted(load)
   gap: 12px;
 }
 .ws-breadcrumb {
-  padding: 0 4px 12px;
+  padding: 0 4px 4px;
   flex-shrink: 0;
   font-size: 14px;
 }
@@ -903,7 +972,7 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px 12px;
+  padding: 0 4px 4px;
   color: var(--color-primary, #18a058);
   cursor: pointer;
   font-size: 14px;
@@ -931,6 +1000,90 @@ onMounted(load)
 .ws-table {
   --n-th-text-color: var(--color-text-muted);
   --n-td-text-color: var(--color-text);
+}
+.ws-table :deep(.ws-row-selected > td) {
+  background: rgba(59, 130, 246, 0.12) !important;
+}
+
+/* Grid (card) view */
+.ws-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+}
+@media (max-width: 1200px) {
+  .ws-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 860px) {
+  .ws-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+  .ws-grid { grid-template-columns: 1fr; }
+}
+.ws-grid-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  overflow: hidden;
+}
+.ws-grid-card:hover {
+  border-color: var(--color-primary);
+  background: rgba(59, 130, 246, 0.04);
+}
+.ws-grid-card--selected {
+  border-color: var(--color-primary);
+  background: rgba(59, 130, 246, 0.08);
+}
+.ws-grid-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.ws-grid-card:hover .ws-grid-check,
+.ws-grid-card--selected .ws-grid-check {
+  opacity: 1;
+}
+.ws-grid-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ws-grid-icon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+.ws-grid-name {
+  font-weight: 600;
+  min-width: 0;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ws-grid-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+.ws-grid-actions {
+  margin-top: 2px;
+  display: flex;
+  justify-content: flex-end;
 }
 .ws-empty {
   padding: 64px 0;
