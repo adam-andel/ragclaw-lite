@@ -61,6 +61,11 @@ start_watcher() {
     c_yellow "  mcp-repl watcher already running (pid $(cat "$WATCH_PID")) — skipping."
     return 0
   fi
+  if ! command -v inotifywait >/dev/null 2>&1; then
+    c_yellow "  WARNING: 'inotifywait' not found on host — skipping mcp-repl hot-reload watcher."
+    c_yellow "           Install inotify-tools:  sudo apt-get install -y inotify-tools"
+    return 0
+  fi
   local devflag=""
   is_dev_mode && devflag="--dev"
   c_cyan "=== Starting mcp-repl hot-reload watcher ($(mode_label) mode) ==="
