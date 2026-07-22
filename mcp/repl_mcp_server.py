@@ -932,8 +932,34 @@ def _make_workspace_note(workdir: str) -> str:
     return f"[workspace: {rel}/]\n"
 
 
-def _append_download_links(result: str, workdir: str) -> str:
-    """Append File download URLs to result if public_url is configured.
+def _snapshot_files(workdir: str) -> dict:
+    """Snapshot ``{filename: (size, mtime_ns)}`` for existing non-empty files.
+
+    Used to diff the workdir before vs. after an execution so we only surface
+    download links for files actually produced or changed by THIS run, never
+    for pre-existing workspace files.
+    """
+    snap = {}
+    if not os.path.isdir(workdir):
+        return snap
+    for f in os.listdir(workdir):
+        fp = os.path.join(workdir, f)
+        try:
+            if os.path.isfile(fp) and os.path.getsize(fp) > 0:
+                st = os.stat(fp)
+                snap[f] = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            pass
+    return snap
+
+
+def _append_download_links(result: str, workdir: str, before: dict | None = None) -> str:
+    """Append File download URLs for files produced/changed by THIS execution.
+
+    Only files that are NEW or whose size/mtime changed relative to ``before``
+    (a snapshot taken right before running the code) receive a [File] link.
+    Pre-existing, untouched workspace files are deliberately omitted so the
+    chat answer never leaks download links for unrelated files.
 
     Uses the full relative path under _allow_dir so nested per-user dirs
     (user_uXXXX/<ws>/file) produce correct /files/... URLs.
@@ -945,10 +971,11 @@ def _append_download_links(result: str, workdir: str) -> str:
     except ValueError:
         return result
     download_base = f"{_public_url}/files/{rel}"
-    for f in sorted(os.listdir(workdir)):
-        fpath = os.path.join(workdir, f)
-        if os.path.isfile(fpath) and os.path.getsize(fpath) > 0:
-            result += f"\n\n[File] {download_base}/{f}"
+    after = _snapshot_files(workdir)
+    for f in sorted(after):
+        if before is not None and after[f] == before.get(f):
+            continue  # unchanged → not produced by this run, skip it
+        result += f"\n\n[File] {download_base}/{f}"
     return result
 
 
@@ -985,11 +1012,12 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
 
         try:
             workdir = _make_workdir(workspace_id, acct)
+            before = _snapshot_files(workdir)  # snapshot BEFORE running code
             result = run_fn(code, workdir, timeout, acct)
             ws_note = _make_workspace_note(workdir)
             result = ws_note + result
             result = result[:MAX_OUTPUT]
-            result = _append_download_links(result, workdir)
+            result = _append_download_links(result, workdir, before)
 
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.info("exec_ok lang=%s user=%s uuid=%s elapsed_ms=%d output_len=%d",
