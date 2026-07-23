@@ -234,7 +234,7 @@ async def reindex_all_documents(
     from app.services.model_manager import model_manager
     from app.services.reindex_service import reindex_service
     if not model_manager.is_installed():
-        raise HTTPException(400, "Embedding 模型尚未安装，无法重新向量化")
+        raise HTTPException(400, "Embedding model not installed - cannot re-embed")
     if reindex_service.is_running():
         return {"started": False, "reason": "already_running"}
     return reindex_service.start()

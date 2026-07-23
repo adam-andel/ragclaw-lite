@@ -69,7 +69,7 @@ class ReindexService:
             if clear_vectors:
                 self._status = _ReindexStatus.RUNNING
                 self._progress = 0.0
-                self._message = "正在删除旧向量…"
+                self._message = "Deleting old vectors…"
                 self._error = ""
                 self._current = 0
                 self._total = 0
@@ -91,23 +91,23 @@ class ReindexService:
         from app.services.model_manager import model_manager
 
         if not model_manager.is_installed():
-            self._set(status=_ReindexStatus.FAILED, error="模型尚未安装",
-                      message="新 Embedding 模型尚未安装，无法重新向量化")
+            self._set(status=_ReindexStatus.FAILED, error="Model not installed",
+                      message="New embedding model not installed - cannot re-embed")
             return
 
         # Optional first phase: wipe every existing vector collection. Used by the
         # embedding-model switch flow, which re-embeds all documents against the
-        # new model. Reporting it up front lets the UI show "正在删除旧向量"
+        # new model. Reporting it up front lets the UI show "Deleting old vectors"
         # immediately instead of only once re-embedding begins.
         if clear_vectors:
             self._set(status=_ReindexStatus.RUNNING, progress=0.0, current=0,
-                      total=0, error="", message="正在删除旧向量…")
+                      total=0, error="", message="Deleting old vectors…")
             try:
                 from app.services.vector_store import vector_store
                 vector_store.clear_all()
             except Exception as e:
                 self._set(status=_ReindexStatus.FAILED, error=str(e),
-                          message=f"删除旧向量失败：{e}")
+                          message=f"Failed to delete old vectors: {e}")
                 return
 
         import sqlite3
@@ -116,7 +116,7 @@ class ReindexService:
             conn = sqlite3.connect(str(settings.sqlite_path), timeout=30)
         except Exception as e:
             self._set(status=_ReindexStatus.FAILED, error=str(e),
-                      message="无法打开数据库")
+                      message="Cannot open database")
             return
 
         try:
@@ -139,7 +139,7 @@ class ReindexService:
             total = len(docs)
             self._set(status=_ReindexStatus.RUNNING, current=0, total=total,
                       progress=0.0, error="",
-                      message=f"开始重新向量化 {total} 篇文档…" if total else "无已完成文档，无需重新向量化")
+                      message=f"Re-embedding {total} document(s)…" if total else "No completed documents - nothing to re-embed")
 
             for i, (doc_id, filename) in enumerate(docs, start=1):
                 try:
@@ -152,13 +152,13 @@ class ReindexService:
                     conn.commit()
                 self._set(current=i,
                           progress=round(i / total * 100, 1) if total else 100.0,
-                          message=f"已处理 {i}/{total}：{filename}")
+                          message=f"Processed {i}/{total}: {filename}")
 
             self._set(status=_ReindexStatus.COMPLETED, progress=100.0,
-                      message=f"重新向量化完成，共 {total} 篇")
+                      message=f"Re-embedding complete - {total} document(s) processed")
         except Exception as e:
             self._set(status=_ReindexStatus.FAILED, error=str(e),
-                      message=f"重新向量化失败：{e}")
+                      message=f"Re-embedding failed: {e}")
         finally:
             conn.close()
 

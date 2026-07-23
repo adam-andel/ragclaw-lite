@@ -197,13 +197,13 @@ async def switch_embedding_model(
 
     # Target already installed → switch synchronously now.
     # The old-vector wipe is performed inside the re-index worker (it reports
-    # "正在删除旧向量" as its first step), so this request returns immediately and
+    # "Deleting old vectors" as its first step), so this request returns immediately and
     # the UI can reflect the deletion progress.
 
     # Apply the new model. The embedding model is loaded lazily inside the
     # re-index worker (on its first embed() call), NOT here: SentenceTransformer
     # load is a multi-second, blocking operation, and doing it in the request
-    # would stall this response and delay the UI's "正在删除旧向量" line by 10+
+    # would stall this response and delay the UI's "Deleting old vectors" line by 10+
     # seconds. The worker thread runs it without blocking this endpoint.
     await config_manager.update({"embedding_model": target})
 
