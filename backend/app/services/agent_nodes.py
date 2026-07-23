@@ -47,9 +47,9 @@ _FORCE_PY_KEYWORDS = (
 )
 
 # Query keywords that signal the user wants to create / write / save / run a
-# file or code. Used as a routing fallback so file-generation intent does not
-# depend on the LLM returning the exact skill name (e.g. "生成文件mydoc.txt"
-# should map to "Document Manager" without an exact-name match).
+# file or code. Used as a routing fallback so file/code-generation intent does
+# not depend on the LLM returning an exact skill name — claw's native run_python
+# meta-tool handles these directly once the agent decides to call it.
 _ROUTE_FILE_INTENT_KEYWORDS = (
     "生成文件", "创建文件", "写文件", "保存文件", "新建文件", "写入文件",
     "生成文档", "写文档", "创建文档", "新建文档", "保存为文件", "保存为",
@@ -690,16 +690,16 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "use_skill",
                 "description": (
-                    "加载并使用另一个技能（例如「Document Manager」）。加载后该技能的规则与工具立即生效，"
-                    "当前对话即可调用其能力。适用于当前技能无法直接完成的子任务"
-                    "（如「PPT美化」需要先有 PPT 文件，可临时 use_skill「Document Manager」生成后再返回美化）。"
+                    "加载并使用另一个技能。加载后该技能的规则与工具立即生效，当前对话即可调用其能力。"
+                    "适用于当前技能无法直接完成的子任务。注意：文件创建/读取/修改/删除与代码运行是你"
+                    "的原生能力（直接调用 run_python 即可），只有当需要某个额外专用技能时才用 use_skill。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "skill_name": {
                             "type": "string",
-                            "description": "要使用的技能名称，例如「Document Manager」。可先调用 list_skills 查看可用技能。",
+                            "description": "要使用的技能名称。可先调用 list_skills 查看可用技能。",
                         },
                         "reason": {
                             "type": "string",
@@ -716,14 +716,57 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "done_skill",
                 "description": (
-                    "结束当前临时技能，返回到上一层技能（例如用「Document Manager」生成文件后，"
-                    "调用 done_skill 回到「PPT美化」继续美化）。无需返回时不必调用。"
+                    "结束当前临时技能，返回到上一层技能。无需返回时不必调用。"
                 ),
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
             "_source": "meta",
         },
     ]
+
+
+# Module-level cache of Python Executor meta tools (always-available native tools).
+# Populated at startup (lifespan) via _refresh_meta_python_tools and used as a
+# fallback here when startup missed it. These are the "元工具" the Python
+# Executor (e.g. run_python) exposes — native file/code execution for claw.
+_META_PYTHON_TOOLS: list[dict] = []
+
+
+async def _refresh_meta_python_tools() -> None:
+    """Fetch tools from the Python Executor MCP server and cache them as meta tools.
+
+    The cached tools keep their MCP source metadata (``_source`` / ``_mcp_server_id``)
+    so they execute through the normal MCP tool path, not the meta control path —
+    this is what makes run_python etc. available natively to every conversation.
+    """
+    global _META_PYTHON_TOOLS
+    try:
+        tools = await tool_registry.get_mcp_tools(["Python Executor"])
+    except Exception as e:
+        logger.warning("meta python tools: fetch failed: %s", e)
+        return
+    _META_PYTHON_TOOLS = [t for t in tools if t.get("function", {}).get("name")]
+    logger.info("meta python tools: loaded %d tools from Python Executor",
+                len(_META_PYTHON_TOOLS))
+
+
+def _meta_control_names() -> set[str]:
+    """Names of the meta *control* tools (orchestration only, never executed)."""
+    return {"list_skills", "use_skill", "done_skill"}
+
+
+async def _build_all_meta_tools() -> list[dict]:
+    """Always-available meta tools: control tools + Python Executor native tools.
+
+    The Python Executor tools (e.g. run_python) are fetched from the server at
+    startup; _refresh_meta_python_tools populates the cache, with a lazy fetch
+    here as a fallback if startup missed it (e.g. MCP not reachable yet).
+    """
+    python_tools = _META_PYTHON_TOOLS
+    if not python_tools:
+        await _refresh_meta_python_tools()
+        python_tools = _META_PYTHON_TOOLS
+    return _build_meta_skill_tools() + python_tools
 
 
 async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]:
@@ -806,26 +849,35 @@ def _emit(state: dict, stage: str, message: str, **extra) -> None:
 async def skill_loader_node(state: dict) -> dict:
     """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
 
-    Runs after router (if a skill was selected) and before retrieval.
-    Also initialises the Route D skill stack and injects the always-available
-    meta tools (list_skills / use_skill / done_skill) for orchestration.
+    Always injects the always-available meta tools (control tools + Python
+    Executor native tools such as run_python) so claw's file/code capabilities
+    are present even when no skill is selected. When a skill IS selected, its
+    SKILL.md body and tools are also loaded and the Route D skill stack is
+    initialised.
     """
     if state.get("cache_hit"):
         return {}
 
+    # Build the always-available meta tools (control + Python Executor native).
+    # This runs before any skill check so run_python etc. are natively available
+    # to every conversation, matching the ragclaw "native file/code execution" role.
+    meta_tools = await _build_all_meta_tools()
+
     active_skill = state.get("active_skill")
     if not active_skill:
-        return {}
+        # No skill selected — still expose the native meta tools so the agent can
+        # operate on files / run code without routing through a skill.
+        return {"available_tools": meta_tools}
 
     folder_name = active_skill.get("folder_name")
     if not folder_name:
-        return {}
+        return {"available_tools": meta_tools}
 
     system_prompt, all_tools = await _load_skill_body_and_tools(folder_name)
     updated_skill = {**active_skill, "system_prompt": system_prompt, "source": "primary"}
 
-    # Always-available meta tools for orchestration (Route D)
-    all_tools = all_tools + _build_meta_skill_tools()
+    # Always-available meta tools for orchestration + native execution (Route D)
+    all_tools = all_tools + meta_tools
 
     _emit(state, "skill_load", f"已加载技能：{active_skill.get('name', '?')}", skill=active_skill.get("name"))
 

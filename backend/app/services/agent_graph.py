@@ -87,11 +87,11 @@ def _build_graph() -> StateGraph:
     workflow.add_edge("router", "join")
     workflow.add_edge("retrieval", "join")
 
-    # join → skill_loader (has skill) | tool_decision (no skill)
+    # join → skill_loader (always; skill_loader injects the always-available meta
+    # tools — control tools + Python Executor native tools like run_python — so the
+    # agent's native file/code capabilities work even when no skill is selected).
     def route_after_join(state: dict) -> str:
-        if state.get("active_skill"):
-            return "skill_loader"
-        return "tool_decision"
+        return "skill_loader"
 
     workflow.add_conditional_edges(
         "join",

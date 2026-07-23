@@ -2,7 +2,7 @@
 
 Schema is owned by Alembic (see ``migrations/``). On startup ``init_db`` runs
 ``alembic upgrade head`` to bring the schema to the latest version, then seeds
-idempotent default data (admin user, default MCP server, doc-manager skill).
+idempotent default data (admin user, default MCP server).
 
 All tables are defined as SQLAlchemy models under ``app/models``; the single
 baseline Alembic migration (``migrations/versions/*_initial_schema.py``) creates
@@ -118,7 +118,7 @@ def _run_alembic_upgrade():
 
 
 def _seed_db():
-    """Seed idempotent default data (admin user, default MCP server, doc-manager skill)."""
+    """Seed idempotent default data (admin user, default MCP server)."""
     import sqlite3
 
     raw = sqlite3.connect(str(settings.sqlite_path))
@@ -158,21 +158,21 @@ def _seed_admin_user(raw):
 
 
 def _seed_defaults(raw):
-    """Seed default MCP Server and doc-manager Skill folder (idempotent).
+    """Seed default MCP Server (idempotent).
 
     Creates:
-    1. Default MCP Server 'Python executor' (if not exists)
-    2. doc-manager Skill folder with SKILL.md on disk + DB index row
+    1. Default MCP Server 'Python Executor' (if not exists) — provides the
+       native file/code execution tools (e.g. run_python) that claw exposes as
+       always-available meta tools (see agent_nodes._build_all_meta_tools).
     """
-    print("[seed] Checking default MCP Server and Skill folder...")
+    print("[seed] Checking default MCP Server...")
     import hashlib
 
     # Deterministic UUIDs
     mcp_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-python-repl").hexdigest()))
-    skill_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-doc-manager").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
-    # Default MCP Server: Python executor
+    # Default MCP Server: Python Executor
     existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
     if not existing:
         raw.execute(
@@ -184,94 +184,7 @@ def _seed_defaults(raw):
     else:
         print("[seed] MCP Server 'Python Executor' already exists")
 
-    # Default Skill: doc-manager (folder-based)
-    skill_dir = settings.skills_dir / "doc-manager"
-    skill_md_path = skill_dir / "SKILL.md"
-
-    if not skill_dir.exists():
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_md_path.write_text(_build_doc_gen_skill_md(), encoding="utf-8")
-        print("[seed] Created doc-manager SKILL.md on disk")
-
-    existing_skill = raw.execute("SELECT id FROM skills WHERE folder_name = ?", ("doc-manager",)).fetchone()
-    if not existing_skill:
-        raw.execute(
-            "INSERT INTO skills(id, folder_name, name, description, is_active, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (skill_id, "doc-manager", "Document Manager",
-             "Create, read, update, and delete workspace files (txt/csv/xlsx/pptx/png/pdf/html/markdown and more) via the Python executor.",
-             1, now, now),
-        )
-        print("[seed] Skill 'doc-manager' DB index created")
-    else:
-        print("[seed] Skill 'doc-manager' DB index already exists")
-
     print("[seed] defaults done")
-
-
-def _build_doc_gen_skill_md() -> str:
-    """Build the SKILL.md content for the doc-manager seed skill."""
-    return """---
-name: Document Manager
-description: "Create, read, update, and delete workspace files (txt/csv/xlsx/pptx/png/pdf/html/markdown and more) via the Python executor."
-mcp_servers:
-  - Python Executor
----
-
-# Document Manager
-
-## Core rule (must follow)
-Your job is NOT to show code to the user — it is to actually operate on
-workspace files. For any request that requires a file operation, you MUST
-call the `run_python` tool to perform it (never just print code and stop).
-If a previous tool result has ALREADY fully satisfied the request, do NOT
-call run_python again — the task is complete.
-
-## Operations
-- **Create**: write a new file with `open(path, "w", encoding="utf-8")`.
-- **Read**: read an existing file with `open(path, "r", encoding="utf-8").read()`
-  (or `pathlib.Path(path).read_text()`) and print its content.
-- **Update**: read first, then modify (replace / insert / append) and write back.
-  Prefer targeted edits over full overwrite when content should be preserved.
-- **Delete**: remove a file with `pathlib.Path(path).unlink()` / `os.remove(path)`.
-  Use `shutil.rmtree(path)` only for directories and only when explicitly asked.
-
-## Safety constraints
-- Operate ONLY inside the workspace directory (run_python's cwd). No absolute
-  paths, no `..` traversal escaping it.
-- Before any Delete: confirm which file(s) will be removed and state it clearly.
-  Never delete the whole workspace, unrelated files, or files outside the task.
-- Before Update of an existing file: read it first so you don't destroy data.
-- Do not run destructive ops on files you didn't create unless explicitly asked.
-
-## Examples
-**User:** generate a txt with content: 1
-**Do:** run_python ->
-  with open("output.txt","w",encoding="utf-8") as f: f.write("1")
-  print("file created")
-
-**User:** read output.txt
-**Do:** run_python -> print(open("output.txt",encoding="utf-8").read())
-
-**User:** append a line to output.txt
-**Do:** run_python ->
-  p="output.txt"; s=open(p,encoding="utf-8").read()+"\\nappended\\n"
-  open(p,"w",encoding="utf-8").write(s); print("updated")
-
-**User:** delete old.txt
-**Do:** run_python -> import os; os.remove("old.txt"); print("deleted old.txt")
-
-## Gotchas
-- Use English filenames (output.txt, report.docx, chart.png).
-- Installed libs: pandas, python-docx, python-pptx, PyPDF2.
-- No network; no external process calls.
-- Generated/changed files expire after 60 min and are auto-deleted.
-- `print()` output is returned to you as the tool result.
-
-## Constraints
-- Avoid very large files or long-running ops (timeout risk).
-- Save to the current directory; the tool auto-assigns the workspace subdir.
-"""
 
 
 async def get_db() -> AsyncSession:
