@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted, computed, watch } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
@@ -25,6 +25,8 @@ const router = useRouter()
 const { t } = useI18n()
 const auth = useAuthStore()
 const chatUnread = useChatUnreadStore()
+// Stop handle for the runtime LLM-status poller started in onMounted.
+let stopLlmPolling = () => {}
 const nmessage = useMessage()
 const dialog = useDialog()
 
@@ -648,6 +650,16 @@ async function loadConversations() {
 onMounted(async () => {
   isReadonly.value = false
 
+  // Refresh LLM config status. The backend loads the .env API key during async
+  // startup, so the initial health check (run at app boot) may report the key as
+  // not configured yet. Poll briefly so the input self-enables without an F5.
+  auth.refreshLlmStatus()
+
+  // Runtime fallback: while still unconfigured, poll every 15s and auto-stop
+  // once the backend reports the key. Covers config changes made long after
+  // startup (e.g. setting the API key a day later) or by another admin.
+  stopLlmPolling = auth.startLlmStatusPolling(15000)
+
   // Load persisted per-conversation selections (workspace dir + KB + skill).
   // Migrate the legacy KB-only map (ragclaw:conv-kb-map) if present.
   try {
@@ -707,6 +719,10 @@ onMounted(async () => {
     const lastConv = localStorage.getItem('ragclaw:last-conv')
     if (lastConv) await loadConversation(lastConv)
   }
+})
+
+onUnmounted(() => {
+  stopLlmPolling()
 })
 
 // Persist the current workspace dir / KB / skill whenever any of them changes,

@@ -12,11 +12,13 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
 const route = useRoute()
+const auth = useAuthStore()
 
 const providerOptions = computed(() => [
   { label: 'OpenAI', value: 'openai' },
@@ -683,6 +685,9 @@ async function doSave() {
       label: changed.join('、'),
       msg: sres.mcp_pushed ? undefined : t('settings.msg.sandboxSavedRestart'),
     }
+    // The save may have just configured the LLM API key — refresh the chat
+    // input state immediately so it enables without a reload.
+    if (payload.llm_api_key) await auth.checkLlmStatusNow()
   } catch (e: any) {
     saveState.value = { status: 'error', label: changed.join('、'), msg: saveErrorReason(e) }
   }
@@ -766,12 +771,12 @@ async function handleTest() {
       <PageHeader :title="t('settings.title')" :icon="Settings" :subtitle="t('settings.subtitle')">
         <template #actions>
           <span class="save-status" :class="saveState.status">
-            <template v-if="saveState.status === 'saving'"><template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saving') }}</template>
+            <template v-if="saveState.status === 'saving'"><template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saving') }}</template>
             <template v-else-if="saveState.status === 'saved'">
-              <NIcon :component="CheckmarkCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saved') }}<template v-if="saveState.msg">（{{ saveState.msg }}）</template>
+              <NIcon :component="CheckmarkCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saved') }}<template v-if="saveState.msg">（{{ saveState.msg }}）</template>
             </template>
             <template v-else-if="saveState.status === 'error'">
-              <NIcon :component="AlertCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saveFailedPrefix') }}{{ saveState.msg }}
+              <NIcon :component="AlertCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saveFailedPrefix') }}{{ saveState.msg }}
             </template>
           </span>
         </template>
