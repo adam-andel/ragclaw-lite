@@ -25,6 +25,18 @@ import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import { formatDateTime, formatDate } from '@/i18n/format'
 
 const { t } = useI18n()
+
+// Backend may store a stable error CODE (e.g. "EMBED_MODEL_NOT_INSTALLED")
+// instead of a baked string. Resolve known codes to a localized message;
+// pass genuine exception text through untouched.
+const DOC_ERROR_CODES = ['EMBED_MODEL_NOT_INSTALLED'] as const
+function docErrorMessage(raw?: string | null): string {
+  if (!raw) return ''
+  if ((DOC_ERROR_CODES as readonly string[]).includes(raw)) {
+    return t(`documents.docErrorCodes.${raw}`)
+  }
+  return raw
+}
 const message = useMessage()
 const auth = useAuthStore()
 const route = useRoute()
@@ -1244,8 +1256,8 @@ async function loadSupportedTypes() {
               {{ statusLabels[detailDoc.status] || detailDoc.status }}
             </NTag>
           </NDescriptionsItem>
-          <NDescriptionsItem v-if="detailDoc.status === 'failed' && detailDoc.error_message" :label="t('documents.errorMessage')">
-            {{ detailDoc.error_message }}
+          <NDescriptionsItem v-if="(detailDoc.status === 'failed' || detailDoc.status === 'chunked') && detailDoc.error_message" :label="t('documents.errorMessage')">
+            {{ docErrorMessage(detailDoc.error_message) }}
           </NDescriptionsItem>
           <NDescriptionsItem :label="t('documents.chunkNumber')">
             <span

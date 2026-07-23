@@ -87,11 +87,11 @@ def _build_graph() -> StateGraph:
     workflow.add_edge("router", "join")
     workflow.add_edge("retrieval", "join")
 
-    # join → skill_loader (has skill) | tool_decision (no skill)
+    # join → skill_loader (always; skill_loader injects the always-available meta
+    # tools — control tools + Python Executor native tools like run_python — so the
+    # agent's native file/code capabilities work even when no skill is selected).
     def route_after_join(state: dict) -> str:
-        if state.get("active_skill"):
-            return "skill_loader"
-        return "tool_decision"
+        return "skill_loader"
 
     workflow.add_conditional_edges(
         "join",
@@ -205,7 +205,7 @@ class RagclawAgentGraph:
         # stable system prompt so the cached prefix stays consistent across KBs.
         kb_prompt = state.get("kb_prompt") or ""
         if kb_prompt:
-            system_prompt = system_prompt + "\n\n## 知识库背景与偏好\n" + kb_prompt
+            system_prompt = system_prompt + "\n\n## Knowledge Base Background & Preferences\n" + kb_prompt
 
         # ── Final generation guidance: when no tools were executed, prevent
         # the LLM from outputting [TOOL_CALL] or JSON tool invocations in free text.
@@ -222,11 +222,11 @@ class RagclawAgentGraph:
             )
             if has_tool_instruction:
                 final_note = (
-                    "\n\n## ⚠️ 当前阶段：最终回答生成\n\n"
-                    "这是最终生成阶段，不再有工具调用能力。"
-                    "请直接以自然语言回复用户的问题。"
-                    "**绝对不要**输出 [TOOL_CALL]、JSON 格式的工具调用、或任何代码块伪装成工具调用。"
-                    "如果用户的任务需要工具但工具未执行，请如实告知用户。"
+                    "\n\n## ⚠️ Current stage: final answer generation\n\n"
+                    "This is the final generation stage; no tool-calling capability is available. "
+                    "Reply to the user's question directly in natural language. "
+                    "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block disguised as a tool call. "
+                    "If the user's task requires a tool but none was executed, tell the user honestly."
                 )
 
         cron_rule = (
@@ -264,13 +264,13 @@ class RagclawAgentGraph:
         user_parts = []
 
         if state.get("memory_context"):
-            user_parts.append(f"## 用户偏好与历史记忆\n{state['memory_context']}")
+            user_parts.append(f"## User Preferences & History Memory\n{state['memory_context']}")
 
         if state.get("tool_results"):
             tool_text = "\n".join(
                 f"- {r}" for r in state["tool_results"]
             )
-            user_parts.append(f"## 工具调用结果\n{tool_text}")
+            user_parts.append(f"## Tool Call Results\n{tool_text}")
 
         rag_context = state.get("rag_context") or ""
         if rag_context:
@@ -278,10 +278,10 @@ class RagclawAgentGraph:
             # result, not from retrieval — so never surface the "no relevant
             # documents" sentinel (it would make the model claim it found
             # nothing). Genuine retrieved context is still injected.
-            if not (rag_context.strip() == "未找到相关文档" and active_skill and tool_results):
-                user_parts.append(f"## 参考文档\n{rag_context}")
+            if not (rag_context.strip() == "No relevant documents found" and active_skill and tool_results):
+                user_parts.append(f"## Reference Documents\n{rag_context}")
 
-        user_parts.append(f"## 问题\n{state['query']}")
+        user_parts.append(f"## Question\n{state['query']}")
         # Final-stage constraint stays in the dynamic user region (only varies with
         # tool execution); keeping it out of the system prefix preserves cache hits.
         if final_note:

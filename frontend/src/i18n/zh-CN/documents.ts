@@ -101,6 +101,12 @@ export default {
     failed: '处理失败。可打开详情删除该文档，然后重新上传。',
   },
 
+  // 后端错误码 -> 本地化文案（用于 'failed' 或 'chunked' 文档）。
+  // 真正的异常原文不做本地化，原样展示。
+  docErrorCodes: {
+    EMBED_MODEL_NOT_INSTALLED: 'Embedding 模型未安装，文档已切片但仅支持关键词检索。请前往「系统设置 → Embedding 模型」安装模型后点击「重建索引」。',
+  },
+
   // Upload item status tags
   upload: {
     waiting: '等待',

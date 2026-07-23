@@ -47,9 +47,9 @@ _FORCE_PY_KEYWORDS = (
 )
 
 # Query keywords that signal the user wants to create / write / save / run a
-# file or code. Used as a routing fallback so file-generation intent does not
-# depend on the LLM returning the exact skill name (e.g. "生成文件mydoc.txt"
-# should map to "Document Manager" without an exact-name match).
+# file or code. Used as a routing fallback so file/code-generation intent does
+# not depend on the LLM returning an exact skill name — claw's native run_python
+# meta-tool handles these directly once the agent decides to call it.
 _ROUTE_FILE_INTENT_KEYWORDS = (
     "生成文件", "创建文件", "写文件", "保存文件", "新建文件", "写入文件",
     "生成文档", "写文档", "创建文档", "新建文档", "保存为文件", "保存为",
@@ -61,106 +61,29 @@ _ROUTE_FILE_INTENT_KEYWORDS = (
 )
 
 
-# ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
-# zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
-# improve instruction-following on English-dominant base models (GPT/Claude/DeepSeek etc.).
+# ── Bilingual Agent-Graph prompts ──
+# Prompt text now lives in app/services/i18n (mirrors frontend/src/i18n):
+# zh_cn.py / en_us.py hold the templates; t() resolves by id + locale.
+# These wrappers keep the original function names/signatures so call sites
+# (build_intent_router_prompt / build_tool_system_prompt / build_skill_switch_limit_message
+# / build_selfheal_prompt) are unchanged. lang='zh' (config_manager.prompt_language
+# default) reproduces the original Chinese behavior; lang='en' selects the English A/B variants.
+from app.services.i18n import t as _t
+
 
 def build_intent_router_prompt(query: str, skill_list: str, lang: str = "zh") -> str:
     """Layer-1 intent-router prompt. lang='zh' reproduces the original behavior."""
-    if lang == "en":
-        return (
-            "You are an intent router. Based on the user's question, select the most "
-            "appropriate skill from the following NUMBERED list.\n\n"
-            "Available skills:\n" + skill_list + "\n\n"
-            "Rules:\n"
-            "- If the user's question closely matches a skill, return that skill's NUMBER.\n"
-            '- If the user\'s question does not match any skill, return 0.\n'
-            "- Return ONLY a single integer (the skill number, or 0). No other output.\n\n"
-            "User question: " + query + "\n\n"
-            "Number:"
-        )
-    return (
-        "你是一个意图路由器。根据用户的问题，从以下编号技能中选择最合适的一个。\n\n"
-        f"可用技能：\n{skill_list}\n\n"
-        "规则：\n"
-        "- 如果用户的问题与某个技能高度匹配，返回该技能的**编号**\n"
-        "- 如果用户的问题与所有技能都不匹配，返回 0\n"
-        "- 只返回一个整数（技能编号，或 0），不要有任何其他输出\n\n"
-        f"用户问题：{query}\n\n"
-        "编号："
-    )
+    return _t("intent_router", lang, query=query, skill_list=skill_list)
 
 
 def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
     """Forced tool-call JSON system prompt. lang='zh' reproduces the original behavior."""
-    if lang == "en":
-        return (
-            "# ⚠️ CRITICAL INSTRUCTION: Decide whether to call a tool (or explicitly stop)\n\n"
-            "Your job is to decide whether another tool call is still needed.\n\n"
-            "## When to STOP calling tools (most important)\n"
-            "- If the prior tool results ALREADY fully satisfy the user's request "
-            "(e.g. the file was successfully created/modified, the computation is done), "
-            "do NOT call any tool again.\n"
-            "- Output ONLY an EMPTY object `{}` and the system will generate the final reply.\n"
-            "- NEVER call the same tool again just to 'confirm' a result, and NEVER repeat a "
-            "write/append that already achieved its goal.\n"
-            "- Only keep calling tools when further action is genuinely required.\n\n"
-            "## When you MUST use a tool\n"
-            "- User asks to generate / create / write / save / append / modify a file -> MUST call run_python\n"
-            "- User asks to run code, do data processing, or compute -> MUST call run_python\n"
-            "- Any file read/write operation that is NOT yet done -> MUST call run_python\n\n"
-            "## Available tools\n" + tool_desc + "\n\n"
-            "## Output format\n"
-            'When a tool is still needed: {"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n'
-            'When the task is done (no tool needed): {}\n\n'
-            "## Rules\n"
-            "- Output ONLY the JSON object above, with no extra text.\n"
-            '- You MUST use double quotes (") and MUST NOT use single quotes (\').\n'
-            "- You MUST NOT use => arrow syntax; use the standard JSON colon (:).\n"
-            "- Do NOT wrap the JSON in ``` code fences.\n"
-            "- Do NOT output [TOOL_CALL] or <tool_call> tags.\n"
-            '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
-            "- Do NOT output the final reply; if the task is done, output {} instead.\n"
-            "- NEVER fabricate File, file paths, or UUIDs."
-        )
-    return (
-        "# ⚠️ 关键指令：判断是否需要调用工具（或显式停止）\n\n"
-        "你的职责是判断「现在是否还需要继续调用工具」。\n\n"
-        "## 何时停止调用工具（最重要）\n"
-        "- 如果**之前的工具结果已经完整满足用户的需求**（例如：文件已成功创建/修改、计算已完成、数据已处理），**不要再调用任何工具**。\n"
-        "- 此时请只输出一个**空对象** `{}`，系统会据此生成最终回复给用户。\n"
-        "- **绝对不要**为了「确认结果」「再检查一次」而重复调用同一个工具；也不要重复执行一个已经达成目标的写入/追加操作（例如文件里已经有用户要的内容了，就不要再写一遍）。\n"
-        "- 只有当确实需要进一步操作（如「先读后写」、真正的多步流程）时，才继续调用工具。\n\n"
-        "## 何时必须使用工具\n"
-        "- 用户要求「生成」「创建」「写入」「保存」「追加」「修改」文件 → **必须**调用 run_python\n"
-        "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
-        "- 任何**尚未完成**的读写文件操作 → **必须**调用 run_python\n\n"
-        "## 可用工具\n" + tool_desc + "\n\n"
-        "## 输出格式\n"
-        '还需要调用工具时：{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n'
-        '任务已完成、无需再调用工具时：{}\n\n'
-        "## 规则\n"
-        "- 只输出上述 JSON 对象，不要附加任何多余文字\n"
-        "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
-        "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
-        "- 不要用 ``` 包裹 JSON\n"
-        "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
-        "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
-        "- **绝对不要**编造File、文件路径或 uuid"
-    )
+    return _t("tool_system", lang, tool_desc=tool_desc)
 
 
 def build_skill_switch_limit_message(name: str, switch_count: int, quota: int, lang: str = "zh") -> str:
     """Suspension message when skill-switch quota is exhausted. lang='zh' = original."""
-    if lang == "en":
-        return (
-            f"use_skill: skill-switch limit reached ({switch_count}/{quota}); "
-            f'cannot load "{name}". Reply "continue" to add quota and auto-retry.'
-        )
-    return (
-        f"use_skill：已达技能切换上限（{switch_count}/{quota}），"
-        f"无法加载「{name}」。请回复「继续」以追加额度后自动重试。"
-    )
+    return _t("skill_switch_limit", lang, name=name, switch_count=switch_count, quota=quota)
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
@@ -457,30 +380,11 @@ def _strip_tool_call_noise(content: str) -> str:
 def build_selfheal_prompt(tool_name: str, bad_output: str, lang: str = "zh") -> str:
     """Layer 2: instruction that asks the LLM to rewrite a malformed tool call
     as strictly valid JSON. The prior bad output is fed back as context.
+    lang='zh' reproduces the original behavior; lang='en' selects the English
+    A/B variant. Template lives in app/services/i18n (key: 'selfheal').
     """
     snippet = (bad_output or "")[:1500]
-    if lang == "en":
-        return (
-            "Your previous tool call was NOT valid JSON and could not be parsed. "
-            f"You MUST call the tool `{tool_name}` now.\n\n"
-            "## Your previous (invalid) output\n" + snippet + "\n\n"
-            "## Requirements\n"
-            f'- Output ONLY a single pure JSON object: {{"tool": "{tool_name}", "arguments": {{...}}}}\n'
-            "- Use double quotes (\") only. NEVER use single quotes, `=>`, `--code`, "
-            "or [TOOL_CALL] tags.\n"
-            '- Escape any double quotes inside string values as \\", and newlines as \\n.\n'
-            "- Do NOT add any explanation before or after the JSON."
-        )
-    return (
-        "你上一次的工具调用不是合法 JSON，无法被解析。"
-        f"你现在必须调用工具 `{tool_name}`。\n\n"
-        "## 你上一次的（非法）输出\n" + snippet + "\n\n"
-        "## 要求\n"
-        f'- 只输出一个纯 JSON 对象：{{"tool": "{tool_name}", "arguments": {{...}}}}\n'
-        "- 只能使用双引号（\"）；绝对不要使用单引号、`=>`、`--code` 或 [TOOL_CALL] 标签\n"
-        "- 字符串值内部的双引号用 \\\" 转义，换行用 \\n\n"
-        "- JSON 前后不要附加任何解释文字"
-    )
+    return _t("selfheal", lang, tool_name=tool_name, snippet=snippet)
 
 
 async def _chat_with_tools_resilient(
@@ -567,7 +471,7 @@ async def skill_router_node(state: dict) -> dict:
     """
     if state.get("cache_hit"):
         return {}
-    _emit(state, "routing", "分析意图并选择技能…")
+    _emit(state, "routing", "Analyzing intent and selecting a skill…")
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
     active_skill = None
@@ -615,7 +519,7 @@ async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict |
             )).scalars().all()
     if not skills:
         return None
-    skill_list = "\n".join(f"{i+1}. {s.name}: {s.description or '(无描述)'}" for i, s in enumerate(skills))
+    skill_list = "\n".join(f"{i+1}. {s.name}: {s.description or '(no description)'}" for i, s in enumerate(skills))
     prompt = build_intent_router_prompt(query, skill_list, lang=config_manager.prompt_language)
     try:
         raw = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip()
@@ -680,7 +584,7 @@ def _build_meta_skill_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "list_skills",
-                "description": "列出当前可用的所有技能（名称与描述）。当需要决定使用哪个技能、或想确认某个技能是否存在时调用。",
+                "description": "List all currently available skills (name and description). Call this when you need to decide which skill to use, or to confirm whether a particular skill exists.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
             "_source": "meta",
@@ -690,20 +594,20 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "use_skill",
                 "description": (
-                    "加载并使用另一个技能（例如「Document Manager」）。加载后该技能的规则与工具立即生效，"
-                    "当前对话即可调用其能力。适用于当前技能无法直接完成的子任务"
-                    "（如「PPT美化」需要先有 PPT 文件，可临时 use_skill「Document Manager」生成后再返回美化）。"
+                    "Load and activate another skill. Once loaded, that skill's rules and tools take effect immediately and can be called in the current conversation. "
+                    "Use this for subtasks the current skill cannot handle directly. Note: creating, reading, updating, and deleting files and running code are your "
+                    "NATIVE capabilities (just call run_python) — only use use_skill when you need a separate, specialized skill."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "skill_name": {
                             "type": "string",
-                            "description": "要使用的技能名称，例如「Document Manager」。可先调用 list_skills 查看可用技能。",
+                            "description": "The name of the skill to use. Call list_skills first if you need to see the available skills.",
                         },
                         "reason": {
                             "type": "string",
-                            "description": "调用该技能的原因/目的，例如「需要先生成 PPT 文档，再返回进行美化」。会展示给用户作为处理过程。",
+                            "description": "Why you are invoking this skill (e.g. 'need to generate a PPT document first, then return to polish it'). Shown to the user as a progress step.",
                         },
                     },
                     "required": ["skill_name"],
@@ -716,14 +620,57 @@ def _build_meta_skill_tools() -> list[dict]:
             "function": {
                 "name": "done_skill",
                 "description": (
-                    "结束当前临时技能，返回到上一层技能（例如用「Document Manager」生成文件后，"
-                    "调用 done_skill 回到「PPT美化」继续美化）。无需返回时不必调用。"
+                    "End the current temporary skill and return to the previous skill layer. Do not call this if no return is needed."
                 ),
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
             "_source": "meta",
         },
     ]
+
+
+# Module-level cache of Python Executor meta tools (always-available native tools).
+# Populated at startup (lifespan) via _refresh_meta_python_tools and used as a
+# fallback here when startup missed it. These are the "元工具" the Python
+# Executor (e.g. run_python) exposes — native file/code execution for claw.
+_META_PYTHON_TOOLS: list[dict] = []
+
+
+async def _refresh_meta_python_tools() -> None:
+    """Fetch tools from the Python Executor MCP server and cache them as meta tools.
+
+    The cached tools keep their MCP source metadata (``_source`` / ``_mcp_server_id``)
+    so they execute through the normal MCP tool path, not the meta control path —
+    this is what makes run_python etc. available natively to every conversation.
+    """
+    global _META_PYTHON_TOOLS
+    try:
+        tools = await tool_registry.get_mcp_tools(["Python Executor"])
+    except Exception as e:
+        logger.warning("meta python tools: fetch failed: %s", e)
+        return
+    _META_PYTHON_TOOLS = [t for t in tools if t.get("function", {}).get("name")]
+    logger.info("meta python tools: loaded %d tools from Python Executor",
+                len(_META_PYTHON_TOOLS))
+
+
+def _meta_control_names() -> set[str]:
+    """Names of the meta *control* tools (orchestration only, never executed)."""
+    return {"list_skills", "use_skill", "done_skill"}
+
+
+async def _build_all_meta_tools() -> list[dict]:
+    """Always-available meta tools: control tools + Python Executor native tools.
+
+    The Python Executor tools (e.g. run_python) are fetched from the server at
+    startup; _refresh_meta_python_tools populates the cache, with a lazy fetch
+    here as a fallback if startup missed it (e.g. MCP not reachable yet).
+    """
+    python_tools = _META_PYTHON_TOOLS
+    if not python_tools:
+        await _refresh_meta_python_tools()
+        python_tools = _META_PYTHON_TOOLS
+    return _build_meta_skill_tools() + python_tools
 
 
 async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]:
@@ -784,8 +731,8 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
 
 # ── Agent-step streaming (Route D observability) ──
 _TOOL_LABELS = {
-    "run_python": "执行 Python 脚本",
-    "read_skill_resource": "读取技能资料",
+    "run_python": "Run Python script",
+    "read_skill_resource": "Read skill resource",
 }
 
 
@@ -806,28 +753,37 @@ def _emit(state: dict, stage: str, message: str, **extra) -> None:
 async def skill_loader_node(state: dict) -> dict:
     """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
 
-    Runs after router (if a skill was selected) and before retrieval.
-    Also initialises the Route D skill stack and injects the always-available
-    meta tools (list_skills / use_skill / done_skill) for orchestration.
+    Always injects the always-available meta tools (control tools + Python
+    Executor native tools such as run_python) so claw's file/code capabilities
+    are present even when no skill is selected. When a skill IS selected, its
+    SKILL.md body and tools are also loaded and the Route D skill stack is
+    initialised.
     """
     if state.get("cache_hit"):
         return {}
 
+    # Build the always-available meta tools (control + Python Executor native).
+    # This runs before any skill check so run_python etc. are natively available
+    # to every conversation, matching the ragclaw "native file/code execution" role.
+    meta_tools = await _build_all_meta_tools()
+
     active_skill = state.get("active_skill")
     if not active_skill:
-        return {}
+        # No skill selected — still expose the native meta tools so the agent can
+        # operate on files / run code without routing through a skill.
+        return {"available_tools": meta_tools}
 
     folder_name = active_skill.get("folder_name")
     if not folder_name:
-        return {}
+        return {"available_tools": meta_tools}
 
     system_prompt, all_tools = await _load_skill_body_and_tools(folder_name)
     updated_skill = {**active_skill, "system_prompt": system_prompt, "source": "primary"}
 
-    # Always-available meta tools for orchestration (Route D)
-    all_tools = all_tools + _build_meta_skill_tools()
+    # Always-available meta tools for orchestration + native execution (Route D)
+    all_tools = all_tools + meta_tools
 
-    _emit(state, "skill_load", f"已加载技能：{active_skill.get('name', '?')}", skill=active_skill.get("name"))
+    _emit(state, "skill_load", f"Loaded skill: {active_skill.get('name', '?')}", skill=active_skill.get("name"))
 
     return {
         "active_skill": updated_skill,
@@ -899,19 +855,19 @@ async def skill_switcher_node(state: dict) -> dict:
                 skills = (await db.execute(
                     select(Skill).where(Skill.is_active == True)  # noqa: E712
                 )).scalars().all()
-            skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills) or "(无可用技能)"
-            result = f"当前可用技能：\n{skill_list}"
+            skill_list = "\n".join(f"- {s.name}: {s.description or '(no description)'}" for s in skills) or "(no skills available)"
+            result = f"Available skills:\n{skill_list}"
             return _skill_control_return(tc, result, stack, state)
 
         # ── done_skill ──
         if fname == "done_skill":
             if len(stack) <= 1:
-                result = "done_skill：已经是最顶层技能，没有可返回的上一层。"
+                result = "done_skill: already at the top-level skill; there is no previous layer to return to."
                 return _skill_control_return(tc, result, stack, state)
             stack = stack[:-1]
             prev = stack[-1]
-            result = f"已返回上一层技能：「{prev.get('name')}」。其规则与工具现已生效。"
-            _emit(state, "skill_return", f"返回上一层技能：「{prev.get('name')}」", skill=prev.get("name"))
+            result = f"Returned to the previous skill layer: '{prev.get('name')}'. Its rules and tools are now active."
+            _emit(state, "skill_return", f"Returned to previous skill layer: '{prev.get('name')}'", skill=prev.get("name"))
             return {
                 "active_skill": prev,
                 "skill_stack": stack,
@@ -929,8 +885,8 @@ async def skill_switcher_node(state: dict) -> dict:
         if fname == "use_skill":
             name = (args.get("skill_name") or "").strip()
             if not name:
-                _emit(state, "skill_switch_fail", "use_skill：未提供 skill_name。")
-                return _skill_control_return(tc, "use_skill：未提供 skill_name。", stack, state)
+                _emit(state, "skill_switch_fail", "use_skill: no skill_name was provided.")
+                return _skill_control_return(tc, "use_skill: no skill_name was provided.", stack, state)
             quota = state.get("skill_switch_quota", MAX_SKILL_SWITCHES)
             if switch_count >= quota:
                # Suspend: wait for user confirmation ("continue" = replay after adding quota) instead of silently rejecting
@@ -947,11 +903,11 @@ async def skill_switcher_node(state: dict) -> dict:
                 }
             skill = await get_skill_by_name(db, name, tenant_id)
             if not skill or not skill.is_active:
-                result = f"use_skill：未找到可用技能「{name}」（可先调用 list_skills 查看）。"
+                result = f"use_skill: no available skill named '{name}' (call list_skills to see what's available)."
                 _emit(state, "skill_switch_fail", result, skill=name)
                 return _skill_control_return(tc, result, stack, state)
             if skill.id in loaded:
-                result = f"use_skill：技能「{skill.name}」已在生效栈中，无需重复加载。"
+                result = f"use_skill: skill '{skill.name}' is already active in the stack; no need to load it again."
                 _emit(state, "skill_switch_fail", result, skill=skill.name)
                 return _skill_control_return(tc, result, stack, state)
 
@@ -974,13 +930,13 @@ async def skill_switcher_node(state: dict) -> dict:
 
             stack = stack + [new_skill]
             result = (
-                f"已加载技能「{skill.name}」，新增工具：{added_names or '（无新工具）'}。"
-                "其规则现已生效，可直接调用相关工具；如需结束该技能请调用 done_skill 返回上一层。"
+                f"Loaded skill '{skill.name}'. New tools added: {added_names or '(none)'}."
+                "Its rules are now active — you can call its tools directly. When finished with this skill, call done_skill to return to the previous layer."
             )
             logger.info("Skill switcher: use_skill '%s' → stack depth=%d, added_tools=%d",
                         skill.name, len(stack), len(added))
             reason = (args.get("reason") or "").strip()
-            switch_msg = f"切换并加载「{skill.name}」"
+            switch_msg = f"Switched to and loaded '{skill.name}'"
             if reason:
                 switch_msg += f"：{reason}"
             _emit(state, "skill_switch", switch_msg, skill=skill.name, reason=reason)
@@ -1001,7 +957,7 @@ async def skill_switcher_node(state: dict) -> dict:
             }
 
     # Unknown control tool — should not happen, but fail safe.
-    result = f"未知元工具：{fname}"
+    result = f"Unknown meta-tool: {fname}"
     _emit(state, "skill_switch_fail", result)
     return _skill_control_return(tc, result, stack, state)
 
@@ -1034,14 +990,14 @@ async def parallel_retrieval_node(state: dict) -> dict:
     # retrieve over, so skip the (vector + BM25) hybrid search entirely. Only
     # the user-scoped memory search still runs.
     if not kb_id:
-        _emit(state, "retrieval_done", "未选择知识库，跳过检索", detail="skip")
+        _emit(state, "retrieval_done", "No knowledge base selected - skipping retrieval", detail="skip")
         memory_context = ""
         if user_id:
             mem_raw = await _search_memories_safe(query, user_id)
             memory_context = _build_memory_context(mem_raw) if mem_raw else ""
         return {"rag_context": "", "citations": [], "memory_context": memory_context,
                 "retrieval_ms": 0}
-    _emit(state, "retrieval", "检索知识库…")
+    _emit(state, "retrieval", "Retrieving from knowledge base…")
     t_start = time.time()
     loop = asyncio.get_running_loop()
 
@@ -1077,7 +1033,7 @@ async def parallel_retrieval_node(state: dict) -> dict:
     rag_context, citations = _build_context(retrieved)
     memory_context = _build_memory_context(mem_raw) if mem_raw else ""
     chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
-    _emit(state, "retrieval_done", f"检索完成，命中 {chunk_count} 段", detail=f"{chunk_count} 段")
+    _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
     return {"rag_context": rag_context, "citations": citations, "memory_context": memory_context,
             "retrieval_ms": round((time.time() - t_start) * 1000)}
 
@@ -1101,7 +1057,7 @@ async def _search_memories_safe(
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
     if not retrieved:
-        return "未找到相关文档", []
+        return "No relevant documents found", []
     parts, citations = [], []
     # Defense-in-depth: collapse display-identical sources so the UI never
     # shows what looks like the same chunk twice (e.g. same doc_id + chunk_index
@@ -1184,8 +1140,8 @@ async def tool_decision_node(state: dict) -> dict:
         quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
         logger.warning("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
        # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
-        msg = (f"工具调用轮次已达上限（{tool_round}/{quota}），"
-               f"请回复「继续」以追加轮次后继续。")
+        msg = (f"Tool-call round limit reached ({tool_round}/{quota}). "
+               f"Reply 'continue' to add more rounds and keep going.")
         _emit(state, "tool_round_limit", msg)
         return {
             "tool_calls": None,
@@ -1209,7 +1165,7 @@ async def tool_decision_node(state: dict) -> dict:
     kb_prompt = state.get("kb_prompt") or ""
     if not kb_prompt:
         kb_prompt = await get_kb_prompt(state["kb_id"])
-    kb_context = f"\n\n## 知识库背景与偏好\n{kb_prompt}" if kb_prompt else ""
+    kb_context = f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}" if kb_prompt else ""
     if available_tools:
         tool_desc = "\n".join(
             f"- {t['function']['name']}: {t['function']['description']}"
@@ -1222,7 +1178,7 @@ async def tool_decision_node(state: dict) -> dict:
         tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
         messages = [
             {"role": "system", "content": tool_system},
-            {"role": "system", "content": "## 任务背景（仅供参考）\n" + skill_prompt + kb_context},
+            {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context},
         ]
     else:
         messages = [{"role": "system", "content": skill_prompt + kb_context}]
@@ -1231,10 +1187,10 @@ async def tool_decision_node(state: dict) -> dict:
         messages.extend(history)
     user_parts = []
     if state.get("memory_context"):
-        user_parts.append(f"## 用户偏好与历史记忆\n{state['memory_context']}")
+        user_parts.append(f"## User Preferences & History Memory\n{state['memory_context']}")
     if state.get("rag_context"):
-        user_parts.append(f"## 参考文档\n{state['rag_context']}")
-    user_parts.append(f"## 问题\n{state['query']}")
+        user_parts.append(f"## Reference Documents\n{state['rag_context']}")
+    user_parts.append(f"## Question\n{state['query']}")
     messages.append({"role": "user", "content": "\n\n".join(user_parts)})
     tool_messages = state.get("tool_messages", [])
     if tool_messages:
@@ -1424,7 +1380,7 @@ async def tool_decision_node(state: dict) -> dict:
                             exact_repeat, degenerate_loop, tool_round,
                         )
                         _emit(state, "tool_loop_guard",
-                              "已检测到重复调用相同工具，自动停止以避免死循环，并生成最终回复。")
+                              "Detected repeated calls to the same tool; auto-stopped to avoid an infinite loop and produced the final reply.")
                         return {"tool_calls": None}
 
             # Strip any raw [TOOL_CALL] wrapper / --code fragments the model may
@@ -1432,7 +1388,7 @@ async def tool_decision_node(state: dict) -> dict:
             # never surface in the chat or pollute the tool-execution history.
             clean_content = _strip_tool_call_noise(content) if content else ""
             tool_msg = {"role": "assistant", "content": clean_content, "tool_calls": tool_calls}
-            _emit(state, "round", f"第 {tool_round + 1} 轮工具调用")
+            _emit(state, "round", f"Tool-call round {tool_round + 1}")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
         logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
@@ -1579,14 +1535,14 @@ async def tool_executor_node(state: dict) -> dict:
         except json.JSONDecodeError:
             args = {}
         label = _TOOL_LABELS.get(tname, tname)
-        _emit(state, "tool", f"执行工具：{label}", tool=tname)
+        _emit(state, "tool", f"Running tool: {label}", tool=tname)
 
         tool_def = tool_lookup.get(tname, {})
         tool_source = tool_def.get("_source", "mcp")
 
         # ── Meta control tools should never reach the executor ──
         if tool_source == "meta":
-            return {"result": f"[{tname}] 元工具不应在工具执行阶段调用", "endpoint": None}
+            return {"result": f"[{tname}] meta-tools must not be called during the tool-execution stage", "endpoint": None}
 
         # ── Script tool path ──
         if tool_source == "script" and folder_name:
@@ -1595,7 +1551,7 @@ async def tool_executor_node(state: dict) -> dict:
             # Find the python_repl MCP server config
             repl_config = await _get_repl_server_config()
             if not repl_config:
-                return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+                return {"result": f"[{tname}] error: Python Executor MCP Server not configured", "endpoint": None}
             result = await execute_script_tool(
                 folder_name, script_path, func_name, args, repl_config,
                 workspace_id=state.get("workspace_id"),
@@ -1603,7 +1559,7 @@ async def tool_executor_node(state: dict) -> dict:
             )
             if result.ok:
                 return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
-            return {"result": f"[{tname}] 错误: {result.error}", "endpoint": repl_config.get("endpoint")}
+            return {"result": f"[{tname}] error: {result.error}", "endpoint": repl_config.get("endpoint")}
 
         # ── Resource tool path (Layer 3: on-demand) ──
         if tool_source == "resource" and folder_name:
@@ -1632,17 +1588,17 @@ async def tool_executor_node(state: dict) -> dict:
                            "command": srv.command, "args_json": srv.args_json, "env_json": srv.env_json,
                            "timeout_seconds": srv.timeout_seconds}
                 else:
-                    return {"result": f"[{tname}] 错误: MCP server not found", "endpoint": None}
+                    return {"result": f"[{tname}] error: MCP server not found", "endpoint": None}
         else:
             # Fallback: try to find run_python on the default python_repl server
             if tname == "run_python":
                 repl_config = await _get_repl_server_config()
                 if not repl_config:
-                    return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+                    return {"result": f"[{tname}] error: Python Executor MCP Server not configured", "endpoint": None}
                 endpoint = repl_config.get("endpoint")
                 cfg = repl_config
             else:
-                return {"result": f"[{tname}] 错误: no MCP server binding for tool", "endpoint": None}
+                return {"result": f"[{tname}] error: no MCP server binding for tool", "endpoint": None}
         try:
             # Share the conversation workspace so chained skills can read
             # files produced by an earlier skill's tool call.
@@ -1655,9 +1611,9 @@ async def tool_executor_node(state: dict) -> dict:
                           tname, res.ok, (res.result or res.error)[:200])
             if res.ok:
                 return {"result": f"[{tname}] {res.result}", "endpoint": endpoint}
-            return {"result": f"[{tname}] 错误: {res.error}", "endpoint": endpoint}
+            return {"result": f"[{tname}] error: {res.error}", "endpoint": endpoint}
         except Exception as e:
-            return {"result": f"[{tname}] 执行异常: {str(e)}", "endpoint": endpoint}
+            return {"result": f"[{tname}] execution error: {str(e)}", "endpoint": endpoint}
 
     tasks = [execute_one(tc) for tc in tool_calls]
     raw = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1677,7 +1633,7 @@ async def tool_executor_node(state: dict) -> dict:
         if fm:
             fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
             tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
-            _emit(state, "tool_done", f"已生成文件：{fname}", tool=tcname, detail=fname)
+            _emit(state, "tool_done", f"File generated: {fname}", tool=tcname, detail=fname)
     result_msgs = []
     for i, tc in enumerate(tool_calls):
         func = tc.get("function", {})
@@ -1691,7 +1647,7 @@ async def _get_repl_server_config() -> dict | None:
     """Get the python_repl MCP server config by name 'Python executor'."""
     async with async_session() as db:
         srv = (await db.execute(
-            select(MCPServer).where(MCPServer.name == "Python执行器").limit(1)
+            select(MCPServer).where(MCPServer.name == "Python Executor").limit(1)
         )).scalar_one_or_none()
         if not srv:
             return None

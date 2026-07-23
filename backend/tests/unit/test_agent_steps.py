@@ -79,16 +79,26 @@ def patch_globals(monkeypatch):
 
     monkeypatch.setattr(nodes, "get_skill_by_name", fake_get_skill)
 
-    # Retrieval backend
-    def fake_search(kb_id, query):
+    # Retrieval backend — parallel_retrieval_node calls vector_store.search and
+    # bm25_index.search (then hybrid_search.fuse), so mock both real entry points.
+    def fake_search(kb_id, query, *top_k):
+        # Shape matches both fuse() branches: vector needs id/content/score/
+        # metadata, BM25 needs chunk_id/content/score (+ optional doc fields).
         return [
-            {"content": "c1", "doc_name": "d1", "doc_id": "id1",
-             "chunk_index": 0, "fusion_score": 0.9, "heading": "", "page": None},
-            {"content": "c2", "doc_name": "d2", "doc_id": "id2",
-             "chunk_index": 1, "fusion_score": 0.8, "heading": "", "page": None},
+            {"id": "id1:0", "chunk_id": "id1:0", "content": "c1", "score": 0.9,
+             "metadata": {"doc_id": "id1", "filename": "d1", "heading": "",
+                          "chunk_index": 0, "page": None},
+             "doc_id": "id1", "doc_name": "d1", "heading": "", "chunk_index": 0,
+             "page": None},
+            {"id": "id2:1", "chunk_id": "id2:1", "content": "c2", "score": 0.8,
+             "metadata": {"doc_id": "id2", "filename": "d2", "heading": "",
+                          "chunk_index": 1, "page": None},
+             "doc_id": "id2", "doc_name": "d2", "heading": "", "chunk_index": 1,
+             "page": None},
         ]
 
-    monkeypatch.setattr(nodes.hybrid_search, "search", fake_search)
+    monkeypatch.setattr(nodes.vector_store, "search", fake_search)
+    monkeypatch.setattr(nodes.bm25_index, "search", fake_search)
 
     # Tool executor backend (script path returns a [File] result)
     fake_repl = types.SimpleNamespace(
@@ -129,8 +139,8 @@ def base_state(emit, **over):
 class TestEmitHelper:
     def test_emits_with_extra(self):
         steps, emit = make_collector()
-        _emit({"emit": emit}, "skill_load", "已加载技能：PPT美化", skill="PPT美化")
-        assert steps == [{"stage": "skill_load", "message": "已加载技能：PPT美化", "skill": "PPT美化"}]
+        _emit({"emit": emit}, "skill_load", "Loaded skill: PPT美化", skill="PPT美化")
+        assert steps == [{"stage": "skill_load", "message": "Loaded skill: PPT美化", "skill": "PPT美化"}]
 
     def test_noop_when_emit_none(self):
         # must not raise
@@ -232,7 +242,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "未找到" in fails[0]["message"]
+        assert fails and "no available skill" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_use_skill_exceeds_limit_fails(self, patch_globals):
@@ -245,7 +255,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "上限" in fails[0]["message"]
+        assert fails and "skill-switch limit" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_use_skill_already_loaded_fails(self, patch_globals):
@@ -258,7 +268,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "已在生效栈中" in fails[0]["message"]
+        assert fails and "already active in the stack" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_unknown_control_tool_fails(self, patch_globals):
@@ -283,7 +293,7 @@ class TestRetrieval:
         assert "retrieval" in stages
         done = [s for s in steps if s["stage"] == "retrieval_done"]
         assert done, "expected retrieval_done"
-        assert "命中 2 段" in done[0]["message"]
+        assert "Retrieved 2 chunk(s)" in done[0]["message"]
 
     @pytest.mark.asyncio
     async def test_skip_when_cache_hit(self, patch_globals):
@@ -320,7 +330,7 @@ class TestToolExecutor:
         tool = [s for s in steps if s["stage"] == "tool"]
         assert tool, "expected a tool event"
         assert tool[0]["tool"] == "run_python"
-        assert "执行 Python 脚本" in tool[0]["message"]
+        assert "Run Python script" in tool[0]["message"]
 
     @pytest.mark.asyncio
     async def test_tool_done_on_file(self, patch_globals):

@@ -172,8 +172,9 @@ export async function checkEmbeddingDimension(model: string): Promise<{
 // ── Re-index all documents against the active embedding model ──
 export interface ReindexStatus {
   status: 'idle' | 'running' | 'completed' | 'failed'
+  phase: string
+  params: Record<string, any>
   progress: number
-  message: string
   error: string
   current: number
   total: number

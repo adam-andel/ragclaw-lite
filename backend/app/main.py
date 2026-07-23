@@ -170,6 +170,15 @@ async def lifespan(app: FastAPI):
         print("Tool registry refresh scheduled")
     except Exception as e:
         print(f"Tool registry init warning: {e}")
+    # Load Python Executor tools as always-available meta tools (claw's native
+    # file/code execution). Fetches the tool list from the Python Executor MCP
+    # server and caches it for injection into every conversation.
+    try:
+        from app.services.agent_nodes import _refresh_meta_python_tools
+        await _refresh_meta_python_tools()
+        print("Meta python tools (Python Executor) loaded at startup")
+    except Exception as e:
+        print(f"Meta python tools init warning: {e}")
     # Sync skill filesystem to DB index
     try:
         from app.services.skill_manager import sync_skills_to_db
