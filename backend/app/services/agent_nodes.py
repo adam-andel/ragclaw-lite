@@ -70,24 +70,24 @@ def build_intent_router_prompt(query: str, skill_list: str, lang: str = "zh") ->
     if lang == "en":
         return (
             "You are an intent router. Based on the user's question, select the most "
-            "appropriate skill from the following list.\n\n"
+            "appropriate skill from the following NUMBERED list.\n\n"
             "Available skills:\n" + skill_list + "\n\n"
             "Rules:\n"
-            "- If the user's question closely matches a skill, select that skill.\n"
-            '- If the user\'s question does not match any skill, return "default".\n'
-            "- Return ONLY the skill name, with no other output.\n\n"
+            "- If the user's question closely matches a skill, return that skill's NUMBER.\n"
+            '- If the user\'s question does not match any skill, return 0.\n'
+            "- Return ONLY a single integer (the skill number, or 0). No other output.\n\n"
             "User question: " + query + "\n\n"
-            "Skill name:"
+            "Number:"
         )
     return (
-        "你是一个意图路由器。根据用户的问题，从以下技能中选择最合适的一个。\n\n"
+        "你是一个意图路由器。根据用户的问题，从以下编号技能中选择最合适的一个。\n\n"
         f"可用技能：\n{skill_list}\n\n"
         "规则：\n"
-        "- 如果用户的问题与某个技能高度匹配，选择该技能\n"
-        "- 如果用户的问题与所有技能都不匹配，返回 \"default\"\n"
-        "- 只返回技能名称，不要有任何其他输出\n\n"
+        "- 如果用户的问题与某个技能高度匹配，返回该技能的**编号**\n"
+        "- 如果用户的问题与所有技能都不匹配，返回 0\n"
+        "- 只返回一个整数（技能编号，或 0），不要有任何其他输出\n\n"
         f"用户问题：{query}\n\n"
-        "技能名称："
+        "编号："
     )
 
 
@@ -615,12 +615,24 @@ async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict |
             )).scalars().all()
     if not skills:
         return None
-    skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills)
+    skill_list = "\n".join(f"{i+1}. {s.name}: {s.description or '(无描述)'}" for i, s in enumerate(skills))
     prompt = build_intent_router_prompt(query, skill_list, lang=config_manager.prompt_language)
     try:
-        chosen = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip().strip('"').strip("'").strip('。!').strip()
+        raw = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip()
+        # The router now returns a 1-based skill NUMBER (or 0 for none). Parse the
+        # first integer so trailing text like "1." / "编号 1" still matches.
+        m = _re.search(r"\d+", raw)
+        if m:
+            idx = int(m.group(0))
+            if 1 <= idx <= len(skills):
+                s = skills[idx - 1]
+                return {"id": s.id, "name": s.name, "description": s.description, "folder_name": s.folder_name}
+            # idx == 0 or out of range -> explicit "no skill" / invalid -> fall through
+        # Safety net: if the model ignored the numbered format and echoed a name,
+        # still try a case/space-insensitive exact-name match.
+        chosen = _re.sub(r"\s+", "", raw.strip('"').strip("'").strip("。!").strip()).lower()
         for s in skills:
-            if s.name == chosen or s.name.lower() == chosen.lower() or s.name.lower().replace(" ", "") == chosen.lower().replace(" ", ""):
+            if _re.sub(r"\s+", "", s.name.lower()) == chosen:
                 return {"id": s.id, "name": s.name, "description": s.description, "folder_name": s.folder_name}
     except Exception as e:
         logger.warning("Skill routing failed: %s", e)
