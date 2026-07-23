@@ -79,16 +79,26 @@ def patch_globals(monkeypatch):
 
     monkeypatch.setattr(nodes, "get_skill_by_name", fake_get_skill)
 
-    # Retrieval backend
-    def fake_search(kb_id, query):
+    # Retrieval backend — parallel_retrieval_node calls vector_store.search and
+    # bm25_index.search (then hybrid_search.fuse), so mock both real entry points.
+    def fake_search(kb_id, query, *top_k):
+        # Shape matches both fuse() branches: vector needs id/content/score/
+        # metadata, BM25 needs chunk_id/content/score (+ optional doc fields).
         return [
-            {"content": "c1", "doc_name": "d1", "doc_id": "id1",
-             "chunk_index": 0, "fusion_score": 0.9, "heading": "", "page": None},
-            {"content": "c2", "doc_name": "d2", "doc_id": "id2",
-             "chunk_index": 1, "fusion_score": 0.8, "heading": "", "page": None},
+            {"id": "id1:0", "chunk_id": "id1:0", "content": "c1", "score": 0.9,
+             "metadata": {"doc_id": "id1", "filename": "d1", "heading": "",
+                          "chunk_index": 0, "page": None},
+             "doc_id": "id1", "doc_name": "d1", "heading": "", "chunk_index": 0,
+             "page": None},
+            {"id": "id2:1", "chunk_id": "id2:1", "content": "c2", "score": 0.8,
+             "metadata": {"doc_id": "id2", "filename": "d2", "heading": "",
+                          "chunk_index": 1, "page": None},
+             "doc_id": "id2", "doc_name": "d2", "heading": "", "chunk_index": 1,
+             "page": None},
         ]
 
-    monkeypatch.setattr(nodes.hybrid_search, "search", fake_search)
+    monkeypatch.setattr(nodes.vector_store, "search", fake_search)
+    monkeypatch.setattr(nodes.bm25_index, "search", fake_search)
 
     # Tool executor backend (script path returns a [File] result)
     fake_repl = types.SimpleNamespace(

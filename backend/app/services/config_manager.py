@@ -271,8 +271,8 @@ class ConfigManager:
             # System prompt (zh = original field; en = A/B variant selected by prompt_language)
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
-            # Agent-graph prompt language: "zh" (default) | "en" — for A/B instruction-following tests
-            "prompt_language": "zh",
+            # Agent-graph prompt language: "zh" | "en" (default "en") — switch to "zh" for Chinese
+            "prompt_language": "en",
             # Cache
             "cache_ttl_seconds": 3600,
             # Sandbox network policy
@@ -298,7 +298,7 @@ class ConfigManager:
             "server_port": 8000,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
-            "prompt_language": "zh",
+            "prompt_language": "en",
             "cache_ttl_seconds": 3600,
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
@@ -511,18 +511,18 @@ class ConfigManager:
     @property
     def system_prompt(self) -> str:
         """Effective system prompt, selected by prompt_language:
-        'en' -> llm_system_prompt_en, otherwise -> llm_system_prompt (Chinese default)."""
+        'en' -> llm_system_prompt_en (default), otherwise -> llm_system_prompt (Chinese)."""
         with self._lock:
-            lang = self._config.get("prompt_language", "zh")
+            lang = self._config.get("prompt_language", "en")
             if lang == "en":
                 return (self._config.get("llm_system_prompt_en") or "").strip() or DEFAULT_SYSTEM_PROMPT_EN
             return (self._config.get("llm_system_prompt") or "").strip() or DEFAULT_SYSTEM_PROMPT
 
     @property
     def prompt_language(self) -> str:
-        """Agent-graph prompt language for A/B instruction-following tests: 'zh' | 'en'."""
+        """Agent-graph prompt language: 'zh' | 'en' (default 'en'; switch to 'zh' for Chinese)."""
         with self._lock:
-            return self._config.get("prompt_language", "zh")
+            return self._config.get("prompt_language", "en")
 
     # ── Public API ──
 
