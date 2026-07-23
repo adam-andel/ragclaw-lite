@@ -46,6 +46,20 @@ _FORCE_PY_KEYWORDS = (
     "delete file", "remove file", "rename", "move file",
 )
 
+# Query keywords that signal the user wants to create / write / save / run a
+# file or code. Used as a routing fallback so file-generation intent does not
+# depend on the LLM returning the exact skill name (e.g. "生成文件mydoc.txt"
+# should map to "Document Manager" without an exact-name match).
+_ROUTE_FILE_INTENT_KEYWORDS = (
+    "生成文件", "创建文件", "写文件", "保存文件", "新建文件", "写入文件",
+    "生成文档", "写文档", "创建文档", "新建文档", "保存为文件", "保存为",
+    "导出文件", "导出为", "生成excel", "生成表格", "生成csv", "导出csv",
+    "运行代码", "执行代码", "运行python", "执行python", "跑代码", "生成代码",
+    "写个文件", "写个文档", "脚本文件",
+    "write file", "create file", "generate file", "save file", "run code",
+    "execute code", "export file", "new file",
+)
+
 
 # ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
 # zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
@@ -563,8 +577,17 @@ async def skill_router_node(state: dict) -> dict:
         logger.info("Router: explicit skill_id=%s name=%s", skill_id, active_skill.get('name') if active_skill else 'NONE')
     if not active_skill and not skill_id:
         # Auto-route using name + description only
-        active_skill = await _route_to_best_skill(query, tenant_id, user_id)
+        async with async_session() as db:
+            skills = (await db.execute(
+                select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+            )).scalars().all()
+        active_skill = await _route_to_best_skill(query, tenant_id, user_id, skills=skills)
         logger.info("Router: auto-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
+        # Fallback: keyword-based routing for file/code generation intent. This
+        # avoids depending on the LLM returning the exact skill name.
+        if not active_skill:
+            active_skill = _route_by_keywords(query, skills)
+            logger.info("Router: keyword-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
@@ -580,15 +603,16 @@ async def _get_skill_index(skill_id: str) -> dict | None:
         return {"id": skill.id, "name": skill.name, "description": skill.description, "folder_name": skill.folder_name}
 
 
-async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
+async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict | None:
     """Auto-route using LLM to match query against skill name + description (Layer 1).
 
     Returns {id, name, description, folder_name} or None.
     """
-    async with async_session() as db:
-        skills = (await db.execute(
-            select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
-        )).scalars().all()
+    if skills is None:
+        async with async_session() as db:
+            skills = (await db.execute(
+                select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+            )).scalars().all()
     if not skills:
         return None
     skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills)
@@ -600,6 +624,34 @@ async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
                 return {"id": s.id, "name": s.name, "description": s.description, "folder_name": s.folder_name}
     except Exception as e:
         logger.warning("Skill routing failed: %s", e)
+    return None
+
+
+def _route_by_keywords(query: str, skills: list) -> dict | None:
+    """Keyword fallback for routing file / code-generation intent to the skill
+    that manages workspace files.
+
+    Used when the LLM name-match router (``_route_to_best_skill``) returns
+    nothing. Picks the candidate skill whose name/description best signals
+    file/document handling, so "生成文件mydoc.txt" maps to e.g. Document
+    Manager without relying on exact-name matching.
+    """
+    if not skills or not query:
+        return None
+    q = query.lower()
+    if not any(kw.lower() in q for kw in _ROUTE_FILE_INTENT_KEYWORDS):
+        return None
+    doc_kw = ("文件", "文档", "file", "document", "doc", "写", "生成",
+              "workspace", "工作区", "excel", "csv", "表格")
+    best, best_score = None, 0
+    for s in skills:
+        blob = f"{s.name} {s.description or ''}".lower()
+        score = sum(1 for k in doc_kw if k.lower() in blob)
+        if score > best_score:
+            best, best_score = s, score
+    if best and best_score > 0:
+        return {"id": best.id, "name": best.name,
+                "description": best.description, "folder_name": best.folder_name}
     return None
 
 
@@ -963,8 +1015,21 @@ async def resume_replay_node(state: dict) -> dict:
 async def parallel_retrieval_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
+    query = state["query"]
+    kb_id = state.get("kb_id")
+    user_id = state.get("user_id", "")
+    # When the user has not selected any knowledge base there is nothing to
+    # retrieve over, so skip the (vector + BM25) hybrid search entirely. Only
+    # the user-scoped memory search still runs.
+    if not kb_id:
+        _emit(state, "retrieval_done", "未选择知识库，跳过检索", detail="skip")
+        memory_context = ""
+        if user_id:
+            mem_raw = await _search_memories_safe(query, user_id)
+            memory_context = _build_memory_context(mem_raw) if mem_raw else ""
+        return {"rag_context": "", "citations": [], "memory_context": memory_context,
+                "retrieval_ms": 0}
     _emit(state, "retrieval", "检索知识库…")
-    query, kb_id, user_id = state["query"], state["kb_id"], state.get("user_id", "")
     t_start = time.time()
     loop = asyncio.get_running_loop()
 
