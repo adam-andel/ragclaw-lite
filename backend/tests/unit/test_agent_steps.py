@@ -129,8 +129,8 @@ def base_state(emit, **over):
 class TestEmitHelper:
     def test_emits_with_extra(self):
         steps, emit = make_collector()
-        _emit({"emit": emit}, "skill_load", "已加载技能：PPT美化", skill="PPT美化")
-        assert steps == [{"stage": "skill_load", "message": "已加载技能：PPT美化", "skill": "PPT美化"}]
+        _emit({"emit": emit}, "skill_load", "Loaded skill: PPT美化", skill="PPT美化")
+        assert steps == [{"stage": "skill_load", "message": "Loaded skill: PPT美化", "skill": "PPT美化"}]
 
     def test_noop_when_emit_none(self):
         # must not raise
@@ -232,7 +232,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "未找到" in fails[0]["message"]
+        assert fails and "no available skill" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_use_skill_exceeds_limit_fails(self, patch_globals):
@@ -245,7 +245,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "上限" in fails[0]["message"]
+        assert fails and "skill-switch limit" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_use_skill_already_loaded_fails(self, patch_globals):
@@ -258,7 +258,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "已在生效栈中" in fails[0]["message"]
+        assert fails and "already active in the stack" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_unknown_control_tool_fails(self, patch_globals):
