@@ -178,11 +178,11 @@ def _seed_defaults(raw):
         raw.execute(
             "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, created_at) "
             "VALUES(?,?,?,?,?,?,?)",
-            (mcp_id, "Python执行器", "http", "http://mcp-repl:9200/mcp", 30, 1, now),
+            (mcp_id, "Python Executor", "http", "http://mcp-repl:9200/mcp", 30, 1, now),
         )
-        print("[seed] MCP Server 'Python执行器' created")
+        print("[seed] MCP Server 'Python Executor' created")
     else:
-        print("[seed] MCP Server 'Python执行器' already exists")
+        print("[seed] MCP Server 'Python Executor' already exists")
 
     # Default Skill: doc-manager (folder-based)
     skill_dir = settings.skills_dir / "doc-manager"
@@ -215,7 +215,7 @@ def _build_doc_gen_skill_md() -> str:
 name: Document Manager
 description: "Create, read, update, and delete workspace files (txt/csv/xlsx/pptx/png/pdf/html/markdown and more) via the Python executor."
 mcp_servers:
-  - Python执行器
+  - Python Executor
 ---
 
 # Document Manager

@@ -1595,7 +1595,7 @@ async def tool_executor_node(state: dict) -> dict:
             # Find the python_repl MCP server config
             repl_config = await _get_repl_server_config()
             if not repl_config:
-                return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+                return {"result": f"[{tname}] 错误: Python Executor MCP Server 未配置", "endpoint": None}
             result = await execute_script_tool(
                 folder_name, script_path, func_name, args, repl_config,
                 workspace_id=state.get("workspace_id"),
@@ -1638,7 +1638,7 @@ async def tool_executor_node(state: dict) -> dict:
             if tname == "run_python":
                 repl_config = await _get_repl_server_config()
                 if not repl_config:
-                    return {"result": f"[{tname}] 错误: Python执行器 MCP Server 未配置", "endpoint": None}
+                    return {"result": f"[{tname}] 错误: Python Executor MCP Server 未配置", "endpoint": None}
                 endpoint = repl_config.get("endpoint")
                 cfg = repl_config
             else:
@@ -1691,7 +1691,7 @@ async def _get_repl_server_config() -> dict | None:
     """Get the python_repl MCP server config by name 'Python executor'."""
     async with async_session() as db:
         srv = (await db.execute(
-            select(MCPServer).where(MCPServer.name == "Python执行器").limit(1)
+            select(MCPServer).where(MCPServer.name == "Python Executor").limit(1)
         )).scalar_one_or_none()
         if not srv:
             return None
