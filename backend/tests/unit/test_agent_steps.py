@@ -293,7 +293,7 @@ class TestRetrieval:
         assert "retrieval" in stages
         done = [s for s in steps if s["stage"] == "retrieval_done"]
         assert done, "expected retrieval_done"
-        assert "命中 2 段" in done[0]["message"]
+        assert "Retrieved 2 chunk(s)" in done[0]["message"]
 
     @pytest.mark.asyncio
     async def test_skip_when_cache_hit(self, patch_globals):
@@ -330,7 +330,7 @@ class TestToolExecutor:
         tool = [s for s in steps if s["stage"] == "tool"]
         assert tool, "expected a tool event"
         assert tool[0]["tool"] == "run_python"
-        assert "执行 Python 脚本" in tool[0]["message"]
+        assert "Run Python script" in tool[0]["message"]
 
     @pytest.mark.asyncio
     async def test_tool_done_on_file(self, patch_globals):

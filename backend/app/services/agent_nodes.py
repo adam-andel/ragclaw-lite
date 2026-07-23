@@ -471,7 +471,7 @@ async def skill_router_node(state: dict) -> dict:
     """
     if state.get("cache_hit"):
         return {}
-    _emit(state, "routing", "正在分析意图并选择技能…")
+    _emit(state, "routing", "Analyzing intent and selecting a skill…")
     query, kb_id = state["query"], state["kb_id"]
     skill_id, tenant_id, user_id = state.get("skill_id"), state.get("tenant_id"), state.get("user_id")
     active_skill = None
@@ -731,8 +731,8 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
 
 # ── Agent-step streaming (Route D observability) ──
 _TOOL_LABELS = {
-    "run_python": "执行 Python 脚本",
-    "read_skill_resource": "读取技能资源",
+    "run_python": "Run Python script",
+    "read_skill_resource": "Read skill resource",
 }
 
 
@@ -783,7 +783,7 @@ async def skill_loader_node(state: dict) -> dict:
     # Always-available meta tools for orchestration + native execution (Route D)
     all_tools = all_tools + meta_tools
 
-    _emit(state, "skill_load", f"已加载技能：{active_skill.get('name', '?')}", skill=active_skill.get("name"))
+    _emit(state, "skill_load", f"Loaded skill: {active_skill.get('name', '?')}", skill=active_skill.get("name"))
 
     return {
         "active_skill": updated_skill,
@@ -867,7 +867,7 @@ async def skill_switcher_node(state: dict) -> dict:
             stack = stack[:-1]
             prev = stack[-1]
             result = f"Returned to the previous skill layer: '{prev.get('name')}'. Its rules and tools are now active."
-            _emit(state, "skill_return", f"已返回上一层技能：'{prev.get('name')}'", skill=prev.get("name"))
+            _emit(state, "skill_return", f"Returned to previous skill layer: '{prev.get('name')}'", skill=prev.get("name"))
             return {
                 "active_skill": prev,
                 "skill_stack": stack,
@@ -990,14 +990,14 @@ async def parallel_retrieval_node(state: dict) -> dict:
     # retrieve over, so skip the (vector + BM25) hybrid search entirely. Only
     # the user-scoped memory search still runs.
     if not kb_id:
-        _emit(state, "retrieval_done", "未选择知识库，跳过检索", detail="skip")
+        _emit(state, "retrieval_done", "No knowledge base selected - skipping retrieval", detail="skip")
         memory_context = ""
         if user_id:
             mem_raw = await _search_memories_safe(query, user_id)
             memory_context = _build_memory_context(mem_raw) if mem_raw else ""
         return {"rag_context": "", "citations": [], "memory_context": memory_context,
                 "retrieval_ms": 0}
-    _emit(state, "retrieval", "正在从知识库检索…")
+    _emit(state, "retrieval", "Retrieving from knowledge base…")
     t_start = time.time()
     loop = asyncio.get_running_loop()
 
@@ -1033,7 +1033,7 @@ async def parallel_retrieval_node(state: dict) -> dict:
     rag_context, citations = _build_context(retrieved)
     memory_context = _build_memory_context(mem_raw) if mem_raw else ""
     chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
-    _emit(state, "retrieval_done", f"命中 {chunk_count} 段", detail=f"{chunk_count} 段")
+    _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
     return {"rag_context": rag_context, "citations": citations, "memory_context": memory_context,
             "retrieval_ms": round((time.time() - t_start) * 1000)}
 
@@ -1380,7 +1380,7 @@ async def tool_decision_node(state: dict) -> dict:
                             exact_repeat, degenerate_loop, tool_round,
                         )
                         _emit(state, "tool_loop_guard",
-                              "检测到对同一工具的重复调用，已自动停止以避免死循环，并生成最终回复。")
+                              "Detected repeated calls to the same tool; auto-stopped to avoid an infinite loop and produced the final reply.")
                         return {"tool_calls": None}
 
             # Strip any raw [TOOL_CALL] wrapper / --code fragments the model may
@@ -1388,7 +1388,7 @@ async def tool_decision_node(state: dict) -> dict:
             # never surface in the chat or pollute the tool-execution history.
             clean_content = _strip_tool_call_noise(content) if content else ""
             tool_msg = {"role": "assistant", "content": clean_content, "tool_calls": tool_calls}
-            _emit(state, "round", f"工具调用轮次 {tool_round + 1}")
+            _emit(state, "round", f"Tool-call round {tool_round + 1}")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
         logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
@@ -1535,7 +1535,7 @@ async def tool_executor_node(state: dict) -> dict:
         except json.JSONDecodeError:
             args = {}
         label = _TOOL_LABELS.get(tname, tname)
-        _emit(state, "tool", f"正在执行工具：{label}", tool=tname)
+        _emit(state, "tool", f"Running tool: {label}", tool=tname)
 
         tool_def = tool_lookup.get(tname, {})
         tool_source = tool_def.get("_source", "mcp")
@@ -1633,7 +1633,7 @@ async def tool_executor_node(state: dict) -> dict:
         if fm:
             fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
             tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
-            _emit(state, "tool_done", f"文件已生成：{fname}", tool=tcname, detail=fname)
+            _emit(state, "tool_done", f"File generated: {fname}", tool=tcname, detail=fname)
     result_msgs = []
     for i, tc in enumerate(tool_calls):
         func = tc.get("function", {})
