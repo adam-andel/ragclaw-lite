@@ -121,7 +121,7 @@ export default {
   promptLang: {
     system: '跟随系统',
     en: 'English（英文）',
-    zh: '中文（默认）',
+    zh: '中文',
   },
   sandboxTitle: '沙盒 / REPL 执行环境（网络策略 & 文件保留）',
   sandboxDesc: '控制 LLM 生成的代码在沙盒中能否访问外部网络。默认 <b>deny</b>（完全禁止，最安全）。选择 <b>allowlist</b> 后可填写允许访问的域名（逗号或换行分隔），Python 代码仅能访问白名单域名，且直连 IP 会被拦截（防 DNS 重绑）。修改后通过 MCP 服务热加载，<b>立即生效，无需重启</b>。',

@@ -60,7 +60,7 @@ const config = ref<LLMConfig>({
   embedding_api_key: '',
   llm_system_prompt: '',
   llm_system_prompt_en: '',
-  prompt_language: 'system',
+  prompt_language: 'en',
   server_host: '0.0.0.0', server_port: 8000,
   cache_ttl_seconds: 3600,
   is_configured: false,
@@ -472,6 +472,10 @@ let scrollTimer: number | null = null
 onMounted(async () => {
   try {
     config.value = await getLLMConfig()
+    // Old configs may store 'system' (follow-system), which is no longer an option.
+    if (config.value.prompt_language === 'system' || !config.value.prompt_language) {
+      config.value.prompt_language = 'en'
+    }
     if (!config.value.llm_context_window) config.value.llm_context_window = 128000
   } catch (e: any) {
     message.error(e.message || t('settings.msg.loadConfigFailed'))
@@ -566,7 +570,6 @@ const systemPromptModel = computed<string>({
 
 // Prompt-language selector options: follow system / Chinese / English.
 const promptLangOptions = computed(() => [
-  { label: t('settings.promptLang.system'), value: 'system' },
   { label: t('settings.promptLang.zh'), value: 'zh' },
   { label: t('settings.promptLang.en'), value: 'en' },
 ])
@@ -574,11 +577,9 @@ const promptLangOptions = computed(() => [
 // Helper text shown next to the selector.
 const promptLangHint = computed(() => {
   const v = config.value.prompt_language
-  if (v === 'system') {
-    const sys = currentLocale.value === 'en-US' ? t('settings.promptLang.en') : t('settings.promptLang.zh')
-    return `${t('settings.promptLang.system')}（${sys}）`
-  }
-  return v === 'en' ? t('settings.promptLang.en') : t('settings.promptLang.zh')
+  // 'system' (follow-system) is no longer an option; treat anything other than
+  // 'zh' as English, the new default.
+  return v === 'zh' ? t('settings.promptLang.zh') : t('settings.promptLang.en')
 })
 
 function scrollTo(id: string) {
@@ -666,9 +667,7 @@ async function doSave() {
     embedding_model: config.value.embedding_model,
     llm_system_prompt: config.value.llm_system_prompt,
     llm_system_prompt_en: config.value.llm_system_prompt_en,
-    prompt_language: config.value.prompt_language === 'system'
-      ? (currentLocale.value === 'en-US' ? 'en' : 'zh')
-      : config.value.prompt_language,
+    prompt_language: config.value.prompt_language,
     server_host: config.value.server_host,
     server_port: config.value.server_port,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
@@ -679,6 +678,9 @@ async function doSave() {
   try {
     const res = await updateLLMConfig(payload)
     config.value = res.config
+    if (config.value.prompt_language === 'system' || !config.value.prompt_language) {
+      config.value.prompt_language = 'en'
+    }
     apiKeyInput.value = ''
     testResult.value = null
     const sres = await updateSandboxNetwork({
@@ -1275,9 +1277,6 @@ async function handleTest() {
                 style="width: 160px"
                 @update:value="scheduleSave(t('settings.agentPromptLang'))"
               />
-              <span class="muted" style="font-size: 13px">
-                {{ promptLangHint }}
-              </span>
             </NSpace>
           </NFormItem>
         </section>

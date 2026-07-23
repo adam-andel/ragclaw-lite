@@ -31,6 +31,8 @@ class LLMConfigUpdate(BaseModel):
     embedding_model: str | None = None
     embedding_api_key: str | None = None
     llm_system_prompt: str | None = None
+    llm_system_prompt_en: str | None = None
+    prompt_language: str | None = None
     server_host: str | None = None
     server_port: int | None = None
     cache_ttl_seconds: int | None = None

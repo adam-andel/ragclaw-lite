@@ -121,7 +121,7 @@ export default {
   promptLang: {
     system: 'Follow System',
     en: 'English',
-    zh: 'Chinese (default)',
+    zh: 'Chinese',
   },
   sandboxTitle: 'Sandbox / REPL Execution Environment (Network Policy & File Retention)',
   sandboxDesc: 'Controls whether LLM-generated code can access external networks in the sandbox. Default <b>deny</b> (fully blocked, safest). After selecting <b>allowlist</b>, you can list allowed domains (comma- or newline-separated); Python code may only reach allowlisted domains, and direct IP connections are blocked (DNS rebinding protection). Changes are hot-reloaded via the MCP service, <b>taking effect immediately, no restart</b>.',
