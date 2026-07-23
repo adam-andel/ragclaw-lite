@@ -312,7 +312,7 @@ class TestNoModelChunkedPipeline:
             refreshed = await db.get(Document, doc_id)
             assert refreshed.status == DocStatus.CHUNKED
             assert refreshed.chunk_count > 0
-            assert refreshed.error_message and "关键词" in refreshed.error_message
+            assert refreshed.error_message == "EMBED_MODEL_NOT_INSTALLED"
             chunks = (await db.execute(
                 select(Chunk).where(Chunk.doc_id == doc_id)
             )).scalars().all()

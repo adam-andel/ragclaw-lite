@@ -26,6 +26,24 @@ class _ReindexStatus:
     FAILED = "failed"
 
 
+class _ReindexPhase:
+    """Machine-readable phase codes for the re-index job.
+
+    The frontend maps these to localized strings via its i18n table, so the
+    backend only ever emits codes + structured params, never baked text.
+    """
+
+    DELETING = "deleting"
+    REEMBEDDING = "reembedding"
+    NOTHING = "nothing"
+    PROCESSED = "processed"
+    COMPLETED = "completed"
+    ERR_MODEL_NOT_INSTALLED = "err_model_not_installed"
+    ERR_DELETE_FAILED = "err_delete_failed"
+    ERR_DB_OPEN = "err_db_open"
+    ERR_REEMBED_FAILED = "err_reembed_failed"
+
+
 class ReindexService:
     """Thread-safe tracker + runner for the full-corpus re-index job."""
 
@@ -33,7 +51,8 @@ class ReindexService:
         self._lock = threading.Lock()
         self._status = _ReindexStatus.IDLE
         self._progress = 0.0
-        self._message = ""
+        self._phase = ""
+        self._params: dict = {}
         self._error = ""
         self._current = 0
         self._total = 0
@@ -45,8 +64,9 @@ class ReindexService:
         with self._lock:
             return {
                 "status": self._status,
+                "phase": self._phase,
+                "params": self._params,
                 "progress": round(self._progress, 1),
-                "message": self._message,
                 "error": self._error,
                 "current": self._current,
                 "total": self._total,
@@ -69,7 +89,8 @@ class ReindexService:
             if clear_vectors:
                 self._status = _ReindexStatus.RUNNING
                 self._progress = 0.0
-                self._message = "Deleting old vectors…"
+                self._phase = _ReindexPhase.DELETING
+                self._params = {}
                 self._error = ""
                 self._current = 0
                 self._total = 0
@@ -91,8 +112,9 @@ class ReindexService:
         from app.services.model_manager import model_manager
 
         if not model_manager.is_installed():
-            self._set(status=_ReindexStatus.FAILED, error="Model not installed",
-                      message="New embedding model not installed - cannot re-embed")
+            self._set(status=_ReindexStatus.FAILED,
+                      phase=_ReindexPhase.ERR_MODEL_NOT_INSTALLED,
+                      error="", params={})
             return
 
         # Optional first phase: wipe every existing vector collection. Used by the
@@ -101,13 +123,14 @@ class ReindexService:
         # immediately instead of only once re-embedding begins.
         if clear_vectors:
             self._set(status=_ReindexStatus.RUNNING, progress=0.0, current=0,
-                      total=0, error="", message="Deleting old vectors…")
+                      total=0, error="", phase=_ReindexPhase.DELETING, params={})
             try:
                 from app.services.vector_store import vector_store
                 vector_store.clear_all()
             except Exception as e:
-                self._set(status=_ReindexStatus.FAILED, error=str(e),
-                          message=f"Failed to delete old vectors: {e}")
+                self._set(status=_ReindexStatus.FAILED,
+                          phase=_ReindexPhase.ERR_DELETE_FAILED,
+                          error=str(e), params={})
                 return
 
         import sqlite3
@@ -115,8 +138,8 @@ class ReindexService:
         try:
             conn = sqlite3.connect(str(settings.sqlite_path), timeout=30)
         except Exception as e:
-            self._set(status=_ReindexStatus.FAILED, error=str(e),
-                      message="Cannot open database")
+            self._set(status=_ReindexStatus.FAILED,
+                      phase=_ReindexPhase.ERR_DB_OPEN, error=str(e), params={})
             return
 
         try:
@@ -139,7 +162,8 @@ class ReindexService:
             total = len(docs)
             self._set(status=_ReindexStatus.RUNNING, current=0, total=total,
                       progress=0.0, error="",
-                      message=f"Re-embedding {total} document(s)…" if total else "No completed documents - nothing to re-embed")
+                      phase=_ReindexPhase.REEMBEDDING if total else _ReindexPhase.NOTHING,
+                      params={"total": total} if total else {})
 
             for i, (doc_id, filename) in enumerate(docs, start=1):
                 try:
@@ -152,13 +176,15 @@ class ReindexService:
                     conn.commit()
                 self._set(current=i,
                           progress=round(i / total * 100, 1) if total else 100.0,
-                          message=f"Processed {i}/{total}: {filename}")
+                          phase=_ReindexPhase.PROCESSED,
+                          params={"i": i, "total": total, "filename": filename})
 
             self._set(status=_ReindexStatus.COMPLETED, progress=100.0,
-                      message=f"Re-embedding complete - {total} document(s) processed")
+                      phase=_ReindexPhase.COMPLETED, params={"total": total})
         except Exception as e:
-            self._set(status=_ReindexStatus.FAILED, error=str(e),
-                      message=f"Re-embedding failed: {e}")
+            self._set(status=_ReindexStatus.FAILED,
+                      phase=_ReindexPhase.ERR_REEMBED_FAILED,
+                      error=str(e), params={})
         finally:
             conn.close()
 

@@ -92,10 +92,11 @@ async def process_document(doc_id: str):
                     # the UI can tell the user keyword retrieval is available.
                     doc.status = DocStatus.CHUNKED
                     doc.progress = 60
-                    doc.error_message = (
-                        "Embedding 模型未安装，文档已切片但仅支持关键词检索。"
-                        "请在「系统设置 → Embedding 模型」安装模型后点击「重建索引」。"
-                    )
+                    # Store a stable error CODE (not a baked string) so the
+                    # frontend can localize it by language. Raw exception detail
+                    # is not needed here - the UI points the user to install a
+                    # model and re-index.
+                    doc.error_message = "EMBED_MODEL_NOT_INSTALLED"
                     await db.commit()
                     return
                 raise

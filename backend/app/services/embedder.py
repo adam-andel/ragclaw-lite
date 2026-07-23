@@ -51,7 +51,7 @@ class EmbedderService:
             if not model_manager.is_installed(config_manager.embedding_model):
                 raise RuntimeError(
                     "EMBED_MODEL_NOT_INSTALLED:"
-                    "本地 Embedding 模型尚未安装，请前往「系统设置 → Embedding 模型」点击下载安装。"
+                    "Embedding model not installed - go to Settings -> Embedding Model and click download to install."
                 )
             self._model = SentenceTransformer(
                 config_manager.embedding_model,

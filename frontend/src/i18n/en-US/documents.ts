@@ -101,6 +101,12 @@ export default {
     failed: 'Processing failed. Open the details to delete the document, then upload it again.',
   },
 
+  // Backend error CODE -> localized message (for 'failed' or 'chunked' docs).
+  // Genuine exception text is shown as-is and not localized.
+  docErrorCodes: {
+    EMBED_MODEL_NOT_INSTALLED: 'Embedding model not installed. The document is chunked but supports keyword search only. Install a model in "Settings → Embedding Model", then click "Re-index".',
+  },
+
   // Upload item status tags
   upload: {
     waiting: 'Waiting',

@@ -7,7 +7,7 @@ export interface DocumentItem {
   filename: string
   file_type: string
   file_size: number
-  status: 'pending' | 'uploaded' | 'parsing' | 'chunking' | 'embedding' | 'completed' | 'failed' | 'skipped'
+  status: 'pending' | 'uploaded' | 'parsing' | 'chunking' | 'embedding' | 'chunked' | 'completed' | 'failed' | 'skipped'
   error_message?: string | null
   chunk_count: number
   progress: number               // 0-100 processing progress

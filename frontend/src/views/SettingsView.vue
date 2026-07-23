@@ -136,7 +136,7 @@ const switchBtnHint = computed(() => {
 
 // ── Re-index (after embedding-model switch) ──
 const reindexStatus = ref<ReindexStatus>({
-  status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0,
+  status: 'idle', phase: '', params: {}, progress: 0, error: '', current: 0, total: 0,
 })
 const reindexing = ref(false)
 const reindexPollTimer = ref<number | null>(null)
@@ -148,6 +148,14 @@ async function loadReindexStatus() {
   } catch (e: any) {
     // non-fatal
   }
+}
+
+// Backend emits a machine-readable phase code + structured params; the
+// frontend resolves it to a localized string via the i18n reindexPhases map.
+// Raw exception detail (if any) stays in `error` for tooltip/log only.
+function reindexPhaseLabel(phase: string, params: Record<string, any> = {}): string {
+  if (!phase) return ''
+  return (t(`settings.embeddingModelMgmt.reindexPhases.${phase}`, params) || '') as string
 }
 
 function stopReindexPolling() {
@@ -169,9 +177,9 @@ function startReindexPolling() {
         // vector against the now-configured model, so any prior dimension
         // conflict is resolved — drop the stale inline warning for good.
         dimensionConflict.value = ''
-        message.success(reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexDone'))
+        message.success(t('settings.embeddingModelMgmt.reindexDone'))
       } else {
-        message.error(reindexStatus.value.error || reindexStatus.value.message || t('settings.embeddingModelMgmt.reindexFailed'))
+        message.error(reindexStatus.value.error || t('settings.embeddingModelMgmt.reindexFailed'))
       }
     }
   }, 2000)
@@ -368,8 +376,9 @@ async function doReindex(target: string) {
   // "正在删除旧向量…" line shows with zero wait even on a slow network round-trip.
   reindexStatus.value = {
     status: 'running',
+    phase: 'deleting',
+    params: {},
     progress: 0,
-    message: t('settings.embeddingModelMgmt.deletingVectors'),
     current: 0,
     total: 0,
     error: '',
@@ -380,7 +389,7 @@ async function doReindex(target: string) {
     config.value.embedding_model = res.model
     await loadEmbeddingStatus()
     if (res.cleared_vectors && res.reindex_started) {
-      // Backend already reports "正在删除旧向量…" (set synchronously in
+      // Backend already reports the "deleting" phase (set synchronously in
       // reindex_service.start()); the poller keeps the panel in sync from here.
       startReindexPolling()
     } else {
@@ -390,7 +399,7 @@ async function doReindex(target: string) {
   } catch (e: any) {
     message.error(e?.response?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
     stopReindexPolling()
-    reindexStatus.value = { status: 'idle', progress: 0, message: '', error: '', current: 0, total: 0 }
+    reindexStatus.value = { status: 'idle', phase: '', params: {}, progress: 0, error: '', current: 0, total: 0 }
     reindexing.value = false
   } finally {
     switching.value = false
@@ -1154,7 +1163,7 @@ async function handleTest() {
               :bordered="false"
             >
               <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap">
-                <span style="white-space: nowrap">{{ t('settings.embeddingModelMgmt.reindexTitle') }}：{{ reindexStatus.message || reindexStatus.error }}</span>
+                <span style="white-space: nowrap">{{ t('settings.embeddingModelMgmt.reindexTitle') }}：{{ reindexPhaseLabel(reindexStatus.phase, reindexStatus.params) || reindexStatus.error }}</span>
                 <NProgress
                   type="line"
                   :percentage="reindexStatus.progress"
