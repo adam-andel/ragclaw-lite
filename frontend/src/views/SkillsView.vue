@@ -504,7 +504,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container pm-flex">
     <PageHeader :title="t('skills.title')" :icon="Bulb">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
@@ -591,7 +591,7 @@ onMounted(() => {
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
     </div>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && skills.length === 0" :description="t('skills.empty')" />
       <div class="sk-list" v-if="skills.length > 0">
         <NCard
@@ -645,7 +645,7 @@ onMounted(() => {
       </div>
     </NSpin>
 
-    <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+    <AppPagination always-show :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
     <AppModal v-model:show="showCreateModal" :title="t('skills.createModalTitle')" size="detail">
@@ -1000,5 +1000,17 @@ onMounted(() => {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   word-break: break-all;
+}
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.pm-flex {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

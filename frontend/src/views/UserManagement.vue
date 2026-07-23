@@ -162,7 +162,7 @@ function formatTime(value: string) {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container pm-flex">
     <PageHeader :title="t('users.pageTitle')" :icon="People">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
@@ -187,7 +187,7 @@ function formatTime(value: string) {
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
     </div>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && total === 0" :description="t('users.empty')" />
       <div class="um-list" v-if="users.length > 0">
         <NCard
@@ -247,7 +247,7 @@ function formatTime(value: string) {
       </div>
     </NSpin>
 
-    <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
+    <AppPagination always-show :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Create Modal -->
     <AppModal v-model:show="showCreate" :title="t('users.createUser')" size="detail" :title-style="{fontSize:'1.25rem',fontWeight:'bold'}">
@@ -492,4 +492,16 @@ function formatTime(value: string) {
 }
 
 .create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.pm-flex {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 </style>

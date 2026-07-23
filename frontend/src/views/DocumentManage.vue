@@ -1110,7 +1110,7 @@ async function loadSupportedTypes() {
     </div>
 
     <!-- Doc List -->
-    <NSpin :show="loading">
+    <NSpin :show="loading" class="dm-list-spin">
       <NEmpty v-if="!loading && docs.length === 0" :description="t('documents.noDocsUpload')" />
       <div class="dm-list" v-if="docs.length > 0">
         <NCard
@@ -1177,7 +1177,7 @@ async function loadSupportedTypes() {
       </div>
     </NSpin>
 
-    <AppPagination :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
+    <AppPagination always-show :page="page" :page-size="size" :item-count="total" @update:page="onPageChange" />
 
     <!-- Doc KBs Modal -->
     <AppModal v-model:show="showDocKbs" :title="t('documents.linkKb')"
@@ -1325,7 +1325,7 @@ async function loadSupportedTypes() {
             </NSpin>
           </div>
           <AppPagination
-            v-if="totalChunkPages > 1"
+            always-show
             class="chunk-footer-pager"
             :page="chunkPage"
             :page-size="chunksPerPage"
@@ -1398,12 +1398,13 @@ async function loadSupportedTypes() {
                 </div>
               </div>
             </div>
-            <AppPagination
-              :page="shareAddedPage"
-              :page-size="shareAddedPageSize"
-              :item-count="shareUsers.length"
-              @update:page="shareAddedPage = $event"
-            />
+          <AppPagination
+            always-show
+            :page="shareAddedPage"
+            :page-size="shareAddedPageSize"
+            :item-count="shareUsers.length"
+            @update:page="shareAddedPage = $event"
+          />
           </div>
           <div class="share-add-more">
             <NButton dashed block class="doc-unlink-btn share-add-more-btn" @click="showAddMoreUsers = !showAddMoreUsers; if (showAddMoreUsers) searchShareUsers()">
@@ -1448,6 +1449,7 @@ async function loadSupportedTypes() {
                 </div>
               </div>
               <AppPagination
+                always-show
                 :page="shareUserPage"
                 :page-size="shareUserPageSize"
                 :item-count="unaddedUsers.length"
@@ -1494,6 +1496,7 @@ async function loadSupportedTypes() {
             </div>
           </div>
           <AppPagination
+            always-show
             :page="availablePage"
             :page-size="availablePageSize"
             :item-count="availableTotal"
@@ -1524,7 +1527,7 @@ async function loadSupportedTypes() {
   </div>
 </template>
 <style scoped>
-.dm-view { height: 100%; overflow-y: auto; }
+.dm-view { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 
 /* Create KB Modal */
 
@@ -1898,5 +1901,12 @@ async function loadSupportedTypes() {
 }
 @media (max-width: 420px) {
   .share-list { grid-template-columns: 1fr; }
+}
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.dm-list-spin {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

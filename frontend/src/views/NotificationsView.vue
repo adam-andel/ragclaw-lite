@@ -81,7 +81,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
+  <div class="pm-flex">
     <NCard :title="t('notifications.center')">
       <template #header-extra>
         <NSpace>
@@ -112,7 +112,7 @@ onMounted(load)
         </NSpace>
       </template>
 
-      <NSpin :show="notificationStore.loading">
+      <NSpin :show="notificationStore.loading" class="pm-scroll">
         <NDataTable
           :columns="columns"
           :data="notificationStore.notifications"
@@ -142,5 +142,17 @@ onMounted(load)
 <style scoped>
 .empty {
   padding: 48px 0;
+}
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.pm-flex {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

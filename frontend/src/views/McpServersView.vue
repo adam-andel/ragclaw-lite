@@ -195,7 +195,7 @@ async function handleRefresh() {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container pm-flex">
     <PageHeader :title="t('mcp.pageTitle')" :icon="Flash">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
@@ -223,7 +223,7 @@ async function handleRefresh() {
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
     </div>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && servers.length === 0" :description="t('mcp.empty')" />
       <div class="mcp-list" v-if="servers.length > 0">
         <NCard
@@ -285,8 +285,9 @@ async function handleRefresh() {
         </NCard>
       </div>
 
-      <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
     </NSpin>
+
+    <AppPagination always-show :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
       <!-- Test Result Modal -->
       <AppModal
@@ -428,5 +429,17 @@ async function handleRefresh() {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.pm-flex {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

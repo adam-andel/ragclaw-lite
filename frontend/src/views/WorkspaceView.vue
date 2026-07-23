@@ -1029,6 +1029,12 @@ onMounted(load)
   flex-shrink: 0;
   font-size: 14px;
 }
+/* Force breadcrumb items to honor the 14px above; Naive UI applies its own
+   font-size on .n-breadcrumb-item internally, which would otherwise make the
+   breadcrumb text a different size than the "back" button. */
+.ws-breadcrumb :deep(.n-breadcrumb-item) {
+  font-size: 14px;
+}
 .ws-breadcrumb-back {
   flex-shrink: 0;
   display: inline-flex;

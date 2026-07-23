@@ -281,7 +281,7 @@ function isPaused(job: CronJob) {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container pm-flex">
     <PageHeader :title="t('cron.title')" :icon="Time">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
@@ -310,7 +310,7 @@ function isPaused(job: CronJob) {
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
     </div>
 
-    <NSpin :show="loading">
+    <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && jobs.length === 0" :description="t('cron.empty')" />
       <div class="cj-list" v-if="jobs.length > 0">
         <NCard
@@ -361,8 +361,9 @@ function isPaused(job: CronJob) {
         </NCard>
       </div>
 
-      <AppPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
     </NSpin>
+
+    <AppPagination always-show :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Detail Modal -->
     <AppModal v-model:show="showDetail" :title="t('cron.detailTitle')" size="detail">
@@ -608,5 +609,17 @@ html.dark .cj-card-desc {
   color: var(--color-error);
   margin-top: 8px;
   font-size: var(--text-sm);
+}
+/* Sticky footer pagination: the list scrolls, the pager stays pinned at the
+   bottom of the viewport (mirrors WorkspaceView.vue). */
+.pm-flex {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>
