@@ -18,6 +18,7 @@ import { useChatUnreadStore } from '@/stores/chatUnread'
 import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
 import { renderStreamingHtml } from '@/utils/think'
+import { backendErrorMessage } from '@/utils/backendError'
 import type { ChatMessage as ChatMsg, Skill } from '@/types'
 
 const route = useRoute()
@@ -850,7 +851,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         // phase (routing / retrieval / skill_load / tool / generating …) is reflected honestly.
         assistantStage.value = (event as any).message || t('chat.thinking')
       } else if (event.type === 'error') {
-        streamedText = t('chat.streamError', { msg: event.message })
+        streamedText = t('chat.streamError', { msg: backendErrorMessage(event.message) })
         break
       } else if (event.type === 'need_user_input') {
         // Suspension: the backend has saved an assistant message (the hint copy). The frontend renders it as a real message bubble,
@@ -915,7 +916,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
       // Remove failed user + assistant messages and restore input
       messages.value = messages.value.filter(m => m.id !== userMsgId && m.id !== proxyMsg.id)
       inputText.value = query
-      nmessage.error(t('chat.sendFailed', { msg: e.message }))
+      nmessage.error(t('chat.sendFailed', { msg: backendErrorMessage(e.message) }))
     }
   } finally {
     isStreaming.value = false

@@ -49,10 +49,7 @@ class EmbedderService:
             # the user knows to install it instead of silently pulling ~2GB.
             from app.services.model_manager import model_manager
             if not model_manager.is_installed(config_manager.embedding_model):
-                raise RuntimeError(
-                    "EMBED_MODEL_NOT_INSTALLED:"
-                    "Embedding model not installed - go to Settings -> Embedding Model and click download to install."
-                )
+                raise RuntimeError("EMBED_MODEL_NOT_INSTALLED")
             self._model = SentenceTransformer(
                 config_manager.embedding_model,
                 device=settings.embedding_device,

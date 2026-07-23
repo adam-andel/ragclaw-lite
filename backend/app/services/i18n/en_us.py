@@ -69,4 +69,14 @@ MESSAGES = {
         '- Escape any double quotes inside string values as \\", and newlines as \\n.\n'
         "- Do NOT add any explanation before or after the JSON."
     ),
+
+    # Final-stage constraint note appended to the user turn when no tools ran
+    # but the skill prompt asked for tool use. Resolved per prompt_language.
+    "final_stage_note": (
+        "\n\n## ⚠️ Current stage: final answer generation\n\n"
+        "This is the final generation stage; no tool-calling capability is available. "
+        "Reply to the user's question directly in natural language. "
+        "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block disguised as a tool call. "
+        "If the user's task requires a tool but none was executed, tell the user honestly."
+    ),
 }
