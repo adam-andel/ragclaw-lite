@@ -466,7 +466,44 @@ const skillSearchText = ref('')
 const emptyMode = ref<'conv' | 'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
-const convKbMap = ref<Record<string, string>>({})
+
+// ── Per-conversation selections (workspace dir + KB + skill) ──
+// Persisted in localStorage keyed by conversation id, so opening a conversation
+// from history restores exactly the workspace directory, knowledge base and
+// skill that were used with it.
+type ConvSettings = { kbId?: string; skillId?: string | null; workspaceDir?: string }
+const CONV_SETTINGS_KEY = 'ragclaw:conv-settings'
+const convSettingsMap = ref<Record<string, ConvSettings>>({})
+
+function saveConvSettings() {
+  localStorage.setItem(CONV_SETTINGS_KEY, JSON.stringify(convSettingsMap.value))
+}
+
+// Persist the currently selected workspace dir / KB / skill under a conversation id.
+function persistConvSettings(convId: string) {
+  convSettingsMap.value[convId] = {
+    kbId: selectedKbId.value || '',
+    skillId: selectedSkillId.value ?? null,
+    workspaceDir: workspaceDir.value || '',
+  }
+  saveConvSettings()
+}
+
+// Restore the workspace dir / KB / skill saved for a conversation (validating
+// that referenced KB / skill still exist so we never point at a deleted item).
+function restoreConvSettings(convId: string) {
+  const saved = convSettingsMap.value[convId]
+  if (!saved) return
+  if (saved.kbId != null) {
+    selectedKbId.value = (saved.kbId && kbs.value.find(k => k.id === saved.kbId)) ? saved.kbId : ''
+  }
+  if (saved.skillId !== undefined) {
+    selectedSkillId.value = (saved.skillId && skills.value.find(s => s.id === saved.skillId)) ? saved.skillId : null
+  }
+  if (saved.workspaceDir != null) {
+    workspaceDir.value = saved.workspaceDir
+  }
+}
 
 const convPreview = computed(() => conversations.value.slice(0, 3))
 const convHasMore = computed(() => conversations.value.length > 3)
@@ -613,10 +650,26 @@ async function loadConversations() {
 onMounted(async () => {
   isReadonly.value = false
 
-  // Load persisted conversation→KB mapping
+  // Load persisted per-conversation selections (workspace dir + KB + skill).
+  // Migrate the legacy KB-only map (ragclaw:conv-kb-map) if present.
   try {
-    const stored = localStorage.getItem('ragclaw:conv-kb-map')
-    if (stored) convKbMap.value = JSON.parse(stored)
+    const stored = localStorage.getItem(CONV_SETTINGS_KEY)
+    if (stored) convSettingsMap.value = JSON.parse(stored)
+    const legacyKb = localStorage.getItem('ragclaw:conv-kb-map')
+    if (legacyKb) {
+      const kbMap: Record<string, string> = JSON.parse(legacyKb)
+      let migrated = false
+      for (const [cid, kbId] of Object.entries(kbMap)) {
+        if (!convSettingsMap.value[cid]) {
+          convSettingsMap.value[cid] = { kbId }
+          migrated = true
+        } else if (convSettingsMap.value[cid].kbId == null) {
+          convSettingsMap.value[cid].kbId = kbId
+          migrated = true
+        }
+      }
+      if (migrated) saveConvSettings()
+    }
   } catch { /* ignore */ }
 
   try {
@@ -658,11 +711,11 @@ onMounted(async () => {
   }
 })
 
-// Persist KB selection when conversation has messages
-watch(selectedKbId, (newKbId) => {
-  if (newKbId && conversationId.value && messages.value.length > 0) {
-    convKbMap.value[conversationId.value] = newKbId
-    localStorage.setItem('ragclaw:conv-kb-map', JSON.stringify(convKbMap.value))
+// Persist the current workspace dir / KB / skill whenever any of them changes,
+// as long as we are inside an existing conversation with messages.
+watch([selectedKbId, selectedSkillId, workspaceDir], () => {
+  if (conversationId.value && messages.value.length > 0) {
+    persistConvSettings(conversationId.value)
   }
 })
 
@@ -702,11 +755,8 @@ async function loadConversation(id: string) {
     // Remember the currently open conversation so returning to the chat page
     // from another page restores it (state is preserved across navigation).
     localStorage.setItem('ragclaw:last-conv', id)
-    // Restore the KB that was used with this conversation
-    const savedKbId = convKbMap.value[id]
-    if (savedKbId && kbs.value.find(k => k.id === savedKbId)) {
-      selectedKbId.value = savedKbId
-    }
+    // Restore the workspace dir / KB / skill that were used with this conversation
+    restoreConvSettings(id)
     checkReadonly((conv as any).user_id)
     if (isReadonly.value) {
       router.replace({ path: `/chat/${id}`, query: { view_user: (conv as any).user_id } })
@@ -754,9 +804,11 @@ onMounted(() => {
 })
 
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
-  // KB id captured at stream start (so it stays correct even if the user
+  // Selections captured at stream start (so they stay correct even if the user
   // switches to another conversation while this one is still streaming).
   const streamKbId = selectedKbId.value
+  const streamSkillId = selectedSkillId.value
+  const streamWorkspaceDir = workspaceDir || ''
   const aid = proxyMsg.id
   let streamedText = ''
   queuePosition.value = null
@@ -831,10 +883,15 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
         ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
         ;(proxyMsg as any)._llm = event.llm_ms || 0
-        // Persist the KB used for this conversation (captured at stream start).
-        if (!convKbMap.value[event.conversation_id]) {
-          convKbMap.value[event.conversation_id] = streamKbId
-          localStorage.setItem('ragclaw:conv-kb-map', JSON.stringify(convKbMap.value))
+        // Persist the workspace dir / KB / skill used for this conversation
+        // (captured at stream start) so a brand-new conversation is restorable.
+        if (!convSettingsMap.value[event.conversation_id]) {
+          convSettingsMap.value[event.conversation_id] = {
+            kbId: streamKbId || '',
+            skillId: streamSkillId ?? null,
+            workspaceDir: streamWorkspaceDir,
+          }
+          saveConvSettings()
         }
         const currentView = conversationId.value
         const onChat = route.path.startsWith('/chat')

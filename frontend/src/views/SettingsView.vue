@@ -65,7 +65,6 @@ const config = ref<LLMConfig>({
 })
 
 const apiKeyInput = ref('')
-const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
 const activeSection = ref('llm')
@@ -510,6 +509,12 @@ onUnmounted(() => {
   observer?.disconnect()
   stopEmbeddingPolling()
   stopReindexPolling()
+  // Flush any pending (debounced) auto-save so the last edit is not lost on navigation.
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+    void doSave()
+  }
 })
 
 function clearTest() { testResult.value = null }
@@ -520,6 +525,7 @@ function onProviderChange(val: string) {
   if (defaultUrl && (!config.value.llm_base_url || Object.values(urlDefaults).includes(config.value.llm_base_url))) {
     config.value.llm_base_url = defaultUrl
   }
+  scheduleSave(t('settings.providerLabel'))
 }
 
 // Effective prompt language: 'system' follows the global UI locale (zh-CN -> zh, en-US -> en).
@@ -579,53 +585,106 @@ function scrollTo(id: string) {
   }, 800)
 }
 
-async function handleSave() {
-  saving.value = true
+// ── Auto-save (debounced): persists on field blur / Enter / select / slider release ──
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+const saveState = ref<{ status: SaveStatus; label?: string; msg?: string }>({ status: 'idle' })
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+// Field names changed within the current debounce window; shown in the inline
+// status (e.g. "API Key 已保存"). A Set dedupes and collapses multiple edits.
+const pendingLabels = new Set<string>()
+
+function scheduleSave(label?: unknown) {
+  // Only accept string labels; control events may pass the event/value object.
+  if (typeof label === 'string' && label) pendingLabels.add(label)
+  saveState.value = { status: 'saving', label: [...pendingLabels].join('、') }
+  if (saveTimer) clearTimeout(saveTimer)
+  // Debounce so rapid commits (e.g. tabbing through fields) collapse into one request.
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    void doSave()
+  }, 300)
+}
+
+// Localize the auto-save failure reason. The API client interceptor already
+// folds the backend `detail` / axios message into `e.message`, so we map by
+// HTTP status and network category to stable i18n strings, and append the raw
+// server detail only when it carries business-specific info (e.g. 4xx).
+function saveErrorReason(e: any): string {
+  const status: number | undefined = e?.response?.status
+  const detail: string = e?.message || ''
+  const isAxiosGeneric = /^Request failed with status code \d+/i.test(detail) || /^timeout/i.test(detail)
+  const businessDetail = detail && !isAxiosGeneric
+  if (status) {
+    const map: Record<number, string> = {
+      400: t('settings.msg.saveFailedBadRequest'),
+      401: t('settings.msg.saveFailedUnauthorized'),
+      403: t('settings.msg.saveFailedForbidden'),
+      404: t('settings.msg.saveFailedNotFound'),
+      409: t('settings.msg.saveFailedConflict'),
+      422: t('settings.msg.saveFailedValidation'),
+      429: t('settings.msg.saveFailedRateLimit'),
+      500: t('settings.msg.saveFailedServer'),
+      502: t('settings.msg.saveFailedUnavailable'),
+      503: t('settings.msg.saveFailedUnavailable'),
+      504: t('settings.msg.saveFailedUnavailable'),
+    }
+    const base = map[status] || t('settings.msg.saveFailedServer')
+    // Append the raw server detail only for client-side (4xx) errors where it
+    // usually explains the rejection; 5xx details are typically unhelpful traces.
+    if (businessDetail && status < 500) return `${base}（${detail}）`
+    return base
+  }
+  if (/timeout/i.test(detail)) return t('settings.msg.saveFailedTimeout')
+  if (/network error/i.test(detail)) return t('settings.msg.saveFailedNetwork')
+  if (businessDetail) return `${t('settings.msg.saveFailedUnknown')}（${detail}）`
+  return t('settings.msg.saveFailedUnknown')
+}
+
+async function doSave() {
+  const changed = [...pendingLabels]
+  pendingLabels.clear()
+  const payload: Record<string, any> = {
+    llm_provider: config.value.llm_provider,
+    llm_model: config.value.llm_model,
+    llm_base_url: config.value.llm_base_url,
+    llm_temperature: config.value.llm_temperature,
+    llm_max_tokens: config.value.llm_max_tokens,
+    agent_max_tokens: config.value.agent_max_tokens,
+    llm_context_window: config.value.llm_context_window,
+    llm_concurrency: config.value.llm_concurrency,
+    embedding_model: config.value.embedding_model,
+    llm_system_prompt: config.value.llm_system_prompt,
+    llm_system_prompt_en: config.value.llm_system_prompt_en,
+    prompt_language: config.value.prompt_language === 'system'
+      ? (currentLocale.value === 'en-US' ? 'en' : 'zh')
+      : config.value.prompt_language,
+    server_host: config.value.server_host,
+    server_port: config.value.server_port,
+    cache_ttl_seconds: config.value.cache_ttl_seconds,
+  }
+  if (apiKeyInput.value.trim()) {
+    payload.llm_api_key = apiKeyInput.value.trim()
+  }
   try {
-    const payload: Record<string, any> = {
-      llm_provider: config.value.llm_provider,
-      llm_model: config.value.llm_model,
-      llm_base_url: config.value.llm_base_url,
-      llm_temperature: config.value.llm_temperature,
-      llm_max_tokens: config.value.llm_max_tokens,
-      agent_max_tokens: config.value.agent_max_tokens,
-      llm_context_window: config.value.llm_context_window,
-      llm_concurrency: config.value.llm_concurrency,
-      embedding_model: config.value.embedding_model,
-      llm_system_prompt: config.value.llm_system_prompt,
-      llm_system_prompt_en: config.value.llm_system_prompt_en,
-      prompt_language: config.value.prompt_language === 'system'
-        ? (currentLocale.value === 'en-US' ? 'en' : 'zh')
-        : config.value.prompt_language,
-      server_host: config.value.server_host,
-      server_port: config.value.server_port,
-      cache_ttl_seconds: config.value.cache_ttl_seconds,
-    }
-    if (apiKeyInput.value.trim()) {
-      payload.llm_api_key = apiKeyInput.value.trim()
-    }
     const res = await updateLLMConfig(payload)
     config.value = res.config
     apiKeyInput.value = ''
     testResult.value = null
-    message.success(t('settings.msg.configSaved'))
-
-    // Also save the sandbox network settings
     const sres = await updateSandboxNetwork({
       sandbox_network_mode: sandboxConfig.value.sandbox_network_mode,
       sandbox_allow_domains: sandboxConfig.value.sandbox_allow_domains,
       sandbox_allow_methods: sandboxConfig.value.sandbox_allow_methods,
     })
     sandboxConfig.value = sres.config
-    if (sres.mcp_pushed) {
-      message.success(t('settings.msg.sandboxSavedHot'))
-    } else {
-      message.warning(t('settings.msg.sandboxSavedRestart'))
+    // Inline status instead of a toast (toasts disappear too fast to read).
+    // Preserve the "sandbox needs restart" hint inline when not hot-pushed.
+    saveState.value = {
+      status: 'saved',
+      label: changed.join('、'),
+      msg: sres.mcp_pushed ? undefined : t('settings.msg.sandboxSavedRestart'),
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.saveFailed'))
-  } finally {
-    saving.value = false
+    saveState.value = { status: 'error', label: changed.join('、'), msg: saveErrorReason(e) }
   }
 }
 
@@ -650,7 +709,7 @@ async function handleReplAuthSave() {
       message.warning(t('settings.msg.replAuthSavedRestart'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.saveFailed'))
+    message.error(saveErrorReason(e))
   } finally {
     replAuthSaving.value = false
   }
@@ -669,7 +728,7 @@ async function handleReplAuthGenerate() {
       message.warning(t('settings.msg.replAuthSavedRestart'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.saveFailed'))
+    message.error(saveErrorReason(e))
   } finally {
     replAuthGenerating.value = false
   }
@@ -706,16 +765,15 @@ async function handleTest() {
     <div class="settings-sticky-top">
       <PageHeader :title="t('settings.title')" :icon="Settings" :subtitle="t('settings.subtitle')">
         <template #actions>
-          <NButton
-            size="small"
-            type="primary"
-            :loading="saving"
-            :disabled="!apiKeyInput.trim() && !config.is_configured"
-            @click="handleSave"
-          >
-            <template #icon><NIcon><Save /></NIcon></template>
-            {{ t('settings.saveConfig') }}
-          </NButton>
+          <span class="save-status" :class="saveState.status">
+            <template v-if="saveState.status === 'saving'"><template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saving') }}</template>
+            <template v-else-if="saveState.status === 'saved'">
+              <NIcon :component="CheckmarkCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saved') }}<template v-if="saveState.msg">（{{ saveState.msg }}）</template>
+            </template>
+            <template v-else-if="saveState.status === 'error'">
+              <NIcon :component="AlertCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }} </template>{{ t('settings.msg.saveFailedPrefix') }}{{ saveState.msg }}
+            </template>
+          </span>
         </template>
       </PageHeader>
 
@@ -768,6 +826,7 @@ async function handleTest() {
               :placeholder="config.is_configured ? (config.api_key_source === 'env' ? t('settings.apiKey.currentEnv', { key: config.llm_api_key }) : t('settings.apiKey.current', { key: config.llm_api_key })) : t('settings.apiKey.placeholder')"
               maxlength="512"
               @input="clearTest"
+              @change="scheduleSave('API Key')"
             >
               <template #prefix><NIcon :component="Key" /></template>
             </NInput>
@@ -775,14 +834,14 @@ async function handleTest() {
 
           <!-- Base URL -->
           <NFormItem label="Base URL">
-            <NInput v-model:value="config.llm_base_url" placeholder="https://api.openai.com/v1" @input="clearTest">
+            <NInput v-model:value="config.llm_base_url" placeholder="https://api.openai.com/v1" @input="clearTest" @change="scheduleSave('Base URL')">
               <template #prefix><NIcon :component="Globe" /></template>
             </NInput>
           </NFormItem>
 
           <!-- Model -->
           <NFormItem :label="t('settings.modelName')">
-            <NInput v-model:value="config.llm_model" placeholder="gpt-4o-mini" @input="clearTest">
+            <NInput v-model:value="config.llm_model" placeholder="gpt-4o-mini" @input="clearTest" @change="scheduleSave(t('settings.modelName'))">
               <template #prefix><NIcon :component="Settings" /></template>
             </NInput>
           </NFormItem>
@@ -801,7 +860,7 @@ async function handleTest() {
               </span>
             </template>
             <NSpace align="center">
-              <NSlider v-model:value="config.llm_temperature" :min="0" :max="2" :step="0.05" style="width: 200px" @update:value="clearTest" />
+              <NSlider v-model:value="config.llm_temperature" :min="0" :max="2" :step="0.05" style="width: 200px" @update:value="clearTest" @change="scheduleSave('Temperature')" />
               <span class="slider-value">{{ config.llm_temperature.toFixed(2) }}</span>
             </NSpace>
           </NFormItem>
@@ -819,7 +878,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" @change="scheduleSave('Max Tokens')" />
           </NFormItem>
 
           <!-- Agent Max Tokens -->
@@ -835,7 +894,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.agent_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.agent_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" @change="scheduleSave('Agent Max Tokens')" />
           </NFormItem>
 
           <!-- LLM Concurrency -->
@@ -851,7 +910,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" @change="scheduleSave(t('settings.maxConcurrency'))" />
           </NFormItem>
 
           <!-- Context Window -->
@@ -867,7 +926,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest" @change="scheduleSave(t('settings.contextWindow'))" />
           </NFormItem>
 
           <!-- Cache TTL -->
@@ -883,7 +942,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest" @change="scheduleSave(t('settings.cacheTtl'))" />
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.cache_ttl_seconds === 0 ? t('common.disabled') : t('settings.cacheSecondsApprox', { seconds: config.cache_ttl_seconds, minutes: Math.round(config.cache_ttl_seconds / 60) }) }}
             </span>
@@ -1135,7 +1194,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInput v-model:value="config.server_host" placeholder="0.0.0.0" @input="clearTest">
+            <NInput v-model:value="config.server_host" placeholder="0.0.0.0" @input="clearTest" @change="scheduleSave(t('settings.listenHost'))">
               <template #prefix><NIcon :component="Server" /></template>
             </NInput>
           </NFormItem>
@@ -1152,7 +1211,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.server_port" :min="1" :max="65535" :step="1" @update:value="clearTest" />
+            <NInputNumber v-model:value="config.server_port" :min="1" :max="65535" :step="1" @update:value="clearTest" @change="scheduleSave(t('settings.listenPort'))" />
           </NFormItem>
         </section>
 
@@ -1178,6 +1237,7 @@ async function handleTest() {
               :rows="10"
               :placeholder="t('settings.systemPrompt')"
               @input="clearTest"
+              @change="scheduleSave(t('settings.systemPrompt'))"
             />
           </NFormItem>
 
@@ -1199,6 +1259,7 @@ async function handleTest() {
                 :options="promptLangOptions"
                 size="small"
                 style="width: 160px"
+                @update:value="scheduleSave(t('settings.agentPromptLang'))"
               />
               <span class="muted" style="font-size: 13px">
                 {{ promptLangHint }}
@@ -1222,15 +1283,16 @@ async function handleTest() {
         <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.sandboxDesc')" />
         <NForm label-placement="left" label-width="140">
           <NFormItem :label="t('settings.networkMode')">
-            <NSelect v-model:value="sandboxConfig.sandbox_network_mode" :options="networkModeOptions" />
+            <NSelect v-model:value="sandboxConfig.sandbox_network_mode" :options="networkModeOptions" @update:value="scheduleSave(t('settings.networkMode'))" />
           </NFormItem>
           <NFormItem v-if="sandboxConfig.sandbox_network_mode === 'allowlist'" :label="t('settings.allowDomains')">
-            <NInput
-              v-model:value="sandboxConfig.sandbox_allow_domains"
-              type="textarea"
-              :rows="3"
-              placeholder="api.github.com, raw.githubusercontent.com"
-            />
+              <NInput
+                v-model:value="sandboxConfig.sandbox_allow_domains"
+                type="textarea"
+                :rows="3"
+                placeholder="api.github.com, raw.githubusercontent.com"
+                @change="scheduleSave(t('settings.allowDomains'))"
+              />
           </NFormItem>
         </NForm>
       </section>
@@ -1363,5 +1425,14 @@ async function handleTest() {
 }
 .test-ok { background: rgba(34,197,94,0.1); color: #16a34a; }
 .test-fail { background: rgba(239,68,68,0.1); color: #dc2626; }
+
+.save-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; line-height: 1; white-space: nowrap;
+}
+.save-status.saving { color: var(--color-text-muted); }
+.save-status.saved { color: #16a34a; }
+.save-status.error { color: #dc2626; }
+.save-status .n-icon { vertical-align: -2px; }
 
 </style>
