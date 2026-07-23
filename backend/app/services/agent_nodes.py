@@ -61,106 +61,29 @@ _ROUTE_FILE_INTENT_KEYWORDS = (
 )
 
 
-# ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
-# zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
-# improve instruction-following on English-dominant base models (GPT/Claude/DeepSeek etc.).
+# ── Bilingual Agent-Graph prompts ──
+# Prompt text now lives in app/services/i18n (mirrors frontend/src/i18n):
+# zh_cn.py / en_us.py hold the templates; t() resolves by id + locale.
+# These wrappers keep the original function names/signatures so call sites
+# (build_intent_router_prompt / build_tool_system_prompt / build_skill_switch_limit_message
+# / build_selfheal_prompt) are unchanged. lang='zh' (config_manager.prompt_language
+# default) reproduces the original Chinese behavior; lang='en' selects the English A/B variants.
+from app.services.i18n import t as _t
+
 
 def build_intent_router_prompt(query: str, skill_list: str, lang: str = "zh") -> str:
     """Layer-1 intent-router prompt. lang='zh' reproduces the original behavior."""
-    if lang == "en":
-        return (
-            "You are an intent router. Based on the user's question, select the most "
-            "appropriate skill from the following NUMBERED list.\n\n"
-            "Available skills:\n" + skill_list + "\n\n"
-            "Rules:\n"
-            "- If the user's question closely matches a skill, return that skill's NUMBER.\n"
-            '- If the user\'s question does not match any skill, return 0.\n'
-            "- Return ONLY a single integer (the skill number, or 0). No other output.\n\n"
-            "User question: " + query + "\n\n"
-            "Number:"
-        )
-    return (
-        "你是一个意图路由器。根据用户的问题，从以下编号技能中选择最合适的一个。\n\n"
-        f"可用技能：\n{skill_list}\n\n"
-        "规则：\n"
-        "- 如果用户的问题与某个技能高度匹配，返回该技能的**编号**\n"
-        "- 如果用户的问题与所有技能都不匹配，返回 0\n"
-        "- 只返回一个整数（技能编号，或 0），不要有任何其他输出\n\n"
-        f"用户问题：{query}\n\n"
-        "编号："
-    )
+    return _t("intent_router", lang, query=query, skill_list=skill_list)
 
 
 def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
     """Forced tool-call JSON system prompt. lang='zh' reproduces the original behavior."""
-    if lang == "en":
-        return (
-            "# ⚠️ CRITICAL INSTRUCTION: Decide whether to call a tool (or explicitly stop)\n\n"
-            "Your job is to decide whether another tool call is still needed.\n\n"
-            "## When to STOP calling tools (most important)\n"
-            "- If the prior tool results ALREADY fully satisfy the user's request "
-            "(e.g. the file was successfully created/modified, the computation is done), "
-            "do NOT call any tool again.\n"
-            "- Output ONLY an EMPTY object `{}` and the system will generate the final reply.\n"
-            "- NEVER call the same tool again just to 'confirm' a result, and NEVER repeat a "
-            "write/append that already achieved its goal.\n"
-            "- Only keep calling tools when further action is genuinely required.\n\n"
-            "## When you MUST use a tool\n"
-            "- User asks to generate / create / write / save / append / modify a file -> MUST call run_python\n"
-            "- User asks to run code, do data processing, or compute -> MUST call run_python\n"
-            "- Any file read/write operation that is NOT yet done -> MUST call run_python\n\n"
-            "## Available tools\n" + tool_desc + "\n\n"
-            "## Output format\n"
-            'When a tool is still needed: {"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n'
-            'When the task is done (no tool needed): {}\n\n'
-            "## Rules\n"
-            "- Output ONLY the JSON object above, with no extra text.\n"
-            '- You MUST use double quotes (") and MUST NOT use single quotes (\').\n'
-            "- You MUST NOT use => arrow syntax; use the standard JSON colon (:).\n"
-            "- Do NOT wrap the JSON in ``` code fences.\n"
-            "- Do NOT output [TOOL_CALL] or <tool_call> tags.\n"
-            '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
-            "- Do NOT output the final reply; if the task is done, output {} instead.\n"
-            "- NEVER fabricate File, file paths, or UUIDs."
-        )
-    return (
-        "# ⚠️ 关键指令：判断是否需要调用工具（或显式停止）\n\n"
-        "你的职责是判断「现在是否还需要继续调用工具」。\n\n"
-        "## 何时停止调用工具（最重要）\n"
-        "- 如果**之前的工具结果已经完整满足用户的需求**（例如：文件已成功创建/修改、计算已完成、数据已处理），**不要再调用任何工具**。\n"
-        "- 此时请只输出一个**空对象** `{}`，系统会据此生成最终回复给用户。\n"
-        "- **绝对不要**为了「确认结果」「再检查一次」而重复调用同一个工具；也不要重复执行一个已经达成目标的写入/追加操作（例如文件里已经有用户要的内容了，就不要再写一遍）。\n"
-        "- 只有当确实需要进一步操作（如「先读后写」、真正的多步流程）时，才继续调用工具。\n\n"
-        "## 何时必须使用工具\n"
-        "- 用户要求「生成」「创建」「写入」「保存」「追加」「修改」文件 → **必须**调用 run_python\n"
-        "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
-        "- 任何**尚未完成**的读写文件操作 → **必须**调用 run_python\n\n"
-        "## 可用工具\n" + tool_desc + "\n\n"
-        "## 输出格式\n"
-        '还需要调用工具时：{"tool": "工具名", "arguments": {"参数名": "参数值"}}\n'
-        '任务已完成、无需再调用工具时：{}\n\n'
-        "## 规则\n"
-        "- 只输出上述 JSON 对象，不要附加任何多余文字\n"
-        "- **必须**使用双引号（\"），**绝对不能**使用单引号（'）\n"
-        "- **绝对不能**使用 => 箭头语法，必须是 JSON 标准的 : 冒号\n"
-        "- 不要用 ``` 包裹 JSON\n"
-        "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
-        "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
-        "- **绝对不要**编造File、文件路径或 uuid"
-    )
+    return _t("tool_system", lang, tool_desc=tool_desc)
 
 
 def build_skill_switch_limit_message(name: str, switch_count: int, quota: int, lang: str = "zh") -> str:
     """Suspension message when skill-switch quota is exhausted. lang='zh' = original."""
-    if lang == "en":
-        return (
-            f"use_skill: skill-switch limit reached ({switch_count}/{quota}); "
-            f'cannot load "{name}". Reply "continue" to add quota and auto-retry.'
-        )
-    return (
-        f"use_skill：已达技能切换上限（{switch_count}/{quota}），"
-        f"无法加载「{name}」。请回复「继续」以追加额度后自动重试。"
-    )
+    return _t("skill_switch_limit", lang, name=name, switch_count=switch_count, quota=quota)
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
@@ -457,30 +380,11 @@ def _strip_tool_call_noise(content: str) -> str:
 def build_selfheal_prompt(tool_name: str, bad_output: str, lang: str = "zh") -> str:
     """Layer 2: instruction that asks the LLM to rewrite a malformed tool call
     as strictly valid JSON. The prior bad output is fed back as context.
+    lang='zh' reproduces the original behavior; lang='en' selects the English
+    A/B variant. Template lives in app/services/i18n (key: 'selfheal').
     """
     snippet = (bad_output or "")[:1500]
-    if lang == "en":
-        return (
-            "Your previous tool call was NOT valid JSON and could not be parsed. "
-            f"You MUST call the tool `{tool_name}` now.\n\n"
-            "## Your previous (invalid) output\n" + snippet + "\n\n"
-            "## Requirements\n"
-            f'- Output ONLY a single pure JSON object: {{"tool": "{tool_name}", "arguments": {{...}}}}\n'
-            "- Use double quotes (\") only. NEVER use single quotes, `=>`, `--code`, "
-            "or [TOOL_CALL] tags.\n"
-            '- Escape any double quotes inside string values as \\", and newlines as \\n.\n'
-            "- Do NOT add any explanation before or after the JSON."
-        )
-    return (
-        "你上一次的工具调用不是合法 JSON，无法被解析。"
-        f"你现在必须调用工具 `{tool_name}`。\n\n"
-        "## 你上一次的（非法）输出\n" + snippet + "\n\n"
-        "## 要求\n"
-        f'- 只输出一个纯 JSON 对象：{{"tool": "{tool_name}", "arguments": {{...}}}}\n'
-        "- 只能使用双引号（\"）；绝对不要使用单引号、`=>`、`--code` 或 [TOOL_CALL] 标签\n"
-        "- 字符串值内部的双引号用 \\\" 转义，换行用 \\n\n"
-        "- JSON 前后不要附加任何解释文字"
-    )
+    return _t("selfheal", lang, tool_name=tool_name, snippet=snippet)
 
 
 async def _chat_with_tools_resilient(

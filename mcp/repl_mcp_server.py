@@ -1043,11 +1043,11 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
 def _net_status_text() -> str:
     """Human-readable network status for tool descriptions."""
     if _network_mode == "allow":
-        return "网络访问已开放（不受限制，调试用）。"
+        return "Network access is open (unrestricted, for debugging)."
     if _network_mode == "allowlist":
-        dom = ", ".join(_allow_domains) if _allow_domains else "（未配置任何域名）"
-        return f"仅允许访问白名单域名: {dom}。"
-    return "无网络访问。"
+        dom = ", ".join(_allow_domains) if _allow_domains else "(no domains configured)"
+        return f"Only allowlisted domains may be accessed: {dom}."
+    return "No network access."
 
 
 def _build_tools() -> list[dict]:
@@ -1058,26 +1058,26 @@ def _build_tools() -> list[dict]:
     tools.append({
         "name": "run_python",
         "description": (
-            "在隔离子进程中执行 Python 代码并返回输出。适用场景：文件生成、数据处理、计算。"
-            + ("工作目录已隔离。" if _allow_dir else "")
+            "Execute Python code in an isolated subprocess and return its output. Use for: file generation, data processing, computation."
+            + ("Working directory is sandboxed." if _allow_dir else "")
             + _net_status_text()
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "code": {"type": "string", "description": "完整的 Python 代码"},
+                "code": {"type": "string", "description": "Complete Python code"},
                 "workspace_id": {
                     "type": "string",
-                    "description": "可选：用户选定的工作子目录（相对路径，允许嵌套如 myproject/data；"
-                                   "由后端强制锁定在该用户自己的工作空间根目录内，无法越权访问他人文件）。"
-                                   "留空或不提供时，使用用户工作空间根目录。"
-                                   "同一 workspace_id 的多次调用共享同一工作目录，便于在一个对话内先生成文件再处理它。",
+                    "description": "Optional: user-selected working subdirectory (relative path, nested paths like myproject/data allowed; "
+                                   "the backend locks it inside that user's own workspace root, so other users' files cannot be accessed). "
+                                   "When omitted, the user's workspace root is used. "
+                                   "Calls sharing the same workspace_id share the same working directory, so you can generate a file and then process it within one conversation.",
                 },
                 "auth": {
                     "type": "object",
-                    "description": "身份信封（Backend 签名注入；auth 强制开启，必须携带有效签名）。"
-                                   "结构: {user:str, uid:int, exp:int(0=不过期), sig:hex}。"
-                                   "sig = HMAC-SHA256(secret, f'{user}|{uid}|{exp}')。",
+                    "description": "Identity envelope (injected and signed by the backend; auth is mandatory, a valid signature is required). "
+                                   "Structure: {user:str, uid:int, exp:int(0=never expires), sig:hex}. "
+                                   "sig = HMAC-SHA256(secret, f'{user}|{uid}|{exp}').",
                     "properties": {
                         "user": {"type": "string"},
                         "exp": {"type": "integer"},
@@ -1092,19 +1092,19 @@ def _build_tools() -> list[dict]:
     # Shell
     if _enable_shell:
         tools.append({
-            "name": "run_shell",
-            "description": (
-                "在隔离子进程中执行 Shell 命令并返回输出。适用场景：文件操作、文本处理、简单脚本。"
-                + ("工作目录已隔离。" if _allow_dir else "")
-                + ("网络工具已被拦截。" if _network_mode != "allow" else "网络访问已开放（不受限制，调试用）。")
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                "code": {"type": "string", "description": "完整的 Shell 命令"},
+        "name": "run_shell",
+        "description": (
+            "Execute shell commands in an isolated subprocess and return output. Use for: file operations, text processing, simple scripts."
+            + ("Working directory is sandboxed." if _allow_dir else "")
+            + ("Network tools are blocked." if _network_mode != "allow" else "Network access is open (unrestricted, for debugging).")
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Complete shell command"},
                 "auth": {
                     "type": "object",
-                    "description": "身份信封（Backend 签名注入）。结构见 run_python。",
+                    "description": "Identity envelope (injected and signed by the backend). Structure see run_python.",
                     "properties": {
                         "user": {"type": "string"},
                         "exp": {"type": "integer"},
@@ -1112,26 +1112,26 @@ def _build_tools() -> list[dict]:
                     },
                 },
             },
-                "required": ["code"],
-            },
+            "required": ["code"],
+        },
         })
 
     # JavaScript
     if _enable_javascript:
         tools.append({
-            "name": "run_javascript",
-            "description": (
-                "在隔离子进程中通过 Node.js 执行 JavaScript 代码并返回输出。适用场景：数据处理、算法验证、JSON 转换。"
-                + ("工作目录已隔离。" if _allow_dir else "")
-                + ("网络模块已被拦截。" if _network_mode != "allow" else "网络访问已开放（不受限制，调试用）。")
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                "code": {"type": "string", "description": "完整的 JavaScript 代码"},
+        "name": "run_javascript",
+        "description": (
+            "Execute JavaScript code via Node.js in an isolated subprocess and return output. Use for: data processing, algorithm verification, JSON transformation."
+            + ("Working directory is sandboxed." if _allow_dir else "")
+            + ("Network modules are blocked." if _network_mode != "allow" else "Network access is open (unrestricted, for debugging).")
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Complete JavaScript code"},
                 "auth": {
                     "type": "object",
-                    "description": "身份信封（Backend 签名注入）。结构见 run_python。",
+                    "description": "Identity envelope (injected and signed by the backend). Structure see run_python.",
                     "properties": {
                         "user": {"type": "string"},
                         "exp": {"type": "integer"},
@@ -1139,8 +1139,8 @@ def _build_tools() -> list[dict]:
                     },
                 },
             },
-                "required": ["code"],
-            },
+            "required": ["code"],
+        },
         })
 
     return tools
