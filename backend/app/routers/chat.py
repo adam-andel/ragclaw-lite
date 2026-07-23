@@ -21,7 +21,7 @@ from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
-from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise
+from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise, _normalize_download_url
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
 from app.services.llm_semaphore import llm_limiter
@@ -765,8 +765,41 @@ async def chat_stream(
                         re.sub(r'\[TOOL_CALL\][\s\S]*', '', collected_content, flags=re.IGNORECASE)
                     )
 
-                    # Inject download links from tool results
+                    # Inject download links from tool results. These are
+                    # system-generated (never from the model). Make the injection
+                    # idempotent: never append a link whose URL already appears in
+                    # the answer (e.g. echoed by the model, or from a prior append)
+                    # so a duplicate download link can never be shown.
                     dl_links = _extract_download_links_from_state(state)
+                    if dl_links:
+                        # The model may echo a legacy /api/download/user_u... link
+                        # from an earlier turn (the old route is gone). Rewrite it
+                        # to the uid-free workspace endpoint so it never leaks the
+                        # uid and never renders as a second, differently-shaped link.
+                        collected_content = re.sub(
+                            r'\[([^\]]*)\]\((/api/download/user_u\d+/[^)]+)\)',
+                            lambda mo: f"[{mo.group(1)}]({_normalize_download_url(mo.group(2))})",
+                            collected_content,
+                        )
+                        # Normalize extracted links too (defensive) and dedupe
+                        # against ANY link URL already present in the answer — not
+                        # just the 📥-prefixed ones, since the model may echo the
+                        # old link with arbitrary link text.
+                        dl_links = re.sub(
+                            r'\((/api/download/user_u\d+/[^)]+)\)',
+                            lambda mo: f"({_normalize_download_url(mo.group(1))})",
+                            dl_links,
+                        )
+                        existing_urls = set(re.findall(r'\]\(([^)]+)\)', collected_content))
+                        kept = []
+                        for ln in dl_links.split("\n"):
+                            if not ln.strip():
+                                continue
+                            m = re.search(r"\(([^)]+)\)", ln)
+                            if m and m.group(1) in existing_urls:
+                                continue
+                            kept.append(ln)
+                        dl_links = "\n".join(kept)
                     if dl_links:
                         collected_content += dl_links
                         enqueue("token", {"content": dl_links})

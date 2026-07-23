@@ -272,8 +272,14 @@ class RagclawAgentGraph:
             )
             user_parts.append(f"## 工具调用结果\n{tool_text}")
 
-        if state.get("rag_context"):
-            user_parts.append(f"## 参考文档\n{state['rag_context']}")
+        rag_context = state.get("rag_context") or ""
+        if rag_context:
+            # When a skill executed tools, the answer is built from the tool
+            # result, not from retrieval — so never surface the "no relevant
+            # documents" sentinel (it would make the model claim it found
+            # nothing). Genuine retrieved context is still injected.
+            if not (rag_context.strip() == "未找到相关文档" and active_skill and tool_results):
+                user_parts.append(f"## 参考文档\n{rag_context}")
 
         user_parts.append(f"## 问题\n{state['query']}")
         # Final-stage constraint stays in the dynamic user region (only varies with

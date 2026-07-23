@@ -46,6 +46,20 @@ _FORCE_PY_KEYWORDS = (
     "delete file", "remove file", "rename", "move file",
 )
 
+# Query keywords that signal the user wants to create / write / save / run a
+# file or code. Used as a routing fallback so file-generation intent does not
+# depend on the LLM returning the exact skill name (e.g. "生成文件mydoc.txt"
+# should map to "Document Manager" without an exact-name match).
+_ROUTE_FILE_INTENT_KEYWORDS = (
+    "生成文件", "创建文件", "写文件", "保存文件", "新建文件", "写入文件",
+    "生成文档", "写文档", "创建文档", "新建文档", "保存为文件", "保存为",
+    "导出文件", "导出为", "生成excel", "生成表格", "生成csv", "导出csv",
+    "运行代码", "执行代码", "运行python", "执行python", "跑代码", "生成代码",
+    "写个文件", "写个文档", "脚本文件",
+    "write file", "create file", "generate file", "save file", "run code",
+    "execute code", "export file", "new file",
+)
+
 
 # ── Bilingual Agent-Graph prompts (A/B test: config_manager.prompt_language = "zh" | "en") ──
 # zh = original Chinese prompts (unchanged behavior). en = English A/B variants that aim to
@@ -563,8 +577,17 @@ async def skill_router_node(state: dict) -> dict:
         logger.info("Router: explicit skill_id=%s name=%s", skill_id, active_skill.get('name') if active_skill else 'NONE')
     if not active_skill and not skill_id:
         # Auto-route using name + description only
-        active_skill = await _route_to_best_skill(query, tenant_id, user_id)
+        async with async_session() as db:
+            skills = (await db.execute(
+                select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+            )).scalars().all()
+        active_skill = await _route_to_best_skill(query, tenant_id, user_id, skills=skills)
         logger.info("Router: auto-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
+        # Fallback: keyword-based routing for file/code generation intent. This
+        # avoids depending on the LLM returning the exact skill name.
+        if not active_skill:
+            active_skill = _route_by_keywords(query, skills)
+            logger.info("Router: keyword-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
@@ -580,15 +603,16 @@ async def _get_skill_index(skill_id: str) -> dict | None:
         return {"id": skill.id, "name": skill.name, "description": skill.description, "folder_name": skill.folder_name}
 
 
-async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
+async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict | None:
     """Auto-route using LLM to match query against skill name + description (Layer 1).
 
     Returns {id, name, description, folder_name} or None.
     """
-    async with async_session() as db:
-        skills = (await db.execute(
-            select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
-        )).scalars().all()
+    if skills is None:
+        async with async_session() as db:
+            skills = (await db.execute(
+                select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+            )).scalars().all()
     if not skills:
         return None
     skill_list = "\n".join(f"- {s.name}: {s.description or '(无描述)'}" for s in skills)
@@ -600,6 +624,34 @@ async def _route_to_best_skill(query, tenant_id, user_id) -> dict | None:
                 return {"id": s.id, "name": s.name, "description": s.description, "folder_name": s.folder_name}
     except Exception as e:
         logger.warning("Skill routing failed: %s", e)
+    return None
+
+
+def _route_by_keywords(query: str, skills: list) -> dict | None:
+    """Keyword fallback for routing file / code-generation intent to the skill
+    that manages workspace files.
+
+    Used when the LLM name-match router (``_route_to_best_skill``) returns
+    nothing. Picks the candidate skill whose name/description best signals
+    file/document handling, so "生成文件mydoc.txt" maps to e.g. Document
+    Manager without relying on exact-name matching.
+    """
+    if not skills or not query:
+        return None
+    q = query.lower()
+    if not any(kw.lower() in q for kw in _ROUTE_FILE_INTENT_KEYWORDS):
+        return None
+    doc_kw = ("文件", "文档", "file", "document", "doc", "写", "生成",
+              "workspace", "工作区", "excel", "csv", "表格")
+    best, best_score = None, 0
+    for s in skills:
+        blob = f"{s.name} {s.description or ''}".lower()
+        score = sum(1 for k in doc_kw if k.lower() in blob)
+        if score > best_score:
+            best, best_score = s, score
+    if best and best_score > 0:
+        return {"id": best.id, "name": best.name,
+                "description": best.description, "folder_name": best.folder_name}
     return None
 
 
@@ -963,8 +1015,21 @@ async def resume_replay_node(state: dict) -> dict:
 async def parallel_retrieval_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
+    query = state["query"]
+    kb_id = state.get("kb_id")
+    user_id = state.get("user_id", "")
+    # When the user has not selected any knowledge base there is nothing to
+    # retrieve over, so skip the (vector + BM25) hybrid search entirely. Only
+    # the user-scoped memory search still runs.
+    if not kb_id:
+        _emit(state, "retrieval_done", "未选择知识库，跳过检索", detail="skip")
+        memory_context = ""
+        if user_id:
+            mem_raw = await _search_memories_safe(query, user_id)
+            memory_context = _build_memory_context(mem_raw) if mem_raw else ""
+        return {"rag_context": "", "citations": [], "memory_context": memory_context,
+                "retrieval_ms": 0}
     _emit(state, "retrieval", "检索知识库…")
-    query, kb_id, user_id = state["query"], state["kb_id"], state.get("user_id", "")
     t_start = time.time()
     loop = asyncio.get_running_loop()
 
@@ -1377,13 +1442,18 @@ import re as _re
 def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
     """Ensure download links are present in tool result.
 
-    Generates download URLs pointing to RAGClaw's own /api/download/{uuid}/ proxy
+    Generates download URLs pointing to RAGClaw's own ``/api/workspace/download``
     endpoint, so the user only needs access to RAGClaw — the MCP server stays
-    fully internal with no host port exposure.
+    fully internal with no host port exposure. The uid is resolved server-side
+    from the caller's session, so the per-user Linux uid (``user_uNNNN``) is
+    NEVER included in the URL.
 
     ``uuid_dir`` is the full relative path under the sandbox's allow-dir, which
     may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
+    Only the sandbox-relative part (uid prefix stripped) goes into the link.
     """
+    from urllib.parse import quote
+
     m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
     if not m:
         return result
@@ -1391,29 +1461,62 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     if not uuid_dir:
         return result
 
+    # Do NOT leak the per-user Linux uid in the URL. The workspace proxy
+    # resolves the uid server-side from the caller's session, so only the
+    # sandbox-relative path (uid prefix stripped) belongs in the link.
+    # The uid may be a bare root (user_u10000) or nested (user_u10000/<ws>),
+    # so strip the trailing slash optionally.
+    rel = _re.sub(r'^user_u\d+/?', '', uuid_dir)
     from app.config import settings
     public_base = settings.public_url.rstrip("/") if settings.public_url else ""
-    proxy_prefix = f"{public_base}/api/download/{uuid_dir}" if public_base else f"/api/download/{uuid_dir}"
+    # Build the query path WITHOUT a leading slash (bare root -> "" so the file
+    # segment is appended directly). The workspace endpoint lstrip()s a leading
+    # slash anyway, but keeping it consistent avoids two shapes of the same link.
+    query_path = quote(rel) + ("/" if rel else "")
+    proxy_prefix = f"{public_base}/api/workspace/download?path={query_path}"
 
     if "[File]" in result:
-        # MCP server included [File] tags with its own URL — rewrite to RAGClaw proxy.
-        # uuid_dir may contain "/" (nested per-user path), so escape it.
+        # MCP server included [File] tags with its own URL — rewrite to the
+        # RAGClaw workspace download endpoint. uuid_dir may contain "/" (nested
+        # per-user path), so escape it. The captured group is the file path
+        # under uuid_dir; encode it so spaces/Unicode stay valid in the URL.
         result = _re.sub(
             r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',
-            f'{proxy_prefix}/\\1',
+            lambda mo: f"{proxy_prefix}/{quote(mo.group(1))}",
             result
         )
+    # The [workspace: <uuid>/] tag carries the per-user Linux uid and is only
+    # needed above to rewrite [File] links — strip it so the uid never persists
+    # in tool results / conversation history.
+    result = _re.sub(r'\[workspace:\s*[\w/-]+/\]', '', result)
+
     # If MCP didn't generate [File] links (missing REPL_PUBLIC_URL),
     # we don't fabricate broken links — let the result speak for itself.
 
     return result
+
+
+def _normalize_download_url(url: str) -> str:
+    """Rewrite the legacy public download proxy (/api/download/<uid>/...) to the
+    workspace endpoint so the per-user Linux uid is never exposed in a URL.
+
+    Legacy links can survive in model output (copied from earlier turns that used
+    the old route) or in persisted history. Normalizing keeps every visible link
+    uid-free and lets the idempotent injection drop duplicates instead of
+    appending a second, differently-shaped link.
+    """
+    m = _re.match(r'^/api/download/user_u\d+/(.*)$', url)
+    if m:
+        return f"/api/workspace/download?path={m.group(1)}"
+    return url
+
 
 def _extract_download_links_from_state(state: dict) -> str:
     """Scan tool results for download links and format them for final display.
 
     This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
     Formats [File] tags as clickable Markdown links the frontend can render.
-    Supports both absolute (https://...) and relative (/api/download/...) URLs.
+    Supports both absolute (https://...) and relative (/api/workspace/download?path=...) URLs.
     """
     tool_results = state.get("tool_results", [])
     links = []
@@ -1421,13 +1524,18 @@ def _extract_download_links_from_state(state: dict) -> str:
     for r in tool_results:
         # Match both absolute and relative [File] URLs
         for url_match in _re.finditer(
-            r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r
+            r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', r
         ):
-            url = url_match.group(1)
-            if url not in seen:
-                seen.add(url)
-                filename = url.rstrip("/").rsplit("/", 1)[-1]
-                links.append(f"- [📥 {filename}]({url})")
+            url = _normalize_download_url(url_match.group(1))
+            filename = url.rstrip("/").rsplit("/", 1)[-1]
+            # Dedupe by the RENDERED line, not just the raw URL: a proxy URL
+            # and a raw REPL URL (or a trailing-slash variant) may render
+            # identically yet differ as strings, which a raw-URL dedup would
+            # miss and would surface as two duplicate download links.
+            line = f"- [📥 {filename}]({url})"
+            if line not in seen:
+                seen.add(line)
+                links.append(line)
     if links:
         return "\n\n---\n" + "\n".join(links)
     return ""
@@ -1553,7 +1661,7 @@ async def tool_executor_node(state: dict) -> dict:
 
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
-        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/download/\S+))', r)
+        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/workspace/download\S+))', r)
         if fm:
             fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
             tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
