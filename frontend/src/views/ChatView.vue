@@ -463,7 +463,7 @@ const skills = ref<Skill[]>([])
 const selectedSkillId = ref<string | null>(null)
 const showSkillModal = ref(false)
 const skillSearchText = ref('')
-const emptyMode = ref<'conv' | 'kb' | ''>('')
+const emptyMode = ref<'kb' | ''>('')
 const showMoreConv = ref(false)
 const showMoreKb = ref(false)
 
@@ -505,8 +505,6 @@ function restoreConvSettings(convId: string) {
   }
 }
 
-const convPreview = computed(() => conversations.value.slice(0, 3))
-const convHasMore = computed(() => conversations.value.length > 3)
 // ── Conversation history modal pagination ──
 const convPage = ref(1)
 const convPageSize = 8
@@ -725,8 +723,9 @@ watch(() => route.params.id, async (id) => {
   if (cid && cid !== conversationId.value) {
     await loadConversation(cid)
   } else if (!cid) {
-    // Navigated to /chat without id — new conversation, unless an answer just
-    // finished streaming while the user was away: open it and clear the dot.
+    // Navigated to /chat without id — new conversation: show the KB picker.
+    // (Unless an answer just finished streaming while the user was away: open
+    // it and clear the dot.)
     if (chatUnread.hasUnread && chatUnread.lastConversationId) {
       const pendingId = chatUnread.lastConversationId
       chatUnread.clearUnread()
@@ -740,7 +739,7 @@ watch(() => route.params.id, async (id) => {
     conversationId.value = undefined
     contextTokens.value = 0
     isReadonly.value = false
-    emptyMode.value = 'conv'
+    emptyMode.value = 'kb'
     localStorage.removeItem('ragclaw:last-conv')
     await loadConversations()
   }
@@ -786,22 +785,6 @@ async function loadConversation(id: string) {
     router.replace('/chat')
   }
 }
-
-// Listen for reset-chat event from sidebar
-onMounted(() => {
-  window.addEventListener('ragclaw:reset-chat', () => {
-    isReadonly.value = false
-    conversationId.value = undefined
-    messages.value = []
-    currentPage.value = 1
-    totalPages.value = 1
-    totalRounds.value = 0
-    contextTokens.value = 0
-    emptyMode.value = 'conv'
-    localStorage.removeItem('ragclaw:last-conv')
-    loadConversations()
-  })
-})
 
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
   // Selections captured at stream start (so they stay correct even if the user
@@ -1038,6 +1021,7 @@ function newConversation() {
   // Starting a fresh conversation clears the remembered open conversation.
   localStorage.removeItem('ragclaw:last-conv')
   loadConversations()
+  // Drop any route query and show the bare /chat so the watcher renders the KB picker.
   router.replace('/chat')
 }
 
@@ -1069,41 +1053,8 @@ function handleKeydown(e: KeyboardEvent) {
 
     <div class="chat-messages" ref="messagesContainer" @scroll="onScroll" role="log" aria-live="polite" :aria-label="t('chat.ariaMessages')">
       <!-- Centered panel: conversation list preview -->
-      <div v-if="showPicker && emptyMode === 'conv'" class="center-panel">
-        <div class="center-panel-box">
-          <div class="center-panel-head">
-            <p class="center-panel-subtitle">{{ t('chat.continueOrStart') }}</p>
-          </div>
-          <div class="conv-list">
-            <div v-for="c in convPreview" :key="c.id" class="conv-row"
-              role="button" tabindex="0"
-              @click="selectAndClose(c.id)"
-              @keydown.enter.prevent="selectAndClose(c.id)"
-              @keydown.space.prevent="selectAndClose(c.id)"
-            >
-              <div class="conv-row-avatar">💬</div>
-              <div class="conv-row-body">
-                <div class="conv-row-title">{{ c.title || t('chat.untitledConversation') }}</div>
-                <div class="conv-row-meta">
-                  <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
-                  <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
-                  <span v-if="chatUnread.hasUnreadConversation(c.id)" class="conv-unread-badge">{{ t('chat.hasUnread') }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <NButton v-if="convHasMore" text size="small" type="primary" class="conv-more-btn" @click="showMoreConv = true">
-            {{ t('chat.moreConversations', { count: conversations.length }) }}
-          </NButton>
-          <NEmpty v-if="conversations.length === 0" :description="t('chat.noConversations')" style="padding:8px 0" />
-          <div class="conv-fallback">
-            {{ t('chat.or') }}<NButton text type="primary" @click="emptyMode = 'kb'" style="padding:0 3px;height:auto;vertical-align:baseline;font-size:inherit">{{ t('chat.newConversation') }}</NButton>
-          </div>
-        </div>
-      </div>
-
       <!-- Centered panel: KB list preview -->
-      <div v-else-if="(showPicker && emptyMode === 'kb') || (!showPicker && messages.length === 0 && !conversationId && !selectedKbId)" class="center-panel">
+      <div v-if="(showPicker && emptyMode === 'kb') || (!showPicker && messages.length === 0 && !conversationId && !selectedKbId)" class="center-panel">
         <div class="center-panel-box" :class="{ 'center-panel-box-wide': emptyMode === 'kb' || (!showPicker && !selectedKbId) }">
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
@@ -1681,18 +1632,6 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: 24px;
   margin-bottom: 14px;
 }
-.center-panel-subtitle {
-  font-size: var(--text-base);
-  color: var(--color-text-muted);
-  margin-top: 4px;
-}
-.conv-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 14px;
-  text-align: left;
-}
 .conv-row {
   display: flex;
   align-items: flex-start;
@@ -1755,17 +1694,6 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-primary);
   font-weight: 500;
 }
-.conv-more-btn {
-  margin-bottom: 4px;
-}
-.conv-fallback {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
-  font-size: var(--text-sm);
-  color: var(--color-text-muted);
-}
-
 /* Modal scrollable list (shared by "More conversations" and "More knowledge bases") */
 .picker-scroll { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 
