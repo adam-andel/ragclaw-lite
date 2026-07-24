@@ -15,6 +15,12 @@ from app.config import settings
 from app.database import init_db, async_session
 from app.models.system_setting import SystemSetting  # noqa: F401
 
+# Keep strong references to fire-and-forget background tasks (e.g. the BGE
+# warmup). asyncio.create_task() only holds a weak reference until the task
+# first runs; without a kept reference the task can be garbage-collected and
+# silently cancelled before it ever starts.
+_BACKGROUND_TASKS: "set[_asyncio.Task]" = set()
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # Loop-stall watchdog (diagnostic).
@@ -67,6 +73,47 @@ def _start_loop_watchdog() -> None:
         print(f"[watchdog] failed to start: {e}")
 
 
+async def _prewarm_embedding_model() -> None:
+    """Best-effort background warmup of the BGE embedding model.
+
+    Spawned as a fire-and-forget ``asyncio.create_task`` from the lifespan (see
+    the caller) rather than awaited. Rationale:
+
+    - A slow model load must NEVER block server startup or the first request.
+      Running it as a background task lets startup complete immediately; if the
+      load stalls, the first request simply lazy-loads the model on the request
+      path (which is reliable in practice).
+    - Loaded via run_in_executor off the event loop so the loop stays
+      responsive. Only model construction (``_ensure_model``) is done, not
+      ``encode()``: the encode forward pass is cheap and runs on the request
+      path anyway.
+    - Idempotent: ``_ensure_model()`` is a no-op if the model is already
+      resident, so a worker reload (uvicorn ``--reload``) re-running this task
+      is safe.
+    - Covers "warm up after reload": each fresh worker re-runs the lifespan and
+      re-spawns this task, with no extra machinery.
+    - Best-effort only: any exception is logged, never propagated.
+    """
+    try:
+        import asyncio
+        from app.services.config_manager import config_manager
+        from app.services.model_manager import model_manager
+        if not model_manager.is_installed(config_manager.embedding_model):
+            print("BGE model not installed yet — skipping warmup (install via Settings UI)", flush=True)
+            return
+        # Brief pause so the load runs after the freshly-forked worker has
+        # settled (avoids the early-startup window where the model load can
+        # stall). Warmup is concurrent with the MCP config push below, so the
+        # push cannot delay it either.
+        await asyncio.sleep(2)
+        from app.services.embedder import embedder_service
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, embedder_service._ensure_model)
+        print("BGE model pre-warmed", flush=True)
+    except Exception as e:  # best-effort — never let warmup break startup
+        print(f"BGE warmup warning: {e}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -76,6 +123,20 @@ async def lifespan(app: FastAPI):
     # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
     await config_manager.init()
+
+    # Best-effort, NON-BLOCKING warmup of the BGE embedding model. Spawned as a
+    # background task (not awaited) so a slow or (rare) hung model load can
+    # never delay or block startup, and so it cannot be delayed by the MCP
+    # config push below (which self-heals/retries for minutes if MCP is down).
+    # Re-runs after every uvicorn --reload worker restart (fresh lifespan).
+    try:
+        import asyncio as _asyncio
+        _task = _asyncio.create_task(_prewarm_embedding_model())
+        # Retain a reference so the task is not GC'd/cancelled before it runs.
+        _BACKGROUND_TASKS.add(_task)
+        _task.add_done_callback(_BACKGROUND_TASKS.discard)
+    except Exception as _e:  # pragma: no cover - defensive
+        print(f"[startup] warmup task spawn skipped: {_e}")
 
     # Push the (auto-generated) REPL identity secret to the MCP REPL container so
     # per-user isolation is active out of the box. Retry because containers may
@@ -109,21 +170,6 @@ async def lifespan(app: FastAPI):
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)
     # Default admin user is now seeded in database._seed_db (fixed REPL UID + idempotent upsert).
-    # Pre-warm BGE model to avoid cold-start on first request.
-    # Only if the local model is already installed (do NOT auto-download at boot).
-    try:
-        import asyncio
-        from app.services.model_manager import model_manager
-        from app.services.config_manager import config_manager
-        if model_manager.is_installed(config_manager.embedding_model):
-            from app.services.embedder import embedder_service
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, embedder_service.embed, ["warmup"])
-            print("BGE model pre-warmed")
-        else:
-            print("BGE model not installed yet — skipping warmup (install via Settings UI)")
-    except Exception as e:
-        print(f"BGE warmup warning: {e}")
     # Rebuild BM25 indexes from DB (using new kb_documents junction table)
     try:
         from app.models.document import Chunk, Document, DocStatus, KBDocument
