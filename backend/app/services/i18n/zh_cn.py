@@ -57,4 +57,13 @@ MESSAGES = {
         "- 字符串值内部的双引号用 \\\" 转义，换行用 \\n\n"
         "- JSON 前后不要附加任何解释文字"
     ),
+
+    # Final-stage constraint note appended to the user turn when no tools ran
+    # but the skill prompt asked for tool use. Resolved per prompt_language.
+    "final_stage_note": (
+        "\n\n## ⚠️ 当前阶段：最终回答生成\n\n"
+        "这是最终生成阶段，已无法调用工具。请直接用自然语言回答用户的问题。"
+        "绝对不要输出 [TOOL_CALL]、JSON 格式的工具调用，或任何伪装成工具调用的代码块。"
+        "如果用户的问题需要工具但没有任何工具被执行，请如实告知用户。"
+    ),
 }

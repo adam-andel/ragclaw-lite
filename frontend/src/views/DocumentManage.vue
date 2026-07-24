@@ -23,19 +23,20 @@ import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import { formatDateTime, formatDate } from '@/i18n/format'
+import { backendErrorMessage } from '@/utils/backendError'
 
 const { t } = useI18n()
 
 // Backend may store a stable error CODE (e.g. "EMBED_MODEL_NOT_INSTALLED")
-// instead of a baked string. Resolve known codes to a localized message;
-// pass genuine exception text through untouched.
-const DOC_ERROR_CODES = ['EMBED_MODEL_NOT_INSTALLED'] as const
+// instead of a baked string. Doc-specific wording (documents.docErrorCodes)
+// takes precedence; otherwise fall back to the generic backend error-code map.
+// Genuine exception text is passed through untouched.
 function docErrorMessage(raw?: string | null): string {
   if (!raw) return ''
-  if ((DOC_ERROR_CODES as readonly string[]).includes(raw)) {
-    return t(`documents.docErrorCodes.${raw}`)
-  }
-  return raw
+  const docKey = `documents.docErrorCodes.${raw}`
+  const docLocalized = t(docKey)
+  if (docLocalized && docLocalized !== docKey) return docLocalized
+  return backendErrorMessage(raw)
 }
 const message = useMessage()
 const auth = useAuthStore()

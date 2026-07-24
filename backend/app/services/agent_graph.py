@@ -16,6 +16,7 @@ Graph topology:
 from langgraph.graph import StateGraph, END, START
 
 from app.services.config_manager import config_manager
+from app.services.i18n import t as _t
 from app.services.agent_state import RagclawAgentState
 from app.services.agent_nodes import (
     entry_node,
@@ -221,13 +222,7 @@ class RagclawAgentGraph:
                 or "调用" in system_prompt
             )
             if has_tool_instruction:
-                final_note = (
-                    "\n\n## ⚠️ Current stage: final answer generation\n\n"
-                    "This is the final generation stage; no tool-calling capability is available. "
-                    "Reply to the user's question directly in natural language. "
-                    "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block disguised as a tool call. "
-                    "If the user's task requires a tool but none was executed, tell the user honestly."
-                )
+                final_note = _t("final_stage_note", config_manager.prompt_language)
 
         cron_rule = (
             "\n\n## Scheduled Task Rule\n\n"
