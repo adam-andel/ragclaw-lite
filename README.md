@@ -1,7 +1,18 @@
-# RAGClaw-Lite（RAGClaw）
+# RAGClaw
 
-> 企业级 Agentic RAG 知识中台 · 精简版  
-> v0.5.0 · FastAPI + LangGraph + ChromaDB + SKILL + MCP
+> 以 **claw（爪）** 为核心、以 **rag** 为辅的智能体 · 原生文件管理与代码执行平台  
+> 部署镜像 / 容器名 `RAGClaw-Lite` · v0.5.0 · FastAPI + LangGraph + ChromaDB + SKILL + MCP
+
+## 它是什么
+
+RAGClaw 是一个**以 claw 为主角**的智能体（agent），而不是单纯的问答机器人，也不仅仅是一个知识库中台。
+
+- **claw 是主要角色**：它天生拥有原生的**文件管理能力**与**脚本执行能力**——可以像在终端里一样直接操作工作区、运行代码（Python / Shell / Node.js）、处理数据、生成文件。它不局限于某一种技能，而是一个能真正「动手干活」的爪子。
+- **rag 是附属品**：当问题涉及知识库 / 文档内容时，系统会把相关的**参考文档**检索出来并注入到对话上下文中，供 claw 引用以增强回答。rag 只是增强 claw 回答的附属能力，而非它的全部。
+
+claw 借由内置的 **REPL 沙箱 MCP Server**（`run_python` / `run_shell` / `run_javascript`）和**工作区文件管理 API** 落地这些能力：读写 / 列举 / 搜索 / 上传 / 重命名 / 压缩文件、解析文档、运行脚本、生成数据产物等。
+
+一句话总结：**claw 负责「做事」（操作文件、跑代码、产出结果），rag 负责「查资料」（在需要时把相关文档喂给 claw）**。
 
 ## 🚀 快速开始
 
@@ -25,7 +36,7 @@ open http://localhost:8000
 
 ### 方式二：开发模式（Docker 热重载，推荐）⭐
 
-> **前提：把项目放在 WSL2 文件系统内运行**（如 `//wsl$/Ubuntu/home/adam/erag`）。
+> **前提：把项目放在 WSL2 文件系统内运行**（如 `//wsl$/Ubuntu/home/adam/ragclaw`）。
 > Windows 宿主机直接挂载会经 9P/gRPC-FUSE 转发，I/O 极慢；WSL2 内为原生 ext4，bind mount 性能最佳。
 
 ```bash
@@ -39,46 +50,39 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 > `docker-compose.dev.yml` 仅作为叠加层；`docker-compose.yml` 中的 `ragclaw` / `mcp-repl` / `ragclaw-egress` 服务照常启动。详见下方「🛠️ 开发模式（热重载）」。
 
-### 方式三：纯本地（不依赖 Docker）
+### 方式三：纯本地（不依赖 Docker）— 暂不支持
 
-```bash
-# 后端
-cd backend
-pip install -e .
-uvicorn app.main:app --reload
+claw 的执行引擎（REPL 沙箱，即 `mcp-repl` 容器）与 egress 代理（`ragclaw-egress` 容器）由 Docker 编排提供，目前**不提供纯本地、不依赖 Docker 的运行方式**。请使用上方「方式一（生产部署）」或「方式二（开发模式）」通过 Docker 启动。
 
-# 前端（新终端）
-cd frontend
-pnpm install
-pnpm dev
-# 访问 http://localhost:5173
-```
-
-**新增依赖**：`langgraph`, `langchain-core`（Agent 编排引擎）。`mem0` 为可选依赖（记忆系统）。
+> 后端运行所需的 Agent 编排依赖：`langgraph`、`langchain-core`（必需），`mem0`（记忆系统，可选）。
 
 ## 📐 技术架构
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  前端：Vue3 + TypeScript + NaiveUI + UnoCSS                   │
+│  （对话 / 工作区 / 技能 / 知识库 等管理界面）                  │
 ├──────────────────────────────────────────────────────────────┤
 │  FastAPI 单体应用                                             │
-│  ├─ LangGraph Agent 状态图                                    │
-│  │   ├─ SKILL 路由（LLM 意图识别）                            │
-│  │   ├─ 并行检索（混合检索 ‖ Mem0 记忆召回）                  │
-│  │   ├─ 工具决策（MCP 工具调用判断）                          │
-│  │   └─ 工具执行（HTTP/stdio MCP Client）                    │
-│  ├─ 文档上传解析 + 结构分块 + 向量化                          │
-│  ├─ 混合检索（向量+BM25+加权融合）                            │
-│  ├─ RAG 对话（SSE 流式，前端零改动）                          │
-│  └─ LRU 结果缓存                                              │
+│  ├─ LangGraph Agent（claw 大脑）                             │
+│  │   ├─ SKILL 路由（LLM 意图识别 / 技能选择）               │
+│  │   ├─ 工具决策（调用 claw 的"爪"或外部 MCP 工具）         │
+│  │   ├─ 工具执行（含 claw 原生能力 ↓）                      │
+│  │   └─ 上下文构建（把 RAG 参考文档并入提示）               │
+│  ├─【claw 原生能力】REPL 沙箱（Python / Shell / Node.js 执行）│
+│  │   └─ 工作区文件管理（列举 / 读写 / 上传 / 下载 / 压缩）  │
+│  ├─【rag 附属】文档解析 + 结构分块 + 向量化 + 混合检索      │
+│  ├─ 流式对话（SSE）                                          │
+│  └─ LRU 结果缓存                                             │
 ├──────────────────────────────────────────────────────────────┤
-│  存储层（零外部运行时依赖）                                   │
-│  ├─ SQLite：元数据 + SKILL/MCP 配置                           │
-│  ├─ ChromaDB：向量存储 + Mem0 记忆                            │
-│  └─ 本地文件系统：原始文档                                    │
+│  存储层（零外部运行时依赖）                                  │
+│  ├─ SQLite：元数据 + SKILL/MCP 配置                          │
+│  ├─ ChromaDB：向量存储 + Mem0 记忆                           │
+│  └─ 本地文件系统：原始文档 + 工作区文件                      │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+> **claw 与 rag 的关系**：claw 的原生文件 / 代码能力（REPL 沙箱 + 工作区 API）始终可用，是 agent 的「手」；rag 检索只在对话涉及知识库 / 文档时触发，把「参考文档」作为上下文喂给 claw，是其「资料来源」之一。
 
 ## 📂 项目结构
 
@@ -99,37 +103,42 @@ ragclaw/
 │       ├── migrations/         # Alembic 迁移（含 initial schema 单条基线）
 │       ├── models/             # ORM 模型（含 Skill/MCPServer）
 │       ├── schemas/            # Pydantic（含 skill/mcp schema）
-│       ├── routers/            # API 路由（含 skills/mcp_servers）
+│       ├── routers/            # API 路由
+│       │   ├── workspace.py    # 【claw】工作区文件管理 API（/api/workspace/*）
+│       │   ├── chat.py         # 对话流式 API
+│       │   ├── skills.py        # 技能管理
+│       │   ├── mcp_servers.py  # MCP Server 管理
+│       │   └── …               # 知识库 / 文档 / 用户 / 记忆 / 通知 / 定时任务 等
 │       ├── services/           # 业务逻辑
 │       │   ├── agent_state.py  # LangGraph 状态定义
-│       │   ├── agent_nodes.py  # 5 个图节点
+│       │   ├── agent_nodes.py  # LangGraph 图节点（入口/分支/汇聚/技能路由/技能加载/工具决策/工具执行/上下文构建 等）
 │       │   ├── agent_graph.py  # StateGraph 编排
-│       │   ├── mcp_client.py   # MCP 客户端
-│       │   └── tool_registry.py # 工具注册表
+│       │   ├── mcp_client.py   # MCP 客户端 + 工具聚合
+│       │   ├── tool_registry.py # 工具注册表（MCP 工具 + 元工具）
+│       │   ├── skill_script_loader.py # 技能脚本加载器（AST 解析 scripts/*.py → 工具）
+│       │   ├── rag_pipeline.py # RAG 流水线（检索 + 重排）
+│       │   └── …               # llm_factory / retrieval_service / ws_manager / skill_manager 等
 │       └── parsers/            # 文档解析器
+│
+├── mcp/                        # 【claw 执行引擎】REPL 沙箱 MCP Server
+│   └── repl_mcp_server.py      # 多语言代码执行（Python/Shell/Node.js）+ 工作区文件管理
 │
 ├── frontend/                   # Vue3 + Vite
 │   ├── package.json
 │   ├── vite.config.ts          # Vite 配置（vite.config.js 优先，见下）
 │   ├── vite.config.js          # /api 代理目标读 VITE_PROXY_TARGET，回退 localhost:8000
 │   └── src/
-│       ├── views/              # 页面（含 SkillsView, McpServersView）
+│       ├── views/              # 页面（Chat / Workspace / Skills / McpServers / 知识库 等）
 │       ├── components/         # 组件
 │       ├── api/                # API 封装（含 skills.ts, mcp.ts）
 │       ├── stores/             # Pinia
 │       └── types/              # TS 类型
 │
-├── docs/                       # 文档
-│   ├── 项目架构说明.html        # 架构设计文档
-│   ├── Agentic-RAG升级实施方案.md # 升级方案
-│   ├── SKILL开发指南.md         # SKILL 开发指南
-│   ├── MCP集成指南.md           # MCP 集成指南
-│   └── 部署注意事项.md          # 部署与安全注意事项（密钥轮换、UID 池）
-│
 └── data/                       # 运行时数据
     ├── chroma/                 # 向量存储
     ├── sqlite/                 # 数据库
-    └── uploads/                # 文档
+    ├── uploads/                # 文档
+    └── skills/                 # 技能文件夹（<name>/ 含 SKILL.md + scripts/）
 ```
 
 ## 🛠️ 开发模式（热重载）
@@ -140,7 +149,7 @@ ragclaw/
 
 Docker Desktop 使用 WSL2 后端。若项目位于 Windows 宿主机，bind mount 需经 9P/gRPC-FUSE 协议转发到 Linux 虚拟机，文件 I/O 明显变慢；而把项目放在 WSL2 发行版的文件系统内（原生 ext4）可直接挂载，性能接近本地，热重载体验最佳。
 
-> 推荐路径示例：`//wsl$/Ubuntu/home/adam/erag`
+> 推荐路径示例：`//wsl$/Ubuntu/home/adam/ragclaw`
 
 ### 启动
 
@@ -177,7 +186,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 | `frontend/Dockerfile.dev` | 前端开发镜像（corepack + pnpm + Vite HMR） |
 | `vite.config.js` | `/api` 代理目标读 `VITE_PROXY_TARGET`，回退 `localhost:8000` |
 
-> 纯本地（不依赖 Docker）的开发方式见「快速开始 · 方式三」。
+> 纯本地（不依赖 Docker）方式暂不支持，请使用「快速开始 · 方式一 / 方式二」的 Docker 启动。
 
 ## 🛠️ 技术栈
 
@@ -185,13 +194,14 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 |------|------|------|
 | 后端框架 | FastAPI | 异步原生、自动 OpenAPI |
 | Agent 编排 | LangGraph | 声明式状态图，条件路由 + 多轮工具调用 |
-| 向量数据库 | ChromaDB | 嵌入式运行、零配置 |
+| claw 执行引擎 | REPL 沙箱（Python / Shell / Node.js） | 多语言代码执行 + 工作区文件管理（claw 的「手」） |
+| 向量数据库 | ChromaDB | 嵌入式运行、零配置（rag 参考文档的存储） |
 | 元数据库 | SQLite + SQLAlchemy + Alembic | 单文件存储 + 版本化迁移（基线 + 增量） |
 | Embedding | BGE-small-zh-v1.5 | 384维中文向量 |
 | LLM | OpenAI / 通义千问 / Ollama | 可切换，支持 tool calling |
 | 记忆系统 | Mem0（可选） | 跨会话记忆，并行加载不增加延迟 |
 | 工具协议 | MCP（HTTP + stdio） | 外部工具集成 |
-| 前端 | Vue3 + TS + NaiveUI | 企业级管理后台 |
+| 前端 | Vue3 + TS + NaiveUI | 企业级管理后台（含工作区 / 技能 / 知识库 界面） |
 | 构建 | Vite + UnoCSS | 秒级 HMR |
 | 部署 | Docker Compose | 生产打包进镜像；开发模式 `docker-compose.dev.yml` 叠加热重载 |
 
@@ -226,14 +236,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## 🔑 核心亮点
 
-1. **Agentic RAG** — LangGraph 状态图，SKILL 路由 + MCP 工具调用，非简单线性 RAG
-2. **SKILL 体系** — 意图路由、专属 System Prompt、工具绑定，一次对话一个知识库
-3. **MCP 工具集成** — 支持 HTTP/stdio 双传输，多轮工具调用，独立超时 + 错误降级
-4. **记忆激活** — Mem0 并行读取，不影响首字延迟
-5. **混合检索 + 加权融合** — 向量检索 + BM25 关键词，互补短板
-6. **结构分块** — 基于标题树的结构化切分，非固定长度
-7. **流式 SSE 输出** — 毫秒级首字延迟，Agent 链路前端零改动
-8. **零外部运行时依赖** — SQLite + ChromaDB 全嵌入式，docker compose up 即用
+1. **claw 原生能力（核心）** — 通过 REPL 沙箱 MCP Server 直接执行 Python / Shell / Node.js，并提供工作区文件管理（列举 / 读写 / 上传 / 下载 / 压缩），像在终端里一样操作文件、跑代码、产出文件
+2. **rag 作为附属增强** — 当问题涉及知识库 / 文档时，混合检索（向量 + BM25）召回**参考文档**并注入对话上下文，供 claw 引用，而非独立的知识中台
+3. **SKILL 体系** — 意图路由、专属 System Prompt、工具绑定；技能以文件夹形式（`data/skills/<name>/`，含 `SKILL.md` + `scripts/`）存放，由 DB + UI 管理
+4. **MCP 工具集成** — 支持 HTTP/stdio 双传输，多轮工具调用，独立超时 + 错误降级
+5. **记忆激活** — Mem0 并行读取，不影响首字延迟
+6. **混合检索 + 加权融合** — 向量检索 + BM25 关键词，互补短板（仅作为 claw 的参考来源之一）
+7. **结构分块** — 基于标题树的结构化切分，非固定长度
+8. **流式 SSE 输出** — 毫秒级首字延迟，Agent 链路前端零改动
+9. **零外部运行时依赖** — SQLite + ChromaDB 全嵌入式，docker compose up 即用
 
 ## 📝 API 文档
 
@@ -243,6 +254,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 | 端点 | 说明 |
 |------|------|
+| `GET/POST/DELETE /api/workspace/*` | 【claw】工作区文件管理（列举 / 读写 / 上传 / 下载 / 压缩） |
 | `POST/GET /api/skills` | SKILL 管理 |
 | `PATCH/DELETE /api/skills/{id}` | SKILL 编辑/删除 |
 | `POST/DELETE /api/skills/{id}/tools` | 工具绑定/解绑 |
