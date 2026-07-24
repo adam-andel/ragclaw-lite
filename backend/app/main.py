@@ -14,6 +14,11 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db, async_session
 from app.models.system_setting import SystemSetting  # noqa: F401
+from app.logging_config import setup_logging
+
+# Apply RAGClaw logging config as early as possible (defensive — the lifespan
+# re-applies it after uvicorn's own config is installed at startup).
+setup_logging()
 
 # Keep strong references to fire-and-forget background tasks (e.g. the BGE
 # warmup). asyncio.create_task() only holds a weak reference until the task
@@ -117,6 +122,11 @@ async def _prewarm_embedding_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    # Re-apply RAGClaw logging now that uvicorn has installed its own config.
+    # Fixes ragclaw.* INFO logs being silently dropped (P0 observability).
+    setup_logging()
+    import logging as _logging
+    _logging.getLogger("ragclaw").info("RAGClaw logging initialized")
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     _start_loop_watchdog()
     await init_db()

@@ -9,5 +9,6 @@ export default {
   // code vocabulary as documents.docErrorCodes but with context-neutral wording.
   backendErrorCodes: {
     EMBED_MODEL_NOT_INSTALLED: 'Embedding 模型未安装，无法执行向量化与语义检索。请前往「系统设置 → Embedding 模型」安装模型。',
+    LLM_BUDGET_EXCEEDED: '本次问答的 LLM 调用超出时间预算，已中止以避免长时间无响应。上游模型可能响应过慢，请稍后重试或调整模型配置。',
   },
 }

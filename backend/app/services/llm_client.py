@@ -11,14 +11,78 @@ The active platform is resolved via ``config_manager.platform`` (explicit
 
 import json
 import logging
+import time
 from typing import AsyncGenerator
 
 import httpx
+import contextvars
 
 from app.services.config_manager import config_manager
 
 logger = logging.getLogger("ragclaw.llm")
 logger.setLevel(logging.INFO)
+
+# ── Request timeouts & per-turn budget (P1: stop the bleeding) ──────────────
+# A single non-streaming call must fail fast if the upstream model hangs. The
+# per-turn budget additionally bounds the WHOLE agent turn so a slow model
+# cannot stack many long calls into a multi-minute silent hang (the root cause
+# of the ~4.7-minute stall observed on 2026-07-24).
+LLM_CONNECT_TIMEOUT = 10.0
+LLM_READ_TIMEOUT = 90.0           # non-streaming chat / chat_with_tools
+LLM_WRITE_TIMEOUT = 30.0
+LLM_POOL_TIMEOUT = 10.0
+LLM_STREAM_READ_TIMEOUT = 120.0   # streaming generation: tolerate slow token cadence
+LLM_TURN_BUDGET_SECONDS = 180.0   # wall-clock cap for all non-stream LLM calls in a turn
+
+# Per-conversation deadline (absolute monotonic timestamp) armed by the chat
+# producer via ``set_llm_deadline``. ``None`` means no budget is enforced
+# (e.g. cron subgraphs that run unattended).
+_LLM_DEADLINE: "contextvars.ContextVar[float | None]" = contextvars.ContextVar(
+    "ragclaw_llm_deadline", default=None
+)
+
+
+# Bare error code surfaced to the frontend via the errors.backendErrorCodes
+# i18n map (zh-CN / en-US). Follows the project convention: the backend throws a
+# CODE and the frontend localizes it; raw text is passed through only for codes
+# that have no mapping.
+LLM_BUDGET_EXCEEDED_CODE = "LLM_BUDGET_EXCEEDED"
+
+
+class LLMBudgetExceeded(Exception):
+    """Raised when the per-turn LLM wall-clock budget is exceeded.
+
+    The exception message is the bare error CODE (``LLM_BUDGET_EXCEEDED``) so the
+    chat SSE error path can be localized via ``errors.backendErrorCodes`` instead
+    of hard-coding a bilingual string here.
+    """
+
+
+def set_llm_deadline(budget_seconds: float = LLM_TURN_BUDGET_SECONDS) -> None:
+    """Arm the per-turn LLM time budget (absolute deadline = now + budget)."""
+    _LLM_DEADLINE.set(time.monotonic() + budget_seconds)
+
+
+def clear_llm_deadline() -> None:
+    _LLM_DEADLINE.set(None)
+
+
+def _check_llm_budget() -> None:
+    """Raise ``LLMBudgetExceeded`` if the per-turn budget has been exceeded."""
+    deadline = _LLM_DEADLINE.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        logger.warning("LLM per-turn budget exceeded (deadline=%.1f); aborting", deadline)
+        raise LLMBudgetExceeded(LLM_BUDGET_EXCEEDED_CODE)
+
+
+def _non_stream_timeout() -> "httpx.Timeout":
+    """Tighter timeout for non-streaming calls so a hung model fails fast."""
+    return httpx.Timeout(
+        connect=LLM_CONNECT_TIMEOUT,
+        read=LLM_READ_TIMEOUT,
+        write=LLM_WRITE_TIMEOUT,
+        pool=LLM_POOL_TIMEOUT,
+    )
 
 
 # Provider-side prompt cache accounting. Collected for observability (logged
@@ -91,7 +155,16 @@ class LLMClient:
     """Unified interface for different LLM providers (OpenAI-compatible API)."""
 
     def __init__(self):
-        self._client = httpx.AsyncClient(timeout=120.0)
+        # Default timeout favours streaming generation (long read window).
+        # Non-streaming calls pass an explicit tighter timeout via
+        # ``_non_stream_timeout()`` so a hung model fails fast instead of
+        # blocking for 120s.
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(
+            connect=LLM_CONNECT_TIMEOUT,
+            read=LLM_STREAM_READ_TIMEOUT,
+            write=LLM_WRITE_TIMEOUT,
+            pool=LLM_POOL_TIMEOUT,
+        ))
 
     @property
     def base_url(self) -> str:
@@ -145,7 +218,9 @@ class LLMClient:
 
         logger.info("chat request: model=%s platform=%s messages=%d temp=%s max_tokens=%s",
                     self.model, platform, len(messages), temp, max_tok)
-        response = await self._client.post(url, headers=headers, json=body)
+        _check_llm_budget()
+        response = await self._client.post(
+            url, headers=headers, json=body, timeout=_non_stream_timeout())
         if response.status_code != 200:
             logger.error("chat error %d: %s", response.status_code, response.text[:1000])
         response.raise_for_status()
@@ -267,7 +342,9 @@ class LLMClient:
         logger.info("chat_with_tools FULL request body: %s",
                     json.dumps(body, ensure_ascii=False))
 
-        response = await self._client.post(url, headers=headers, json=body)
+        _check_llm_budget()
+        response = await self._client.post(
+            url, headers=headers, json=body, timeout=_non_stream_timeout())
 
         # ── Debug logging: print FULL error response on non-200 ──
         if response.status_code != 200:

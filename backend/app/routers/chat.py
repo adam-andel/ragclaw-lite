@@ -543,7 +543,11 @@ async def chat_stream(
         async def producer():
             try:
                 from app.services.agent_graph import ragclaw_agent_graph
-                from app.services.llm_client import llm_client
+                from app.services.llm_client import (
+                    llm_client,
+                    set_llm_deadline,
+                    clear_llm_deadline,
+                )
                 from app.services.agent_nodes import _extract_download_links_from_state
 
                # ── 0. Suspension triage: does this session have a pending quota suspension awaiting user confirmation (persisted snapshot) ───
@@ -682,7 +686,13 @@ async def chat_stream(
                # ── 2. Run the graph ───
                 async with llm_limiter.acquire(on_queue_position):
                     # Token acquired: build state and run agent graph.
-                    state = await ragclaw_agent_graph.run(initial_state)
+                    # Arm the per-turn LLM time budget (P1: stop the bleeding on
+                    # a slow upstream so a turn cannot silently hang for minutes).
+                    set_llm_deadline()
+                    try:
+                        state = await ragclaw_agent_graph.run(initial_state)
+                    finally:
+                        clear_llm_deadline()
 
                    # ── 2b. Suspension detection: the graph requests user confirmation ───
                     if state.get("pending_limit"):
