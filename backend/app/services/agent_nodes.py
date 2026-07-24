@@ -387,6 +387,29 @@ def build_selfheal_prompt(tool_name: str, bad_output: str, lang: str = "zh") -> 
     return _t("selfheal", lang, tool_name=tool_name, snippet=snippet)
 
 
+def _build_working_dir_prompt(state: dict) -> str:
+    """Return an English note describing the user's selected working directory.
+
+    Injected into the LLM system prompt so file/code operations land in the
+    correct place. ``state["workspace_id"]`` is the user-selected sub-directory
+    (relative to their sandbox root; "" = root) — it never contains the per-user
+    Linux uid, which the REPL sandbox resolves server-side, so it is safe to
+    surface to the model. Written in English per explicit request.
+    """
+    ws = (state.get("workspace_id") or "").strip()
+    if ws:
+        return (
+            "\n\n## Working Directory\n"
+            f"The user's current working directory is '{ws}' (relative to their sandbox root). "
+            "Perform all file read, write, and run operations relative to this directory."
+        )
+    return (
+        "\n\n## Working Directory\n"
+        "The user's current working directory is the sandbox root (no sub-directory selected). "
+        "Perform all file read, write, and run operations relative to this root directory."
+    )
+
+
 async def _chat_with_tools_resilient(
     messages: list[dict], tools: list[dict], tool_choice,
     temperature: float, max_tokens: int,
@@ -1166,22 +1189,25 @@ async def tool_decision_node(state: dict) -> dict:
     if not kb_prompt:
         kb_prompt = await get_kb_prompt(state["kb_id"])
     kb_context = f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}" if kb_prompt else ""
-    if available_tools:
-        tool_desc = "\n".join(
-            f"- {t['function']['name']}: {t['function']['description']}"
-            for t in available_tools
-        )
-        # Tencent tokenhub does not support tool_choice="required" (400/502).
-        # Use tool_choice="auto" and steer via prompt. Even when the LLM ignores
-        # the JSON instruction, its alternate output (Python code blocks) is caught
-        # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
-        tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
-        messages = [
-            {"role": "system", "content": tool_system},
-            {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context},
-        ]
-    else:
-        messages = [{"role": "system", "content": skill_prompt + kb_context}]
+    # Tell the LLM the user's selected working directory (English) so file/code
+    # operations target the right place. Appended to the task-background context.
+    # NOTE: available_tools is guaranteed non-empty here — tool_decision_node
+    # returns early at the top when it is empty (so the LLM is never called in the
+    # no-tools case, and cwd is irrelevant there anyway).
+    ws_context = _build_working_dir_prompt(state)
+    tool_desc = "\n".join(
+        f"- {t['function']['name']}: {t['function']['description']}"
+        for t in available_tools
+    )
+    # Tencent tokenhub does not support tool_choice="required" (400/502).
+    # Use tool_choice="auto" and steer via prompt. Even when the LLM ignores
+    # the JSON instruction, its alternate output (Python code blocks) is caught
+    # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
+    tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
+    messages = [
+        {"role": "system", "content": tool_system},
+        {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
+    ]
     history = state.get("conversation_history", [])
     if history:
         messages.extend(history)
