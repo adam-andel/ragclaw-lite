@@ -52,8 +52,7 @@ const networkModeOptions = computed(() => [
 
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
-  llm_base_url: '', llm_temperature: 0.4, llm_max_tokens: 4096,
-  agent_max_tokens: 8192,
+  llm_base_url: '', llm_temperature: 0.4,   llm_max_tokens: 4096,
   llm_context_window: 128000,
   llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
@@ -661,7 +660,6 @@ async function doSave() {
     llm_base_url: config.value.llm_base_url,
     llm_temperature: config.value.llm_temperature,
     llm_max_tokens: config.value.llm_max_tokens,
-    agent_max_tokens: config.value.agent_max_tokens,
     llm_context_window: config.value.llm_context_window,
     llm_concurrency: config.value.llm_concurrency,
     embedding_model: config.value.embedding_model,
@@ -895,22 +893,6 @@ async function handleTest() {
               </span>
             </template>
             <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" @change="scheduleSave('Max Tokens')" />
-          </NFormItem>
-
-          <!-- Agent Max Tokens -->
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                Agent Max Tokens
-                <NTooltip trigger="hover" :width="320">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span v-html="t('settings.tip.agentMaxTokens')" />
-                </NTooltip>
-              </span>
-            </template>
-            <NInputNumber v-model:value="config.agent_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" @change="scheduleSave('Agent Max Tokens')" />
           </NFormItem>
 
           <!-- LLM Concurrency -->

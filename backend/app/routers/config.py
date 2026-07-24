@@ -25,7 +25,6 @@ class LLMConfigUpdate(BaseModel):
     llm_base_url: str | None = None
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None
-    agent_max_tokens: int | None = None
     llm_context_window: int | None = None
     llm_concurrency: int | None = None
     embedding_model: str | None = None
@@ -56,13 +55,6 @@ class LLMConfigUpdate(BaseModel):
     def tokens_range(cls, v):
         if v is not None and not (128 <= v <= 131072):
             raise ValueError("max_tokens 必须在 128-131072 之间")
-        return v
-
-    @field_validator("agent_max_tokens")
-    @classmethod
-    def agent_tokens_range(cls, v):
-        if v is not None and not (128 <= v <= 131072):
-            raise ValueError("agent_max_tokens 必须在 128-131072 之间")
         return v
 
     @field_validator("llm_context_window")

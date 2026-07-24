@@ -19,12 +19,35 @@ from app.services.skill_manager import (
 from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
+from app.services.token_count import count_messages_tokens
 
 logger = logging.getLogger("ragclaw.agent")
 logger.setLevel(logging.INFO)
 
 MAX_TOOL_ROUNDS = 5
 MAX_SKILL_SWITCHES = 4  # Route D: cap on use_skill pushes to prevent runaway chaining
+
+# ── Agent tool-decision output cap ──
+# Hard ceiling (safety rail against runaway generation) of 32768 tokens; but
+# never allowed to exceed the *remaining* context window, so we don't 400 on
+# small-context models. effective = min(32768, context_window - input - 256).
+AGENT_MAX_TOKENS_HARD_CAP = 32768
+AGENT_MAX_TOKENS_SAFETY_MARGIN = 256
+
+
+def _compute_agent_max_tokens(messages: list[dict]) -> int:
+    """Output cap (tokens) for a single Agent tool-decision response.
+
+    Only bounds the model-written function-call arguments, not tool results.
+    Uses min(HARD_CAP, remaining context) so large-arg tools don't truncate
+    while small-context models stay safely under their window.
+    """
+    context_window = config_manager.context_window
+    input_tokens = count_messages_tokens(messages)
+    remaining = context_window - input_tokens - AGENT_MAX_TOKENS_SAFETY_MARGIN
+    if remaining < AGENT_MAX_TOKENS_SAFETY_MARGIN:
+        remaining = AGENT_MAX_TOKENS_SAFETY_MARGIN
+    return min(AGENT_MAX_TOKENS_HARD_CAP, remaining)
 
 # ── Tool-call robustness (3-layer defense against malformed tool calls) ──
 # Layer 1: force a named tool via tool_choice dict when intent is unambiguous.
@@ -1247,7 +1270,7 @@ async def tool_decision_node(state: dict) -> dict:
                        len(available_tools), tool_round, forced_tool)
             response = await _chat_with_tools_resilient(
                 messages, available_tools, tool_choice,
-                temperature=0.1, max_tokens=config_manager.agent_max_tokens,
+                temperature=0.1, max_tokens=_compute_agent_max_tokens(messages),
             )
             tool_calls = response.get("tool_calls")
             content = response.get("content") or ""
@@ -1262,16 +1285,16 @@ async def tool_decision_node(state: dict) -> dict:
                     logger.warning("Tool decision: retrying with tool_choice=auto (forced tool rejected)")
                     response = await _chat_with_tools_resilient(
                         messages, available_tools, "auto",
-                        temperature=0.1, max_tokens=config_manager.agent_max_tokens,
+                        temperature=0.1, max_tokens=_compute_agent_max_tokens(messages),
                     )
                     tool_calls = response.get("tool_calls")
                     content = response.get("content") or ""
                 except Exception as retry_err:
                     logger.warning("Tool decision: auto retry failed (%s), text mode", str(retry_err)[:200])
-                    content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
+                    content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             else:
                 logger.warning("Tool decision: falling back to text mode")
-                content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=config_manager.agent_max_tokens)
+                content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             logger.warning("Tool decision: fallback content_preview=%.200s", content[:200])
 
         if not content and not tool_calls:
@@ -1316,7 +1339,7 @@ async def tool_decision_node(state: dict) -> dict:
                     try:
                         heal_resp = await _chat_with_tools_resilient(
                             heal_messages, available_tools, heal_choice,
-                            temperature=0.0, max_tokens=config_manager.agent_max_tokens,
+                            temperature=0.0, max_tokens=_compute_agent_max_tokens(heal_messages),
                         )
                     except Exception as heal_err:
                         # Forced dict may be rejected on retry — try once with auto.
@@ -1325,7 +1348,7 @@ async def tool_decision_node(state: dict) -> dict:
                         try:
                             heal_resp = await _chat_with_tools_resilient(
                                 heal_messages, available_tools, "auto",
-                                temperature=0.0, max_tokens=config_manager.agent_max_tokens,
+                                temperature=0.0, max_tokens=_compute_agent_max_tokens(heal_messages),
                             )
                         except Exception as heal_err2:
                             logger.warning("Tool decision: self-heal auto also failed (%s)", str(heal_err2)[:150])

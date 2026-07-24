@@ -259,7 +259,6 @@ class ConfigManager:
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
-            "agent_max_tokens": settings.agent_max_tokens,
             "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             # Embedding
@@ -290,7 +289,6 @@ class ConfigManager:
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
-            "agent_max_tokens": settings.agent_max_tokens,
             "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             "embedding_model": settings.embedding_model,
@@ -414,11 +412,6 @@ class ConfigManager:
             return self._config.get("llm_max_tokens", 4096)
 
     @property
-    def agent_max_tokens(self) -> int:
-        with self._lock:
-            return self._config.get("agent_max_tokens", 8192)
-
-    @property
     def concurrency(self) -> int:
         with self._lock:
             return self._config.get("llm_concurrency", 3)
@@ -535,7 +528,7 @@ class ConfigManager:
             # Mask the REPL auth secret in the general config payload; the
             # dedicated /api/config/repl-auth endpoint returns the real value.
             c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
-            c.setdefault("agent_max_tokens", self._config.get("agent_max_tokens", 8192))
+
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
             c["api_key_source"] = "env" if self._key_from_env else "stored"
             return c
@@ -545,7 +538,7 @@ class ConfigManager:
         allowed = {
             "llm_provider", "llm_model", "llm_api_key",
             "llm_base_url", "llm_temperature", "llm_max_tokens",
-            "agent_max_tokens", "llm_concurrency", "embedding_model", "embedding_api_key",
+            "llm_concurrency", "embedding_model", "embedding_api_key",
             "llm_context_window",
             "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
