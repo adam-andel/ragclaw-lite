@@ -545,8 +545,6 @@ async def chat_stream(
                 from app.services.agent_graph import ragclaw_agent_graph
                 from app.services.llm_client import (
                     llm_client,
-                    set_llm_deadline,
-                    clear_llm_deadline,
                 )
                 from app.services.agent_nodes import _extract_download_links_from_state
 
@@ -569,7 +567,7 @@ async def chat_stream(
                     # Resume requested but no suspension snapshot exists
                     # (e.g. it was already cleared). Cannot replay with an
                     # empty query, so fail loudly instead of producing a blank answer.
-                    enqueue("error", {"message": "没有可恢复的对话状态，请重新发起提问。"})
+                    enqueue("error", {"message": "CONVERSATION_STATE_NOT_RECOVERABLE"})
                     return
 
                 if resume_mode is None:
@@ -686,13 +684,10 @@ async def chat_stream(
                # ── 2. Run the graph ───
                 async with llm_limiter.acquire(on_queue_position):
                     # Token acquired: build state and run agent graph.
-                    # Arm the per-turn LLM time budget (P1: stop the bleeding on
-                    # a slow upstream so a turn cannot silently hang for minutes).
-                    set_llm_deadline()
-                    try:
-                        state = await ragclaw_agent_graph.run(initial_state)
-                    finally:
-                        clear_llm_deadline()
+                    # NOTE: the LLM time budget is now PER-CALL (each non-streaming
+                    # call bounded by LLM_PER_CALL_BUDGET_SECONDS inside llm_client),
+                    # not a cumulative cap on the whole turn — see llm_client.py.
+                    state = await ragclaw_agent_graph.run(initial_state)
 
                    # ── 2b. Suspension detection: the graph requests user confirmation ───
                     if state.get("pending_limit"):
