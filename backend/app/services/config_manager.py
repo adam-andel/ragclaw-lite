@@ -406,7 +406,7 @@ class ConfigManager:
     @property
     def temperature(self) -> float:
         with self._lock:
-            return self._config.get("llm_temperature", 0.3)
+            return self._config.get("llm_temperature", 0.4)
 
     @property
     def max_tokens(self) -> int:

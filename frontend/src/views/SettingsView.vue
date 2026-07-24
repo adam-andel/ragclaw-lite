@@ -52,7 +52,7 @@ const networkModeOptions = computed(() => [
 
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
-  llm_base_url: '', llm_temperature: 0.3, llm_max_tokens: 4096,
+  llm_base_url: '', llm_temperature: 0.4, llm_max_tokens: 4096,
   agent_max_tokens: 8192,
   llm_context_window: 128000,
   llm_concurrency: 3,
@@ -876,7 +876,7 @@ async function handleTest() {
               </span>
             </template>
             <NSpace align="center">
-              <NSlider v-model:value="config.llm_temperature" :min="0" :max="2" :step="0.05" style="width: 200px" @update:value="clearTest" @change="scheduleSave('Temperature')" />
+              <NSlider v-model:value="config.llm_temperature" :min="0" :max="1" :step="0.05" style="width: 200px" @update:value="clearTest" @change="scheduleSave('Temperature')" />
               <span class="slider-value">{{ config.llm_temperature.toFixed(2) }}</span>
             </NSpace>
           </NFormItem>
