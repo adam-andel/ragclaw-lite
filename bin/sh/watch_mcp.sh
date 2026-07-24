@@ -3,10 +3,14 @@
 # RAGClaw — dev-only hot-reload for the REPL MCP server (Route B).
 #
 # Watches the HOST copy of ./mcp (the bind-mount source for the mcp-repl
-# container) with inotifywait and runs `compose restart mcp-repl` whenever a
-# server source file changes — no image rebuild, no watchdog in the image, and
-# ZERO effect on production (prod never loads docker-compose.dev.yml, and this
-# script never touches the image / requirements.txt).
+# container) and runs `compose restart mcp-repl` whenever a server source file
+# changes — no image rebuild, no watchdog in the image, and ZERO effect on
+# production (prod never loads docker-compose.dev.yml, and this script never
+# touches the image / requirements.txt).
+#
+# On Linux the watch uses inotify-tools (`inotifywait`); on macOS it uses
+# `fswatch` (install via `brew install fswatch`). The script auto-detects
+# whichever is available.
 #
 # Usage:
 #   bash bin/sh/watch_mcp.sh [--dev|--prod]
@@ -16,11 +20,12 @@
 #   --prod  Use base docker-compose.yml only (not usually what you want for a
 #           watched dev loop, but harmless if you run mcp-repl from prod base).
 #
-# Requires inotify-tools (`inotifywait`) on the WSL/Linux host:
-#   sudo apt-get install -y inotify-tools
+# Host dependencies:
+#   Linux:  sudo apt-get install -y inotify-tools
+#   macOS:  brew install fswatch
 #
-# Run from the WSL project root (ext4, native inotify). On a Windows D:\ or
-# \\wsl$\ 9P path inotify will NOT receive events — stay on the ext4 mount.
+# Run from the project root on a native filesystem. On Windows, stay on the
+# WSL2 ext4 mount (//wsl$/... will NOT receive inotify events over 9P).
 # =====================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,9 +52,14 @@ RESTART_INTERVAL=2
 SVC=mcp-repl
 
 # ---- pre-flight ----
-if ! command -v inotifywait >/dev/null 2>&1; then
-  c_red "ERROR: 'inotifywait' not found on the host."
-  c_yellow "       Install inotify-tools:  sudo apt-get install -y inotify-tools"
+if command -v inotifywait >/dev/null 2>&1; then
+  WATCHER=inotifywait
+elif command -v fswatch >/dev/null 2>&1; then
+  WATCHER=fswatch
+else
+  c_red "ERROR: neither 'inotifywait' (inotify-tools) nor 'fswatch' found on the host."
+  c_yellow "       Linux:  sudo apt-get install -y inotify-tools"
+  c_yellow "       macOS:  brew install fswatch"
   exit 1
 fi
 if [ ! -d "$WATCH_DIR" ]; then
@@ -65,14 +75,14 @@ if [ -z "$(compose ps -q "$SVC" 2>/dev/null)" ]; then
   c_yellow "           bash bin/sh/start.sh --dev start"
 fi
 
-# ---- FIFO bridge to inotifywait (so we control its PID for cleanup) ----
+# ---- FIFO bridge to the watcher (so we control its PID for cleanup) ----
 FIFO="$(mktemp -u)"
 mkfifo "$FIFO"
 
 cleanup() {
   c_dim ""
   c_cyan "Stopping mcp-repl watcher."
-  [ -n "${INOTIFY_PID:-}" ] && kill "$INOTIFY_PID" >/dev/null 2>&1
+  [ -n "${WATCHER_PID:-}" ] && kill "$WATCHER_PID" >/dev/null 2>&1
   exec 3<&- 2>/dev/null
   rm -f "$FIFO"
   exit 0
@@ -90,12 +100,22 @@ echo
 # /app/workspace; the host lower dir must not trigger restarts) and Python
 # bytecode caches. We watch recursively so new source files are picked up too,
 # but the exclude keeps volume/user artifacts out.
-inotifywait -m -r \
-  -e close_write -e moved_to -e create \
-  --exclude '(/workspace/|__pycache__/|\.pyc$)' \
-  --format '%w%f' \
-  "$WATCH_DIR" > "$FIFO" &
-INOTIFY_PID=$!
+if [ "$WATCHER" = "inotifywait" ]; then
+  inotifywait -m -r \
+    -e close_write -e moved_to -e create \
+    --exclude '(/workspace/|__pycache__/|\.pyc$)' \
+    --format '%w%f' \
+    "$WATCH_DIR" > "$FIFO" &
+  WATCHER_PID=$!
+else
+  # fswatch (macOS / BSD). -E = extended regex; limit to create/update/rename
+  # events so saves coalesce into a single restart like inotifywait does.
+  fswatch -r -E \
+    -e '/workspace/' -e '__pycache__' -e '\.pyc$' \
+    --event Created --event Updated --event Renamed \
+    "$WATCH_DIR" > "$FIFO" &
+  WATCHER_PID=$!
+fi
 
 exec 3<"$FIFO"
 

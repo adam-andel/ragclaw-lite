@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAGClaw Backend Control Script (WSL / Linux)
+# RAGClaw Backend Control Script (macOS / Linux)
 # Usage: bash bin/sh/backend.sh [start|stop|reload|status|build|logs]
 #
 # Container mode only: the backend always runs as a Docker container

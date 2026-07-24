@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAGClaw All-in-one Control Script (WSL / Linux)
+# RAGClaw All-in-one Control Script (macOS / Linux)
 # Usage: bash bin/sh/start.sh [start|stop|reload|status]
 #
 # Container mode only: the backend runs containerized and serves the frontend
@@ -16,6 +16,16 @@ CONTAINER_PORT=8000   # backend container port; host port = RAGCLAW_PORT / .env 
 
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
+
+# Open a URL in the default browser: xdg-open (Linux) preferred, else open (macOS).
+open_browser() {
+  local url="$1"
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 &
+  elif command -v open >/dev/null 2>&1; then
+    open "$url" >/dev/null 2>&1 &
+  fi
+}
 
 # Dev-mode toggle: optional leading --dev / --prod / --watch flags (env RAGCLAW_DEV default).
 RAGCLAW_DEV="${RAGCLAW_DEV:-0}"
@@ -61,9 +71,11 @@ start_watcher() {
     c_yellow "  mcp-repl watcher already running (pid $(cat "$WATCH_PID")) — skipping."
     return 0
   fi
-  if ! command -v inotifywait >/dev/null 2>&1; then
-    c_yellow "  WARNING: 'inotifywait' not found on host — skipping mcp-repl hot-reload watcher."
-    c_yellow "           Install inotify-tools:  sudo apt-get install -y inotify-tools"
+  if ! command -v inotifywait >/dev/null 2>&1 && ! command -v fswatch >/dev/null 2>&1; then
+    c_yellow "  WARNING: neither 'inotifywait' (inotify-tools) nor 'fswatch' found on host —"
+    c_yellow "           skipping mcp-repl hot-reload watcher."
+    c_yellow "           Linux:  sudo apt-get install -y inotify-tools"
+    c_yellow "           macOS:  brew install fswatch"
     return 0
   fi
   local devflag=""
@@ -160,7 +172,7 @@ case "${1:-start}" in
     open_url="http://localhost:$PORT"
     is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
     sleep 1
-    command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
+    open_browser "$open_url"
     ;;
 
   reload)
@@ -187,7 +199,7 @@ case "${1:-start}" in
     open_url="http://localhost:$PORT"
     is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
     sleep 1
-    command -v xdg-open >/dev/null 2>&1 && xdg-open "$open_url" >/dev/null 2>&1 &
+    open_browser "$open_url"
     ;;
 
   stop)

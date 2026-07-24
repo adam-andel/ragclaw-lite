@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAGClaw Control Menu (WSL / Linux)
+# RAGClaw Control Menu (macOS / Linux)
 # Usage: bash bin/sh/menu.sh
 #
 # Interactive equivalent of bin/psl/menu.bat. Loops until the user picks [0].

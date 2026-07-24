@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAGClaw Backend Full Test Suite (container mode) — WSL / Linux
+# RAGClaw Backend Full Test Suite (container mode) — macOS / Linux
 # Usage: bash bin/sh/run_all_tests.sh
 #
 # Runs the pytest suite inside the 'ragclaw-lite' Docker container. Local Python

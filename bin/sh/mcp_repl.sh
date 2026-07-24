@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RAGClaw REPL MCP Server Control Script (WSL / Linux)
+# RAGClaw REPL MCP Server Control Script (macOS / Linux)
 # Usage: bash bin/sh/mcp_repl.sh [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
