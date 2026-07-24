@@ -35,7 +35,9 @@ MESSAGES = {
         "## When you MUST use a tool\n"
         "- User asks to generate / create / write / save / append / modify a file -> MUST call run_python\n"
         "- User asks to run code, do data processing, or compute -> MUST call run_python\n"
-        "- Any file read/write operation that is NOT yet done -> MUST call run_python\n\n"
+        "- Any file read/write operation that is NOT yet done -> MUST call run_python\n"
+        "- User asks to generate a diagram / HTML page / chart / visualization / web page / document / report -> MUST call run_python to write the file\n"
+        "- Any request to PRODUCE or READ a workspace file / code -> MUST call run_python; NEVER answer such a request with plain text instead of a tool call\n\n"
         "## Available tools\n{tool_desc}\n\n"
         "## Output format\n"
         'When a tool is still needed: {"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n'
@@ -49,6 +51,26 @@ MESSAGES = {
         '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
         "- Do NOT output the final reply; if the task is done, output {} instead.\n"
         "- NEVER fabricate File, file paths, or UUIDs."
+    ),
+
+    # Forced run_python retry instruction (interception when intent needs a tool
+    # but the model produced no tool call). No placeholders.
+    "tool_force_retry": (
+        "⚠️ This user request clearly requires a workspace file or code operation "
+        "(e.g. generating an HTML page / diagram / chart / document, reading or modifying a file, "
+        "or running code). You MUST now call run_python to fulfill it — never answer in plain text. "
+        "Output a valid run_python tool call (as JSON or a code block) immediately."
+    ),
+
+    # Rule appended to the final-generation system prompt: when a tool produced
+    # a downloadable file, the answer must not re-paste the source code. No placeholders.
+    "file_answer_rule": (
+        "## File-generation Answer Rule\n"
+        "If your tool produced a downloadable file (a `[File]` download link appears in the "
+        "tool result), your final answer should ONLY state that the file was generated and point "
+        "to the download link the system appends automatically at the end. Do NOT re-paste the "
+        "source code / script that generated the file, nor the `[File]` tag. The download link is "
+        "appended by the system — do not reproduce it."
     ),
 
     # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}

@@ -25,7 +25,9 @@ MESSAGES = {
         "## 何时必须使用工具\n"
         "- 用户要求「生成」「创建」「写入」「保存」「追加」「修改」文件 → **必须**调用 run_python\n"
         "- 用户要求执行代码、数据处理、计算 → **必须**调用 run_python\n"
-        "- 任何**尚未完成**的读写文件操作 → **必须**调用 run_python\n\n"
+        "- 任何**尚未完成**的读写文件操作 → **必须**调用 run_python\n"
+        "- 用户要求「生成示意图 / HTML 页面 / 图表 / 可视化 / 网页 / 文档 / 报告」→ **必须**调用 run_python 写入文件\n"
+        "- 任何「产出或读取工作区文件 / 代码」的请求 → **必须**调用 run_python；**绝不可用自然语言直接回答**来替代工具调用\n\n"
         "## 可用工具\n{tool_desc}\n\n"
         "## 输出格式\n"
         "还需要调用工具时：{\"tool\": \"工具名\", \"arguments\": {\"参数名\": \"参数值\"}}\n"
@@ -38,6 +40,24 @@ MESSAGES = {
         "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
         "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
         "- **绝对不要**编造File、文件路径或 uuid"
+    ),
+
+    # Forced run_python retry instruction (interception when intent needs a tool
+    # but the model produced no tool call). No placeholders.
+    "tool_force_retry": (
+        "⚠️ 这条用户请求明确需要对工作区文件或代码进行操作（例如生成 HTML 页面 / 示意图 / 图表 / 文档，"
+        "或读取 / 修改文件，或运行代码）。你现在**必须**调用 run_python 来完成，绝不能用自然语言直接回答。"
+        "请立即输出一个合法的 run_python 工具调用（JSON 或代码块形式）。"
+    ),
+
+    # Rule appended to the final-generation system prompt: when a tool produced
+    # a downloadable file, the answer must not re-paste the source code. No placeholders.
+    "file_answer_rule": (
+        "## 文件生成回答规则\n"
+        "若你的工具已经生成了可下载文件（工具结果中出现 `[File]` 下载链接），"
+        "你的最终回答应当**只说明文件已生成并指向系统自动附加在末尾的下载链接**，"
+        "**不要**把生成该文件的源代码 / 脚本内容 / `[File]` 标签再原样贴一遍。"
+        "下载链接由系统在回答末尾自动补充，你无需重复生成。"
     ),
 
     # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}

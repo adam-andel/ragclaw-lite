@@ -248,7 +248,10 @@ class RagclawAgentGraph:
         # the user message (dynamic region) below. This keeps the cached system
         # prefix constant regardless of tool execution, so provider-side prompt
         # caches don't get split into two incompatible groups.
-        messages = [{"role": "system", "content": system_prompt + cron_rule}]
+        # file_answer_rule is a constant suffix (like cron_rule) appended to every
+        # turn so the model never re-pastes a generated file's source code.
+        file_rule = "\n\n## File-generation Answer Rule\n" + _t("file_answer_rule", config_manager.prompt_language)
+        messages = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
 
         # Conversation history
         history = state.get("conversation_history", [])
