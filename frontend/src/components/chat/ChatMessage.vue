@@ -9,6 +9,7 @@ import AppModal from '@/components/common/AppModal.vue'
 import type { ChatMessage } from '@/types'
 import { escapeHtml } from '@/utils/think'
 import { getDocumentChunk, downloadDocument } from '@/api/documents'
+import { downloadAndSave } from '@/api/workspace'
 
 import { useAuthStore } from '@/stores/auth'
 
@@ -198,6 +199,27 @@ function getCitationContent(c: ChatMessage['citations'][number]) {
   return t('chat.citationLoadFailed')
 }
 
+// Intercept clicks on sandbox download links rendered inside the message body.
+// These links point at /api/workspace/download, which requires a Bearer token —
+// a plain <a> click does a top-level navigation that carries NO auth header and
+// the backend rejects it with "未提供认证令牌". So we prevent the navigation and
+// instead perform an authenticated blob download, exactly like WorkspaceView does.
+function onContentClick(e: MouseEvent) {
+  const a = (e.target as HTMLElement | null)?.closest('a')
+  if (!a) return
+  const href = a.getAttribute('href') || ''
+  if (!href.includes('/api/workspace/download')) return
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  try {
+    const url = new URL(href, window.location.href)
+    const path = (url.searchParams.get('path') || '').replace(/\/{2,}/g, '/')
+    if (path) downloadAndSave(path)
+  } catch {
+    // ignore malformed link
+  }
+}
+
 async function handleDownload(docId: string, filename: string) {
   try {
     const res = await downloadDocument(docId)
@@ -274,7 +296,7 @@ onBeforeUnmount(() => {
 
       <!-- Stage 1: streaming — innerHTML written by chatview (includes think-block + cursor) -->
       <template v-if="isStreaming">
-        <div class="message-content streaming">
+        <div class="message-content streaming" @click="onContentClick">
           <span ref="streamEl" :id="'stream-' + message.id"></span>
           <span v-show="!hasStreamedContent" class="thinking-placeholder">
             <template v-if="queuePosition != null && queuePosition > 0">
@@ -287,7 +309,7 @@ onBeforeUnmount(() => {
 
       <!-- Stage 2: done — render Markdown via v-html (with highlighting when keywords are hit) -->
       <template v-else>
-        <div class="message-content" v-html="displayHtml"></div>
+        <div class="message-content" v-html="displayHtml" @click="onContentClick"></div>
       </template>
 
       <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">

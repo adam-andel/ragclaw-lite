@@ -1463,20 +1463,24 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     rel = _re.sub(r'^user_u\d+/?', '', uuid_dir)
     from app.config import settings
     public_base = settings.public_url.rstrip("/") if settings.public_url else ""
-    # Build the query path WITHOUT a leading slash (bare root -> "" so the file
-    # segment is appended directly). The workspace endpoint lstrip()s a leading
-    # slash anyway, but keeping it consistent avoids two shapes of the same link.
-    query_path = quote(rel) + ("/" if rel else "")
-    proxy_prefix = f"{public_base}/api/workspace/download?path={query_path}"
+    # Absolute base of the download endpoint. The full relative path
+    # (rel + "/" + filename, or just filename when rel is empty) is appended
+    # below — building it in one shot avoids a stray double slash
+    # (e.g. "dir1//file.txt") that the old code produced by appending a slash
+    # to the prefix AND another before the filename.
+    base = f"{public_base}/api/workspace/download?path="
 
     if "[File]" in result:
         # MCP server included [File] tags with its own URL — rewrite to the
         # RAGClaw workspace download endpoint. uuid_dir may contain "/" (nested
         # per-user path), so escape it. The captured group is the file path
         # under uuid_dir; encode it so spaces/Unicode stay valid in the URL.
+        def _rewrite(mo):
+            file_rel = (rel + "/" if rel else "") + mo.group(1)
+            return f"{base}{quote(file_rel)}"
         result = _re.sub(
             r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',
-            lambda mo: f"{proxy_prefix}/{quote(mo.group(1))}",
+            _rewrite,
             result
         )
     # The [workspace: <uuid>/] tag carries the per-user Linux uid and is only
