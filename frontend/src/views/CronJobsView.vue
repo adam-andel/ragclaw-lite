@@ -57,6 +57,7 @@ const form = ref<CronJobCreatePayload & { id?: string }>({
   task_content: '',
   kb_id: '',
   skill_id: '',
+  workspace_dir: '',
 })
 
 const detailJob = ref<CronJob | null>(null)
@@ -143,6 +144,7 @@ function openCreate() {
     task_content: '',
     kb_id: '',
     skill_id: '',
+    workspace_dir: '',
   }
   showModal.value = true
 }
@@ -159,6 +161,7 @@ function openEdit(job: CronJob) {
     task_content: job.task_content,
     kb_id: job.kb_id || '',
     skill_id: job.skill_id || '',
+    workspace_dir: job.workspace_dir || '',
   }
   showModal.value = true
 }
@@ -174,6 +177,7 @@ async function handleSave() {
       task_content: form.value.task_content,
       kb_id: form.value.kb_id || undefined,
       skill_id: form.value.skill_id || undefined,
+      workspace_dir: form.value.workspace_dir || undefined,
     }
     if (editing.value) {
       await updateCronJob(editing.value.id, payload)
@@ -454,6 +458,9 @@ function isPaused(job: CronJob) {
         </NFormItem>
         <NFormItem :label="t('cron.skillId')">
           <NInput v-model:value="form.skill_id" :placeholder="t('cron.optional')" />
+        </NFormItem>
+        <NFormItem :label="t('cron.workspaceDir')">
+          <NInput v-model:value="form.workspace_dir" :placeholder="t('cron.optional')" />
         </NFormItem>
       </NForm>
       <template #footer>

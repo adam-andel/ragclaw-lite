@@ -13,6 +13,7 @@ class CronJobCreate(BaseModel):
     task_content: str
     kb_id: str | None = None
     skill_id: str | None = None
+    workspace_dir: str | None = None
 
 
 class CronJobUpdate(BaseModel):
@@ -24,6 +25,7 @@ class CronJobUpdate(BaseModel):
     task_content: str | None = None
     kb_id: str | None = None
     skill_id: str | None = None
+    workspace_dir: str | None = None
 
 
 class CronJobResponse(BaseModel):

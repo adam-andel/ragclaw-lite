@@ -339,6 +339,7 @@ export interface CronJobCreatePayload {
   task_content: string
   kb_id?: string | null
   skill_id?: string | null
+  workspace_dir?: string | null
 }
 
 export interface CronJobUpdatePayload {
@@ -350,6 +351,7 @@ export interface CronJobUpdatePayload {
   task_content?: string
   kb_id?: string | null
   skill_id?: string | null
+  workspace_dir?: string | null
 }
 
 export interface CronJobListResponse {

@@ -131,6 +131,7 @@ async def create_cron_job(
         task_content=data.task_content,
         kb_id=data.kb_id,
         skill_id=data.skill_id,
+        workspace_dir=data.workspace_dir,
         status=CronJobStatus.SCHEDULED,
         next_run_at=next_run,
     )
@@ -185,6 +186,8 @@ async def update_cron_job(
         job.kb_id = data.kb_id
     if data.skill_id is not None:
         job.skill_id = data.skill_id
+    if data.workspace_dir is not None:
+        job.workspace_dir = data.workspace_dir
 
     # Recalculate next run if schedule-related fields changed.
     if any(f is not None for f in (data.cron_expr, data.timezone, data.max_runs)):

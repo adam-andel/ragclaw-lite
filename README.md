@@ -6,6 +6,9 @@
 
 > 部署镜像 / 容器名 `RAGClaw-Lite` · v0.5.0 · FastAPI + LangGraph + ChromaDB + SKILL + MCP
 
+> **初始账号 / Default credentials** — 用户名 `admin` · 密码 `admin123`（首次登录后请尽快修改）
+> **Default credentials** — username `admin` · password `admin123` (change it after first login)
+
 ---
 
 ## What is RAGClaw / 它是什么
@@ -45,8 +48,8 @@ RAGClaw 是一个**智能体（Agent）平台**，而不是单纯的问答机器
    - **中文** — 一片你和智能体共同打理、用起来像本机文件夹的工作区：面包屑导航、列表/卡片双视图、拖拽上传、批量打包、递归搜索，底层与沙盒写入的是同一卷。
 
 4. **SKILL system · SKILL 体系**
-   - **EN** — intent routing, dedicated System Prompt, tool binding; skills live as folders (`data/skills/<name>/`, with `SKILL.md` + `scripts/`), managed by DB + UI.
-   - **中文** — 意图路由、专属 System Prompt、工具绑定；技能以文件夹形式（`data/skills/<name>/`，含 `SKILL.md` + `scripts/`）存放，由 DB + UI 管理。
+   - **EN** — intent routing, dedicated System Prompt, tool binding; skills live as folders (`data/skills/<name>/`, with `SKILL.md` + `references/` + `assets/` + `scripts/`), managed by DB + UI.
+   - **中文** — 意图路由、专属 System Prompt、工具绑定；技能以文件夹形式（`data/skills/<name>/`，含 `SKILL.md` + `references/` + `assets/` + `scripts/`）存放，由 DB + UI 管理。
 
 5. **MCP tool integration · MCP 工具集成**
    - **EN** — HTTP/stdio dual transport, multi-turn tool calls, independent timeouts + error degradation.
@@ -68,8 +71,11 @@ Two ways to run: **Production** (code baked into the image), **Development** (Do
 
 ```bash
 # 1. Configure environment / 配置环境变量
+# This step is optional: if the defaults already work for you, you can skip it and start with built-in defaults.
+# Check .env.example to see all the default values.
+# 这一步是可选的：若默认值已满足需求，可直接跳过。
+# 不创建 .env 也能用内置默认值启动，可查看 .env.example 了解各项默认值。
 cp .env.example .env
-# Edit .env and fill in your LLM_API_KEY
 
 # 2. Build & start (uses docker-compose.yml only; source is baked into the image)
 docker compose -f docker-compose.yml up -d

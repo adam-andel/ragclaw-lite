@@ -547,7 +547,6 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
 
     # Imported lazily to avoid a circular import (agent_graph imports this module).
     from app.services.agent_graph import ragclaw_agent_graph
-    from app.agents import llm_client
 
     initial_state = {
         "query": task,

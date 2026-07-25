@@ -77,7 +77,7 @@ function initParticles() {
       y: Math.random() * window.innerHeight,
       vx: (Math.random() - 0.5) * 0.3,
       vy: (Math.random() - 0.5) * 0.3,
-      r: Math.random() * 1.5 + 0.5,
+      r: Math.random() * 1.6 + 0.9,
     })
   }
 }
@@ -113,7 +113,7 @@ function animateParticles() {
 
     ctx.beginPath()
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = `rgba(${dotColor}, ${isDark ? 0.8 : 0.6})`
+    ctx.fillStyle = `rgba(${dotColor}, ${isDark ? 1 : 0.85})`
     ctx.fill()
   }
 
