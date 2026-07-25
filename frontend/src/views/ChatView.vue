@@ -339,11 +339,16 @@ function onScroll() {
 // A manually terminated round in history (status==='stopped'): the DB stores only the original hint copy,
 // and at load time overlays a localized termination notice based on the current UI language, so it still shows after refresh.
 function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
-  return msgs.map(m =>
-    m.status === 'stopped'
-      ? { ...m, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
-      : m,
-  )
+  return msgs.map(m => {
+    // Map the backend's snake_case agent_steps into the frontend AgentStep shape
+    // so the persisted processing trace replays after refresh / reopen (the
+    // ChatMessage component already renders message.agentSteps).
+    const steps = (m as any).agent_steps || m.agentSteps || []
+    const base = { ...m, agentSteps: steps }
+    return m.status === 'stopped'
+      ? { ...base, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
+      : base
+  })
 }
 
 async function loadOlder() {

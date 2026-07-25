@@ -1,6 +1,7 @@
 """Agent graph nodes for the RAGClaw LangGraph state machine."""
 import asyncio, json, logging, time
 from datetime import datetime
+from urllib.parse import quote, unquote
 from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
@@ -359,6 +360,71 @@ def _infer_forced_tool(query: str, available_tools: list[dict],
         q = (query or "").lower()
         if any(kw.lower() in q for kw in _FORCE_PY_KEYWORDS):
             return "run_python"
+    return None
+
+
+# Conservative interception guard — DISTINCT from the round-0 forcing in
+# _infer_forced_tool. Purpose: decide whether tool_decision should RETRY with
+# run_python when the model declined to call any tool. High precision on
+# purpose, covering only unambiguous file/code-production or CRUD intents, so
+# it never misfires on pure conversation. The primary fix for under-triggering
+# is the strengthened tool_system prompt (direction B), not this keyword set.
+_TOOL_INTENT_GUARD = (
+    "生成", "创建", "新建", "写入", "写文件", "保存", "导出", "输出文件",
+    "运行代码", "执行代码", "跑代码", "跑一下代码",
+    "html", "网页", "示意图", "状态机", "流程图", "架构图", "图表", "导图", "可视化",
+    "diagram", "chart", "flowchart", "html file", "web page", "visualization",
+    "读取文件", "查看文件", "读文件", "修改文件", "编辑文件", "删除文件",
+    "重命名", "移动文件",
+    "read file", "edit file", "delete file", "rename", "move file",
+    "generate file", "create file", "write file", "save file", "export file",
+)
+
+
+def _query_obviously_needs_tool(query: str, available_tools: list[dict]) -> bool:
+    """High-precision gate: does this query obviously require a workspace tool?
+
+    Returns True only for unambiguous file/code-production or CRUD intents. Used
+    to trigger a forced run_python retry in tool_decision when the model produced
+    no tool call. Deliberately narrow to avoid false positives on conversation.
+    """
+    if "run_python" not in _tool_names(available_tools):
+        return False
+    q = (query or "").lower()
+    return any(kw.lower() in q for kw in _TOOL_INTENT_GUARD)
+
+
+async def _force_run_python_retry(messages: list[dict], available_tools: list[dict],
+                                  lang: str) -> list[dict] | None:
+    """Last-resort interception: model produced no tool call but the query
+    obviously needs one. Force a single run_python call via tool_choice plus a
+    strong instruction, so the graph never silently falls into the final-answer
+    stage (which would surface final_stage_note / "can't call tools").
+
+    Returns a run_python tool_call list, or None if even the forced call failed.
+    """
+    if "run_python" not in _tool_names(available_tools):
+        return None
+    hint = _t("tool_force_retry", lang)
+    forced_messages = messages + [{"role": "user", "content": hint}]
+    try:
+        resp = await _chat_with_tools_resilient(
+            forced_messages, available_tools,
+            {"type": "function", "function": {"name": "run_python"}},
+            temperature=0.0, max_tokens=config_manager.agent_max_tokens,
+        )
+    except Exception as e:
+        logger.warning("Tool decision: forced run_python retry failed (%s)", str(e)[:200])
+        return None
+    tool_calls = resp.get("tool_calls")
+    if not tool_calls:
+        content = resp.get("content") or ""
+        if content:
+            tool_calls = (_try_parse_tool_call(content, available_tools)
+                          or _try_extract_code_as_tool(content, available_tools))
+    if tool_calls:
+        logger.warning("Tool decision: forced run_python retry SUCCEEDED")
+        return tool_calls
     return None
 
 
@@ -783,10 +849,24 @@ _TOOL_LABELS = {
 
 
 def _emit(state: dict, stage: str, message: str, **extra) -> None:
-    """Push an agent_step progress event to the SSE stream, if a callback is wired.
+    """Push an agent_step progress event to the SSE stream (if a callback is
+    wired) and accumulate it into ``state["agent_steps"]`` for durable persistence.
 
-    Must never raise — a broken emit must not interrupt the agent graph.
+    Must never raise — a broken emit must not interrupt the agent graph. The
+    accumulated steps live in a SEPARATE channel: they are never injected into
+    the LLM message list and never fed to MEM0 memory extraction.
     """
+    # Accumulate for persistence (guarded; must never break the graph).
+    try:
+        steps = state.setdefault("agent_steps", [])
+        steps.append({
+            "stage": stage,
+            "message": message,
+            "extra": extra or None,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception:
+        pass
     fn = state.get("emit")
     if not fn:
         return
@@ -1440,6 +1520,21 @@ async def tool_decision_node(state: dict) -> dict:
             _emit(state, "round", f"Tool-call round {tool_round + 1}")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
+        # ── Interception: the model declined to call any tool, but the query
+        # obviously needs one (file/code production or CRUD). On the first round
+        # (tool budget intact) force ONE run_python retry so the graph never
+        # silently reaches the final-answer stage and its final_stage_note
+        # ("sorry, can't call tools") for such requests. ──
+        if tool_round == 0 and _query_obviously_needs_tool(state.get("query", ""), available_tools):
+            logger.warning(
+                "Tool decision: intent obviously needs a tool but none produced — intercepting with forced run_python retry"
+            )
+            intercepted = await _force_run_python_retry(messages, available_tools, config_manager.prompt_language)
+            if intercepted:
+                tool_msg = {"role": "assistant", "content": "", "tool_calls": intercepted}
+                _emit(state, "round", f"Tool-call round {tool_round + 1} (intercept)")
+                return {"tool_calls": intercepted, "tool_messages": [tool_msg]}
+
         logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
         return {"tool_calls": None}
     except Exception as e:
@@ -1469,8 +1564,6 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
     Only the sandbox-relative part (uid prefix stripped) goes into the link.
     """
-    from urllib.parse import quote
-
     m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
     if not m:
         return result
@@ -1532,6 +1625,27 @@ def _normalize_download_url(url: str) -> str:
     return url
 
 
+def _filename_from_download_url(url: str) -> str:
+    """Extract a human-friendly filename from a download URL.
+
+    Handles both plain paths (/files/foo/bar.html) and query-style workspace
+    endpoints (/api/workspace/download?path=foo/bar.html), where the filename
+    lives in the `path=` query parameter rather than the last path segment.
+    The naive `url.rsplit('/', 1)[-1]` would otherwise return the whole
+    'download?path=foo.bar' tail for the query-style form.
+    """
+    if not url:
+        return "file"
+    # Query-style workspace endpoint: /api/workspace/download?path=<rel>
+    m = _re.search(r"[?&]path=([^&]+)", url)
+    if m:
+        name = unquote(m.group(1)).rsplit("/", 1)[-1]
+        return name or "file"
+    # Otherwise fall back to the last path segment.
+    name = url.rstrip("/").rsplit("/", 1)[-1]
+    return name or "file"
+
+
 def _extract_download_links_from_state(state: dict) -> str:
     """Scan tool results for download links and format them for final display.
 
@@ -1548,7 +1662,7 @@ def _extract_download_links_from_state(state: dict) -> str:
             r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', r
         ):
             url = _normalize_download_url(url_match.group(1))
-            filename = url.rstrip("/").rsplit("/", 1)[-1]
+            filename = _filename_from_download_url(url)
             # Dedupe by the RENDERED line, not just the raw URL: a proxy URL
             # and a raw REPL URL (or a trailing-slash variant) may render
             # identically yet differ as strings, which a raw-URL dedup would
@@ -1684,7 +1798,7 @@ async def tool_executor_node(state: dict) -> dict:
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
         fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/workspace/download\S+))', r)
         if fm:
-            fname = fm.group(1).rstrip("/").rsplit("/", 1)[-1]
+            fname = _filename_from_download_url(fm.group(1))
             tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
             _emit(state, "tool_done", f"File generated: {fname}", tool=tcname, detail=fname)
     result_msgs = []

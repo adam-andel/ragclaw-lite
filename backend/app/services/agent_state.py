@@ -52,6 +52,11 @@ class RagclawAgentState(TypedDict):
     final_answer: str             # Set by router on cache hit, else empty
     retrieval_ms: float           # Measured in retrieval node
 
+    # ── Persisted processing trace (Route D observability) ──
+    # Accumulated in place by _emit during the graph run, then persisted to the
+    # agent_steps table. Never sent to the LLM and never saved to MEM0.
+    agent_steps: list[dict]      # [{stage, message, extra, ts}]
+
     # ── Skill orchestration (Route D: stack-based chaining) ──
     skill_stack: list[dict]       # Stack of loaded skills; last entry = current/active_skill
     loaded_skill_ids: list[str]   # Dedupe list of loaded skill ids (TypedDict has no set)

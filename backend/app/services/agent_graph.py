@@ -248,7 +248,10 @@ class RagclawAgentGraph:
         # the user message (dynamic region) below. This keeps the cached system
         # prefix constant regardless of tool execution, so provider-side prompt
         # caches don't get split into two incompatible groups.
-        messages = [{"role": "system", "content": system_prompt + cron_rule}]
+        # file_answer_rule is a constant suffix (like cron_rule) appended to every
+        # turn so the model never re-pastes a generated file's source code.
+        file_rule = "\n\n## File-generation Answer Rule\n" + _t("file_answer_rule", config_manager.prompt_language)
+        messages = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
 
         # Conversation history
         history = state.get("conversation_history", [])
@@ -283,7 +286,19 @@ class RagclawAgentGraph:
             user_parts.append(final_note)
         messages.append({"role": "user", "content": "\n\n".join(user_parts)})
 
+        messages = _sanitize_llm_messages(messages)
         return messages
+
+
+def _sanitize_llm_messages(messages: list[dict]) -> list[dict]:
+    """Defensive guard: ensure no agent-step trace ever reaches the LLM.
+
+    Agent steps are persisted in a separate channel and must never be injected
+    into the LLM message list (neither as a top-level message nor as a key on a
+    message). Drop any message carrying an ``agent_step`` marker so a future
+    regression cannot leak the processing trace into the model context.
+    """
+    return [m for m in messages if not (isinstance(m, dict) and m.get("agent_step"))]
 
 
 # Singleton
