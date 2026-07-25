@@ -20,8 +20,15 @@ const featureKeys = [
   'featureRag',
 ]
 
+// Pre-fill default credentials only on first open; once the user has logged in
+// successfully we stop auto-filling (so returning visitors start clean).
+const LOGIN_SEEDED_KEY = 'ragclaw_login_seeded'
 const username = ref('')
 const password = ref('')
+if (!localStorage.getItem(LOGIN_SEEDED_KEY)) {
+  username.value = 'admin'
+  password.value = 'admin123'
+}
 const loading = ref(false)
 const passwordInput = ref<InstanceType<typeof NInput> | null>(null)
 const cursorGlow = ref<HTMLElement | null>(null)
@@ -171,6 +178,7 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.login(username.value.trim(), password.value)
+    localStorage.setItem(LOGIN_SEEDED_KEY, '1')
     message.success(t('login.loginSuccess'))
     router.push('/chat')
   } catch (e: any) {
