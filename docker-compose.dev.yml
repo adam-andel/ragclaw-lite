@@ -41,6 +41,10 @@
 
 services:
   ragclaw:
+    environment:
+      # Dev: emit ragclaw.* INFO logs (tool decisions, LLM calls) to docker logs.
+      # Production (base compose) omits this -> defaults to WARNING, so INFO is suppressed.
+      - RAGCLAW_ENV=development
     volumes:
       # Overlay the host source on top of the image's /app/backend.
       # PYTHONPATH=/app/backend (set in Dockerfile) points here and takes

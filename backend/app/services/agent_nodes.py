@@ -1254,17 +1254,17 @@ async def tool_decision_node(state: dict) -> dict:
     available_tools = state.get("available_tools", [])
     tool_round = state.get("tool_round", 0)
     prev_results = state.get("tool_results", [])
-    # Intentionally logs every decision entry at WARNING level to aid debugging
-    # of tool-call loops (see the deterministic loop guard below). Keep this.
-    logger.warning("🔍 tool_decision ENTER: round=%d tools=%d prev_results=%d cache=%s",
-                   tool_round, len(available_tools), len(prev_results),
-                   state.get("cache_hit"))
+    # Logs the decision trace at INFO (dev) so tool-call loops are debuggable
+    # via `docker logs`. Production suppresses INFO (see logging_config).
+    logger.info("🔍 tool_decision ENTER: round=%d tools=%d prev_results=%d cache=%s",
+                tool_round, len(available_tools), len(prev_results),
+                state.get("cache_hit"))
     if not available_tools:
-        logger.warning("Tool decision: no available tools — skipping tool phase")
+        logger.info("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
     if tool_round >= state.get("tool_round_quota", MAX_TOOL_ROUNDS):
         quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
-        logger.warning("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
+        logger.info("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
        # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
         msg = (f"Tool-call round limit reached ({tool_round}/{quota}). "
                f"Reply 'continue' to add more rounds and keep going.")
@@ -1372,7 +1372,7 @@ async def tool_decision_node(state: dict) -> dict:
         )
 
         try:
-            logger.warning("Tool decision: trying chat_with_tools (native), %d tools, round=%d, forced=%s",
+            logger.info("Tool decision: trying chat_with_tools (native), %d tools, round=%d, forced=%s",
                        len(available_tools), tool_round, forced_tool)
             response = await _chat_with_tools_resilient(
                 messages, available_tools, tool_choice,
@@ -1380,7 +1380,7 @@ async def tool_decision_node(state: dict) -> dict:
             )
             tool_calls = response.get("tool_calls")
             content = response.get("content") or ""
-            logger.warning("Tool decision: native_tool_calls=%s content_preview=%.200s",
+            logger.info("Tool decision: native_tool_calls=%s content_preview=%.200s",
                        bool(tool_calls), content[:200])
         except Exception as native_err:
             # A forced tool_choice dict may 400 on an incompatible model — retry
@@ -1388,7 +1388,7 @@ async def tool_decision_node(state: dict) -> dict:
             logger.warning("Tool decision: chat_with_tools failed (%s)", str(native_err)[:200])
             if forced_tool:
                 try:
-                    logger.warning("Tool decision: retrying with tool_choice=auto (forced tool rejected)")
+                    logger.info("Tool decision: retrying with tool_choice=auto (forced tool rejected)")
                     response = await _chat_with_tools_resilient(
                         messages, available_tools, "auto",
                         temperature=0.1, max_tokens=_compute_agent_max_tokens(messages),
@@ -1399,9 +1399,9 @@ async def tool_decision_node(state: dict) -> dict:
                     logger.warning("Tool decision: auto retry failed (%s), text mode", str(retry_err)[:200])
                     content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             else:
-                logger.warning("Tool decision: falling back to text mode")
+                logger.info("Tool decision: falling back to text mode")
                 content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
-            logger.warning("Tool decision: fallback content_preview=%.200s", content[:200])
+            logger.info("Tool decision: fallback content_preview=%.200s", content[:200])
 
         if not content and not tool_calls:
             logger.warning("Tool decision: LLM returned empty content and no tool_calls")
@@ -1411,16 +1411,16 @@ async def tool_decision_node(state: dict) -> dict:
         if not tool_calls and content:
             parsed = _try_parse_tool_call(content, available_tools)
             if parsed:
-                logger.warning("Tool decision: parsed tool_calls from JSON in content (round %d)", tool_round)
+                logger.info("Tool decision: parsed tool_calls from JSON in content (round %d)", tool_round)
                 tool_calls = parsed
                 content = ""
 
         # Fallback: try extracting Python code blocks from LLM response
         if not tool_calls and content:
-            logger.warning("Tool decision: no JSON tool call (round %d), trying code extraction", tool_round)
+            logger.info("Tool decision: no JSON tool call (round %d), trying code extraction", tool_round)
             code_tool = _try_extract_code_as_tool(content, available_tools)
             if code_tool:
-                logger.warning("Tool decision: extracted code from LLM response, built run_python call")
+                logger.info("Tool decision: extracted code from LLM response, built run_python call")
                 tool_calls = code_tool
                 content = ""
             else:
@@ -1433,7 +1433,7 @@ async def tool_decision_node(state: dict) -> dict:
         if not tool_calls and content:
             intended = _extract_intended_tool_name(content, available_tools)
             if intended:
-                logger.warning("Tool decision: entering self-heal for tool '%s' (round %d)", intended, tool_round)
+                logger.info("Tool decision: entering self-heal for tool '%s' (round %d)", intended, tool_round)
                 heal_choice = {"type": "function", "function": {"name": intended}}
                 bad_output = content
                 for attempt in range(SELF_HEAL_MAX_RETRIES):
@@ -1465,7 +1465,7 @@ async def tool_decision_node(state: dict) -> dict:
                         heal_tc = (_try_parse_tool_call(heal_content, available_tools)
                                    or _try_extract_code_as_tool(heal_content, available_tools))
                     if heal_tc:
-                        logger.warning("Tool decision: self-heal SUCCESS on attempt %d (tool '%s')",
+                        logger.info("Tool decision: self-heal SUCCESS on attempt %d (tool '%s')",
                                        attempt + 1, intended)
                         tool_calls = heal_tc
                         content = ""
@@ -1526,7 +1526,7 @@ async def tool_decision_node(state: dict) -> dict:
         # silently reaches the final-answer stage and its final_stage_note
         # ("sorry, can't call tools") for such requests. ──
         if tool_round == 0 and _query_obviously_needs_tool(state.get("query", ""), available_tools):
-            logger.warning(
+            logger.info(
                 "Tool decision: intent obviously needs a tool but none produced — intercepting with forced run_python retry"
             )
             intercepted = await _force_run_python_retry(messages, available_tools, config_manager.prompt_language)
@@ -1535,7 +1535,7 @@ async def tool_decision_node(state: dict) -> dict:
                 _emit(state, "round", f"Tool-call round {tool_round + 1} (intercept)")
                 return {"tool_calls": intercepted, "tool_messages": [tool_msg]}
 
-        logger.warning("Tool decision: no tool_calls produced, proceeding to final generation")
+        logger.info("Tool decision: no tool_calls produced, proceeding to final generation")
         return {"tool_calls": None}
     except Exception as e:
         logger.warning("Tool decision error: %s", e)

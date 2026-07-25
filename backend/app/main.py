@@ -327,6 +327,18 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
+@app.middleware("http")
+async def _ensure_logging_middleware(request: Request, call_next):
+    # uvicorn --reload re-applies its own log_config AFTER our lifespan
+    # setup_logging(), which sets disable_existing_loggers=True (disabling
+    # ragclaw.* loggers), resets root.level to WARNING, and replaces our root
+    # handler with uvicorn's. That left request-time ragclaw.* INFO silently
+    # dropped. Re-applying setup_logging() on every request guarantees
+    # ragclaw.* INFO reaches docker logs. setup_logging() is idempotent + cheap.
+    setup_logging()
+    return await call_next(request)
+
+
 @app.get("/api/health")
 async def health_check():
     from app.services.config_manager import config_manager
