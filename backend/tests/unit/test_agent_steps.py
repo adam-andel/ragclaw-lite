@@ -353,3 +353,82 @@ class TestToolExecutor:
         done = [s for s in steps if s["stage"] == "tool_done"]
         assert done, "expected a tool_done event for [File] output"
         assert "X.pptx" in done[0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Persistence channel (agent_steps) — Route D observability
+# ---------------------------------------------------------------------------
+
+class TestAgentStepsPersistence:
+    def test_emit_accumulates_separate_channel(self):
+        # _emit must write into state["agent_steps"] for durable persistence,
+        # independent of (and in addition to) the SSE collector.
+        steps, emit = make_collector()
+        st = {"emit": emit}
+        _emit(st, "retrieval", "Retrieving from knowledge base…")
+        _emit(st, "tool", "Running tool: Run Python script", tool="run_python")
+        assert "agent_steps" in st
+        assert len(st["agent_steps"]) == 2
+        assert st["agent_steps"][0]["stage"] == "retrieval"
+        assert st["agent_steps"][1]["extra"] == {"tool": "run_python"}
+        # SSE collector still received the same events (dual channel)
+        assert len(steps) == 2
+
+    def test_emit_accumulates_without_emit_callback(self):
+        st: dict = {}
+        _emit(st, "routing", "Analyzing intent…")
+        assert st["agent_steps"][0]["stage"] == "routing"
+
+    def test_emit_never_raises_on_accumulation_failure(self):
+        # A hostile state that breaks setdefault/get must not crash the graph.
+        class Bad:
+            def setdefault(self, k, d):
+                raise RuntimeError("no")
+
+            def get(self, k, d=None):
+                return d
+
+        _emit(Bad(), "x", "y")  # must not raise
+
+
+class TestSanitizeLlmMessages:
+    def test_drops_agent_step_marker(self):
+        from app.services.agent_graph import _sanitize_llm_messages
+
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q", "agent_step": True},
+            {"role": "assistant", "content": "a"},
+        ]
+        clean = _sanitize_llm_messages(msgs)
+        assert len(clean) == 2
+        assert all("agent_step" not in m for m in clean)
+
+    def test_passthrough_when_clean(self):
+        from app.services.agent_graph import _sanitize_llm_messages
+
+        msgs = [{"role": "user", "content": "q"}]
+        assert _sanitize_llm_messages(msgs) == msgs
+
+
+class TestBuildGenerationMessagesIsolation:
+    def test_agent_step_history_is_stripped(self):
+        from app.services.agent_graph import ragclaw_agent_graph
+
+        state = {
+            "query": "hi",
+            "conversation_history": [
+                {"role": "user", "content": "earlier"},
+                # A leaked processing-trace marker must never reach the LLM.
+                {"role": "user", "content": "LEAKED_STEP_TEXT", "agent_step": True},
+            ],
+            "tool_results": [],
+            "rag_context": "",
+            "memory_context": "",
+            "active_skill": None,
+            "kb_prompt": "",
+        }
+        msgs = ragclaw_agent_graph.build_generation_messages(state)
+        assert all(not m.get("agent_step") for m in msgs)
+        joined = " ".join(m.get("content", "") for m in msgs)
+        assert "LEAKED_STEP_TEXT" not in joined

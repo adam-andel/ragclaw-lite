@@ -29,6 +29,22 @@ class CitationSchema(BaseModel):
     score: float
 
 
+class AgentStepOut(BaseModel):
+    """One persisted agent processing trace entry (Route D observability)."""
+
+    id: str
+    seq: int = 0
+    stage: str
+    message: str
+    skill: str | None = None
+    tool: str | None = None
+    detail: str | None = None
+    extra: dict | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class MessageResponse(BaseModel):
     id: str
     role: str
@@ -41,6 +57,9 @@ class MessageResponse(BaseModel):
     retrieval_ms: int = 0
     llm_ms: int = 0
     created_at: datetime
+    # Persisted processing trace (Route D observability). Excluded from the LLM
+    # context and from MEM0 memory; surfaced to the frontend for replay after reload.
+    agent_steps: list[AgentStepOut] = []
 
     model_config = {"from_attributes": True}
 

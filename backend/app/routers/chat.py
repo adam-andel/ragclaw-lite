@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -16,7 +17,7 @@ from app.config import settings
 from app.database import get_db
 import app.database as db_mod
 from app.models.user import User
-from app.models.conversation import Conversation, Message, PendingLimitState
+from app.models.conversation import Conversation, Message, PendingLimitState, AgentStep
 from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
@@ -36,6 +37,8 @@ from app.schemas.chat import (
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
+
+logger = logging.getLogger("ragclaw.chat")
 
 
 def _sse(event_type: str, payload: dict) -> str:
@@ -138,6 +141,35 @@ async def _save_assistant_message(
         await session.commit()
 
     return assistant_msg
+
+
+async def _persist_agent_steps(conv_id: str, message_id: str, steps: list[dict]) -> None:
+    """Persist accumulated agent_step traces to the agent_steps table.
+
+    Runs in its own session (mirrors _save_assistant_message). Steps are stored
+    verbatim for audit/replay; they are intentionally excluded from the LLM
+    context and from MEM0 memory extraction elsewhere. Full retention (no cap).
+    """
+    if not steps:
+        return
+    try:
+        async with db_mod.async_session() as session:
+            objs = []
+            for i, s in enumerate(steps):
+                extra = s.get("extra")
+                objs.append(AgentStep(
+                    conversation_id=conv_id,
+                    message_id=message_id,
+                    seq=i,
+                    stage=s.get("stage", ""),
+                    message=s.get("message", ""),
+                    extra_json=json.dumps(extra, ensure_ascii=False) if extra else None,
+                ))
+            session.add_all(objs)
+            await session.commit()
+    except Exception as e:
+        logger.warning("Failed to persist agent steps: %s", e)
+
 
 # ── Suspension snapshot persistence (DB) ───# Persist the Human-in-the-Loop pure-data snapshot to the DB so it survives page refresh / process restart.。# These helpers reuse the caller's session, so tests can use their overridden test session.。
 
@@ -445,6 +477,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "tool_round_quota": quota_tr,
         "pending_limit": None,
         "resume_action": resume_action,
+        "agent_steps": [],
         "emit": emit_fn,
     }
 
@@ -649,6 +682,7 @@ async def chat_stream(
                         "tool_round_quota": MAX_TOOL_ROUNDS,
                         "pending_limit": None,
                         "resume_action": None,
+                        "agent_steps": [],
                         "emit": emit_agent_step,
                     }
                 else:
@@ -698,6 +732,7 @@ async def chat_stream(
                             state.get("citations", []),
                             cache_hit=False,
                         )
+                        await _persist_agent_steps(conv_id, pending_msg.id, state.get("agent_steps") or [])
                         snap = _snapshot_state(state)
                         snap["pending_msg_id"] = pending_msg.id
                         await _save_pending_state(db, conv_id, pending_msg.id, snap)
@@ -848,6 +883,7 @@ async def chat_stream(
                         msg_id=pending_msg_id if resume_mode is not None else None,
                         prompt_tokens=prompt_tokens,
                     )
+                    await _persist_agent_steps(conv_id, assistant_msg.id, state.get("agent_steps") or [])
                     enqueue("done", {
                         "conversation_id": conv_id,
                         "message_id": assistant_msg.id,
@@ -1020,6 +1056,7 @@ async def get_conversation_messages(
             select(Message)
             .where(Message.conversation_id == conv_id)
             .order_by(Message.created_at.asc())
+            .options(selectinload(Message.agent_steps))
             .offset(start)
             .limit(end - start)
         )

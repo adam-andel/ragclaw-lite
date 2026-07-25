@@ -1,6 +1,7 @@
 """Agent graph nodes for the RAGClaw LangGraph state machine."""
 import asyncio, json, logging, time
 from datetime import datetime
+from urllib.parse import quote, unquote
 from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
@@ -848,10 +849,24 @@ _TOOL_LABELS = {
 
 
 def _emit(state: dict, stage: str, message: str, **extra) -> None:
-    """Push an agent_step progress event to the SSE stream, if a callback is wired.
+    """Push an agent_step progress event to the SSE stream (if a callback is
+    wired) and accumulate it into ``state["agent_steps"]`` for durable persistence.
 
-    Must never raise — a broken emit must not interrupt the agent graph.
+    Must never raise — a broken emit must not interrupt the agent graph. The
+    accumulated steps live in a SEPARATE channel: they are never injected into
+    the LLM message list and never fed to MEM0 memory extraction.
     """
+    # Accumulate for persistence (guarded; must never break the graph).
+    try:
+        steps = state.setdefault("agent_steps", [])
+        steps.append({
+            "stage": stage,
+            "message": message,
+            "extra": extra or None,
+            "ts": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception:
+        pass
     fn = state.get("emit")
     if not fn:
         return
@@ -1549,8 +1564,6 @@ def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) ->
     may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
     Only the sandbox-relative part (uid prefix stripped) goes into the link.
     """
-    from urllib.parse import quote
-
     m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
     if not m:
         return result
