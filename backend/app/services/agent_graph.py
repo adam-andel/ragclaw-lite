@@ -190,7 +190,7 @@ class RagclawAgentGraph:
         result = await self._graph.ainvoke(initial_state)
         return result
 
-    def build_generation_messages(self, state: dict) -> list[dict]:
+    def build_generation_messages(self, state: dict, include_cron_rule: bool = True) -> list[dict]:
         """Build the final message list for LLM generation.
 
         Assembles system prompt (from SKILL or default), conversation history,
@@ -242,7 +242,7 @@ class RagclawAgentGraph:
             '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
             '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
             "Do not wrap the JSON in markdown code fences."
-        )
+        ) if include_cron_rule else ""
 
         # final_note is intentionally kept OUT of the system prompt — it lives in
         # the user message (dynamic region) below. This keeps the cached system

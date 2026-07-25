@@ -25,6 +25,7 @@ export default {
   taskContent: 'Task Content',
   kbId: 'Knowledge Base ID',
   skillId: 'Skill ID',
+  workspaceDir: 'Workspace Directory',
   lastRun: 'Last Run',
   jobId: 'Task ID',
   logs: 'Logs',

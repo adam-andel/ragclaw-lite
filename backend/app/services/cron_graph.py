@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 
 from app.database import async_session
 from app.models.cron_job import CronJob, CronJobStatus
-from app.models.user import User
 from app.services.config_manager import config_manager
 from app.services.cron_parser import compute_next_run
 from app.services.llm_client import llm_client
@@ -76,6 +75,7 @@ class _CreateCronJobTool(BaseTool):
         tenant_id = self.metadata.get("tenant_id") if self.metadata else None
         kb_id = self.metadata.get("kb_id") if self.metadata else None
         skill_id = self.metadata.get("skill_id") if self.metadata else None
+        workspace_dir = self.metadata.get("workspace_dir") if self.metadata else None
         # Interpret the cron expression in the user's local timezone so the
         # schedule matches the wall-clock time they spoke ("15:55" => 15:55 local,
         # not 15:55 UTC). pytz validates the zone inside compute_next_run and
@@ -94,6 +94,7 @@ class _CreateCronJobTool(BaseTool):
                 task_content=task_content,
                 kb_id=kb_id,
                 skill_id=skill_id,
+                workspace_dir=workspace_dir,
                 status=CronJobStatus.SCHEDULED,
                 next_run_at=compute_next_run(cron_expr, tz_name),
             )
@@ -151,7 +152,7 @@ class _RecordCronResultTool(BaseTool):
             return json.dumps({"status": "recorded", "cron_id": cron_id}, ensure_ascii=False)
 
 
-def _make_create_tool(user_id: str | None, tenant_id: str | None, kb_id: str | None, skill_id: str | None, timezone: str | None = None) -> BaseTool:
+def _make_create_tool(user_id: str | None, tenant_id: str | None, kb_id: str | None, skill_id: str | None, timezone: str | None = None, workspace_dir: str | None = None) -> BaseTool:
     tool = _CreateCronJobTool()
     tool.metadata = {
         "user_id": user_id,
@@ -159,6 +160,7 @@ def _make_create_tool(user_id: str | None, tenant_id: str | None, kb_id: str | N
         "kb_id": kb_id,
         "skill_id": skill_id,
         "timezone": timezone,
+        "workspace_dir": workspace_dir,
     }
     return tool
 
@@ -393,9 +395,10 @@ async def _create_cron_job_text_fallback(
     kb_id: str | None,
     skill_id: str | None,
     timezone: str | None = None,
+    workspace_dir: str | None = None,
 ) -> str:
     """Hand-written tool loop for providers that reject the tools parameter."""
-    tool = _make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=timezone)
+    tool = _make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=timezone, workspace_dir=workspace_dir)
 
     tz_note = f" The user's local timezone is {timezone}. Interpret the cron expression in that timezone." if timezone else ""
     invocation_prompt = (
@@ -479,6 +482,7 @@ async def run_cron_creation_subgraph(
     kb_id: str | None,
     skill_id: str | None,
     user_timezone: str | None = None,
+    workspace_dir: str | None = None,
 ) -> str:
     """Run the cron creation subgraph and return a user-friendly confirmation.
 
@@ -486,13 +490,15 @@ async def run_cron_creation_subgraph(
         user_timezone: user's local IANA timezone (e.g. Asia/Shanghai). It is
             stored on the job and used to interpret the cron expression so the
             schedule matches the wall-clock time the user spoke.
+        workspace_dir: working directory selected in the chat when the job was
+            created; stored on the job and restored at execution time.
     """
     if not _is_native_tool_calling_supported():
         return await _create_cron_job_text_fallback(
-            payload, user_id, tenant_id, kb_id, skill_id, timezone=user_timezone
+            payload, user_id, tenant_id, kb_id, skill_id, timezone=user_timezone, workspace_dir=workspace_dir
         )
 
-    tools = [_make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=user_timezone)]
+    tools = [_make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=user_timezone, workspace_dir=workspace_dir)]
     graph = _build_cron_subgraph(tools)
 
     tz_note = f" The user's local timezone is {user_timezone}. Interpret times in that timezone." if user_timezone else ""
@@ -527,35 +533,72 @@ async def run_cron_creation_subgraph(
 
 
 async def run_cron_execution_subgraph(job: CronJob) -> str:
-    """Run the cron execution subgraph and record the result via tool."""
-    if not _is_native_tool_calling_supported():
-        return await _record_cron_result_text_fallback(job)
+    """Execute a cron job by replaying the scene it was created in.
 
-    tools = [_make_record_tool()]
-    graph = _build_cron_subgraph(tools)
+    The job stores the knowledge base (kb_id), skill (skill_id) and working
+    directory (workspace_dir) the user had selected in the chat. We feed those
+    into the very same agent graph used by the live chat, so execution behaves
+    exactly as if the user had run the task in that conversation. The cron-rule
+    is disabled for the final summary so the task is never re-scheduled.
+    """
+    task = job.task_content or ""
+    if not task.strip():
+        return "(任务内容为空，未执行)"
 
-    tenant_id = None
-    if job.user_id:
-        async with async_session() as db:
-            user = await db.get(User, job.user_id)
-            if user:
-                tenant_id = user.tenant_id
+    # Imported lazily to avoid a circular import (agent_graph imports this module).
+    from app.services.agent_graph import ragclaw_agent_graph
+    from app.agents import llm_client
 
-    system_prompt = (
-        "You are an autonomous task executor. Complete the task described by the user. "
-        "After you finish, call the record_cron_result tool with a concise summary of the result. "
-        "If the task generated a document, include the download link in the summary."
-    )
-
-    user_prompt = job.task_content
-
-    initial_state: CronGraphState = {
-        "messages": [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ],
+    initial_state = {
+        "query": task,
+        "available_tools": [],
+        "active_skill": None,
+        "skill_stack": [],
+        "loaded_skill_ids": [],
+        "skill_switch_count": 0,
+        "tool_messages": [],
+        "tool_results": [],
+        "context": "",
+        "tool_round": 0,
+        "route": None,
+        "cache_hit": None,
+        "final_answer": None,
+        "kb_id": job.kb_id or "",
+        "skill_id": job.skill_id,
+        "workspace_id": job.workspace_dir or "",
+        "emit": None,
+        "user_id": job.user_id,
+        "tenant_id": job.tenant_id,
+        "conversation_history": [],
+        "conversation_id": job.id,
+        # Never re-detect / re-create a cron job while executing one.
+        "skip_cache": True,
     }
 
-    final_state = await graph.ainvoke(initial_state)
-    final_message = final_state["messages"][-1]
-    return str(final_message.content)
+    try:
+        state = await ragclaw_agent_graph.run(initial_state)
+    except Exception as e:
+        logger.exception("Cron execution agent run failed: %s", e)
+        return f"(执行出错: {e})"
+
+    # Produce the final natural-language answer the same way the live chat does,
+    # but without the cron-rule (the task must not be turned into a new cron job).
+    try:
+        messages = ragclaw_agent_graph.build_generation_messages(state, include_cron_rule=False)
+        answer = ""
+        async for chunk in llm_client.chat_stream(messages):
+            if isinstance(chunk, dict):
+                if chunk.get("type") == "usage":
+                    continue
+                answer += chunk.get("content", "")
+            else:
+                answer += chunk
+        answer = answer.strip()
+        if answer:
+            return answer
+    except Exception as e:
+        logger.exception("Cron execution final generation failed: %s", e)
+
+    if state.get("final_answer"):
+        return state["final_answer"]
+    return "(任务已执行，但无文本结果)"

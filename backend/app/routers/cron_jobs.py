@@ -38,6 +38,7 @@ def _cron_job_response(job: CronJob) -> CronJobResponse:
         task_content=job.task_content,
         kb_id=job.kb_id,
         skill_id=job.skill_id,
+        workspace_dir=job.workspace_dir,
         status=job.status.value,
         next_run_at=job.next_run_at.isoformat() if job.next_run_at else None,
         last_run_at=job.last_run_at.isoformat() if job.last_run_at else None,

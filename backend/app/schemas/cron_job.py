@@ -39,6 +39,7 @@ class CronJobResponse(BaseModel):
     task_content: str
     kb_id: str | None
     skill_id: str | None
+    workspace_dir: str | None
     status: str
     next_run_at: str | None
     last_run_at: str | None

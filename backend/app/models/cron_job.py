@@ -39,6 +39,9 @@ class CronJob(Base):
     task_content: Mapped[str] = mapped_column(Text, nullable=False)
     kb_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     skill_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_dir: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, comment="创建定时任务时对话中所选的工作目录（相对沙箱根路径）"
+    )
 
     status: Mapped[CronJobStatus] = mapped_column(
         SAEnum(CronJobStatus, values_callable=lambda e: [m.value for m in e]),

@@ -320,6 +320,7 @@ export interface CronJob {
   task_content: string
   kb_id?: string | null
   skill_id?: string | null
+  workspace_dir?: string | null
   status: 'scheduled' | 'running' | 'paused' | 'completed' | 'failed'
   next_run_at?: string | null
   last_run_at?: string | null

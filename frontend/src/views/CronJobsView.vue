@@ -384,6 +384,7 @@ function isPaused(job: CronJob) {
         <NDescriptionsItem :label="t('cron.taskContent')">{{ detailJob.task_content }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.kbId')">{{ detailJob.kb_id || '—' }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.skillId')">{{ detailJob.skill_id || '—' }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.workspaceDir')">{{ detailJob.workspace_dir || '—' }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.nextRun')">{{ formatTime(detailJob.next_run_at) }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.lastRun')">{{ formatTime(detailJob.last_run_at) }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('common.createdAt')">{{ formatTime(detailJob.created_at) }}</NDescriptionsItem>

@@ -25,6 +25,7 @@ export default {
   taskContent: '任务内容',
   kbId: '知识库 ID',
   skillId: '技能 ID',
+  workspaceDir: '工作目录',
   lastRun: '最后执行',
   jobId: '任务 ID',
   logs: '日志',
