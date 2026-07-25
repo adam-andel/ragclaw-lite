@@ -5,6 +5,7 @@ import {
   getUnreadNotificationCount,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  type ListNotificationsParams,
 } from '@/api/notifications'
 import type { NotificationItem } from '@/types'
 import router from '@/router'
@@ -36,10 +37,10 @@ export const useNotificationStore = defineStore('notifications', () => {
     }
   }
 
-  async function fetchNotifications(page = 1, size = 20, unreadOnly = false) {
+  async function fetchNotifications(params: ListNotificationsParams = {}) {
     loading.value = true
     try {
-      const data = await listNotifications(page, size, unreadOnly)
+      const data = await listNotifications(params)
       notifications.value = data.items
       total.value = data.total
       unreadCount.value = data.unread_count
@@ -105,7 +106,7 @@ export const useNotificationStore = defineStore('notifications', () => {
     await fetchUnreadCount()
     if (unreadCount.value > previousCount) {
       try {
-        const data = await listNotifications(1, 1, true)
+        const data = await listNotifications({ page: 1, size: 1, unreadOnly: true })
         if (data.items.length > 0) {
           const item = data.items[0]
           showToast(item)

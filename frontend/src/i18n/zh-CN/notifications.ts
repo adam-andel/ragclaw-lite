@@ -8,6 +8,13 @@ export default {
   empty: '暂无通知',
   title: '标题',
   content: '内容',
+  searchPlaceholder: '按标题搜索…',
+  allTypes: '全部类型',
+  filter: {
+    allStatus: '全部状态',
+    read: '已读',
+    unread: '未读',
+  },
   type: {
     cron: '定时任务',
     system: '系统',

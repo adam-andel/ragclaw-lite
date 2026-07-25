@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
-from app.models.notification import Notification
+from app.models.notification import Notification, NotificationType
 from app.services.auth import get_current_user
 from app.schemas.notification import NotificationResponse, NotificationListResponse, NotificationMarkReadResponse
 
@@ -35,6 +35,9 @@ async def list_notifications(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     unread_only: bool = Query(False),
+    search: str | None = Query(None),
+    type: str | None = Query(None),
+    read: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -42,6 +45,12 @@ async def list_notifications(
     filters = [Notification.user_id == current_user.id]
     if unread_only:
         filters.append(Notification.read.is_(False))
+    elif read is not None:
+        filters.append(Notification.read.is_(read))
+    if search and search.strip():
+        filters.append(Notification.title.ilike(f"%{search.strip()}%"))
+    if type in (t.value for t in NotificationType):
+        filters.append(Notification.type == type)
 
     count_q = select(func.count()).select_from(Notification).where(*filters)
     total = (await db.execute(count_q)).scalar() or 0

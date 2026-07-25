@@ -8,6 +8,13 @@ export default {
   empty: 'No notifications',
   title: 'Title',
   content: 'Content',
+  searchPlaceholder: 'Search by title…',
+  allTypes: 'All Types',
+  filter: {
+    allStatus: 'All Status',
+    read: 'Read',
+    unread: 'Unread',
+  },
   type: {
     cron: 'Scheduled Task',
     system: 'System',

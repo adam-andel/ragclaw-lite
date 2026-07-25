@@ -1,8 +1,23 @@
 import client from './client'
 import type { NotificationItem, NotificationListResponse } from '@/types'
 
-export const listNotifications = (page = 1, size = 20, unreadOnly = false) =>
-  client.get<NotificationListResponse>('/notifications', { params: { page, size, unread_only: unreadOnly } }).then(r => r.data)
+export interface ListNotificationsParams {
+  page?: number
+  size?: number
+  unreadOnly?: boolean
+  search?: string
+  type?: string
+  read?: boolean | null
+}
+
+export const listNotifications = (params: ListNotificationsParams = {}) => {
+  const { page = 1, size = 20, unreadOnly = false, search, type, read } = params
+  const query: Record<string, unknown> = { page, size, unread_only: unreadOnly }
+  if (search) query.search = search
+  if (type) query.type = type
+  if (read !== undefined && read !== null) query.read = read
+  return client.get<NotificationListResponse>('/notifications', { params: query }).then(r => r.data)
+}
 
 export const getUnreadNotificationCount = () =>
   client.get<{ unread_count: number }>('/notifications/unread-count').then(r => r.data)
