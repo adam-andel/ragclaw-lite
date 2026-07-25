@@ -2,13 +2,15 @@
 
 import asyncio as _asyncio
 import faulthandler
+import logging
 import threading
 import time
 import traceback as _tb
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -297,6 +299,32 @@ app.include_router(cron_jobs.router)
 app.include_router(notifications.router)
 app.include_router(embedding_model.router)
 app.include_router(workspace.router)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Global exception handler (observability — P0).
+# In `uvicorn --reload` dev mode, Starlette's ServerErrorMiddleware logs
+# unhandled tracebacks to the `uvicorn.error` logger, which frequently does NOT
+# reach `docker logs`. Register a handler on the base Exception class so the
+# full traceback is emitted via the `ragclaw` logger — logging_config.setup_logging()
+# guarantees it reaches stderr and survives reload's disable_existing_loggers.
+# This ensures EVERY 500 is visible in the container logs.
+# NOTE: FastAPI's HTTPException (→ 4xx) and RequestValidationError (→ 422) keep
+# their dedicated handlers and are matched first by Starlette's ExceptionMiddleware,
+# so they are intentionally NOT intercepted here.
+# ───────────────────────────────────────────────────────────────────────────
+_logger = logging.getLogger("ragclaw")
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    _logger.error(
+        "Unhandled exception: %s %s\n%s",
+        request.method,
+        request.url.path,
+        _tb.format_exc(),
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 
 @app.get("/api/health")
