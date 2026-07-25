@@ -16,8 +16,10 @@ class ChatRequest(BaseModel):
     skip_cache: bool = False            # Skip the cache when regenerating
     resume_action: str | None = None    # "continue" | "stop" | None (new question))
     workspace_dir: str | None = None   # Optional: user-selected workspace sub-directory
-                                          # (relative under their sandbox root; "" = root).
-                                          # Routed to REPL as workspace_id; confined to user_u<uid>/ by _ws_safe.
+                                        # (relative under their sandbox root; "" = root).
+                                        # Routed to REPL as workspace_id; confined to user_u<uid>/ by _ws_safe.
+    timezone: str | None = None        # Optional: user's local IANA timezone (e.g. Asia/Shanghai).
+                                        # Used to interpret natural-language times when creating cron jobs.
 
 
 class CitationSchema(BaseModel):

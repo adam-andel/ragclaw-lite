@@ -857,6 +857,7 @@ async def chat_stream(
                             tenant_id=current_user.tenant_id,
                             kb_id=request.kb_id or None,
                             skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", None),
+                            user_timezone=request.timezone,
                         )
                         collected_content = confirmation
                         # Re-emit the confirmation as a single token event.

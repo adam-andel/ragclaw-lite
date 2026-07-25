@@ -822,7 +822,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   assistantStage.value = t('chat.retrieving')
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir, Intl.DateTimeFormat().resolvedOptions().timeZone)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {

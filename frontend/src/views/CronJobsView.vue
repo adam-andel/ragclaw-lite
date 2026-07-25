@@ -17,6 +17,7 @@ import {
   toggleCronJob, runCronJobNow, listCronJobRuns,
 } from '@/api/cronJobs'
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
+import { parseUtcTs } from '@/utils/datetime'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -43,11 +44,15 @@ const statusOptions = [
 
 const showModal = ref(false)
 const editing = ref<CronJob | null>(null)
+// Detect the browser's local IANA timezone so new cron jobs are scheduled in
+// the user's wall-clock time by default (previously hardcoded to UTC, which
+// shifted schedules by the local offset).
+const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 const form = ref<CronJobCreatePayload & { id?: string }>({
   name: '',
   description: '',
   cron_expr: '',
-  timezone: 'UTC',
+  timezone: localTz,
   max_runs: null,
   task_content: '',
   kb_id: '',
@@ -133,7 +138,7 @@ function openCreate() {
     name: '',
     description: '',
     cron_expr: '',
-    timezone: 'UTC',
+    timezone: localTz,
     max_runs: null,
     task_content: '',
     kb_id: '',
@@ -246,9 +251,8 @@ async function openRuns(job: CronJob) {
 // ── Helpers ──
 
 function formatTime(t?: string | null) {
-  if (!t) return '—'
-  const d = new Date(t)
-  if (isNaN(d.getTime())) return t
+  const d = parseUtcTs(t)
+  if (!d) return '—'
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
@@ -436,7 +440,7 @@ function isPaused(job: CronJob) {
           <NInput v-model:value="form.cron_expr" :placeholder="t('cron.cronExprPlaceholder')" />
         </NFormItem>
         <NFormItem :label="t('cron.timezone')">
-          <NInput v-model:value="form.timezone" placeholder="UTC" disabled />
+          <NInput v-model:value="form.timezone" :placeholder="localTz" />
         </NFormItem>
         <NFormItem :label="t('cron.maxRuns')">
           <NInputNumber v-model:value="form.max_runs" :min="1" :show-button="false" :placeholder="t('cron.maxRunsPlaceholder')" style="width: 100%" />
@@ -468,7 +472,7 @@ function isPaused(job: CronJob) {
             <NCard v-for="run in runs" :key="run.id" size="small" style="margin-bottom: 12px">
               <div class="run-meta">
                 <NTag :type="run.status === 'success' ? 'success' : 'error'">{{ run.status }}</NTag>
-                <span class="run-time">{{ run.started_at }}</span>
+                <span class="run-time">{{ formatTime(run.started_at) }}</span>
               </div>
               <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
               <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>

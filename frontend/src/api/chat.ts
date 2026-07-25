@@ -25,6 +25,7 @@ export async function* streamChat(
   skipCache?: boolean,
   resumeAction?: 'continue' | 'stop' | null,
   workspaceDir?: string,
+  timezone?: string,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
@@ -40,6 +41,7 @@ export async function* streamChat(
       skip_cache: skipCache,
       resume_action: resumeAction ?? undefined,
       workspace_dir: workspaceDir ?? '',
+      timezone: timezone ?? undefined,
     }),
     signal,
   })

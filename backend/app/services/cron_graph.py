@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import TypedDict, Annotated
 
 import httpx
+import pytz
 
 from langchain_core.messages import (
     BaseMessage,
@@ -75,6 +76,11 @@ class _CreateCronJobTool(BaseTool):
         tenant_id = self.metadata.get("tenant_id") if self.metadata else None
         kb_id = self.metadata.get("kb_id") if self.metadata else None
         skill_id = self.metadata.get("skill_id") if self.metadata else None
+        # Interpret the cron expression in the user's local timezone so the
+        # schedule matches the wall-clock time they spoke ("15:55" => 15:55 local,
+        # not 15:55 UTC). pytz validates the zone inside compute_next_run and
+        # falls back to UTC on an unknown name.
+        tz_name = (self.metadata.get("timezone") if self.metadata else None) or "UTC"
 
         async with async_session() as db:
             job = CronJob(
@@ -83,23 +89,34 @@ class _CreateCronJobTool(BaseTool):
                 name=name,
                 description=description or None,
                 cron_expr=cron_expr,
-                timezone="UTC",
+                timezone=tz_name,
                 max_runs=max_runs if max_runs else None,
                 task_content=task_content,
                 kb_id=kb_id,
                 skill_id=skill_id,
                 status=CronJobStatus.SCHEDULED,
-                next_run_at=compute_next_run(cron_expr, "UTC"),
+                next_run_at=compute_next_run(cron_expr, tz_name),
             )
             db.add(job)
             await db.commit()
             await db.refresh(job)
+
+            next_run_display = None
+            if job.next_run_at:
+                try:
+                    local_tz = pytz.timezone(tz_name)
+                    local_dt = job.next_run_at.replace(tzinfo=timezone.utc).astimezone(local_tz)
+                    next_run_display = local_dt.strftime("%Y-%m-%d %H:%M")
+                except pytz.UnknownTimeZoneError:
+                    next_run_display = job.next_run_at.isoformat()
 
             result = {
                 "cron_id": job.id,
                 "name": job.name,
                 "cron_expr": job.cron_expr,
                 "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
+                "next_run_at_display": next_run_display,
+                "timezone": tz_name,
                 "message": f"已创建定时任务「{job.name}」，可在定时任务管理页查看。",
             }
             return json.dumps(result, ensure_ascii=False)
@@ -134,13 +151,14 @@ class _RecordCronResultTool(BaseTool):
             return json.dumps({"status": "recorded", "cron_id": cron_id}, ensure_ascii=False)
 
 
-def _make_create_tool(user_id: str | None, tenant_id: str | None, kb_id: str | None, skill_id: str | None) -> BaseTool:
+def _make_create_tool(user_id: str | None, tenant_id: str | None, kb_id: str | None, skill_id: str | None, timezone: str | None = None) -> BaseTool:
     tool = _CreateCronJobTool()
     tool.metadata = {
         "user_id": user_id,
         "tenant_id": tenant_id,
         "kb_id": kb_id,
         "skill_id": skill_id,
+        "timezone": timezone,
     }
     return tool
 
@@ -374,16 +392,19 @@ async def _create_cron_job_text_fallback(
     tenant_id: str | None,
     kb_id: str | None,
     skill_id: str | None,
+    timezone: str | None = None,
 ) -> str:
     """Hand-written tool loop for providers that reject the tools parameter."""
-    tool = _make_create_tool(user_id, tenant_id, kb_id, skill_id)
+    tool = _make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=timezone)
 
+    tz_note = f" The user's local timezone is {timezone}. Interpret the cron expression in that timezone." if timezone else ""
     invocation_prompt = (
         "You are a task scheduling assistant. The user wants to create a scheduled task.\n\n"
         "Call the create_cron_job tool by outputting ONLY a single JSON object like:\n"
         '{"tool": "create_cron_job", "arguments": {"name": "...", "cron_expr": "...", "task_content": "...", "max_runs": null, "description": ""}}\n\n'
         f"Available tool schema:\n{json.dumps(_tool_to_dict(tool), ensure_ascii=False, indent=2)}\n\n"
         "Do not wrap the JSON in markdown fences."
+        f"{tz_note}"
     )
 
     user_prompt = (
@@ -412,10 +433,11 @@ async def _create_cron_job_text_fallback(
     # providers that reject certain message shapes.
     try:
         result_data = json.loads(tool_result)
-        next_run = result_data.get("next_run_at", "unknown")
+        next_run = result_data.get("next_run_at_display") or result_data.get("next_run_at", "unknown")
+        tz_name = result_data.get("timezone", "UTC")
         return (
             f"已创建定时任务「{result_data.get('name', '')}」，"
-            f"下次执行时间：{next_run}，"
+            f"下次执行时间：{next_run}（{tz_name}），"
             f"可在定时任务管理页查看。"
         )
     except json.JSONDecodeError:
@@ -456,19 +478,31 @@ async def run_cron_creation_subgraph(
     tenant_id: str | None,
     kb_id: str | None,
     skill_id: str | None,
+    user_timezone: str | None = None,
 ) -> str:
-    """Run the cron creation subgraph and return a user-friendly confirmation."""
-    if not _is_native_tool_calling_supported():
-        return await _create_cron_job_text_fallback(payload, user_id, tenant_id, kb_id, skill_id)
+    """Run the cron creation subgraph and return a user-friendly confirmation.
 
-    tools = [_make_create_tool(user_id, tenant_id, kb_id, skill_id)]
+    Args:
+        user_timezone: user's local IANA timezone (e.g. Asia/Shanghai). It is
+            stored on the job and used to interpret the cron expression so the
+            schedule matches the wall-clock time the user spoke.
+    """
+    if not _is_native_tool_calling_supported():
+        return await _create_cron_job_text_fallback(
+            payload, user_id, tenant_id, kb_id, skill_id, timezone=user_timezone
+        )
+
+    tools = [_make_create_tool(user_id, tenant_id, kb_id, skill_id, timezone=user_timezone)]
     graph = _build_cron_subgraph(tools)
 
+    tz_note = f" The user's local timezone is {user_timezone}. Interpret times in that timezone." if user_timezone else ""
     system_prompt = (
         "You are a task scheduling assistant. The user wants to create a scheduled task. "
         "Use the create_cron_job tool to persist the job. "
         "After the tool returns the cron_id, respond to the user in Chinese with a friendly confirmation, "
-        "including the task name, cron expression, and next run time."
+        f"including the task name, cron expression, and next run time.{tz_note} "
+        "The tool result includes a 'next_run_at_display' field already formatted in the user's local timezone; "
+        "use that value directly when telling the user the next run time (do not show raw UTC)."
     )
 
     user_prompt = (
