@@ -82,7 +82,7 @@ async def get_llm_config(current_user=Depends(get_current_admin)):
 async def update_llm_config(data: LLMConfigUpdate, current_user=Depends(get_current_admin)):
     """Update the LLM configuration (including first-time entry). Takes effect immediately after update, no restart needed."""
     if data.llm_api_key is not None and not data.llm_api_key.strip():
-        raise HTTPException(status_code=400, detail="API Key 不能为空")
+        raise HTTPException(status_code=400, detail="CONFIG_API_KEY_EMPTY")
     result = await config_manager.update(data.model_dump(exclude_none=True))
     if data.llm_concurrency is not None:
         await llm_limiter.update_max(data.llm_concurrency)
@@ -97,7 +97,7 @@ class TestRequest(BaseModel):
 async def test_llm_connection(data: TestRequest, current_user=Depends(get_current_admin)):
     """Test whether the LLM connection works."""
     if not config_manager.is_configured:
-        raise HTTPException(status_code=400, detail="尚未配置 API Key，请先在设置页面录入")
+        raise HTTPException(status_code=400, detail="CONFIG_API_KEY_NOT_CONFIGURED")
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -167,7 +167,7 @@ async def update_sandbox_network(
         if k in {"sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods"}
     }
     if not patch:
-        raise HTTPException(status_code=400, detail="没有提供任何可更新的字段")
+        raise HTTPException(status_code=400, detail="CONFIG_NO_FIELDS")
     await config_manager.update(patch)
     mcp_pushed = await notify_network_policy_changed()
     return {
@@ -311,9 +311,9 @@ async def update_repl_auth(
     """Set the REPL MCP identity secret explicitly; hot-reloaded into MCP (no restart)."""
     secret = (data.repl_auth_secret or "").strip()
     if not secret:
-        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 不能为空")
+        raise HTTPException(status_code=400, detail="CONFIG_REPL_SECRET_EMPTY")
     if len(secret) < 16:
-        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 至少 16 个字符")
+        raise HTTPException(status_code=400, detail="CONFIG_REPL_SECRET_SHORT")
     await config_manager.update({"repl_auth_secret": secret})
     mcp_pushed = await notify_auth_secret_changed(secret)
     return {

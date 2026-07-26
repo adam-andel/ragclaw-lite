@@ -88,11 +88,11 @@ async def create_user(
         raise HTTPException(400, "Invalid role")
     target_role = UserRole(data.role) if data.role else UserRole.USER
     if current_user.role == UserRole.MODERATOR and target_role != UserRole.USER:
-        raise HTTPException(403, "普通管理员只能创建普通用户")
+        raise HTTPException(403, "USER_CREATE_ROLE")
 
     existing = await db.execute(select(User).where(User.username == data.username))
     if existing.scalar_one_or_none():
-        raise HTTPException(400, "用户名已存在")
+        raise HTTPException(400, "USER_NAME_EXISTS")
 
     # Allocate a dedicated REPL sandbox UID and commit the whole user row.
     # Retry the commit on a (rare) unique-constraint collision; if all retries
@@ -137,7 +137,7 @@ async def create_user(
     if created is None:
         raise HTTPException(
             503,
-            f"无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。",
+            f"USER_UID_POOL_EXHAUSTED: 无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。",
         )
     return UserResponse.model_validate(created)
 
@@ -151,9 +151,9 @@ async def get_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(404, "用户不存在")
+        raise HTTPException(404, "USER_NOT_FOUND")
     if not can_manage_user(current_user, user):
-        raise HTTPException(403, "无权管理该用户")
+        raise HTTPException(403, "USER_NO_MANAGE_PERM")
     return UserResponse.model_validate(user)
 
 
@@ -167,9 +167,9 @@ async def update_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(404, "用户不存在")
+        raise HTTPException(404, "USER_NOT_FOUND")
     if not can_manage_user(current_user, user):
-        raise HTTPException(403, "无权管理该用户")
+        raise HTTPException(403, "USER_NO_MANAGE_PERM")
 
     if data.display_name is not None:
         user.display_name = data.display_name
@@ -178,7 +178,7 @@ async def update_user(
     if data.role is not None:
         new_role = UserRole(data.role)
         if current_user.role == UserRole.MODERATOR and new_role != UserRole.USER:
-            raise HTTPException(403, "普通管理员只能设置普通用户角色")
+            raise HTTPException(403, "USER_ROLE_PERMISSION")
         user.role = new_role
     if data.is_active is not None:
         user.is_active = data.is_active
@@ -197,13 +197,13 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
 ):
     if user_id == current_user.id:
-        raise HTTPException(400, "不能删除自己")
+        raise HTTPException(400, "USER_CANNOT_DELETE_SELF")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(404, "用户不存在")
+        raise HTTPException(404, "USER_NOT_FOUND")
     if not can_manage_user(current_user, user):
-        raise HTTPException(403, "无权删除该用户")
+        raise HTTPException(403, "USER_NO_DELETE_PERM")
 
     # Capture the UID BEFORE releasing it. Delete the user's sandbox base
     # directory first (cleanup-before-reuse): if the sandbox is unreachable the
@@ -218,7 +218,7 @@ async def delete_user(
             logger.warning("repl_dir_cleanup_failed user=%s uid=%s err=%s", user_id, repl_uid, e)
             raise HTTPException(
                 502,
-                f"无法清理用户 {user_id} 的沙盒目录（mcp-repl 可能不可用），用户未删除。"
+                f"USER_SANDBOX_CLEANUP_FAILED: 无法清理用户 {user_id} 的沙盒目录（mcp-repl 可能不可用），用户未删除。"
                 f"请排查 mcp-repl 服务后重试。原始错误: {e}",
             )
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
   NCard, NButton, NSwitch, NTag, NSpace, NSpin, NEmpty,
@@ -45,7 +46,7 @@ async function load() {
     const data = await listPlugins()
     plugins.value = data.items
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.loadFailed'))
+    message.error(backendErrorMessage(e.message) || t('plugins.msg.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -65,7 +66,7 @@ async function handleToggle(name: string, enabled: boolean) {
     }
     await load()
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.opFailed'))
+    message.error(backendErrorMessage(e.message) || t('plugins.msg.opFailed'))
   } finally {
     toggling.value = null
   }
@@ -77,7 +78,7 @@ async function handleRefreshCache() {
     message.success(t('plugins.msg.refreshSuccess'))
     await load()
   } catch (e: any) {
-    message.error(e?.response?.data?.detail || e.message || t('plugins.msg.refreshFailed'))
+    message.error(backendErrorMessage(e.message) || t('plugins.msg.refreshFailed'))
   }
 }
 

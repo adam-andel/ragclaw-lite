@@ -121,7 +121,7 @@ async def get_server(
     """Get a single MCP server by ID."""
     server = await db.get(MCPServer, server_id)
     if not server:
-        raise HTTPException(404, "MCP 服务不存在")
+        raise HTTPException(404, "MCP_SERVER_NOT_FOUND")
     return _server_to_response(server)
 
 
@@ -135,10 +135,10 @@ async def update_server(
     """Update an MCP server configuration."""
     server = await db.get(MCPServer, server_id)
     if not server:
-        raise HTTPException(404, "MCP 服务不存在")
+        raise HTTPException(404, "MCP_SERVER_NOT_FOUND")
     # Built-in servers are managed by code/seed; block any user edit (incl. rename).
     if server.is_builtin:
-        raise HTTPException(403, "内置 MCP 服务不可修改")
+        raise HTTPException(403, "MCP_SERVER_BUILTIN_NO_EDIT")
 
     if data.name is not None:
         server.name = data.name
@@ -171,11 +171,11 @@ async def delete_server(
     """Delete an MCP server registration."""
     server = await db.get(MCPServer, server_id)
     if not server:
-        raise HTTPException(404, "MCP 服务不存在")
+        raise HTTPException(404, "MCP_SERVER_NOT_FOUND")
     # Built-in servers are mandatory platform infrastructure (e.g. Python
     # Executor); deleting them would break run_python for every conversation.
     if server.is_builtin:
-        raise HTTPException(403, "内置 MCP 服务不可删除")
+        raise HTTPException(403, "MCP_SERVER_BUILTIN_NO_DELETE")
     await db.delete(server)
     await db.commit()
     return {"status": "deleted"}
@@ -202,13 +202,13 @@ async def test_server(
     """Test MCP server connection and list available tools."""
     server = await db.get(MCPServer, server_id)
     if not server:
-        raise HTTPException(404, "MCP 服务不存在")
+        raise HTTPException(404, "MCP_SERVER_NOT_FOUND")
 
     if server.transport_type != "http":
         return {"ok": True, "message": "stdio 传输暂不支持自动测试，请手动验证", "tools": []}
 
     if not server.endpoint:
-        raise HTTPException(400, "HTTP 传输缺少 endpoint")
+        raise HTTPException(400, "MCP_SERVER_HTTP_NO_ENDPOINT")
 
     try:
         async with httpx.AsyncClient(timeout=min(server.timeout_seconds, 30)) as client:

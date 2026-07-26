@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { backendErrorMessage } from '@/utils/backendError'
 import {
   NButton, NForm, NFormItem, NInput,
   NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
@@ -64,7 +65,7 @@ async function load() {
     servers.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || t('mcp.loadFailed'))
+    message.error(backendErrorMessage(e.message) || t('mcp.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -141,7 +142,7 @@ async function handleSave() {
     showModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('mcp.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('mcp.saveFailed'))
   }
 }
 
@@ -151,7 +152,7 @@ async function handleDelete(server: MCPServer) {
     message.success(t('mcp.deleted'))
     await load()
   } catch (e: any) {
-    message.error(e.message || t('mcp.deleteFailed'))
+    message.error(backendErrorMessage(e.message) || t('mcp.deleteFailed'))
   }
 }
 
@@ -163,7 +164,7 @@ async function handleToggle(server: MCPServer) {
     message.success(server.is_active ? t('mcp.serverDisabled') : t('mcp.serverEnabled'))
     await load()
   } catch (e: any) {
-    message.error(e.message || t('mcp.operationFailed'))
+    message.error(backendErrorMessage(e.message) || t('mcp.operationFailed'))
   }
 }
 
@@ -189,7 +190,7 @@ async function handleRefresh() {
     const result = await refreshTools()
     message.success(t('mcp.refreshComplete', { servers: result.servers, tools: result.total_tools }))
   } catch (e: any) {
-    message.error(e.message || t('mcp.refreshFailed'))
+    message.error(backendErrorMessage(e.message) || t('mcp.refreshFailed'))
   }
 }
 </script>

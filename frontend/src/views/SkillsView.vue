@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
@@ -80,7 +81,7 @@ async function load() {
     skills.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || t('skills.loadFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -112,7 +113,7 @@ async function handleCreate() {
     showCreateModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.createFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.createFailed'))
   }
 }
 
@@ -125,7 +126,7 @@ async function openEdit(skill: Skill) {
     skillMdContent.value = full.skill_md_content || ''
     showEditModal.value = true
   } catch (e: any) {
-    message.error(e.message || t('skills.loadDetailFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.loadDetailFailed'))
   }
 }
 
@@ -137,7 +138,7 @@ async function handleSaveEdit() {
     showEditModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.saveFailed'))
   }
 }
 
@@ -149,7 +150,7 @@ async function openDetail(skill: Skill) {
   try {
     detailSkill.value = await getSkill(skill.id)
   } catch (e: any) {
-    message.error(e.message || t('skills.loadDetailFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.loadDetailFailed'))
     detailSkill.value = skill
   } finally {
     detailLoading.value = false
@@ -165,7 +166,7 @@ async function handleDelete(skill: Skill) {
     if (detailSkill.value?.id === skill.id) showDetail.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.deleteFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.deleteFailed'))
   }
 }
 
@@ -204,7 +205,7 @@ async function doFolderUpload(files: File[], paths: string[]) {
     dragOver.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.uploadFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.uploadFailed'))
   } finally {
     loading.value = false
   }
@@ -374,7 +375,7 @@ async function handleZipUpload(options: any) {
     showUploadModal.value = false
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.uploadFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.uploadFailed'))
   } finally {
     loading.value = false
   }
@@ -413,7 +414,7 @@ async function doReuploadFolder(files: File[], paths: string[]) {
     message.success(t('skills.folderReuploaded'))
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.reuploadFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.reuploadFailed'))
   } finally {
     loading.value = false
   }
@@ -431,7 +432,7 @@ async function handleReuploadZip(skillId: string, options: any) {
     message.success(t('skills.zipReuploaded'))
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.reuploadFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.reuploadFailed'))
   } finally {
     loading.value = false
   }
@@ -448,7 +449,7 @@ async function handleToggle(skill: Skill) {
     }
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.operationFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.operationFailed'))
   }
 }
 
@@ -461,7 +462,7 @@ async function handleSync() {
     message.success(t('skills.syncComplete', { added: result.added, updated: result.updated, deactivated: result.deactivated }))
     await load()
   } catch (e: any) {
-    message.error(e.message || t('skills.syncFailed'))
+    message.error(backendErrorMessage(e.message) || t('skills.syncFailed'))
   } finally {
     loading.value = false
   }

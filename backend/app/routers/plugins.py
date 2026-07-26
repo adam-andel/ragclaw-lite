@@ -51,7 +51,7 @@ async def enable_plugin(
     """Enable a previously disabled plugin."""
     valid_names = {p["name"] for p in parser_service.list_plugins()}
     if name not in valid_names:
-        raise HTTPException(404, f"插件不存在: {name}")
+        raise HTTPException(404, f"PLUGIN_NOT_FOUND: {name}")
     result = await db.execute(
         select(ParserPluginState).where(ParserPluginState.name == name)
     )
@@ -73,7 +73,7 @@ async def disable_plugin(
     """Disable a plugin. Disabled extensions will be rejected at upload."""
     valid_names = {p["name"] for p in parser_service.list_plugins()}
     if name not in valid_names:
-        raise HTTPException(404, f"插件不存在: {name}")
+        raise HTTPException(404, f"PLUGIN_NOT_FOUND: {name}")
     result = await db.execute(
         select(ParserPluginState).where(ParserPluginState.name == name)
     )

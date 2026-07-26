@@ -167,13 +167,13 @@ async def switch_embedding_model(
     """
     target = body.model
     if not is_known_model(target):
-        raise HTTPException(status_code=400, detail=f"未知模型：{target}")
+        raise HTTPException(status_code=400, detail=f"EMBEDDING_MODEL_UNKNOWN: {target}")
 
     new_dim = known_dimension(target) or model_manager.model_dimension(target)
     if new_dim is None:
         raise HTTPException(
             status_code=400,
-            detail=f"无法确定模型维度，请先安装 {target} 后再切换",
+            detail=f"EMBEDDING_MODEL_DIM_UNKNOWN: {target}",
         )
 
     info = _embedding_conflict(target)
@@ -192,7 +192,7 @@ async def switch_embedding_model(
     if not installed:
         raise HTTPException(
             status_code=400,
-            detail=f"模型 {target} 尚未安装，请先下载安装后再切换。",
+            detail=f"EMBEDDING_MODEL_NOT_INSTALLED_SWITCH: {target}",
         )
 
     # Target already installed → switch synchronously now.
@@ -240,13 +240,13 @@ async def check_embedding_model(
     """
     target = body.model
     if not is_known_model(target):
-        raise HTTPException(status_code=400, detail=f"未知模型：{target}")
+        raise HTTPException(status_code=400, detail=f"EMBEDDING_MODEL_UNKNOWN: {target}")
 
     new_dim = known_dimension(target) or model_manager.model_dimension(target)
     if new_dim is None:
         raise HTTPException(
             status_code=400,
-            detail=f"无法确定模型维度，请先安装 {target} 后再切换",
+            detail=f"EMBEDDING_MODEL_DIM_UNKNOWN: {target}",
         )
 
     info = _embedding_conflict(target)

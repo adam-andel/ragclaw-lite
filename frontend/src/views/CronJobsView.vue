@@ -18,6 +18,7 @@ import {
 } from '@/api/cronJobs'
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
 import { parseUtcTs } from '@/utils/datetime'
+import { backendErrorMessage } from '@/utils/backendError'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -99,7 +100,7 @@ async function load() {
     jobs.value = data.items
     total.value = data.total
   } catch (e: any) {
-    message.error(e.message || t('cron.loadFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -190,7 +191,7 @@ async function handleSave() {
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || t('cron.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.saveFailed'))
   }
 }
 
@@ -204,7 +205,7 @@ async function handleDelete(job: CronJob) {
     }
     await load()
   } catch (e: any) {
-    message.error(e.message || t('cron.deleteFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.deleteFailed'))
   }
 }
 
@@ -215,7 +216,7 @@ async function handleToggle(job: CronJob) {
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || t('cron.switchFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.switchFailed'))
   }
 }
 
@@ -227,7 +228,7 @@ async function handleRunNow(job: CronJob) {
     await load()
     refreshDetail()
   } catch (e: any) {
-    message.error(e.message || t('cron.execFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.execFailed'))
   } finally {
     runningId.value = ''
   }
@@ -246,7 +247,7 @@ async function openRuns(job: CronJob) {
     const data = await listCronJobRuns(job.id, 1, 50)
     runs.value = data.items
   } catch (e: any) {
-    message.error(e.message || t('cron.loadLogFailed'))
+    message.error(backendErrorMessage(e.message) || t('cron.loadLogFailed'))
   } finally {
     runsLoading.value = false
   }

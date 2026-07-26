@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, h } from 'vue'
+import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NAvatar, NIcon,
@@ -61,7 +62,7 @@ async function handleAvatarUpload(e: Event) {
     message.success(t('profile.avatarUpdated'))
     showAvatarPicker.value = false
   } catch (e: any) {
-    message.error(e.message || t('profile.uploadFailed'))
+    message.error(backendErrorMessage(e.message) || t('profile.uploadFailed'))
   } finally {
     uploading.value = false
     target.value = ''
@@ -75,7 +76,7 @@ async function removeCustomAvatar() {
     auth.user = res.data
     message.success(t('profile.avatarReset'))
   } catch (e: any) {
-    message.error(e.message || t('profile.resetFailed'))
+    message.error(backendErrorMessage(e.message) || t('profile.resetFailed'))
   } finally {
     uploading.value = false
   }
@@ -111,7 +112,7 @@ async function handleSave() {
     form.value.password = ''
     form.value.passwordConfirm = ''
   } catch (e: any) {
-    message.error(e.message || t('profile.updateFailed'))
+    message.error(backendErrorMessage(e.message) || t('profile.updateFailed'))
   } finally {
     saving.value = false
   }

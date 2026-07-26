@@ -89,7 +89,7 @@ async def list_cron_jobs(
         try:
             status_val = CronJobStatus(status)
         except ValueError:
-            raise HTTPException(400, f"无效的定时任务状态: {status}")
+            raise HTTPException(400, f"CRON_JOB_INVALID_STATUS: {status}")
         conditions.append(CronJob.status == status_val)
 
     count_q = select(func.count()).select_from(CronJob)
@@ -150,9 +150,9 @@ async def get_cron_job(
     """Get a single cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
     return _cron_job_response(job)
 
 
@@ -166,9 +166,9 @@ async def update_cron_job(
     """Update a cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
 
     if data.name is not None:
         job.name = data.name
@@ -212,9 +212,9 @@ async def delete_cron_job(
     """Delete a cron job and its run logs."""
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
 
     await db.execute(delete(CronJobRun).where(CronJobRun.cron_job_id == job_id))
     await db.delete(job)
@@ -231,9 +231,9 @@ async def toggle_cron_job(
     """Pause or resume a cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
 
     if job.status == CronJobStatus.SCHEDULED:
         job.status = CronJobStatus.PAUSED
@@ -243,7 +243,7 @@ async def toggle_cron_job(
         job.next_run_at = compute_next_run(job.cron_expr, job.timezone)
         job.last_error = None
     else:
-        raise HTTPException(400, f"当前状态无法切换: {job.status.value}")
+        raise HTTPException(400, f"CRON_JOB_INVALID_STATE: {job.status.value}")
 
     job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
@@ -265,20 +265,20 @@ async def run_cron_job_now(
     """
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
 
     if job.status == CronJobStatus.RUNNING:
-        raise HTTPException(409, "任务正在执行中，请等待当前执行完成")
+        raise HTTPException(409, "CRON_JOB_RUNNING")
     if job.status == CronJobStatus.COMPLETED:
-        raise HTTPException(400, "任务已完成，请先重置状态后再执行")
+        raise HTTPException(400, "CRON_JOB_COMPLETED")
 
     try:
         result = await execute_and_record_cron_job(job_id)
         return {"status": result["status"], "result": result["result"], "error": result["error"]}
     except Exception as e:
-        raise HTTPException(500, f"执行失败: {e}")
+        raise HTTPException(500, f"CRON_EXEC_FAILED: {e}")
 
 
 @router.get("/{job_id}/runs", response_model=CronJobRunListResponse)
@@ -292,9 +292,9 @@ async def list_cron_job_runs(
     """List execution logs for a cron job."""
     job = await db.get(CronJob, job_id)
     if not job:
-        raise HTTPException(404, "定时任务不存在")
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
     if current_user.role.value != "admin" and job.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
 
     total = (
         await db.execute(

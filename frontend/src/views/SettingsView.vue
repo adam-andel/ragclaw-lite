@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { backendErrorMessage } from '@/utils/backendError'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -281,7 +282,7 @@ async function handleDownloadEmbedding() {
       message.warning(t('settings.embeddingModelMgmt.alreadyDownloading'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.saveFailed'))
   }
 }
 
@@ -304,7 +305,7 @@ async function doDeleteEmbedding() {
     await loadEmbeddingStatus()
     message.success(t('settings.embeddingModelMgmt.deleted'))
   } catch (e: any) {
-    message.error(e.message || t('settings.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.saveFailed'))
   }
 }
 
@@ -317,7 +318,7 @@ async function handlePauseDownload() {
       message.info(t('settings.embeddingModelMgmt.paused'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.saveFailed'))
   }
 }
 
@@ -330,7 +331,7 @@ async function handleResumeDownload() {
       message.info(t('settings.embeddingModelMgmt.resumed'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.saveFailed'))
   }
 }
 
@@ -343,7 +344,7 @@ async function handleCancelDownload() {
       message.info(t('settings.embeddingModelMgmt.cancelled'))
     }
   } catch (e: any) {
-    message.error(e.message || t('settings.saveFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.saveFailed'))
   }
 }
 
@@ -486,20 +487,20 @@ onMounted(async () => {
     }
     if (!config.value.llm_context_window) config.value.llm_context_window = 128000
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.loadConfigFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.msg.loadConfigFailed'))
   }
 
   try {
     sandboxConfig.value = await getSandboxNetwork()
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.loadSandboxFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.msg.loadSandboxFailed'))
   }
 
   try {
     const ra = await getReplAuth()
     replAuthSecret.value = ra.repl_auth_secret || ''
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.loadReplAuthFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.msg.loadReplAuthFailed'))
   }
 
   try {
@@ -507,7 +508,7 @@ onMounted(async () => {
     httpsEnabled.value = hs.https_enabled
     httpsMeta.value = hs.cert_meta
   } catch (e: any) {
-    message.error(e.message || t('settings.msg.loadHttpsFailed'))
+    message.error(backendErrorMessage(e.message) || t('settings.msg.loadHttpsFailed'))
   }
 
   await loadEmbeddingStatus()

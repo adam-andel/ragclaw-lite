@@ -30,7 +30,7 @@ async def _repl_uid_or_403(user: User) -> int:
     """Resolve the user's sandbox UID, or 503 if the sandbox is uninitialised."""
     uid = await get_user_repl_uid(user.id)
     if uid is None:
-        raise HTTPException(503, detail="用户沙箱未初始化")
+        raise HTTPException(503, detail="WORKSPACE_SANDBOX_NOT_INIT")
     return uid
 
 
@@ -40,7 +40,7 @@ def _ws_headers(uid: int) -> dict:
 
     secret = config_manager.repl_auth_secret
     if not secret:
-        raise HTTPException(503, detail="REPL 认证未配置")
+        raise HTTPException(503, detail="WORKSPACE_REPL_AUTH_MISSING")
     return {"X-Repl-Auth": secret, "X-Repl-Uid": str(uid)}
 
 
@@ -59,9 +59,9 @@ async def _json_proxy(method: str, url: str, *, headers: dict,
                 method, url, headers=headers, json=json_body, params=params
             )
     except httpx.ConnectError:
-        raise HTTPException(503, detail="MCP REPL 服务不可用")
+        raise HTTPException(503, detail="WORKSPACE_MCP_UNAVAILABLE")
     except Exception as e:  # noqa: BLE001 - surface proxy failures uniformly
-        raise HTTPException(502, detail=f"工作空间代理错误: {e}")
+        raise HTTPException(502, detail=f"WORKSPACE_PROXY_ERROR: {e}")
 
     try:
         payload = resp.json()
@@ -127,17 +127,17 @@ async def download(
         )
     except httpx.ConnectError:
         await client.aclose()
-        raise HTTPException(503, detail="MCP REPL 服务不可用")
+        raise HTTPException(503, detail="WORKSPACE_MCP_UNAVAILABLE")
     except Exception as e:  # noqa: BLE001
         await client.aclose()
-        raise HTTPException(502, detail=f"下载代理错误: {e}")
+        raise HTTPException(502, detail=f"WORKSPACE_DOWNLOAD_ERROR: {e}")
 
     if resp.status_code == 404:
         await client.aclose()
-        raise HTTPException(404, detail="文件不存在")
+        raise HTTPException(404, detail="WORKSPACE_FILE_NOT_FOUND")
     if resp.status_code != 200:
         await client.aclose()
-        raise HTTPException(502, detail=f"MCP 错误 {resp.status_code}")
+        raise HTTPException(502, detail=f"WORKSPACE_MCP_STATUS: {resp.status_code}")
 
     async def _gen():
         try:
@@ -179,7 +179,7 @@ async def download_zip(
 
     src_paths = body.get("paths")
     if not isinstance(src_paths, list) or not src_paths:
-        raise HTTPException(400, detail="缺少要下载的路径")
+        raise HTTPException(400, detail="WORKSPACE_MISSING_PATHS")
     # Optional top-level folder name inside the archive.
     root_dir = (str(body.get("root", "") or "")).strip("/")
 

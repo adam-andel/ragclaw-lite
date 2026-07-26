@@ -97,7 +97,7 @@ async function fpLoadDirs() {
       return a.name.localeCompare(b.name)
     })
   } catch (e: any) {
-    nmessage.error(e?.message || t('workspace.errors.load'))
+    nmessage.error(backendErrorMessage(e.message) || t('workspace.errors.load'))
     fpEntries.value = []
   } finally {
     fpLoading.value = false
@@ -257,7 +257,7 @@ async function wsLoadDirs() {
     // Only show immediate subdirectories in the selector.
     wsDirs.value = (data.entries || []).filter(e => e.type === 'dir')
   } catch (e: any) {
-    nmessage.error(e?.message || t('workspace.errors.load'))
+    nmessage.error(backendErrorMessage(e.message) || t('workspace.errors.load'))
     wsDirs.value = []
   } finally {
     wsLoading.value = false
@@ -297,7 +297,7 @@ async function wsCreateDir() {
     wsCurrentPath.value = full
     await wsLoadDirs()
   } catch (e: any) {
-    nmessage.error(e?.message || t('workspace.errors.create'))
+    nmessage.error(backendErrorMessage(e.message) || t('workspace.errors.create'))
   }
 }
 

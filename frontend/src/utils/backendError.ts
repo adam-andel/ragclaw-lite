@@ -10,7 +10,10 @@ const PREFIX = 'errors.backendErrorCodes.'
 export function backendErrorMessage(raw?: string | null): string {
   if (!raw) return ''
   const code = raw.split(':', 1)[0]
-  const localized = i18n.global.t(PREFIX + code) as string
-  if (localized && localized !== PREFIX + code) return localized
+  const detail = raw.slice(code.length + 1).trim()
+  const key = PREFIX + code
+  if (i18n.global.te(key)) {
+    return i18n.global.t(key, detail ? { detail } : undefined)
+  }
   return raw
 }
