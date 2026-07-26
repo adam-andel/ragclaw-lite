@@ -187,3 +187,24 @@ export async function startReindex(): Promise<{ started: boolean; reason?: strin
   const res = await client.post('/documents/reindex')
   return res.data
 }
+
+// ── HTTPS / TLS (nginx reverse proxy, prod only) ──
+export interface HTTPSConfig {
+  https_enabled: boolean
+  cert_configured: boolean
+  cert_meta: { subject: string; expires: string } | null
+}
+
+export async function getHttpsConfig(): Promise<HTTPSConfig> {
+  const res = await client.get('/config/https')
+  return res.data
+}
+
+export async function updateHttpsConfig(data: {
+  https_enabled: boolean
+  https_cert?: string
+  https_key?: string
+}): Promise<{ message: string; https_enabled: boolean; cert_configured: boolean; cert_meta: any }> {
+  const res = await client.put('/config/https', data)
+  return res.data
+}

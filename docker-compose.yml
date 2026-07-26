@@ -8,6 +8,9 @@ services:
       - "${RAGCLAW_PORT:+${RAGCLAW_PORT}:}8000"
     volumes:
       - ragclaw_data:/app/data
+      # Shared TLS material (cert/key + rendered nginx conf) written by the
+      # backend and read (ro) by the nginx reverse proxy.
+      - ragclaw_tls:/app/tls
     env_file:
       - path: .env
         required: false
@@ -41,6 +44,29 @@ services:
       ragclaw: {}
       ragclaw-internal:
         ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.3
+
+  # ── nginx reverse proxy (TLS termination + force-HTTPS, prod only) ──
+  # Terminates TLS on 443, proxies everything to ragclaw:8000 (which serves
+  # both the API and the SPA), and sets HSTS. The backend writes the cert/key
+  # + rendered conf into the shared ragclaw_tls volume; nginx mounts it ro and
+  # hot-reloads via inotify (see nginx/tls-entrypoint.sh). Port 80 is NOT
+  # published by default, so there is no plaintext HTTP entry point — "force
+  # HTTPS" holds by construction. Set RAGCLAW_HTTPS_PORT to pin the host port
+  # (e.g. 443); unset => docker assigns a random host port.
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-nginx
+    ports:
+      - "${RAGCLAW_HTTPS_PORT:+${RAGCLAW_HTTPS_PORT}:}443"
+    volumes:
+      - ragclaw_tls:/etc/nginx/conf.d:ro
+    depends_on:
+      - ragclaw
+    networks:
+      - ragclaw
+    restart: unless-stopped
 
   # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
@@ -191,4 +217,8 @@ volumes:
   # Persisted REPL auth secret written by mcp-repl and read back at startup
   # (mirrors ragclaw_policy; removes the transient 403 window after a restart).
   ragclaw_auth_secret:
+    driver: local
+  # Shared TLS material (cert/key + rendered nginx conf) between the backend
+  # (writer) and the nginx reverse proxy (reader, ro).
+  ragclaw_tls:
     driver: local

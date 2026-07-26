@@ -9,10 +9,17 @@ import os
 import secrets
 import threading
 import uuid
+from pathlib import Path
 
+from cryptography import x509
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_private_key,
+    Encoding,
+    PublicFormat,
+)
 
 from app.config import settings
 
@@ -189,6 +196,83 @@ def _generate_repl_auth_secret() -> str:
     return secrets.token_hex(32)
 
 
+# ── HTTPS / TLS materialization (nginx reverse proxy, prod only) ──
+# The backend writes the certificate, key and a rendered nginx server config
+# into this shared volume; the nginx container mounts it read-only and hot-
+# reloads on change (no docker.sock needed). In dev (volume not mounted) writes
+# are best-effort no-ops.
+TLS_DIR = Path("/app/tls")
+
+
+def _validate_cert_key(cert_pem: str, key_pem: str) -> dict:
+    """Validate a PEM certificate (leaf) + private key pair.
+
+    Returns cert metadata (subject + expiry). Raises ValueError on any
+    parse/format/mismatch problem so the caller can surface a 400.
+    """
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"证书解析失败: {e}")
+    try:
+        key = load_pem_private_key(key_pem.encode("utf-8"), password=None)
+    except TypeError:
+        raise ValueError("私钥受密码保护，请提供未加密的 PEM 私钥")
+    except Exception as e:
+        raise ValueError(f"私钥解析失败: {e}")
+    try:
+        key_pub = key.public_key().public_bytes(Encoding.DER)
+    except Exception:
+        raise ValueError("不支持的私钥格式（需未加密的 PEM 私钥）")
+    if cert.public_key().public_bytes(Encoding.DER) != key_pub:
+        raise ValueError("证书与私钥不匹配")
+    subject = cert.subject.rfc4514_string()
+    try:
+        not_after = cert.not_valid_after_utc
+    except Exception:
+        not_after = cert.not_valid_after
+    return {"subject": subject, "expires": not_after.strftime("%Y-%m-%d")}
+
+
+def _render_nginx_conf(https_enabled: bool) -> str:
+    """Render the nginx server config written to the shared TLS volume.
+
+    When HTTPS is enabled only a 443 TLS server (with HSTS) is emitted, so there
+    is no plaintext HTTP entry point — "force HTTPS" holds by construction.
+    When disabled only an HTTP reverse proxy is emitted.
+    """
+    common = (
+        "\n"
+        "        proxy_pass http://ragclaw:8000;\n"
+        "        proxy_set_header Host $host;\n"
+        "        proxy_set_header X-Real-IP $remote_addr;\n"
+        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+        "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+        "        proxy_http_version 1.1;\n"
+        "        proxy_buffering off;\n"
+        "        proxy_read_timeout 3600s;\n"
+    )
+    if https_enabled:
+        return (
+            "server {\n"
+            "    listen 443 ssl;\n"
+            "    server_name _;\n"
+            "    ssl_certificate     /etc/nginx/conf.d/fullchain.pem;\n"
+            "    ssl_certificate_key /etc/nginx/conf.d/privkey.pem;\n"
+            "    ssl_protocols TLSv1.2 TLSv1.3;\n"
+            "    add_header Strict-Transport-Security \"max-age=63072000; includeSubDomains\" always;\n"
+            "    location / {" + common + "    }\n"
+            "}\n"
+        )
+    return (
+        "server {\n"
+        "    listen 80;\n"
+        "    server_name _;\n"
+        "    location / {" + common + "    }\n"
+        "}\n"
+    )
+
+
 class ConfigManager:
     """Thread-safe singleton for runtime configuration."""
 
@@ -240,6 +324,12 @@ class ConfigManager:
                     stored_emb = saved.get("embedding_api_key", "")
                     if stored_emb:
                         self._config["embedding_api_key"] = stored_emb
+                    stored_cert = saved.get("https_cert", "")
+                    if stored_cert:
+                        self._config["https_cert"] = stored_cert
+                    stored_https_key = saved.get("https_key", "")
+                    if stored_https_key:
+                        self._config["https_key"] = stored_https_key
                     legacy_file_existed = True
                     print("[ConfigManager] loaded encrypted config")
                 except Exception as e:
@@ -267,6 +357,8 @@ class ConfigManager:
             # Server (startup-time only)
             "server_host": "0.0.0.0",
             "server_port": 8000,
+            # HTTPS / TLS (nginx reverse proxy, prod only)
+            "https_enabled": False,
             # System prompt (zh = original field; en = A/B variant selected by prompt_language)
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
@@ -294,6 +386,8 @@ class ConfigManager:
             "embedding_model": settings.embedding_model,
             "server_host": "0.0.0.0",
             "server_port": 8000,
+            # HTTPS / TLS (nginx reverse proxy, prod only)
+            "https_enabled": False,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
             "prompt_language": "en",
@@ -344,11 +438,13 @@ class ConfigManager:
                 print("[ConfigManager] migrated legacy config.enc to key-only format")
 
     def _persist_keys_locked(self):
-        """Write only API keys to encrypted file. Must hold _lock."""
+        """Write only API keys + HTTPS material to encrypted file. Must hold _lock."""
         self._config_file.parent.mkdir(parents=True, exist_ok=True)
         keys_only = {
             "llm_api_key": self._config.get("llm_api_key", ""),
             "embedding_api_key": self._config.get("embedding_api_key", ""),
+            "https_cert": self._config.get("https_cert", ""),
+            "https_key": self._config.get("https_key", ""),
         }
         plain = json.dumps(keys_only, ensure_ascii=False)
         self._config_file.write_bytes(_encrypt(plain))
@@ -525,6 +621,8 @@ class ConfigManager:
             c = dict(self._config)
             c["llm_api_key"] = _mask(c.get("llm_api_key", ""))
             c["embedding_api_key"] = _mask(c.get("embedding_api_key", ""))
+            c["https_cert"] = _mask(c.get("https_cert", "")) if c.get("https_cert") else ""
+            c["https_key"] = _mask(c.get("https_key", "")) if c.get("https_key") else ""
             # Mask the REPL auth secret in the general config payload; the
             # dedicated /api/config/repl-auth endpoint returns the real value.
             c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
@@ -544,10 +642,11 @@ class ConfigManager:
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret",
+            "https_enabled", "https_cert", "https_key",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 
-        encrypted_patch = {k: v for k, v in patch.items() if k in {"llm_api_key", "embedding_api_key"}}
+        encrypted_patch = {k: v for k, v in patch.items() if k in {"llm_api_key", "embedding_api_key", "https_cert", "https_key"}}
         db_patch = {k: v for k, v in patch.items() if k not in {"llm_api_key", "embedding_api_key"}}
 
         with self._lock:
@@ -578,6 +677,104 @@ class ConfigManager:
                 else:
                     db.add(SystemSetting(setting_key=k, value=json.dumps(v, ensure_ascii=False)))
             await db.commit()
+
+    # ── HTTPS / TLS (nginx reverse proxy, prod only) ──
+
+    @property
+    def https_enabled(self) -> bool:
+        with self._lock:
+            return bool(self._config.get("https_enabled", False))
+
+    @property
+    def https_cert(self) -> str:
+        with self._lock:
+            return self._config.get("https_cert", "") or ""
+
+    @property
+    def https_key(self) -> str:
+        with self._lock:
+            return self._config.get("https_key", "") or ""
+
+    def get_https_config(self) -> dict:
+        """Masked HTTPS status for the settings UI (no secret material)."""
+        with self._lock:
+            enabled = bool(self._config.get("https_enabled", False))
+            meta = self._config.get("https_cert_meta")
+            cert = self._config.get("https_cert", "") or ""
+            key = self._config.get("https_key", "") or ""
+        return {
+            "https_enabled": enabled,
+            "cert_configured": bool(cert and key),
+            "cert_meta": meta,
+        }
+
+    def ensure_tls_config(self) -> None:
+        """Seed the shared TLS volume so nginx can start.
+
+        Called at startup. If HTTPS was previously enabled, re-materialize the
+        cert/key from the encrypted store; otherwise write an HTTP-only conf.
+        Failures are non-fatal (e.g. TLS volume not mounted in dev).
+        """
+        try:
+            enabled = self.https_enabled
+            cert = self.https_cert
+            key = self.https_key
+            if enabled and cert and key:
+                self._write_tls(cert, key, True)
+            else:
+                self._write_tls(None, None, False)
+        except Exception as e:  # pragma: no cover - best effort
+            print(f"[ConfigManager] TLS volume not available, skipping nginx config: {e}")
+
+    def _write_tls(self, cert: str | None, key: str | None, https_enabled: bool) -> None:
+        """Write cert/key + rendered nginx conf into the shared TLS volume."""
+        tls_dir = TLS_DIR
+        tls_dir.mkdir(parents=True, exist_ok=True)
+        default_conf = tls_dir / "default.conf"
+        if https_enabled and cert and key:
+            (tls_dir / "fullchain.pem").write_text(cert, encoding="utf-8")
+            (tls_dir / "privkey.pem").write_text(key, encoding="utf-8")
+            os.chmod(tls_dir / "fullchain.pem", 0o600)
+            os.chmod(tls_dir / "privkey.pem", 0o600)
+            default_conf.write_text(_render_nginx_conf(True), encoding="utf-8")
+        else:
+            for fname in ("fullchain.pem", "privkey.pem"):
+                p = tls_dir / fname
+                if p.exists():
+                    p.unlink()
+            default_conf.write_text(_render_nginx_conf(False), encoding="utf-8")
+
+    async def set_https(self, enabled: bool, cert: str | None, key: str | None) -> dict | None:
+        """Persist HTTPS settings and materialize TLS material.
+
+        Returns the cert metadata dict when enabled, else None. Raises
+        ValueError (surfaced as HTTP 400) when cert/key are invalid or missing.
+        """
+        cert = (cert or "").strip()
+        key = (key or "").strip()
+        if enabled:
+            if not cert or not key:
+                raise ValueError("certificate and private key are both required when enabling HTTPS")
+            meta = _validate_cert_key(cert, key)
+            self._write_tls(cert, key, True)
+            with self._lock:
+                self._config["https_enabled"] = True
+                self._config["https_cert"] = cert
+                self._config["https_key"] = key
+                self._config["https_cert_meta"] = meta
+            self._persist_keys_locked()
+            await self._save_db_settings({"https_enabled": True, "https_cert_meta": meta})
+            return meta
+        # Disabled: clear material + config
+        self._write_tls(None, None, False)
+        with self._lock:
+            self._config["https_enabled"] = False
+            self._config["https_cert"] = ""
+            self._config["https_key"] = ""
+            self._config["https_cert_meta"] = None
+        self._persist_keys_locked()
+        await self._save_db_settings({"https_enabled": False, "https_cert_meta": None})
+        return None
 
 
 # Module-level singleton

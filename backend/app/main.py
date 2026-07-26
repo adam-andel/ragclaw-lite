@@ -135,6 +135,10 @@ async def lifespan(app: FastAPI):
     # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
     await config_manager.init()
+    # Materialize TLS material (cert/key + nginx conf) into the shared volume so
+    # the nginx reverse proxy can serve HTTPS. No-op if the TLS volume is not
+    # mounted (e.g. dev stack).
+    config_manager.ensure_tls_config()
 
     # Best-effort, NON-BLOCKING warmup of the BGE embedding model. Spawned as a
     # background task (not awaited) so a slow or (rare) hung model load can

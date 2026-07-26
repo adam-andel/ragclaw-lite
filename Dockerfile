@@ -75,7 +75,7 @@ COPY backend/ backend/
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # ── Layer 6: Data dirs + non-root user (rarely changes) ──
-RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads /app/data/hf_cache && \
+RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads /app/data/hf_cache /app/tls && \
     useradd -m -s /bin/bash ragclaw && \
     chown -R ragclaw:ragclaw /app
 
