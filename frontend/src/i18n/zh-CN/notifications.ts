@@ -5,6 +5,8 @@ export default {
   markAllRead: '全部已读',
   markRead: '标记已读',
   read: '已读',
+  unread: '未读',
+  detail: '通知详情',
   empty: '暂无通知',
   title: '标题',
   content: '内容',

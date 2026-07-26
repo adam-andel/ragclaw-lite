@@ -2,12 +2,13 @@
 import { ref, onMounted, h, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  NCard, NDataTable, NTag, NSpace, NButton, NSpin, NEmpty,
-  NIcon, NPagination, NInput, NSelect,
+  NCard, NDataTable, NTag, NButton, NSpin, NEmpty,
+  NIcon, NPagination, NInput, NSelect, NPopconfirm,
 } from 'naive-ui'
-import { CheckmarkDone, Notifications, Search } from '@vicons/ionicons5'
+import { CheckmarkDone, Notifications, Search, Trash } from '@vicons/ionicons5'
 import { useNotificationStore } from '@/stores/notifications'
 import PageHeader from '@/components/common/PageHeader.vue'
+import AppModal from '@/components/common/AppModal.vue'
 import { useBrowserNotification } from '@/composables/useBrowserNotification'
 import type { NotificationItem } from '@/types'
 import type { DataTableColumns } from 'naive-ui'
@@ -32,7 +33,33 @@ const readOptions = [
   { label: t('notifications.filter.unread'), value: 'unread' },
 ]
 
+// Format ISO timestamp as YYYY-MM-DD HH:mm:ss (no milliseconds).
+function formatTime(iso?: string | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+const selected = ref<NotificationItem | null>(null)
+const showDetail = ref(false)
+
 const columns: DataTableColumns<NotificationItem> = [
+  {
+    title: t('notifications.title'),
+    key: 'title',
+    minWidth: 240,
+    render: (row: NotificationItem) => h(
+      'span',
+      { class: 'nt-title-cell', onClick: () => openDetail(row) },
+      [
+        !row.read ? h('span', { class: 'nt-dot' }) : null,
+        h('span', { class: 'nt-title-text' }, row.title),
+      ],
+    ),
+  },
   {
     title: t('common.type'),
     key: 'type',
@@ -44,41 +71,60 @@ const columns: DataTableColumns<NotificationItem> = [
     ),
   },
   {
-    title: t('notifications.title'),
-    key: 'title',
-    ellipsis: { tooltip: true },
-    render: (row: NotificationItem) => h(
-      'span',
-      { style: { fontWeight: row.read ? 'normal' : '600' } },
-      row.title,
-    ),
-  },
-  {
-    title: t('notifications.content'),
-    key: 'content',
-    ellipsis: { tooltip: true },
-  },
-  {
     title: t('common.time'),
     key: 'created_at',
     width: 170,
+    render: (row: NotificationItem) => h('span', formatTime(row.created_at)),
   },
   {
     title: t('common.action'),
     key: 'actions',
-    width: 120,
-    render: (row: NotificationItem) =>
-      h(NSpace, { size: 'small' }, {
-        default: () => [
-          !row.read
-            ? h(NButton, { size: 'tiny', onClick: () => notificationStore.markAsRead(row.id) }, {
-                default: () => t('notifications.markRead'),
-              })
-            : h(NTag, { type: 'default', size: 'small' }, { default: () => t('notifications.read') }),
-        ],
-      }),
+    width: 90,
+    render: (row: NotificationItem) => {
+      if (row.read) {
+        return h(NButton, { size: 'tiny', type: 'error', tertiary: true, onClick: () => onDelete(row) }, {
+          default: () => t('common.delete'),
+        })
+      }
+      return h(
+        NPopconfirm,
+        { onPositiveClick: () => onDelete(row) },
+        {
+          trigger: () =>
+            h(NButton, { size: 'tiny', type: 'error', tertiary: true }, { default: () => t('common.delete') }),
+          default: () => t('common.confirmDelete'),
+        },
+      )
+    },
   },
 ]
+
+function rowClassName(row: NotificationItem): string {
+  return row.read ? 'nt-row-read' : ''
+}
+
+async function openDetail(row: NotificationItem) {
+  selected.value = row
+  showDetail.value = true
+  if (!row.read) {
+    await notificationStore.markAsRead(row.id)
+  }
+}
+
+async function onDelete(row: NotificationItem) {
+  try {
+    await notificationStore.deleteNotification(row.id)
+    if (showDetail.value && selected.value?.id === row.id) {
+      showDetail.value = false
+    }
+  } catch (e) {
+    // error already logged in the store
+  }
+}
+
+function onDeleteSelected() {
+  if (selected.value) onDelete(selected.value)
+}
 
 async function load() {
   await notificationStore.fetchNotifications({
@@ -164,6 +210,7 @@ onMounted(load)
           :columns="columns"
           :data="notificationStore.notifications"
           :row-key="(row: NotificationItem) => row.id"
+          :row-class-name="rowClassName"
           :bordered="false"
           size="small"
           class="nt-table"
@@ -179,6 +226,42 @@ onMounted(load)
         @update:page="load"
       />
     </div>
+
+    <AppModal
+      v-model:show="showDetail"
+      :title="t('notifications.detail')"
+      size="detail"
+    >
+      <div v-if="selected" class="nt-detail">
+        <h3 class="nt-detail-title">{{ selected.title }}</h3>
+        <div class="nt-detail-meta">
+          <NTag :type="selected.type === 'cron_job' ? 'success' : 'default'" size="small">
+            {{ selected.type === 'cron_job' ? t('notifications.type.cron') : t('notifications.type.system') }}
+          </NTag>
+          <span class="nt-detail-time">{{ formatTime(selected.created_at) }}</span>
+        </div>
+        <div class="nt-detail-content">
+          <p class="nt-detail-body">{{ selected.content || '-' }}</p>
+        </div>
+      </div>
+      <template #footer>
+        <div class="nt-detail-footer">
+          <NButton v-if="selected && selected.read" type="error" @click="onDeleteSelected">
+            <template #icon><NIcon><Trash /></NIcon></template>
+            {{ t('common.delete') }}
+          </NButton>
+          <NPopconfirm v-else @positive-click="onDeleteSelected">
+            <template #trigger">
+              <NButton type="error">
+                <template #icon><NIcon><Trash /></NIcon></template>
+                {{ t('common.delete') }}
+              </NButton>
+            </template>
+            {{ t('common.confirmDelete') }}
+          </NPopconfirm>
+        </div>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -202,6 +285,60 @@ onMounted(load)
 .nt-table {
   --n-th-text-color: var(--color-text-muted);
   --n-td-text-color: var(--color-text);
+}
+.nt-table :deep(.n-data-table-th) {
+  text-align: center;
+}
+.nt-table :deep(tr.nt-row-read td) {
+  color: var(--color-text-muted);
+}
+.nt-table :deep(.nt-title-cell) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
+}
+.nt-table :deep(.nt-dot) {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-error, #d03050);
+  flex-shrink: 0;
+}
+.nt-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.nt-detail-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: inherit;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.nt-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+.nt-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nt-detail-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+.nt-detail-footer {
+  display: flex;
+  justify-content: flex-end;
 }
 .nt-empty {
   padding: 64px 0;

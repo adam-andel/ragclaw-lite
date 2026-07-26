@@ -5,6 +5,7 @@ import {
   getUnreadNotificationCount,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  deleteNotification as deleteNotificationApi,
   type ListNotificationsParams,
 } from '@/api/notifications'
 import type { NotificationItem } from '@/types'
@@ -81,6 +82,26 @@ export const useNotificationStore = defineStore('notifications', () => {
       latestUnread.value = null
     } catch (e) {
       console.error('[Notifications] mark all read failed', e)
+    }
+  }
+
+  async function deleteNotification(id: string) {
+    try {
+      await deleteNotificationApi(id)
+      const idx = notifications.value.findIndex(n => n.id === id)
+      if (idx !== -1) {
+        if (!notifications.value[idx].read) {
+          unreadCount.value = Math.max(0, unreadCount.value - 1)
+        }
+        notifications.value.splice(idx, 1)
+        total.value = Math.max(0, total.value - 1)
+      }
+      if (latestUnread.value?.id === id) {
+        latestUnread.value = null
+      }
+    } catch (e) {
+      console.error('[Notifications] delete failed', e)
+      throw e
     }
   }
 
@@ -168,6 +189,7 @@ export const useNotificationStore = defineStore('notifications', () => {
     fetchNotifications,
     markAsRead,
     markAllRead,
+    deleteNotification,
     showToast,
     hideToast,
     poll,

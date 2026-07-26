@@ -27,3 +27,6 @@ export const markNotificationAsRead = (id: string) =>
 
 export const markAllNotificationsAsRead = () =>
   client.patch<{ marked_as_read: number }>('/notifications/read-all').then(r => r.data)
+
+export const deleteNotification = (id: string) =>
+  client.delete<{ id: string; deleted: boolean }>(`/notifications/${id}`).then(r => r.data)

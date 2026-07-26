@@ -5,6 +5,8 @@ export default {
   markAllRead: 'Mark All as Read',
   markRead: 'Mark as Read',
   read: 'Read',
+  unread: 'Unread',
+  detail: 'Notification Detail',
   empty: 'No notifications',
   title: 'Title',
   content: 'Content',

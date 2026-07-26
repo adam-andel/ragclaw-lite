@@ -131,3 +131,20 @@ async def mark_all_notifications_read(
         n.read_at = now
     await db.commit()
     return {"marked_as_read": len(notifications)}
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single notification for the current user."""
+    notification = await db.get(Notification, notification_id)
+    if not notification:
+        raise HTTPException(404, "通知不存在")
+    if notification.user_id != current_user.id:
+        raise HTTPException(403, "无权访问")
+    await db.delete(notification)
+    await db.commit()
+    return {"id": notification_id, "deleted": True}
