@@ -268,7 +268,7 @@ function formatTime(value: string) {
     <!-- Detail Modal -->
     <AppModal
       v-model:show="showDetail"
-      :title="detailUser?.username || t('users.detailTitle')"
+      :title="t('users.detailTitle')"
       size="detail"
     >
       <NSpin :show="loading">

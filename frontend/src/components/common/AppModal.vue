@@ -108,6 +108,11 @@ const modalAttrs = computed(() => {
   min-height: 0;
   overflow-y: auto;
 }
+/* Smaller modal title. The title (from the `title` prop) is rendered inside
+   .n-card-header__main; scope it to .app-modal so only these modals are affected. */
+.app-modal.n-card > .n-card-header .n-card-header__main {
+  font-size: 1rem;
+}
 /* Faster open/close transition.
    IMPORTANT: in naive-ui the fade-in-scale-up transition classes are applied to the `.n-modal-body-wrapper`
    (the <Transition> root), NOT to the `.n-card`. So the previous rule that only targeted

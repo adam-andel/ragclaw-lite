@@ -1241,7 +1241,7 @@ async function loadSupportedTypes() {
     </AppModal>
 
     <!-- Document Detail Modal -->
-    <AppModal v-model:show="showDetail" :title="detailDoc?.filename || t('documents.docDetail')"
+    <AppModal v-model:show="showDetail" :title="t('documents.docDetail')"
       size="detail"
       @after-leave="detailDoc = null; showDetailChunks = false"
     >

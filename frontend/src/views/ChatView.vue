@@ -3,7 +3,7 @@ import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
-import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NSpin, useMessage, useDialog } from 'naive-ui'
+import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NSpin, NSwitch, NTooltip, useMessage, useDialog } from 'naive-ui'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -1048,9 +1048,23 @@ function newConversation() {
 }
 
 const isComposing = ref(false)
+// Send shortcut mode: 'enter' = Enter sends (Shift+Enter for newline);
+// 'shiftEnter' = Shift+Enter sends, plain Enter inserts a newline.
+type SendMode = 'enter' | 'shiftEnter'
+const SEND_MODE_KEY = 'chat.sendMode'
+const sendMode = ref<SendMode>(localStorage.getItem(SEND_MODE_KEY) === 'shiftEnter' ? 'shiftEnter' : 'enter')
+watch(sendMode, (v) => localStorage.setItem(SEND_MODE_KEY, v))
+
 function handleKeydown(e: KeyboardEvent) {
   if (isComposing.value) return
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+  if (e.key !== 'Enter') return
+  if (sendMode.value === 'shiftEnter') {
+    // Shift+Enter sends; plain Enter falls through to newline.
+    if (e.shiftKey) { e.preventDefault(); sendMessage() }
+    return
+  }
+  // 'enter' mode: Enter sends, Shift+Enter inserts a newline.
+  if (!e.shiftKey) { e.preventDefault(); sendMessage() }
 }
 </script>
 
@@ -1384,6 +1398,21 @@ function handleKeydown(e: KeyboardEvent) {
           <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
           <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
         </div>
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NSwitch
+              v-model:value="sendMode"
+              checked-value="shiftEnter"
+              unchecked-value="enter"
+              size="small"
+              class="send-mode-switch"
+            >
+              <template #checked>{{ t('chat.sendModeShiftEnter') }}</template>
+              <template #unchecked>{{ t('chat.sendModeEnter') }}</template>
+            </NSwitch>
+          </template>
+          {{ sendMode === 'shiftEnter' ? t('chat.sendModeShiftEnterHint') : t('chat.sendModeEnterHint') }}
+        </NTooltip>
       </div>
       <div class="chat-input-area">
         <NButton
@@ -2007,6 +2036,12 @@ function handleKeydown(e: KeyboardEvent) {
 }
 .ws-create-input {
   width: 180px;
+}
+
+/* ── Send-mode switch (Enter vs Shift+Enter), in the toolbar row ── */
+.send-mode-switch {
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 /* ── Attach ("+") button left of the input box ── */

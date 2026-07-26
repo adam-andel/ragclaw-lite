@@ -699,7 +699,7 @@ onMounted(() => {
     <!-- Detail Modal -->
     <AppModal
       v-model:show="showDetail"
-      :title="detailSkill?.name || t('skills.detailTitle')"
+      :title="t('skills.detailTitle')"
       size="detail"
     >
       <NSpin :show="detailLoading">
