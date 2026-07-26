@@ -137,7 +137,18 @@ const roleColor = computed(() => {
 
 <template>
   <div class="profile-page">
-    <PageHeader :title="t('profile.title')" title-tag="h1" />
+    <PageHeader :title="t('profile.title')" :icon="PersonCircle">
+      <template #actions>
+        <NButton
+          type="primary"
+          :loading="saving"
+          :disabled="!form.display_name.trim()"
+          @click="handleSave"
+        >
+          {{ t('profile.saveChanges') }}
+        </NButton>
+      </template>
+    </PageHeader>
 
     <NCard class="profile-card" :bordered="false">
       <!-- Avatar -->
@@ -174,7 +185,7 @@ const roleColor = computed(() => {
       </div>
 
       <!-- Form -->
-      <NForm label-placement="left" label-width="100" :style="{ maxWidth: '480px' }">
+      <NForm label-placement="left" label-width="100" :style="{ maxWidth: '480px', margin: '0 auto' }">
         <NFormItem :label="t('profile.username')">
           <NInput
             :value="auth.user?.username"
@@ -246,17 +257,6 @@ const roleColor = computed(() => {
             </template>
           </NInput>
         </NFormItem>
-
-        <NFormItem :show-feedback="false">
-          <NButton
-            type="primary"
-            :loading="saving"
-            :disabled="!form.display_name.trim()"
-            @click="handleSave"
-          >
-            {{ t('profile.saveChanges') }}
-          </NButton>
-        </NFormItem>
       </NForm>
     </NCard>
   </div>
@@ -264,8 +264,9 @@ const roleColor = computed(() => {
 
 <style scoped>
 .profile-page {
-  max-width: 680px;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 .profile-card {
   background: var(--color-surface);
