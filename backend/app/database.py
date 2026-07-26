@@ -115,6 +115,13 @@ def _run_alembic_upgrade():
     cfg.set_main_option("script_location", str(base_dir / "migrations"))
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
     command.upgrade(cfg, "head")
+    # Alembic's env.py calls fileConfig(alembic.ini), which attaches its own
+    # timestamp-less "console" handler to the root logger — duplicating every
+    # ragclaw.* line our handler emits. Re-apply our logging setup immediately
+    # so startup-time ragclaw INFO logs (MCP push, BGE warmup, ...) are not
+    # doubled before the first HTTP request reaches the per-request middleware.
+    from app.logging_config import setup_logging
+    setup_logging()
 
 
 def _seed_db():
