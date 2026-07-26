@@ -237,13 +237,26 @@ def _validate_cert_key(cert_pem: str, key_pem: str) -> dict:
 def _render_nginx_conf(https_enabled: bool) -> str:
     """Render the nginx server config written to the shared TLS volume.
 
-    When HTTPS is enabled only a 443 TLS server (with HSTS) is emitted, so there
-    is no plaintext HTTP entry point — "force HTTPS" holds by construction.
-    When disabled only an HTTP reverse proxy is emitted.
+    HTTPS is OPTIONAL: the feature does not force you to enable it. When it is
+    OFF, an HTTP reverse proxy on port 80 serves the site over plain HTTP.
+
+    When HTTPS is ON, HTTP is FORCED to HTTPS: the port-80 server issues a 301
+    redirect to https://$host, and a 443 TLS server (with HSTS) is the only one
+    that actually serves content. The backend itself is never published to the
+    host — all traffic reaches it through nginx.
+
+    The backend is referenced via a runtime-resolved variable (resolver
+    127.0.0.11 = Docker's embedded DNS) instead of a static upstream host. nginx
+    would otherwise try to resolve "ragclaw" at CONFIG-LOAD time and fail fatally
+    ("host not found in upstream") whenever the backend container is not yet
+    registered in Docker DNS when nginx starts. The backend depends_on nginx, so
+    nginx ALWAYS starts first — hence the runtime resolver is required for a
+    reliable startup.
     """
-    common = (
-        "\n"
-        "        proxy_pass http://ragclaw:8000;\n"
+    # Proxy location body. Uses $backend_upstream (defined per server block) so
+    # nginx resolves the backend hostname per request instead of at config load.
+    location_body = (
+        "        proxy_pass http://$backend_upstream;\n"
         "        proxy_set_header Host $host;\n"
         "        proxy_set_header X-Real-IP $remote_addr;\n"
         "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -252,25 +265,46 @@ def _render_nginx_conf(https_enabled: bool) -> str:
         "        proxy_buffering off;\n"
         "        proxy_read_timeout 3600s;\n"
     )
-    if https_enabled:
+    resolver = "    resolver 127.0.0.11 valid=10s ipv6=off;\n"
+    set_upstream = "    set $backend_upstream ragclaw:8000;\n"
+
+    https_server = (
+        "server {\n"
+        "    listen 443 ssl;\n"
+        "    server_name _;\n"
+        "    ssl_certificate     /etc/nginx/conf.d/fullchain.pem;\n"
+        "    ssl_certificate_key /etc/nginx/conf.d/privkey.pem;\n"
+        "    ssl_protocols TLSv1.2 TLSv1.3;\n"
+        "    add_header Strict-Transport-Security \"max-age=63072000; includeSubDomains\" always;\n"
+        + resolver
+        + set_upstream
+        + "    location / {\n"
+        + location_body
+        + "    }\n"
+        "}\n"
+    )
+    if not https_enabled:
+        # Plain HTTP only — port 80 reverse-proxies to the backend.
         return (
             "server {\n"
-            "    listen 443 ssl;\n"
+            "    listen 80;\n"
             "    server_name _;\n"
-            "    ssl_certificate     /etc/nginx/conf.d/fullchain.pem;\n"
-            "    ssl_certificate_key /etc/nginx/conf.d/privkey.pem;\n"
-            "    ssl_protocols TLSv1.2 TLSv1.3;\n"
-            "    add_header Strict-Transport-Security \"max-age=63072000; includeSubDomains\" always;\n"
-            "    location / {" + common + "    }\n"
+            + resolver
+            + set_upstream
+            + "    location / {\n"
+            + location_body
+            + "    }\n"
             "}\n"
         )
-    return (
+    # HTTPS enabled — force HTTP -> HTTPS via 301, then serve on 443.
+    http_redirect = (
         "server {\n"
         "    listen 80;\n"
         "    server_name _;\n"
-        "    location / {" + common + "    }\n"
+        "    return 301 https://$host$request_uri;\n"
         "}\n"
     )
+    return http_redirect + "\n" + https_server
 
 
 class ConfigManager:

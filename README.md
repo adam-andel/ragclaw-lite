@@ -81,13 +81,16 @@ cp .env.example .env
 docker compose -f docker-compose.yml up -d
 
 # 3. Access / 访问
-# Host port is randomly assigned by Docker by default (unless RAGCLAW_PORT is set in .env).
-# The startup script auto-detects the real port and prints the URL, e.g. http://localhost:<port>/docs
-# You can also query the actual host port anytime:
-docker compose -f docker-compose.yml port ragclaw 8000
+# In production ALL traffic goes through the nginx reverse proxy — the only
+# published entry point. nginx publishes :80 (HTTP) and :443 (HTTPS, when
+# enabled), pinned by RAGCLAW_HTTP_PORT / RAGCLAW_HTTPS_PORT, or random if unset.
+# The startup script auto-detects the real port and prints the URL.
+# You can also query the actual host port(s) anytime:
+docker compose -f docker-compose.yml port nginx 80
+# docker compose -f docker-compose.yml port nginx 443   # only when HTTPS is enabled
 ```
 
-> Production mode reads only `docker-compose.yml`: backend is loaded via `PYTHONPATH=/app/backend`, frontend is built into a static `dist` served by the backend — everything packaged into the image, suited for demos and production.
+> Production mode reads only `docker-compose.yml`: backend is loaded via `PYTHONPATH=/app/backend`, frontend is built into a static `dist` served by the backend, and the **nginx** reverse proxy (TLS optional, toggled on the Settings → HTTPS page) is the only published entry point — all traffic is proxied to the backend, whose container port is not exposed on the host. Everything is packaged into the image, suited for demos and production.
 > 生产模式只读取 `docker-compose.yml`：backend 通过 `PYTHONPATH=/app/backend` 加载、frontend 构建为静态 `dist` 由后端托管，全部打包进镜像，适合演示与生产环境。
 
 ### Method 2 — Development (Docker hot-reload, recommended) ⭐ / 方式二：开发模式（热重载，推荐）
@@ -104,7 +107,7 @@ docker compose -f docker-compose.yml port ragclaw 8000
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
-- **Backend (in-container `:8000`, random host port)** — local `./backend` is bind-mounted into the container; `uvicorn --reload` watches for changes and restarts the worker automatically, **no image rebuild needed**. Set `RAGCLAW_PORT` to pin the host port.
+- **Backend (in-container `:8000`, NOT published to host)** — local `./backend` is bind-mounted into the container; `uvicorn --reload` watches for changes and restarts the worker automatically, **no image rebuild needed**. The backend is reachable only inside the compose network (the Vite dev server and nginx proxy to it via `ragclaw:8000`); its port is not published, so `RAGCLAW_PORT` is no longer used.
 - **Frontend (in-container `:5173`, random host port)** — a separate `frontend-dev` container runs Vite HMR; `/api` is proxied to the backend via `VITE_PROXY_TARGET=http://ragclaw:8000` (over the compose network, not `localhost`). Set `RAGCLAW_FRONTEND_PORT` to pin the host port.
 - The daily access URL is printed by the startup script (host port is random — use `docker compose ... port frontend-dev 5173` or the script output; **don't assume `http://localhost:5173`**).
 
@@ -141,6 +144,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 > **RAG ↔ Claw.** Claw's native file/code abilities (REPL sandbox + workspace API) are always available — the agent's "hands". RAG retrieval fires only when a conversation touches the knowledge base / documents, feeding "reference docs" into context as one of its knowledge sources. Both are first-class engines of the same agent.
 > **RAG 与 Claw 并重。** Claw 的原生文件 / 代码能力（REPL 沙箱 + 工作区 API）始终可用，是智能体的「手」；RAG 检索只在对话涉及知识库 / 文档时触发，把「参考文档」作为上下文喂给智能体，是其「知识来源」之一。二者同为这个智能体的一等公民。
+
+> **Deployment entry point (nginx).** In production, all inbound traffic reaches the app through the **nginx** reverse proxy — the only published entry point. The backend listens on `:8000` only inside the internal `ragclaw` network (not published to the host). nginx terminates TLS when HTTPS is enabled (toggle it on **Settings → HTTPS**, paste a cert + key, and nginx hot-reloads), and otherwise serves plain HTTP. See the `nginx/` directory and `RAGCLAW_HTTP_PORT` / `RAGCLAW_HTTPS_PORT` in `.env.example`.
+> **部署入口（nginx）。** 生产环境所有入站流量都经过 **nginx** 反向代理——它是唯一的对外入口。后端只在内部 `ragclaw` 网络监听 `:8000`（不发布到宿主）。开启 HTTPS 后 nginx 负责终结 TLS（在「设置 → HTTPS」里开启、粘贴证书 + 私钥，nginx 即热重载），否则以明文 HTTP 提供服务。详见 `nginx/` 目录与 `.env.example` 中的 `RAGCLAW_HTTP_PORT` / `RAGCLAW_HTTPS_PORT`。
 
 ---
 
@@ -208,9 +214,12 @@ Because the workspace is shared with the sandbox, what you drop in becomes insta
 
 ```
 ragclaw/
-├── docker-compose.yml          # Production deploy (code baked into image)
+├── docker-compose.yml          # Production deploy (code baked into image; nginx entry point)
 ├── docker-compose.dev.yml      # Dev overlay: bind mount + hot-reload (used with the above)
 ├── Dockerfile                  # Multi-stage build (production image)
+├── nginx/                      # nginx reverse proxy: TLS termination, the only published entry point
+│   ├── Dockerfile
+│   └── tls-entrypoint.sh       # renders conf from shared volume + inotify hot-reload
 ├── frontend/Dockerfile.dev     # Frontend dev image (Vite HMR)
 ├── .env.example                # Environment variable template
 │
@@ -289,7 +298,7 @@ Docker Desktop 使用 WSL2 后端。若项目位于 Windows 宿主机，bind mou
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
-- **Backend (in-container `:8000`, random host port)** — `./backend` is bind-mounted into `/app/backend`; `uvicorn --reload --reload-dir backend` watches for changes and restarts the worker. Since the image sets `PYTHONPATH=/app/backend` ahead of `site-packages`, no editable install is needed. Set `RAGCLAW_PORT` to pin the host port.
+- **Backend (in-container `:8000`, NOT published to host)** — `./backend` is bind-mounted into `/app/backend`; `uvicorn --reload --reload-dir backend` watches for changes and restarts the worker. Since the image sets `PYTHONPATH=/app/backend` ahead of `site-packages`, no editable install is needed. The backend is reachable only inside the compose network (the Vite dev server proxies `/api` to `ragclaw:8000`); its port is not published, so `RAGCLAW_PORT` is no longer used.
 - **Frontend (in-container `:5173`, random host port)** — the `frontend-dev` container runs Vite; `/api` is proxied over the compose network via `VITE_PROXY_TARGET=http://ragclaw:8000` (in-container `localhost` points to itself, so the service name `ragclaw` is required). Set `RAGCLAW_FRONTEND_PORT` to pin the host port.
 
 ### Hot-reload behavior / 热重载行为
@@ -337,7 +346,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 | Tool protocol | MCP (HTTP + stdio) | External tool integration |
 | Frontend | Vue3 + TS + NaiveUI | Enterprise admin UI (workspace / skills / KB) |
 | Build | Vite + UnoCSS | Sub-second HMR |
-| Deploy | Docker Compose | Production bakes code into image; dev mode overlays hot-reload |
+| Deploy | Docker Compose + nginx | Production bakes code into image; **nginx** is the single entry point (TLS optional, hot-reload on cert change); dev mode overlays hot-reload |
 
 ---
 
@@ -382,10 +391,10 @@ An old DB built by the legacy mechanism will error on `alembic upgrade head` bec
 
 ## 📝 API Docs / API 文档
 
-After starting, visit Swagger UI (host port is randomly assigned by Docker by default, unless `RAGCLAW_PORT` is set in `.env`):
+After starting, visit Swagger UI at the nginx entry point (host port is randomly assigned by Docker by default, unless `RAGCLAW_HTTP_PORT` / `RAGCLAW_HTTPS_PORT` is set in `.env`):
 
-- The startup script prints the real URL, e.g. `http://localhost:<actual-port>/docs`
-- Or query manually: `docker compose -f docker-compose.yml port ragclaw 8000`
+- The startup script prints the real URL, e.g. `http://localhost:<actual-port>/docs` (or `https://localhost:<actual-port>/docs` when HTTPS is enabled)
+- Or query manually: `docker compose -f docker-compose.yml port nginx 80` (and `... port nginx 443` when HTTPS is enabled)
 
 **New endpoints (v0.5.0)**:
 
@@ -399,6 +408,7 @@ After starting, visit Swagger UI (host port is randomly assigned by Docker by de
 | `PATCH/DELETE /api/mcp/servers/{id}` | MCP Server edit/delete |
 | `POST /api/mcp/servers/{id}/test` | MCP connection test |
 | `POST /api/chat/stream` | New `skill_id` param |
+| `GET / PUT /api/config/https` | HTTPS settings (enable + cert/key); nginx hot-reloads on change |
 
 ---
 

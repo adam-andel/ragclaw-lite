@@ -4,8 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-lite
-    ports:
-      - "${RAGCLAW_PORT:+${RAGCLAW_PORT}:}8000"
+    # Backend port is NOT published to the host — all traffic is proxied
+    # through the nginx service (see below). nginx reaches it on the internal
+    # `ragclaw` network at ragclaw:8000.
+    # The shared TLS volume is mounted rw here so the (non-root) backend can
+    # write default.conf + cert/key into it; nginx mounts the same volume and
+    # chmods it world-writable at startup so this write always succeeds.
+    depends_on:
+      - nginx
     volumes:
       - ragclaw_data:/app/data
       # Shared TLS material (cert/key + rendered nginx conf) written by the
@@ -45,25 +51,32 @@ services:
       ragclaw-internal:
         ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.3
 
-  # ── nginx reverse proxy (TLS termination + force-HTTPS, prod only) ──
-  # Terminates TLS on 443, proxies everything to ragclaw:8000 (which serves
-  # both the API and the SPA), and sets HSTS. The backend writes the cert/key
-  # + rendered conf into the shared ragclaw_tls volume; nginx mounts it ro and
-  # hot-reloads via inotify (see nginx/tls-entrypoint.sh). Port 80 is NOT
-  # published by default, so there is no plaintext HTTP entry point — "force
-  # HTTPS" holds by construction. Set RAGCLAW_HTTPS_PORT to pin the host port
-  # (e.g. 443); unset => docker assigns a random host port.
+  # ── nginx reverse proxy (always proxies; TLS optional, prod only) ──
+  # Proxies ALL traffic to ragclaw:8000 (API + SPA). The backend port is not
+  # published to the host, so every request goes through nginx.
+  #   HTTPS OFF: only an 80 HTTP reverse proxy is served (plain HTTP).
+  #   HTTPS ON : 80 issues a 301 redirect to HTTPS, and a 443 TLS server (with
+  #              HSTS) is the sole content server — i.e. HTTPS is FORCED once
+  #              enabled. So HTTPS is optional to turn on, but once on it forces
+  #              all traffic to HTTPS.
+  # The backend writes the cert/key + rendered conf into the shared ragclaw_tls
+  # volume; nginx mounts it (rw, so the non-root backend can write) and
+  # hot-reloads via inotify (nginx/tls-entrypoint.sh). The entrypoint chmods the
+  # dir world-writable so the backend's write always succeeds.
+  # Host ports mirror the former backend-port strategy:
+  #   RAGCLAW_HTTP_PORT  -> published :80  (HTTP; redirect target when HTTPS on)
+  #   RAGCLAW_HTTPS_PORT -> published :443 (HTTPS, when enabled)
+  # Unset => docker assigns random host ports.
   nginx:
     build:
       context: ./nginx
       dockerfile: Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-nginx
     ports:
+      - "${RAGCLAW_HTTP_PORT:+${RAGCLAW_HTTP_PORT}:}80"
       - "${RAGCLAW_HTTPS_PORT:+${RAGCLAW_HTTPS_PORT}:}443"
     volumes:
-      - ragclaw_tls:/etc/nginx/conf.d:ro
-    depends_on:
-      - ragclaw
+      - ragclaw_tls:/etc/nginx/conf.d
     networks:
       - ragclaw
     restart: unless-stopped
