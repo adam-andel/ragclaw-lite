@@ -103,13 +103,22 @@ function rowClassName(row: NotificationItem): string {
   return row.read ? 'nt-row-read' : ''
 }
 
-async function openDetail(row: NotificationItem) {
+// Clicking a title only opens the modal (identical to the working CronJobsView
+// pattern). We deliberately do NOT mark-as-read here: doing so mutates the list
+// and re-renders the table while the modal is mid-open, which interrupts the
+// modal and leaves it invisible. Instead we mark as read once the modal closes.
+function openDetail(row: NotificationItem) {
   selected.value = row
   showDetail.value = true
-  if (!row.read) {
-    await notificationStore.markAsRead(row.id)
-  }
 }
+
+// Mark the viewed notification as read after the modal has closed, so the list
+// re-render can never interfere with the modal's open transition.
+watch(showDetail, (open) => {
+  if (!open && selected.value && !selected.value.read) {
+    notificationStore.markAsRead(selected.value.id)
+  }
+})
 
 async function onDelete(row: NotificationItem) {
   try {
@@ -251,7 +260,7 @@ onMounted(load)
             {{ t('common.delete') }}
           </NButton>
           <NPopconfirm v-else @positive-click="onDeleteSelected">
-            <template #trigger">
+            <template #trigger>
               <NButton type="error">
                 <template #icon><NIcon><Trash /></NIcon></template>
                 {{ t('common.delete') }}

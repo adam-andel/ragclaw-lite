@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   listNotifications,
   getUnreadNotificationCount,
@@ -11,6 +12,7 @@ import {
 import type { NotificationItem } from '@/types'
 import router from '@/router'
 import { useBrowserNotification } from '@/composables/useBrowserNotification'
+import { useChatUnreadStore } from '@/stores/chatUnread'
 
 export const useNotificationStore = defineStore('notifications', () => {
   const unreadCount = ref(0)
@@ -23,9 +25,13 @@ export const useNotificationStore = defineStore('notifications', () => {
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let hideToastTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Browser desktop notification: only sent when the user has granted permission; lastNotifiedId is used for seeding and deduplication
+  // Browser desktop notification: only sent when the user has granted permission; lastNotifiedId is used for deduplication
   const { notify: notifyBrowser } = useBrowserNotification()
   let lastNotifiedId: string | null = null
+  // Whether the baseline (newest existing unread) has been recorded. The first
+  // poll only seeds this baseline so we never notify for notifications that
+  // already existed before the page loaded.
+  let seeded = false
 
   const hasUnread = computed(() => unreadCount.value > 0)
 
@@ -125,13 +131,30 @@ export const useNotificationStore = defineStore('notifications', () => {
   async function poll() {
     const previousCount = unreadCount.value
     await fetchUnreadCount()
+
+    // First poll: only record the current newest unread as the baseline, so we
+    // don't toast/notify for notifications that already existed at page load.
+    if (!seeded) {
+      seeded = true
+      try {
+        const data = await listNotifications({ page: 1, size: 1, unreadOnly: true })
+        lastNotifiedId = data.items[0]?.id ?? null
+      } catch (e) {
+        console.error('[Notifications] seed latest unread failed', e)
+      }
+      return
+    }
+
     if (unreadCount.value > previousCount) {
       try {
         const data = await listNotifications({ page: 1, size: 1, unreadOnly: true })
         if (data.items.length > 0) {
           const item = data.items[0]
-          showToast(item)
-          fireBrowserNotification(item)
+          if (item.id !== lastNotifiedId) {
+            lastNotifiedId = item.id
+            showToast(item)
+            fireBrowserNotification(item)
+          }
         }
       } catch (e) {
         console.error('[Notifications] poll latest unread failed', e)
@@ -139,16 +162,31 @@ export const useNotificationStore = defineStore('notifications', () => {
     }
   }
 
+  // Surface a browser notification when the chat "unread answer" red dot appears
+  // (the sidebar Chat label, or the history button dot in ChatView). `markUnread`
+  // is only called when an answer finishes for a conversation the user is NOT
+  // currently viewing, so this fires exactly when that red dot is shown.
+  const chatUnread = useChatUnreadStore()
+  const { t } = useI18n({ useScope: 'global' })
+  watch(
+    () => chatUnread.hasUnread,
+    (val, old) => {
+      if (val && !old) {
+        fireBrowserNotification({
+          id: 'chat-unread',
+          title: 'ragclaw',
+          content: t('chat.hasUnread'),
+          link: chatUnread.lastConversationId
+            ? `/chat/${chatUnread.lastConversationId}`
+            : '/chat',
+        })
+      }
+    },
+  )
+
   // When a new unread arrives, push a browser desktop notification only if the user has ALREADY granted permission.
   // Do not request permission during polling: permission requests must be triggered by a user gesture (see the notification center page button).
   function fireBrowserNotification(item: NotificationItem) {
-    // The first poll only seeds, to avoid popping browser notifications for old unread notices that existed before page load
-    if (lastNotifiedId === null) {
-      lastNotifiedId = item.id
-      return
-    }
-    if (item.id === lastNotifiedId) return
-    lastNotifiedId = item.id
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
     const instance = notifyBrowser(item.title, {
       body: item.content || '',
