@@ -70,4 +70,8 @@ export default {
   execCompleteWith: '执行完成：{result}',
   execFailed: '执行失败',
   loadLogFailed: '加载日志失败',
+  reset: '重置',
+  resetConfirm: '确定重置该任务？执行次数将清零并重新排期。',
+  resetSuccess: '任务已重置并重新排期',
+  resetFailed: '重置失败',
 }

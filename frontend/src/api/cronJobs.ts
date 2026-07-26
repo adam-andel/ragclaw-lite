@@ -25,6 +25,9 @@ export const deleteCronJob = (id: string) =>
 export const toggleCronJob = (id: string) =>
   client.post<CronJob>(`/cron-jobs/${id}/toggle`).then(r => r.data)
 
+export const resetCronJob = (id: string) =>
+  client.post<CronJob>(`/cron-jobs/${id}/reset`).then(r => r.data)
+
 export const runCronJobNow = (id: string) =>
   client.post<{ status: string; result?: string }>(`/cron-jobs/${id}/run-now`).then(r => r.data)
 

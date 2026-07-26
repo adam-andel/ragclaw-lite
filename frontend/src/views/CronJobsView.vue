@@ -7,14 +7,14 @@ import {
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NEmpty, NSelect,
 } from 'naive-ui'
-import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
+import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search, Refresh } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listCronJobs, createCronJob, updateCronJob, deleteCronJob,
-  toggleCronJob, runCronJobNow, listCronJobRuns,
+  toggleCronJob, runCronJobNow, resetCronJob, listCronJobRuns,
 } from '@/api/cronJobs'
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
 import { parseUtcTs } from '@/utils/datetime'
@@ -234,6 +234,17 @@ async function handleRunNow(job: CronJob) {
   }
 }
 
+async function handleReset(job: CronJob) {
+  try {
+    await resetCronJob(job.id)
+    message.success(t('cron.resetSuccess'))
+    await load()
+    refreshDetail()
+  } catch (e: any) {
+    message.error(backendErrorMessage(e.message) || t('cron.resetFailed'))
+  }
+}
+
 function openDetail(job: CronJob) {
   detailJob.value = job
   showDetail.value = true
@@ -339,7 +350,7 @@ function isPaused(job: CronJob) {
               <span class="cj-name" :title="job.name">{{ job.name }}</span>
               <NTag :type="statusType(job.status)" size="tiny" :bordered="false">{{ statusLabel(job.status) }}</NTag>
             </div>
-            <div class="cj-card-toggle" @click.stop>
+            <div class="cj-card-toggle" @click.stop v-if="job.status !== 'completed'">
               <StatusToggle
                 :value="!isPaused(job)"
                 @update:value="() => handleToggle(job)"
@@ -361,7 +372,16 @@ function isPaused(job: CronJob) {
 
           <template #footer>
             <NSpace justify="end">
-              <NButton size="small" :loading="runningId === job.id" @click.stop="handleRunNow(job)">
+              <NPopconfirm v-if="job.status === 'completed'" @positive-click="handleReset(job)">
+                <template #trigger>
+                  <NButton size="small" @click.stop>
+                    <template #icon><NIcon><Refresh /></NIcon></template>
+                    {{ t('cron.reset') }}
+                  </NButton>
+                </template>
+                {{ t('cron.resetConfirm') }}
+              </NPopconfirm>
+              <NButton v-if="job.status !== 'completed'" size="small" :loading="runningId === job.id" @click.stop="handleRunNow(job)">
                 <template #icon><NIcon><Play /></NIcon></template>
                 {{ t('cron.runNow') }}
               </NButton>
@@ -376,7 +396,11 @@ function isPaused(job: CronJob) {
 
     <!-- Detail Modal -->
     <AppModal v-model:show="showDetail" :title="t('cron.detailTitle')" size="detail">
-      <NDescriptions v-if="detailJob" :column="1" label-placement="left" bordered>
+      <NDescriptions
+        v-if="detailJob" :column="1" label-placement="left" bordered
+        :label-style="{ whiteSpace: 'nowrap' }"
+        :content-style="{ overflowWrap: 'anywhere', wordBreak: 'break-word' }"
+      >
         <NDescriptionsItem :label="t('common.name')">{{ detailJob.name }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('common.status')">
           <NTag :type="statusType(detailJob.status)" size="tiny" :bordered="false">{{ statusLabel(detailJob.status) }}</NTag>
@@ -399,11 +423,20 @@ function isPaused(job: CronJob) {
 
       <template #footer>
         <NSpace justify="end">
-          <NButton size="small" v-if="detailJob" @click="openEdit(detailJob)">
+          <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" @click="openEdit(detailJob)">
             <template #icon><NIcon><Create /></NIcon></template>
             {{ t('common.edit') }}
           </NButton>
-          <NButton size="small" v-if="detailJob" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
+          <NPopconfirm v-if="detailJob && detailJob.status === 'completed'" @positive-click="handleReset(detailJob)">
+            <template #trigger>
+              <NButton size="small">
+                <template #icon><NIcon><Refresh /></NIcon></template>
+                {{ t('cron.reset') }}
+              </NButton>
+            </template>
+            {{ t('cron.resetConfirm') }}
+          </NPopconfirm>
+          <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
             <template #icon><NIcon><Play /></NIcon></template>
             {{ t('cron.runNow') }}
           </NButton>
@@ -411,7 +444,7 @@ function isPaused(job: CronJob) {
             <template #icon><NIcon><Time /></NIcon></template>
             {{ t('cron.logs') }}
           </NButton>
-          <NButton size="small" v-if="detailJob" @click="handleToggle(detailJob)" :style="isPaused(detailJob) ? greenStyle : yellowStyle">
+          <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" @click="handleToggle(detailJob)" :style="isPaused(detailJob) ? greenStyle : yellowStyle">
             <template #icon>
               <NIcon>
                 <CheckmarkCircle v-if="isPaused(detailJob)" />

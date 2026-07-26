@@ -70,4 +70,8 @@ export default {
   execCompleteWith: 'Execution complete: {result}',
   execFailed: 'Execution failed',
   loadLogFailed: 'Failed to load log',
+  reset: 'Reset',
+  resetConfirm: 'Reset this task? Its run count will be cleared and it will be rescheduled.',
+  resetSuccess: 'Task reset and rescheduled',
+  resetFailed: 'Failed to reset',
 }

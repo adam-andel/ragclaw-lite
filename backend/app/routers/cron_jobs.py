@@ -251,6 +251,37 @@ async def toggle_cron_job(
     return _cron_job_response(job)
 
 
+@router.post("/{job_id}/reset", response_model=CronJobResponse)
+async def reset_cron_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset a COMPLETED cron job back to a runnable state.
+
+    Clears the run counter and reschedules the job so it can run again.
+    Only COMPLETED jobs can be reset; other states are managed via
+    toggle / run-now instead.
+    """
+    job = await db.get(CronJob, job_id)
+    if not job:
+        raise HTTPException(404, "CRON_JOB_NOT_FOUND")
+    if current_user.role.value != "admin" and job.user_id != current_user.id:
+        raise HTTPException(403, "CRON_JOB_FORBIDDEN")
+
+    if job.status != CronJobStatus.COMPLETED:
+        raise HTTPException(400, f"CRON_JOB_INVALID_STATE: {job.status.value}")
+
+    job.status = CronJobStatus.SCHEDULED
+    job.run_count = 0
+    job.next_run_at = compute_next_run(job.cron_expr, job.timezone)
+    job.last_error = None
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(job)
+    return _cron_job_response(job)
+
+
 @router.post("/{job_id}/run-now")
 async def run_cron_job_now(
     job_id: str,
