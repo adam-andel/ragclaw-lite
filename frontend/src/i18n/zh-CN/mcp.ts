@@ -1,5 +1,6 @@
 export default {
   pageTitle: 'MCP 服务管理',
+  builtin: '系统内置',
   allStatus: '全部状态',
   refreshTools: '刷新工具',
   registerServer: '注册服务',

@@ -4,8 +4,8 @@ import type {
   MCPServerListResponse, MCPServerTestResult,
 } from '@/types'
 
-export const listServers = (page = 1, size = 20, search?: string, isActive?: boolean) =>
-  client.get<MCPServerListResponse>('/mcp/servers', { params: { page, size, search, is_active: isActive } }).then(r => r.data)
+export const listServers = (page = 1, size = 20, search?: string, isActive?: boolean, includeBuiltin = true) =>
+  client.get<MCPServerListResponse>('/mcp/servers', { params: { page, size, search, is_active: isActive, include_builtin: includeBuiltin } }).then(r => r.data)
 
 export const getServer = (id: string) =>
   client.get<MCPServer>(`/mcp/servers/${id}`).then(r => r.data)

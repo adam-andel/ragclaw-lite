@@ -5,11 +5,11 @@ import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
-  NProgress, NTag,
+  NProgress, NTag, NSwitch,
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 import { useAuthStore } from '@/stores/auth'
@@ -42,6 +42,7 @@ const sections = [
   { id: 'plugins', label: 'settings.nav.plugins' },
   { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
   { id: 'repl-auth', label: 'settings.nav.replAuth' },
+  { id: 'https', label: 'settings.nav.https' },
 ]
 
 const networkModeOptions = computed(() => [
@@ -83,6 +84,14 @@ const replAuthSaving = ref(false)
 const replAuthGenerating = ref(false)
 const replAuthDirty = ref(false)
 const replAuthPushed = ref<boolean | null>(null)
+
+// ── HTTPS / TLS (nginx reverse proxy, prod only) ──
+const httpsEnabled = ref(false)
+const httpsCert = ref('')
+const httpsKey = ref('')
+const httpsSaving = ref(false)
+const httpsMeta = ref<{ subject: string; expires: string } | null>(null)
+const httpsDirty = ref(false)
 
 // ── Embedding model (on-demand download) ──
 const embeddingStatus = ref<EmbeddingModelStatus>({
@@ -493,6 +502,14 @@ onMounted(async () => {
     message.error(e.message || t('settings.msg.loadReplAuthFailed'))
   }
 
+  try {
+    const hs = await getHttpsConfig()
+    httpsEnabled.value = hs.https_enabled
+    httpsMeta.value = hs.cert_meta
+  } catch (e: any) {
+    message.error(e.message || t('settings.msg.loadHttpsFailed'))
+  }
+
   await loadEmbeddingStatus()
   await loadReindexStatus()
   if (reindexing.value) startReindexPolling()
@@ -754,6 +771,28 @@ async function handleReplAuthCopy() {
     message.success(t('settings.replAuthCopied'))
   } catch {
     message.warning(t('settings.replAuthCopyFailed'))
+  }
+}
+
+async function handleHttpsSave() {
+  httpsSaving.value = true
+  try {
+    const res = await updateHttpsConfig({
+      https_enabled: httpsEnabled.value,
+      https_cert: httpsEnabled.value ? httpsCert.value : '',
+      https_key: httpsEnabled.value ? httpsKey.value : '',
+    })
+    httpsEnabled.value = res.https_enabled
+    httpsMeta.value = res.cert_meta
+    httpsDirty.value = false
+    // Secrets are not echoed back; clear the inputs after a successful save.
+    httpsCert.value = ''
+    httpsKey.value = ''
+    message.success(t('settings.httpsSaved'))
+  } catch (e: any) {
+    message.error(saveErrorReason(e))
+  } finally {
+    httpsSaving.value = false
   }
 }
 
@@ -1343,6 +1382,66 @@ async function handleTest() {
                 </template>
                 <template v-if="replAuthDirty"> · {{ t('settings.replAuthUnsaved') }}</template>
               </span>
+            </NSpace>
+          </NFormItem>
+        </NForm>
+      </section>
+    </NCard>
+
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <section id="https">
+        <h3 class="section-title">{{ t('settings.httpsTitle') }}</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.httpsDesc')" />
+        <NForm label-placement="left" label-width="140">
+          <NFormItem :label="t('settings.httpsEnableLabel')">
+            <NSwitch v-model:value="httpsEnabled" @update:value="httpsDirty = true" />
+          </NFormItem>
+          <template v-if="httpsEnabled">
+            <NFormItem :label="t('settings.httpsCertLabel')">
+              <NInput
+                v-model:value="httpsCert"
+                type="textarea"
+                :rows="6"
+                :placeholder="t('settings.httpsCertPlaceholder')"
+                @input="httpsDirty = true"
+              />
+            </NFormItem>
+            <NFormItem :label="t('settings.httpsKeyLabel')">
+              <NInput
+                v-model:value="httpsKey"
+                type="textarea"
+                :rows="6"
+                :placeholder="t('settings.httpsKeyPlaceholder')"
+                @input="httpsDirty = true"
+              />
+            </NFormItem>
+          </template>
+          <NFormItem>
+            <NSpace vertical :size="8" style="width: 100%">
+              <NSpace :size="8">
+                <NButton
+                  type="primary"
+                  :loading="httpsSaving"
+                  :disabled="httpsSaving || (httpsEnabled && (!httpsCert.trim() || !httpsKey.trim()))"
+                  @click="handleHttpsSave"
+                >
+                  <template #icon><NIcon><Save /></NIcon></template>
+                  {{ t('settings.httpsSave') }}
+                </NButton>
+              </NSpace>
+              <span class="muted" style="font-size: 12px">
+                <template v-if="httpsEnabled && httpsMeta">
+                  {{ t('settings.httpsStatusOn') }} · {{ t('settings.httpsCertInfo', { subject: httpsMeta.subject, expires: httpsMeta.expires }) }}
+                </template>
+                <template v-else-if="httpsEnabled">
+                  {{ t('settings.httpsStatusOn') }}
+                </template>
+                <template v-else>
+                  {{ t('settings.httpsStatusOff') }}
+                </template>
+                <template v-if="httpsDirty"> · {{ t('settings.httpsUnsaved') }}</template>
+              </span>
+              <span class="muted" style="font-size: 12px">{{ t('settings.httpsAccessHint') }}</span>
             </NSpace>
           </NFormItem>
         </NForm>

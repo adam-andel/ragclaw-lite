@@ -244,6 +244,7 @@ export interface MCPServer {
   env_json?: string | null
   timeout_seconds: number
   is_active: boolean
+  is_builtin?: boolean
   created_at: string
 }
 

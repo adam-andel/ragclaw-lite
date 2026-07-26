@@ -237,10 +237,12 @@ async function handleRefresh() {
             <div class="mcp-card-title-wrap">
               <span class="mcp-name" :title="server.name">{{ server.name }}</span>
               <NTag v-if="!server.is_active" size="tiny" :bordered="false" type="default" class="mcp-disabled-tag">{{ t('common.disabled') }}</NTag>
+              <NTag v-if="server.is_builtin" size="tiny" :bordered="false" type="success" class="mcp-builtin-tag">{{ t('mcp.builtin') }}</NTag>
             </div>
             <div class="mcp-card-toggle" @click.stop>
               <StatusToggle
                 :value="server.is_active"
+                :disabled="server.is_builtin"
                 @update:value="() => handleToggle(server)"
               />
             </div>
@@ -263,7 +265,7 @@ async function handleRefresh() {
 
           <template #footer>
             <NSpace justify="end">
-              <NButton size="small" @click="openEdit(server)">
+              <NButton size="small" :disabled="server.is_builtin" @click="openEdit(server)">
                 <template #icon><NIcon><Create /></NIcon></template>
                 {{ t('common.edit') }}
               </NButton>
@@ -271,9 +273,9 @@ async function handleRefresh() {
                 <template #icon><NIcon><Flash /></NIcon></template>
                 {{ t('mcp.test') }}
               </NButton>
-              <NPopconfirm @positive-click="handleDelete(server)">
+              <NPopconfirm @positive-click="handleDelete(server)" :disabled="server.is_builtin">
                 <template #trigger>
-                  <NButton size="small" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
+                  <NButton size="small" :disabled="server.is_builtin" :style="{ '--n-text-color': '#ef4444', '--n-border': '1px solid #ef4444', '--n-border-hover': '1px solid #dc2626', '--n-border-pressed': '1px solid #dc2626', '--n-text-color-hover': '#dc2626', '--n-text-color-pressed': '#dc2626' }">
                     <template #icon><NIcon><Trash /></NIcon></template>
                     {{ t('common.delete') }}
                   </NButton>

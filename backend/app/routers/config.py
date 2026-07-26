@@ -440,3 +440,43 @@ async def notify_auth_secret_changed(secret: str) -> bool:
     if _auth_secret_retry_task is None or _auth_secret_retry_task.done():
         _auth_secret_retry_task = asyncio.create_task(_auth_secret_retry_loop())
     return False
+
+
+# ═══════════════════════════════════════════════════════════
+# HTTPS / TLS (nginx reverse proxy, prod only)
+# ═══════════════════════════════════════════════════════════
+
+class HTTPSConfigUpdate(BaseModel):
+    https_enabled: bool = False
+    https_cert: str | None = None
+    https_key: str | None = None
+
+
+@router.get("/https")
+async def get_https_config(current_user=Depends(get_current_admin)):
+    """Read HTTPS status (masked; no secret material returned)."""
+    return config_manager.get_https_config()
+
+
+@router.put("/https")
+async def update_https_config(
+    data: HTTPSConfigUpdate,
+    current_user=Depends(get_current_admin),
+):
+    """Enable/disable HTTPS.
+
+    When enabling, validates the cert/key pair, persists it (encrypted) and
+    materializes the TLS material into the shared volume so the nginx reverse
+    proxy serves the site over HTTPS. Takes effect after nginx picks up the new
+    config (inotify reload) — no backend restart needed.
+    """
+    try:
+        meta = await config_manager.set_https(data.https_enabled, data.https_cert, data.https_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "message": "HTTPS configuration saved",
+        "https_enabled": config_manager.https_enabled,
+        "cert_configured": bool(config_manager.https_cert and config_manager.https_key),
+        "cert_meta": meta,
+    }

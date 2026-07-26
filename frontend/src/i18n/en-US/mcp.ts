@@ -1,5 +1,6 @@
 export default {
   pageTitle: 'MCP Server Management',
+  builtin: 'Built-in',
   allStatus: 'All Statuses',
   refreshTools: 'Refresh Tools',
   registerServer: 'Register Server',

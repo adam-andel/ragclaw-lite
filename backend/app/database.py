@@ -179,17 +179,25 @@ def _seed_defaults(raw):
     mcp_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-python-repl").hexdigest()))
     now = datetime.now(timezone.utc).isoformat()
 
-    # Default MCP Server: Python Executor
+    # Default MCP Server: Python Executor (platform-mandated, built-in).
     existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
     if not existing:
         raw.execute(
-            "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, created_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (mcp_id, "Python Executor", "http", "http://mcp-repl:9200/mcp", 30, 1, now),
+            "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, is_builtin, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (mcp_id, "Python Executor", "http", "http://mcp-repl:9200/mcp", 30, 1, 1, now),
         )
-        print("[seed] MCP Server 'Python Executor' created")
+        print("[seed] MCP Server 'Python Executor' created (built-in)")
     else:
         print("[seed] MCP Server 'Python Executor' already exists")
+
+    # Idempotently (re)assert the built-in flag on the existing row so the
+    # Python Executor is always treated as a platform-managed server, even if
+    # the column was just added by a migration on an older database.
+    raw.execute(
+        "UPDATE mcp_servers SET is_builtin = 1 WHERE id = ? AND COALESCE(is_builtin, 0) = 0",
+        (mcp_id,),
+    )
 
     print("[seed] defaults done")
 

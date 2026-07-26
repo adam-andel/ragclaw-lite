@@ -40,6 +40,7 @@ class MCPServerResponse(BaseModel):
     env_json: str | None = None
     timeout_seconds: int
     is_active: bool
+    is_builtin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

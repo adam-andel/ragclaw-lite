@@ -6,7 +6,7 @@ from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -37,6 +37,7 @@ def _server_to_response(s: MCPServer) -> MCPServerResponse:
         env_json=s.env_json,
         timeout_seconds=s.timeout_seconds,
         is_active=s.is_active,
+        is_builtin=s.is_builtin,
         created_at=s.created_at,
     )
 
@@ -75,10 +76,15 @@ async def list_servers(
     size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
+    include_builtin: bool = Query(False, description="Include platform built-in servers (e.g. Python Executor)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List registered MCP servers (tenant-scoped)."""
+    """List registered MCP servers (tenant-scoped).
+
+    Built-in servers are excluded by default so the user-facing MCP management
+    UI only shows user-managed servers; pass include_builtin=true to opt in.
+    """
     conditions = []
     if current_user.tenant_id:
         conditions.append(MCPServer.tenant_id == current_user.tenant_id)
@@ -86,6 +92,8 @@ async def list_servers(
         conditions.append(MCPServer.name.ilike(f"%{search}%"))
     if is_active is not None:
         conditions.append(MCPServer.is_active == is_active)
+    if not include_builtin:
+        conditions.append(MCPServer.is_builtin == false())
 
     count_q = select(func.count()).select_from(MCPServer)
     if conditions:
@@ -128,6 +136,9 @@ async def update_server(
     server = await db.get(MCPServer, server_id)
     if not server:
         raise HTTPException(404, "MCP 服务不存在")
+    # Built-in servers are managed by code/seed; block any user edit (incl. rename).
+    if server.is_builtin:
+        raise HTTPException(403, "内置 MCP 服务不可修改")
 
     if data.name is not None:
         server.name = data.name
@@ -161,6 +172,10 @@ async def delete_server(
     server = await db.get(MCPServer, server_id)
     if not server:
         raise HTTPException(404, "MCP 服务不存在")
+    # Built-in servers are mandatory platform infrastructure (e.g. Python
+    # Executor); deleting them would break run_python for every conversation.
+    if server.is_builtin:
+        raise HTTPException(403, "内置 MCP 服务不可删除")
     await db.delete(server)
     await db.commit()
     return {"status": "deleted"}
