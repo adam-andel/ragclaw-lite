@@ -60,9 +60,10 @@ services:
   # The base image (built from ./mcp) still supplies Python + Node + pip deps —
   # only the server source is replaced by the bind mount.
   #
-  # The named volumes ragclaw_workspace / ragclaw_policy / ragclaw_auth_secret
-  # (declared in the base file) continue to mount on /app/workspace,
-  # /repl-policy and /repl-auth, on top of this bind mount.
+  # The named volumes ragclaw_workspace / ragclaw_policy (declared in the base
+  # file) continue to mount on /app/workspace and /repl-policy, on top of this
+  # bind mount. The REPL identity secret is now a mounted Docker secret
+  # (/run/secrets/repl_auth_secret), not the old ragclaw_auth_secret volume.
   #
   # NOTE: the host entrypoint.sh is *not* executable, so we can't rely on the
   # image's `ENTRYPOINT ["./entrypoint.sh"]` under a bind mount (permission

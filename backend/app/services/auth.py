@@ -1,6 +1,8 @@
 """JWT authentication utilities."""
 
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from jose import JWTError, jwt
@@ -14,9 +16,43 @@ from app.database import get_db
 from app.models.user import User, UserRole
 
 # --- Config ---
-SECRET_KEY = "ragclaw-jwt-secret-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+_JWT_SECRET: str | None = None
+
+
+def _load_jwt_secret() -> str:
+    """Load the JWT signing secret.
+
+    Prefers the mounted Docker secret ``/run/secrets/ragclaw_jwt_secret`` (a
+    deployment-provided value, stable across container recreation). Falls back
+    to the ``RAGCLAW_JWT_SECRET`` env var. Raises if neither is present so a
+    missing secret fails loudly instead of signing tokens with a known default.
+    """
+    path = "/run/secrets/ragclaw_jwt_secret"
+    try:
+        if os.path.exists(path):
+            s = Path(path).read_text(encoding="utf-8").strip()
+            if s:
+                return s
+    except Exception:
+        pass
+    env = (os.environ.get("RAGCLAW_JWT_SECRET") or "").strip()
+    if env:
+        return env
+    raise RuntimeError(
+        "JWT secret not found: mount /run/secrets/ragclaw_jwt_secret or set "
+        "RAGCLAW_JWT_SECRET before starting the backend."
+    )
+
+
+def get_jwt_secret() -> str:
+    """Return the cached JWT secret, loading it on first use."""
+    global _JWT_SECRET
+    if _JWT_SECRET is None:
+        _JWT_SECRET = _load_jwt_secret()
+    return _JWT_SECRET
 
 security = HTTPBearer(auto_error=False)
 
@@ -42,12 +78,12 @@ def create_access_token(user_id: str, username: str, role: str, tenant_id: str |
         "tenant_id": tenant_id,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict | None:
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
     except JWTError:
         return None
 

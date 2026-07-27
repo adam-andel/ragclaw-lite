@@ -16,6 +16,7 @@ CONTAINER_PORT=8000   # backend container port; host port = RAGCLAW_PORT / .env 
 
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
+source "$SCRIPT_DIR/lib/gen-secrets.sh"
 
 # Open a URL in the default browser: xdg-open (Linux) preferred, else open (macOS).
 open_browser() {
@@ -203,6 +204,7 @@ case "${1:-start}" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    gen_secrets
     build_stack "$mirror" || exit 1
     echo
     c_cyan "=== Starting stack ==="
@@ -233,6 +235,7 @@ case "${1:-start}" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    gen_secrets
     build_stack "$mirror" || exit 1
     echo
     c_cyan "=== Recreating stack ==="
