@@ -7,14 +7,16 @@
 # / .gitignore has `secrets/`) and must be backed up — losing ragclaw_config_key
 # makes the encrypted config.enc (LLM / embedding API keys) undecryptable.
 #
-# Files produced (each 32 random bytes, stored as 64 hex chars):
+# Files produced (32 random bytes, stored as 64 hex chars):
 #   secrets/ragclaw_config_key   AES-256 key for config.enc
-#   secrets/ragclaw_jwt_secret  JWT HS256 signing secret
+# Note: the JWT signing secret and the REPL identity secret are now DB-backed
+# (auto-generated on first boot, rotated via the admin UI), so they are NOT
+# generated as mounted secret files.
 
 gen_secrets() {
   local dir="$ROOT/secrets"
   mkdir -p "$dir"
-  local names=("ragclaw_config_key" "ragclaw_jwt_secret")
+  local names=("ragclaw_config_key")
   local missing=0
   for n in "${names[@]}"; do
     if [ ! -f "$dir/$n" ]; then

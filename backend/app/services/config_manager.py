@@ -214,6 +214,11 @@ def _generate_repl_auth_secret() -> str:
     return secrets.token_hex(32)
 
 
+def _generate_jwt_secret() -> str:
+    """Generate a cryptographically strong JWT HS256 signing secret (64 hex chars)."""
+    return secrets.token_hex(32)
+
+
 # ── HTTPS / TLS materialization (nginx reverse proxy, prod only) ──
 # The backend writes the certificate, key and a rendered nginx server config
 # into this shared volume; the nginx container mounts it read-only and hot-
@@ -398,6 +403,10 @@ class ConfigManager:
         # _ensure_repl_auth_secret) and rotated via the admin UI; it is no
         # longer sourced from a mounted Docker secret file (Plan B).
         await self._ensure_repl_auth_secret()
+        # JWT signing secret: DB-backed, single source of truth. Auto-generated
+        # on first boot (mirrors repl_auth_secret) and rotated via the admin UI.
+        # No mounted Docker secret is used (see auth.get_jwt_secret).
+        await self._ensure_jwt_secret()
 
     def _build_defaults(self, env_api_key: str = "") -> dict:
         return {
@@ -431,6 +440,8 @@ class ConfigManager:
             "sandbox_allow_methods": "",
             # REPL MCP identity HMAC secret (auto-generated on first boot if absent)
             "repl_auth_secret": "",
+            # JWT HS256 signing secret (auto-generated on first boot if absent)
+            "jwt_secret": "",
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -458,6 +469,10 @@ class ConfigManager:
             # _ensure_repl_auth_secret and rotated via the admin UI. It is no
             # longer sourced from a mounted Docker secret file (Plan B).
             "repl_auth_secret": "",
+            # jwt_secret is auto-generated on first boot by _ensure_jwt_secret
+            # and rotated via the admin UI. It is no longer sourced from a
+            # mounted Docker secret file (DB-ified, mirrors repl_auth_secret).
+            "jwt_secret": "",
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -533,6 +548,28 @@ class ConfigManager:
             self._config["repl_auth_secret"] = new_secret
         await self._save_db_settings({"repl_auth_secret": new_secret})
         print("[ConfigManager] generated preset REPL_AUTH_SECRET")
+
+    async def _ensure_jwt_secret(self):
+        """Guarantee a non-empty JWT signing secret exists (first-boot default).
+
+        The secret is the single source of truth, persisted in the DB:
+          * DB empty -> a fresh secret is generated and persisted on first boot.
+          * DB has rows but predates this key -> missing -> generate + persist.
+          * Key present but blank -> regenerate (defensive).
+        UI rotation (POST /api/config/jwt-secret/regenerate) is canonical and
+        survives restarts — no mounted secret file overrides it on boot. The
+        auth layer reads it live from ConfigManager (auth.get_jwt_secret), so a
+        rotation takes effect on the next token sign/verify with zero restart.
+        """
+        with self._lock:
+            current = self._config.get("jwt_secret", "") or ""
+        if current:
+            return
+        new_secret = _generate_jwt_secret()
+        with self._lock:
+            self._config["jwt_secret"] = new_secret
+        await self._save_db_settings({"jwt_secret": new_secret})
+        print("[ConfigManager] generated preset JWT secret")
 
     # ── Properties ──
 
@@ -665,6 +702,18 @@ class ConfigManager:
             return self._config.get("repl_auth_secret", "") or ""
 
     @property
+    def jwt_secret(self) -> str:
+        """JWT HS256 signing secret (runtime value, source of truth).
+
+        Auto-generated on first boot and persisted to DB. Used by the auth
+        layer to sign/verify session tokens. The value is read live from this
+        cache, which is updated synchronously when the secret is rotated in the
+        UI — so rotation takes effect immediately, with no backend restart.
+        """
+        with self._lock:
+            return self._config.get("jwt_secret", "") or ""
+
+    @property
     def system_prompt(self) -> str:
         """Effective system prompt, selected by prompt_language:
         'en' -> llm_system_prompt_en (default), otherwise -> llm_system_prompt (Chinese)."""
@@ -706,7 +755,7 @@ class ConfigManager:
             "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
-            "repl_auth_secret",
+            "repl_auth_secret", "jwt_secret",
             "https_enabled",
         }
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}

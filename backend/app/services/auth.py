@@ -1,8 +1,6 @@
 """JWT authentication utilities."""
 
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 from jose import JWTError, jwt
@@ -14,45 +12,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.services.config_manager import config_manager
 
 # --- Config ---
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-_JWT_SECRET: str | None = None
-
-
-def _load_jwt_secret() -> str:
-    """Load the JWT signing secret.
-
-    Prefers the mounted Docker secret ``/run/secrets/ragclaw_jwt_secret`` (a
-    deployment-provided value, stable across container recreation). Falls back
-    to the ``RAGCLAW_JWT_SECRET`` env var. Raises if neither is present so a
-    missing secret fails loudly instead of signing tokens with a known default.
-    """
-    path = "/run/secrets/ragclaw_jwt_secret"
-    try:
-        if os.path.exists(path):
-            s = Path(path).read_text(encoding="utf-8").strip()
-            if s:
-                return s
-    except Exception:
-        pass
-    env = (os.environ.get("RAGCLAW_JWT_SECRET") or "").strip()
-    if env:
-        return env
-    raise RuntimeError(
-        "JWT secret not found: mount /run/secrets/ragclaw_jwt_secret or set "
-        "RAGCLAW_JWT_SECRET before starting the backend."
-    )
-
 
 def get_jwt_secret() -> str:
-    """Return the cached JWT secret, loading it on first use."""
-    global _JWT_SECRET
-    if _JWT_SECRET is None:
-        _JWT_SECRET = _load_jwt_secret()
-    return _JWT_SECRET
+    """Return the JWT signing secret.
+
+    Sourced from the DB-backed ConfigManager (auto-generated on first boot,
+    rotated via the admin UI). No external mounted secret is required. The
+    value is read from ConfigManager's in-memory cache, which is updated
+    synchronously when the secret is rotated in the UI — so a rotation takes
+    effect on the very next token sign/verify with zero backend restart.
+    """
+    secret = config_manager.jwt_secret
+    if not secret:
+        raise RuntimeError(
+            "JWT secret is empty — ConfigManager failed to initialize it on startup."
+        )
+    return secret
 
 security = HTTPBearer(auto_error=False)
 

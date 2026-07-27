@@ -314,6 +314,36 @@ async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
     }
 
 
+# ═══════════════════════════════════════════════════════════
+# JWT signing secret (HS256) — DB-backed, hot-reloadable
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/jwt-secret")
+async def get_jwt_secret(current_user=Depends(get_current_admin)):
+    """Read the current JWT signing secret (admin only, unmasked)."""
+    return {"jwt_secret": config_manager.jwt_secret}
+
+
+@router.post("/jwt-secret/regenerate")
+async def regenerate_jwt_secret(current_user=Depends(get_current_admin)):
+    """Generate a new random JWT signing secret; takes effect immediately.
+
+    The auth layer reads the secret live from ConfigManager (auth.get_jwt_secret),
+    so no restart is needed. NOTE: this invalidates every currently issued token,
+    so all users (including the admin rotating it) must re-login.
+    """
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    await config_manager.update({"jwt_secret": new_secret})
+    return {
+        "message": (
+            "Generated a new JWT signing secret — it takes effect immediately. "
+            "All currently issued tokens are now invalid; every user must re-login."
+        ),
+        "jwt_secret": config_manager.jwt_secret,
+    }
+
+
 async def _push_mcp_auth_secret(secret: str) -> bool:
     """Best-effort: hot-reload the REPL identity secret into the MCP REPL container.
 

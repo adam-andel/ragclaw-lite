@@ -86,6 +86,21 @@ export async function regenerateReplAuth(): Promise<{ message: string; repl_auth
   return res.data
 }
 
+// ── JWT signing secret (DB-backed, hot-reloadable) ──
+export interface JwtAuthConfig {
+  jwt_secret: string
+}
+
+export async function getJwtAuth(): Promise<JwtAuthConfig> {
+  const res = await client.get('/config/jwt-secret')
+  return res.data
+}
+
+export async function regenerateJwtAuth(): Promise<{ message: string; jwt_secret: string }> {
+  const res = await client.post('/config/jwt-secret/regenerate')
+  return res.data
+}
+
 // ── Embedding model (on-demand download) ──
 export interface EmbeddingModelOption {
   id: string
