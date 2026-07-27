@@ -645,11 +645,11 @@ async def chat_stream(
                             request.query, uid
                         )
                         msg = (
-                            f"已附加 {len(file_refs)} 个文件"
-                            f"（内联 {file_summary['inline']}，置顶附录 {file_summary['prepend']}）"
+                            f"Attached {len(file_refs)} file(s)"
+                            f" (inlined {file_summary['inline']}, prepended appendix {file_summary['prepend']})"
                         )
                         if file_summary["failed"]:
-                            msg += f"；{file_summary['failed']} 个读取失败"
+                            msg += f"; {file_summary['failed']} failed to read"
                         emit_agent_step("file_context", msg)
 
                     initial_state = {
@@ -777,7 +777,7 @@ async def chat_stream(
                     prompt_tokens = count_messages_tokens(messages)
                     # Signal the final-generation phase so the frontend can show it honestly
                     # (the graph handles everything up to here; the actual LLM stream starts now).
-                    emit_agent_step("generating", "生成回答中…")
+                    emit_agent_step("generating", "Generating answer…")
                     collected_content = ""
                     collected_citations = []
                     _stream_buf = ""  # holds back [TOOL_CALL] spans from live display

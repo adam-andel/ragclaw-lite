@@ -1403,6 +1403,13 @@ async def tool_decision_node(state: dict) -> dict:
                 content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             logger.info("Tool decision: fallback content_preview=%.200s", content[:200])
 
+        # Surface the model's raw reasoning ("thinking"/planning, e.g. "我来…")
+        # as a separate agent_step so it appears in the processing timeline and is
+        # persisted to the agent_steps table — never mixed into the final answer.
+        # Emitted verbatim (NOT stripped) per requirement.
+        if content and content.strip():
+            _emit(state, "thinking", content.strip())
+
         if not content and not tool_calls:
             logger.warning("Tool decision: LLM returned empty content and no tool_calls")
             return {"tool_calls": None}

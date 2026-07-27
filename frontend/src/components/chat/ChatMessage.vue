@@ -132,6 +132,28 @@ const displayHtml = computed(() => {
 
 const steps = computed(() => props.message.agentSteps || [])
 
+// Pure-English badge labels for each processing step stage (independent of UI language).
+const STAGE_LABELS: Record<string, string> = {
+  routing: 'ROUTE',
+  retrieval: 'RETRIEVE',
+  retrieval_done: 'RETRIEVE',
+  skill_load: 'SKILL',
+  skill_switch: 'SKILL',
+  skill_switch_fail: 'SKILL',
+  skill_return: 'SKILL',
+  file_context: 'FILES',
+  generating: 'GENERATE',
+  thinking: 'THINK',
+  tool: 'TOOL',
+  tool_done: 'TOOL',
+  tool_round_limit: 'TOOL',
+  tool_loop_guard: 'TOOL',
+  round: 'ROUND',
+}
+function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] || stage.replace(/_/g, ' ').toUpperCase()
+}
+
 const copied = ref(false)
 let copyTimer: number | null = null
 
@@ -289,6 +311,7 @@ onBeforeUnmount(() => {
         <summary>{{ t('chat.processSteps', { count: steps.length }) }}</summary>
         <ul class="agent-step-list">
           <li v-for="(s, i) in steps" :key="i" :class="'step-' + s.stage">
+            <span class="step-badge">{{ stageLabel(s.stage) }}</span>
             <span class="step-msg">{{ s.message }}</span>
           </li>
         </ul>
@@ -538,6 +561,37 @@ mark.search-hit.active {
 }
 .agent-step-list li {
   padding: 2px 0; color: var(--color-text-muted); line-height: 1.6; word-break: break-word;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.step-badge {
+  flex: 0 0 auto;
+  min-width: 64px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+}
+/* Subtle highlight for the model's reasoning/planning step so it stands out
+   from system processing actions without changing layout or stealing focus. */
+.agent-step-list li.step-thinking {
+  background: rgba(99, 102, 241, 0.08);
+  border-left: 3px solid var(--color-primary, #6366f1);
+  padding-left: 8px;
+  border-radius: 0 4px 4px 0;
+}
+.agent-step-list li.step-thinking .step-badge {
+  color: #fff;
+  background: var(--color-primary, #6366f1);
+  border-color: var(--color-primary, #6366f1);
+}
+.agent-step-list li.step-thinking .step-msg {
+  color: var(--color-text);
+  font-weight: 500;
 }
 .message-content { line-height: 1.65; word-break: break-word; }
 .message-content.streaming { display: flex; align-items: baseline; gap: 2px; }
