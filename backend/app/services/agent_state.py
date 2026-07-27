@@ -46,6 +46,7 @@ class RagclawAgentState(TypedDict):
     tool_round: int               # How many tool rounds executed (prevents infinite loop)
     tool_results: Annotated[list[str], operator.add]  # Accumulated across rounds
     tool_messages: Annotated[list[dict], operator.add]  # Full tool call/result messages for LLM
+    download_entries: Annotated[list[dict], operator.add]  # Structured file refs from MCP tools (no regex)
 
     # ── Output ──
     cache_hit: bool               # Set by router on cache hit

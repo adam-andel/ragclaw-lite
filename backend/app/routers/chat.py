@@ -606,7 +606,6 @@ async def chat_stream(
                     llm_client,
                 )
                 from app.services.agent_nodes import (
-                    _extract_download_links_from_state,
                     _extract_download_entries_from_state,
                 )
 
@@ -702,6 +701,7 @@ async def chat_stream(
                         "tool_round": 0,
                         "tool_results": [],
                         "tool_messages": [],
+                        "download_entries": [],
                         "cache_hit": False,
                         "final_answer": "",
                         "retrieval_ms": 0,

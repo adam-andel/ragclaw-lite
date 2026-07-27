@@ -553,7 +553,7 @@ async def entry_node(state: dict) -> dict:
         if cached:
             return {"cache_hit": True, "final_answer": cached.answer,
                     "citations": cached.citations or [], "tool_results": [],
-                    "tool_messages": [], "kb_prompt": kb_prompt}
+                    "tool_messages": [], "download_entries": [], "kb_prompt": kb_prompt}
     return {"cache_hit": False, "kb_prompt": kb_prompt}
 
 
@@ -607,7 +607,8 @@ async def skill_router_node(state: dict) -> dict:
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
-            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": []}
+            "cache_hit": False, "tool_round": 0, "tool_results": [], "tool_messages": [],
+            "download_entries": []}
 
 
 async def _get_skill_index(skill_id: str) -> dict | None:
@@ -1558,63 +1559,33 @@ def _dump_state_for_debug(state: dict) -> str:
 
 import re as _re
 
-def _enrich_with_download_links(result: str, mcp_endpoint: str | None = None) -> str:
-    """Ensure download links are present in tool result.
+def _build_download_entries(files: list[dict]) -> list[dict]:
+    """Convert MCP ``structuredContent.files`` items into download entries.
 
-    Generates download URLs pointing to RAGClaw's own ``/api/workspace/download``
-    endpoint, so the user only needs access to RAGClaw — the MCP server stays
-    fully internal with no host port exposure. The uid is resolved server-side
-    from the caller's session, so the per-user Linux uid (``user_uNNNN``) is
-    NEVER included in the URL.
+    Each ``files`` item is ``{name, path, mimeType}``, where ``path`` is the
+    sandbox-relative path (uid prefix already stripped by the MCP server).
 
-    ``uuid_dir`` is the full relative path under the sandbox's allow-dir, which
-    may be nested (e.g. ``user_u2001/<ws>``) when per-user isolation is active.
-    Only the sandbox-relative part (uid prefix stripped) goes into the link.
+    Produces ``{"url", "filename", "path"}`` entries pointing at RAGClaw's own
+    ``/api/workspace/download`` endpoint — so the user only needs access to
+    RAGClaw and the per-user Linux uid is NEVER exposed in a URL.
     """
-    m = _re.search(r'\[workspace:\s*([\w/-]+)/\]', result)
-    if not m:
-        return result
-    uuid_dir = m.group(1).strip("/")
-    if not uuid_dir:
-        return result
-
-    # Do NOT leak the per-user Linux uid in the URL. The workspace proxy
-    # resolves the uid server-side from the caller's session, so only the
-    # sandbox-relative path (uid prefix stripped) belongs in the link.
-    # The uid may be a bare root (user_u10000) or nested (user_u10000/<ws>),
-    # so strip the trailing slash optionally.
-    rel = _re.sub(r'^user_u\d+/?', '', uuid_dir)
     from app.config import settings
     public_base = settings.public_url.rstrip("/") if settings.public_url else ""
-    # Absolute base of the download endpoint. The full relative path
-    # (rel + "/" + filename, or just filename when rel is empty) is appended
-    # below — building it in one shot avoids a stray double slash
-    # (e.g. "dir1//file.txt") that the old code produced by appending a slash
-    # to the prefix AND another before the filename.
     base = f"{public_base}/api/workspace/download?path="
-
-    if "[File]" in result:
-        # MCP server included [File] tags with its own URL — rewrite to the
-        # RAGClaw workspace download endpoint. uuid_dir may contain "/" (nested
-        # per-user path), so escape it. The captured group is the file path
-        # under uuid_dir; encode it so spaces/Unicode stay valid in the URL.
-        def _rewrite(mo):
-            file_rel = (rel + "/" if rel else "") + mo.group(1)
-            return f"{base}{quote(file_rel)}"
-        result = _re.sub(
-            r'(?<=\[File\] )\S+/files/' + _re.escape(uuid_dir) + r'/(\S+)',
-            _rewrite,
-            result
-        )
-    # The [workspace: <uuid>/] tag carries the per-user Linux uid and is only
-    # needed above to rewrite [File] links — strip it so the uid never persists
-    # in tool results / conversation history.
-    result = _re.sub(r'\[workspace:\s*[\w/-]+/\]', '', result)
-
-    # If MCP didn't generate [File] links (missing REPL_PUBLIC_URL),
-    # we don't fabricate broken links — let the result speak for itself.
-
-    return result
+    entries: list[dict] = []
+    seen: set = set()
+    for f in files:
+        if not isinstance(f, dict):
+            continue
+        rel = f.get("path") or f.get("name") or ""
+        if not rel:
+            continue
+        url = f"{base}{quote(rel)}"
+        filename = f.get("name") or rel.rsplit("/", 1)[-1] or "file"
+        if url not in seen:
+            seen.add(url)
+            entries.append({"url": url, "filename": filename, "path": rel})
+    return entries
 
 
 def _normalize_download_url(url: str) -> str:
@@ -1632,99 +1603,21 @@ def _normalize_download_url(url: str) -> str:
     return url
 
 
-def _filename_from_download_url(url: str) -> str:
-    """Extract a human-friendly filename from a download URL.
-
-    Handles both plain paths (/files/foo/bar.html) and query-style workspace
-    endpoints (/api/workspace/download?path=foo/bar.html), where the filename
-    lives in the `path=` query parameter rather than the last path segment.
-    The naive `url.rsplit('/', 1)[-1]` would otherwise return the whole
-    'download?path=foo.bar' tail for the query-style form.
-    """
-    if not url:
-        return "file"
-    # Query-style workspace endpoint: /api/workspace/download?path=<rel>
-    m = _re.search(r"[?&]path=([^&]+)", url)
-    if m:
-        name = unquote(m.group(1)).rsplit("/", 1)[-1]
-        return name or "file"
-    # Otherwise fall back to the last path segment.
-    name = url.rstrip("/").rsplit("/", 1)[-1]
-    return name or "file"
-
-
-def _extract_download_links_from_state(state: dict) -> str:
-    """Scan tool results for download links and format them for final display.
-
-    This runs OUTSIDE the LLM — links are system-generated, never hallucinated.
-    Formats [File] tags as clickable Markdown links the frontend can render.
-    Supports both absolute (https://...) and relative (/api/workspace/download?path=...) URLs.
-    """
-    tool_results = state.get("tool_results", [])
-    links = []
-    seen = set()
-    for r in tool_results:
-        # Match both absolute and relative [File] URLs
-        for url_match in _re.finditer(
-            r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', r
-        ):
-            url = _normalize_download_url(url_match.group(1))
-            filename = _filename_from_download_url(url)
-            # Dedupe by the RENDERED line, not just the raw URL: a proxy URL
-            # and a raw REPL URL (or a trailing-slash variant) may render
-            # identically yet differ as strings, which a raw-URL dedup would
-            # miss and would surface as two duplicate download links.
-            line = f"- [📥 {filename}]({url})"
-            if line not in seen:
-                seen.add(line)
-                links.append(line)
-    if links:
-        return "\n\n---\n" + "\n".join(links)
-    return ""
+# NOTE: the markdown-format _extract_download_links_from_state helper was removed;
+# download entries now flow through state["download_entries"] (see
+# _extract_download_entries_from_state below) instead of being regex-parsed
+# from tool text.
 
 
 def _extract_download_entries_from_state(state: dict) -> list[dict]:
-    """Like _extract_download_links_from_state, but returns STRUCTURED entries
-    ({"url", "filename", "path"}) instead of markdown text.
+    """Return structured download entries emitted by the MCP REPL server.
 
-    Download links are system-generated (never from the model), so they should
-    travel through an LLM-independent channel — emitted as `stage="file_done"`
-    agent steps — rather than being appended to the answer text. Appending them
-    as markdown made the link vulnerable to the model leaving an unclosed code
-    fence or re-pasting source (the recurring "broken download link" bug).
+    Files produced by tool calls travel through an LLM-independent channel:
+    the MCP server returns them as ``structuredContent.files`` and they are
+    accumulated in ``state.download_entries``. No regex parsing of tool text is
+    performed — the old ``[File]``-tag convention has been removed.
     """
-    from urllib.parse import urlparse, parse_qs
-
-    tool_results = state.get("tool_results", [])
-    entries: list[dict] = []
-    seen: set = set()
-    for r in tool_results:
-        # Production stores tool_results as plain strings (see agent_state:
-        # tool_results is Annotated[list[str], operator.add]); some test paths
-        # pass dicts with a "result" key. Normalize both so the [File] scan
-        # never silently skips every entry.
-        if isinstance(r, dict):
-            txt = r.get("result", "") or ""
-        elif isinstance(r, str):
-            txt = r
-        else:
-            continue
-        for url_match in _re.finditer(
-            r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', txt
-        ):
-            url = _normalize_download_url(url_match.group(1))
-            if not url:
-                continue
-            filename = _filename_from_download_url(url)
-            path = ""
-            parsed = urlparse(url)
-            if parsed.query:
-                path = parse_qs(parsed.query).get("path", [""])[0]
-            key = (url, filename)
-            if key not in seen:
-                seen.add(key)
-                entries.append({"url": url, "filename": filename, "path": path})
-    return entries
+    return state.get("download_entries", []) or []
 
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
@@ -1776,8 +1669,10 @@ async def tool_executor_node(state: dict) -> dict:
                 user_id=state.get("user_id"),
             )
             if result.ok:
-                return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint")}
-            return {"result": f"[{tname}] error: {result.error}", "endpoint": repl_config.get("endpoint")}
+                return {"result": f"[{tname}] {result.result}", "endpoint": repl_config.get("endpoint"),
+                        "files": getattr(result, "files", None) or []}
+            return {"result": f"[{tname}] error: {result.error}", "endpoint": repl_config.get("endpoint"),
+                    "files": []}
 
         # ── Resource tool path (Layer 3: on-demand) ──
         if tool_source == "resource" and folder_name:
@@ -1828,37 +1723,44 @@ async def tool_executor_node(state: dict) -> dict:
             logger.warning(">>> tool_executor RESULT: tool=%s ok=%s result=%.200s <<<",
                           tname, res.ok, (res.result or res.error)[:200])
             if res.ok:
-                return {"result": f"[{tname}] {res.result}", "endpoint": endpoint}
-            return {"result": f"[{tname}] error: {res.error}", "endpoint": endpoint}
+                return {"result": f"[{tname}] {res.result}", "endpoint": endpoint,
+                        "files": getattr(res, "files", None) or []}
+            return {"result": f"[{tname}] error: {res.error}", "endpoint": endpoint, "files": []}
         except Exception as e:
             return {"result": f"[{tname}] execution error: {str(e)}", "endpoint": endpoint}
 
     tasks = [execute_one(tc) for tc in tool_calls]
     raw = await asyncio.gather(*tasks, return_exceptions=True)
-    # Unwrap: each item is a dict {"result": str, "endpoint": str|None} or Exception
+    # Unwrap: each item is a dict {"result": str, "endpoint": str|None,
+    # "files": list[dict]} or Exception. ``files`` comes from the MCP
+    # structuredContent.files channel and feeds state.download_entries.
     tr = []
-    for item in raw:
+    download_acc = []
+    for i, item in enumerate(raw):
         if isinstance(item, Exception):
             tr.append(str(item))
         elif isinstance(item, dict):
-            tr.append(_enrich_with_download_links(item.get("result", ""), item.get("endpoint")))
+            tr.append(item.get("result", ""))
+            files = item.get("files") or []
+            if files:
+                entries = _build_download_entries(files)
+                download_acc.extend(entries)
+                tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
+                for fe in entries:
+                    _emit(state, "tool_done", f"File generated: {fe['filename']}", tool=tcname, detail=fe["filename"])
         else:
             tr.append(str(item))
 
     for i, r in enumerate(tr):
         logger.info("Tool executor round=%d result[%d]: %s", state.get("tool_round", 0) + 1, i, r[:300])
-        fm = _re.search(r'\[File\]\s*((?:https?://\S+|/api/workspace/download\S+))', r)
-        if fm:
-            fname = _filename_from_download_url(fm.group(1))
-            tcname = tool_calls[i].get("function", {}).get("name", "unknown") if i < len(tool_calls) else "unknown"
-            _emit(state, "tool_done", f"File generated: {fname}", tool=tcname, detail=fname)
     result_msgs = []
     for i, tc in enumerate(tool_calls):
         func = tc.get("function", {})
         result_msgs.append({"role": "tool", "tool_call_id": tc.get("id", f"call_{i}"),
                             "name": func.get("name", "unknown"),
                             "content": tr[i] if i < len(tr) else ""})
-    return {"tool_results": tr, "tool_messages": result_msgs, "tool_round": state.get("tool_round", 0) + 1}
+    return {"tool_results": tr, "tool_messages": result_msgs, "tool_round": state.get("tool_round", 0) + 1,
+            "download_entries": download_acc}
 
 
 async def _get_repl_server_config() -> dict | None:

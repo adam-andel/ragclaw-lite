@@ -100,10 +100,12 @@ def patch_globals(monkeypatch):
     monkeypatch.setattr(nodes.vector_store, "search", fake_search)
     monkeypatch.setattr(nodes.bm25_index, "search", fake_search)
 
-    # Tool executor backend (script path returns a [File] result)
+    # Tool executor backend (script path returns structured file refs, no [File] text)
     fake_repl = types.SimpleNamespace(
         ok=True,
-        result="[File] https://example.com/files/abc/X.pptx",
+        result="File generated successfully",
+        files=[{"name": "X.pptx", "path": "X.pptx",
+                "mimeType": "application/vnd.ms-powerpoint"}],
         error=None,
     )
 
@@ -423,6 +425,7 @@ class TestBuildGenerationMessagesIsolation:
                 {"role": "user", "content": "LEAKED_STEP_TEXT", "agent_step": True},
             ],
             "tool_results": [],
+            "download_entries": [],
             "rag_context": "",
             "memory_context": "",
             "active_skill": None,

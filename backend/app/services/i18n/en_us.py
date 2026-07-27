@@ -66,13 +66,13 @@ MESSAGES = {
     # a downloadable file, the answer must not re-paste the source code. No placeholders.
     "file_answer_rule": (
         "## File-generation Answer Rule\n"
-        "If your tool produced a downloadable file (a `[File]` entry appears in the tool result), "
-        "the system displays it to the user as a SEPARATE download button — outside your answer "
-        "text. Therefore your final answer should ONLY contain a brief sentence saying the file "
-        "was generated; do NOT include any download link, the `[File]` tag, a file path, or a URL "
-        "in your answer. Also do NOT re-paste the source code / script that generated the file, "
-        "and never paste the generated file's own content (e.g. the HTML/source of the file) back "
-        "into your answer — the user gets the file via the button.\n"
+        "If your tool produced a downloadable file, the system sends the file metadata through a "
+        "SEPARATE structured channel and displays it to the user as a SEPARATE download button — "
+        "outside your answer text. Therefore your final answer should ONLY contain a brief "
+        "sentence saying the file was generated; do NOT include any download link, a file path, "
+        "or a URL in your answer. Also do NOT re-paste the source code / script that generated the "
+        "file, and never paste the generated file's own content (e.g. the HTML/source of the file) "
+        "back into your answer — the user gets the file via the button.\n"
         "IMPORTANT: always close every code block you open with a final ``` line. An unclosed code "
         "fence turns the rest of your answer into unreadable code and hides the summary you wrote."
     ),

@@ -22,6 +22,7 @@ import logging
 import threading
 import re
 import base64
+import mimetypes
 from urllib.parse import urlparse, parse_qs, unquote, quote
 import ast as _ast_module
 import hmac as _hmac_module
@@ -870,22 +871,6 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
 # Executor registry — each language registers its own tool
 # ═══════════════════════════════════════════════════════════
 
-def _make_workspace_note(workdir: str) -> str:
-    """Generate workspace identifier for output prefix.
-
-    Emits the full relative path under _allow_dir (e.g. `user_u<uid>/<ws>` under
-    per-user isolation) so the Backend can reconstruct the nested /files/... URL
-    and proxy it correctly.
-    """
-    if not _allow_dir:
-        return ""
-    try:
-        rel = os.path.relpath(workdir, _allow_dir)
-    except ValueError:
-        return ""
-    return f"[workspace: {rel}/]\n"
-
-
 def _snapshot_files(workdir: str) -> dict:
     """Snapshot ``{filename: (size, mtime_ns)}`` for existing non-empty files.
 
@@ -896,53 +881,70 @@ def _snapshot_files(workdir: str) -> dict:
     snap = {}
     if not os.path.isdir(workdir):
         return snap
-    for f in os.listdir(workdir):
-        fp = os.path.join(workdir, f)
-        try:
-            if os.path.isfile(fp) and os.path.getsize(fp) > 0:
-                st = os.stat(fp)
-                snap[f] = (st.st_size, st.st_mtime_ns)
-        except OSError:
-            pass
+    for root, _dirs, files in os.walk(workdir):
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                if os.path.getsize(fp) > 0:
+                    st = os.stat(fp)
+                    # Key by path relative to workdir so nested files
+                    # (e.g. output/report.pdf) are captured too.
+                    snap[os.path.relpath(fp, workdir)] = (st.st_size, st.st_mtime_ns)
+            except OSError:
+                pass
     return snap
 
 
-def _append_download_links(result: str, workdir: str, before: dict | None = None) -> str:
-    """Append File download URLs for files produced/changed by THIS execution.
+def _collect_generated_files(workdir: str, before: dict | None = None) -> list[dict]:
+    """Return metadata for files produced/changed by THIS execution.
 
-    Only files that are NEW or whose size/mtime changed relative to ``before``
-    (a snapshot taken right before running the code) receive a [File] link.
-    Pre-existing, untouched workspace files are deliberately omitted so the
-    chat answer never leaks download links for unrelated files.
+    Each entry is ``{name, path, mimeType}``. ``path`` is the sandbox-relative
+    path (relative to _allow_dir, with the per-user uid prefix stripped) so the
+    Backend can build a uid-free download URL.
 
-    Uses the full relative path under _allow_dir so nested per-user dirs
-    (user_uXXXX/<ws>/file) produce correct /files/... URLs.
+    Files are surfaced to the Backend through the MCP ``structuredContent.files``
+    channel — NOT as inline ``[File]`` text tags — so the download data is
+    machine-readable and never depends on regex parsing.
     """
-    if not _public_url or not _allow_dir:
-        return result
+    if not _allow_dir:
+        return []
     try:
         rel = os.path.relpath(workdir, _allow_dir)
     except ValueError:
-        return result
-    download_base = f"{_public_url}/files/{rel}"
+        return []
     after = _snapshot_files(workdir)
+    files = []
     for f in sorted(after):
         if before is not None and after[f] == before.get(f):
             continue  # unchanged → not produced by this run, skip it
-        result += f"\n\n[File] {download_base}/{f}"
-    return result
+        # Strip the per-user uid prefix (user_uNNNN/) from the sandbox-relative
+        # path so the Backend only ever sees uid-free paths.
+        segs = rel.split("/") if rel else []
+        if segs and segs[0].startswith("user_u") and segs[0][6:].isdigit():
+            segs = segs[1:]
+        path = "/".join(segs + [f]) if segs else f
+        files.append({
+            "name": os.path.basename(f),
+            "path": path,
+            "mimeType": mimetypes.guess_type(f)[0] or "application/octet-stream",
+        })
+    return files
 
 
 def _executor_template(lang: str, prescreen_fn, run_fn):
     """Factory: produce a unified execute function for one language.
 
-    Returns a callable (code: str, timeout: int) -> str that handles:
+    Returns a callable (code: str, timeout: int) -> (str, list[dict]) that handles:
     1. prescreening  2. concurrency gate  3. workspace creation
-    4. execution  5. post-processing (workspace note + download links)
+    4. execution  5. post-processing (collect generated file metadata)
+
+    The returned tuple is ``(text_output, generated_files)`` where
+    ``generated_files`` is the list passed to the MCP ``structuredContent.files``
+    channel.
     """
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
                 workspace_id: str | None = None, user: str | None = None,
-                uid: int | None = None) -> str:
+                uid: int | None = None) -> tuple[str, list[dict]]:
         t0 = time.time()
 
         # Pre-screen
@@ -950,12 +952,12 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
         if err:
             logger.warning("%s_prescreen_reject reason=%s code_preview=%.60s",
                           lang, err, code[:60].replace("\n", " "))
-            return f"{lang} 代码审查未通过: {err}"
+            return f"{lang} 代码审查未通过: {err}", []
 
         # Concurrency gate
         if not _acquire_slot():
             logger.warning("exec_busy max_concurrent=%d lang=%s", _max_concurrent, lang)
-            return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试"
+            return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试", []
 
         # Resolve per-user account from the UID carried in the signed envelope
         # (stateless, exact). The envelope is always verified and uid-pinned by
@@ -968,26 +970,24 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             workdir = _make_workdir(workspace_id, acct)
             before = _snapshot_files(workdir)  # snapshot BEFORE running code
             result = run_fn(code, workdir, timeout, acct)
-            ws_note = _make_workspace_note(workdir)
-            result = ws_note + result
             result = result[:MAX_OUTPUT]
-            result = _append_download_links(result, workdir, before)
+            generated = _collect_generated_files(workdir, before)
 
             elapsed_ms = int((time.time() - t0) * 1000)
-            logger.info("exec_ok lang=%s user=%s uuid=%s elapsed_ms=%d output_len=%d",
+            logger.info("exec_ok lang=%s user=%s uuid=%s elapsed_ms=%d output_len=%d files=%d",
                         lang, user or "-", os.path.basename(workdir) if _allow_dir else "-",
-                        elapsed_ms, len(result))
-            return result
+                        elapsed_ms, len(result), len(generated))
+            return result, generated
         except subprocess.TimeoutExpired:
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.warning("exec_timeout lang=%s timeout=%d elapsed_ms=%d",
                           lang, timeout, elapsed_ms)
-            return f"执行超时（>{timeout}秒），已终止进程"
+            return f"执行超时（>{timeout}秒），已终止进程", []
         except Exception as e:
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.error("exec_error lang=%s error=%s elapsed_ms=%d",
                         lang, type(e).__name__, elapsed_ms)
-            return f"执行异常: {str(e)}"
+            return f"执行异常: {str(e)}", []
         finally:
             _exec_semaphore.release()
 
@@ -1207,8 +1207,10 @@ class MCPHandler(BaseHTTPRequestHandler):
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
                 uid = auth_info["uid"] if auth_info else None
-                result = {"content": [{"type": "text",
-                        "text": executor(code, workspace_id=workspace_id, user=user, uid=uid)}]}
+                text, generated = executor(code, workspace_id=workspace_id, user=user, uid=uid)
+                result = {"content": [{"type": "text", "text": text}]}
+                if generated:
+                    result["structuredContent"] = {"files": generated}
             else:
                 result = {"content": [{"type": "text", "text": f"未知工具: {tool_name}"}]}
         else:

@@ -557,6 +557,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         "skill_switch_count": 0,
         "tool_messages": [],
         "tool_results": [],
+        "download_entries": [],
         "context": "",
         "tool_round": 0,
         "route": None,

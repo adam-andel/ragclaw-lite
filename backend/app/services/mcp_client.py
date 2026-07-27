@@ -59,6 +59,7 @@ class ToolResult:
     ok: bool
     result: str = ""       # success output as string
     error: str = ""        # error message if ok=False
+    files: list[dict] | None = None  # structured file refs (MCP structuredContent.files)
 
 
 class MCPClient:
@@ -195,7 +196,14 @@ class MCPClient:
         else:
             text = json.dumps(result, ensure_ascii=False)
 
-        return ToolResult(tool_name=tool_name, ok=True, result=text)
+        # Pull structured file refs out of the MCP structuredContent channel
+        # (the REPL server surfaces generated files here, never as [File] text).
+        files: list[dict] = []
+        sc = result.get("structuredContent") or {}
+        if isinstance(sc, dict):
+            files = sc.get("files") or []
+
+        return ToolResult(tool_name=tool_name, ok=True, result=text, files=files)
 
     async def _http_post(self, endpoint: str, method: str, params: dict, timeout: int) -> dict:
         """Send a JSON-RPC 2.0 request via HTTP."""

@@ -47,6 +47,7 @@ def _sample_snapshot() -> dict:
         "memory_context": "",
         "tool_results": [],
         "tool_messages": [],
+        "download_entries": [],
         "skill_stack": [],
         "loaded_skill_ids": ["s1"],
         "workspace_id": "ws-1",
