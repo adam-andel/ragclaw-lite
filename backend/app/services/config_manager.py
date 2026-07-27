@@ -473,9 +473,6 @@ class ConfigManager:
             # Embedding
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
-            # Server (startup-time only)
-            "server_host": "0.0.0.0",
-            "server_port": 8000,
             # HTTPS / TLS (nginx reverse proxy, prod only)
             "https_enabled": False,
             # System prompt (zh = original field; en = A/B variant selected by prompt_language)
@@ -505,8 +502,6 @@ class ConfigManager:
             "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             "embedding_model": settings.embedding_model,
-            "server_host": "0.0.0.0",
-            "server_port": 8000,
             # HTTPS / TLS (nginx reverse proxy, prod only)
             "https_enabled": False,
             "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
@@ -673,16 +668,6 @@ class ConfigManager:
             return self._config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
 
     @property
-    def server_host(self) -> str:
-        with self._lock:
-            return self._config.get("server_host", "0.0.0.0")
-
-    @property
-    def server_port(self) -> int:
-        with self._lock:
-            return self._config.get("server_port", 8000)
-
-    @property
     def llm_provider(self) -> str:
         with self._lock:
             return self._config.get("llm_provider", "openai")
@@ -805,7 +790,7 @@ class ConfigManager:
             "llm_base_url", "llm_temperature", "llm_max_tokens",
             "llm_concurrency", "embedding_model", "embedding_api_key",
             "llm_context_window",
-            "server_host", "server_port", "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
+            "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret", "jwt_secret",

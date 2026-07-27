@@ -8,7 +8,7 @@ import {
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag, NSwitch,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, getJwtAuth, regenerateJwtAuth, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig, type JwtAuthConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
@@ -63,7 +63,6 @@ const config = ref<LLMConfig>({
   llm_system_prompt: '',
   llm_system_prompt_en: '',
   prompt_language: 'en',
-  server_host: '0.0.0.0', server_port: 8000,
   cache_ttl_seconds: 3600,
   is_configured: false,
 })
@@ -694,8 +693,6 @@ async function doSave() {
     llm_system_prompt: config.value.llm_system_prompt,
     llm_system_prompt_en: config.value.llm_system_prompt_en,
     prompt_language: config.value.prompt_language,
-    server_host: config.value.server_host,
-    server_port: config.value.server_port,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
   }
   if (apiKeyInput.value.trim()) {
@@ -1219,43 +1216,6 @@ async function handleTest() {
             <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.conflictTitle') }}：{{ dimensionConflict }}</div>
           </NAlert>
           
-        </section>
-
-        <NDivider />
-
-        <!-- Server -->
-        <section id="server">
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.listenHost') }}
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span v-html="t('settings.listenHostTip')" />
-                </NTooltip>
-              </span>
-            </template>
-            <NInput v-model:value="config.server_host" placeholder="0.0.0.0" @input="clearTest" @change="scheduleSave(t('settings.listenHost'))">
-              <template #prefix><NIcon :component="Server" /></template>
-            </NInput>
-          </NFormItem>
-
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.listenPort') }}
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span v-html="t('settings.listenPortTip')" />
-                </NTooltip>
-              </span>
-            </template>
-            <NInputNumber v-model:value="config.server_port" :min="1" :max="65535" :step="1" @update:value="clearTest" @change="scheduleSave(t('settings.listenPort'))" />
-          </NFormItem>
         </section>
 
         <NDivider />
