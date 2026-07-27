@@ -5,7 +5,6 @@ export default {
   nav: {
     llm: 'LLM',
     embeddingModel: 'Embedding Model',
-    server: 'Server',
     systemPrompt: 'System Prompt',
     sandboxNetwork: 'Sandbox Network',
     replAuth: 'REPL Auth',
@@ -84,6 +83,8 @@ export default {
     deleteConfirmContent: 'This will delete all local files and the install record for model "{model}". You will need to download it again before use. Continue?',
     deleteConfirmOk: 'Delete',
   },
+  llmTitle: 'LLM Configuration',
+  llmDesc: 'Configure the LLM provider, API key, and inference parameters. Changes take effect immediately, no restart needed.',
   providerLabel: 'LLM Provider',
   providerQwen: 'Qwen (Alibaba)',
   providerOllama: 'Ollama (Local)',
@@ -113,6 +114,10 @@ export default {
   },
   systemPrompt: 'LLM System Prompt',
   systemPromptTip: 'System prompt used for RAG and default Agent replies.<br/>Takes effect immediately, no restart needed.',
+  systemPromptTitle: 'System Prompt',
+  systemPromptDesc: 'Set the system prompt injected into every conversation, plus the prompt language used by the agent graph. Changes take effect immediately, no restart needed.',
+  pluginsTitle: 'Plugin Management',
+  pluginsDesc: 'These are the file formats supported for upload by the document management module.',
   agentPromptLang: 'Agent Prompt Language',
   agentPromptLangTip: 'Controls the language of Agent Graph internal prompts (intent routing + tool forced JSON).<br/>Default <b>Chinese</b>; switch to <b>English</b> to compare instruction-following on English-dominant models (GPT / Claude / DeepSeek, etc.).<br/>Takes effect immediately, no restart, good for A/B comparison.',
   promptLang: {
