@@ -293,35 +293,10 @@ async def notify_network_policy_changed() -> bool:
 # REPL MCP identity secret (HMAC) — hot-reloadable
 # ═══════════════════════════════════════════════════════════
 
-class ReplAuthUpdate(BaseModel):
-    repl_auth_secret: str | None = None  # explicit secret; empty/None => leave unchanged
-
-
 @router.get("/repl-auth")
 async def get_repl_auth(current_user=Depends(get_current_admin)):
     """Read the current REPL MCP identity secret (admin only, unmasked)."""
     return {"repl_auth_secret": config_manager.repl_auth_secret}
-
-
-@router.put("/repl-auth")
-async def update_repl_auth(
-    data: ReplAuthUpdate,
-    current_user=Depends(get_current_admin),
-):
-    """Set the REPL MCP identity secret explicitly; hot-reloaded into MCP (no restart)."""
-    secret = (data.repl_auth_secret or "").strip()
-    if not secret:
-        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 不能为空")
-    if len(secret) < 16:
-        raise HTTPException(status_code=400, detail="REPL_AUTH_SECRET 至少 16 个字符")
-    await config_manager.update({"repl_auth_secret": secret})
-    mcp_pushed = await notify_auth_secret_changed(secret)
-    return {
-        "message": "REPL_AUTH_SECRET 已更新，立即生效"
-        + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
-        "repl_auth_secret": config_manager.repl_auth_secret,
-        "mcp_pushed": mcp_pushed,
-    }
 
 
 @router.post("/repl-auth/regenerate")

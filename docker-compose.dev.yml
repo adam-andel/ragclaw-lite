@@ -62,8 +62,10 @@ services:
   #
   # The named volumes ragclaw_workspace / ragclaw_policy (declared in the base
   # file) continue to mount on /app/workspace and /repl-policy, on top of this
-  # bind mount. The REPL identity secret is now a mounted Docker secret
-  # (/run/secrets/repl_auth_secret), not the old ragclaw_auth_secret volume.
+  # bind mount. The REPL identity secret is now owned by the Backend
+  # (auto-generated on first boot, rotated via admin UI) and pushed to mcp-repl
+  # at runtime — no longer a mounted Docker secret or the old ragclaw_auth_secret
+  # volume.
   #
   # NOTE: the host entrypoint.sh is *not* executable, so we can't rely on the
   # image's `ENTRYPOINT ["./entrypoint.sh"]` under a bind mount (permission

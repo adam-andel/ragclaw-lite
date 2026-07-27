@@ -81,11 +81,6 @@ export async function getReplAuth(): Promise<ReplAuthConfig> {
   return res.data
 }
 
-export async function updateReplAuth(secret: string): Promise<{ message: string; repl_auth_secret: string; mcp_pushed: boolean }> {
-  const res = await client.put('/config/repl-auth', { repl_auth_secret: secret })
-  return res.data
-}
-
 export async function regenerateReplAuth(): Promise<{ message: string; repl_auth_secret: string; mcp_pushed: boolean }> {
   const res = await client.post('/config/repl-auth/regenerate')
   return res.data

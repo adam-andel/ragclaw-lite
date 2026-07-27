@@ -62,11 +62,11 @@ _network_mode: str = "deny"
 _allow_domains: list[str] = []      # allowed hostnames in allowlist mode
 _allow_methods: list[str] = []      # reserved for L7 filtering (Phase 2)
 _policy_file: str = os.environ.get("REPL_POLICY_FILE", "/tmp/repl_network_policy.json")
-# Persisted REPL auth secret (mirrors _policy_file). Written by _set_auth_secret
-# on every Backend push and read back at startup, so mcp-repl recovers the
-# secret across restarts without waiting for the Backend's push — this removes
-# the transient 403 window right after a container restart.
-_auth_secret_file: str = os.environ.get("REPL_AUTH_SECRET_FILE", "/repl-auth/repl_auth_secret.txt")
+# The REPL auth secret is owned by the Backend: it is auto-generated on first
+# boot (DB) and pushed to this server at runtime via PUT /auth-secret (with a
+# retry loop on startup). There is intentionally NO on-disk secret file — the
+# Backend is the single source of truth, so a rotation in the admin UI survives
+# restarts without being overridden by a stale mounted file.
 # ── Egress proxy (network-layer broker, approach B) ───
 # Children are forced through this loopback proxy so all HTTP(S) egress
 # (incl. asyncio/httpx/curl) hits the allowlist. Port is shared with
@@ -255,9 +255,8 @@ def _set_auth_secret(secret):
 
     Auth + per-user UID isolation are always on, so this only swaps the active
     secret. An empty/None secret is rejected — it can never disable auth.
-    The secret is also persisted to _auth_secret_file (a persistent shared
-    volume) so mcp-repl recovers it on restart without waiting for the
-    Backend's push — eliminating the transient 403 on container restart.
+    The secret is owned by the Backend (DB + admin-UI rotation) and pushed here
+    at runtime; it is never persisted to disk by this server.
     """
     global _REPL_AUTH_SECRET, _auth_required, _isolation_enabled
     if not secret:
@@ -265,29 +264,6 @@ def _set_auth_secret(secret):
     _REPL_AUTH_SECRET = secret
     _auth_required = True
     _isolation_enabled = True
-    _persist_auth_secret(secret)
-
-
-def _persist_auth_secret(secret: str) -> None:
-    """Persist the active secret to disk (survives container restart).
-
-    Mirrors _set_network_policy's file persistence. Best-effort: failures are
-    logged but never block the runtime secret swap.
-    """
-    path = _auth_secret_file
-    if not path:
-        return
-    try:
-        d = os.path.dirname(path)
-        if d and not os.path.isdir(d):
-            os.makedirs(d, exist_ok=True)
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(secret)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("auth_secret_persist_failed %s", e)
 
 
 def _ensure_dir_owned(path: str, acct, mode: int = 0o770) -> None:
@@ -413,28 +389,6 @@ def _load_policy_file() -> None:
                         _network_mode, len(_allow_domains))
     except Exception as e:
         logger.warning("policy_load_failed %s", e)
-
-
-def _load_auth_secret_file() -> None:
-    """Load persisted auth secret from disk (survives container restart).
-
-    Mirrors _load_policy_file: the file overrides the CLI/env seed so the
-    secret pushed by the Backend in a previous run is reused immediately,
-    before the Backend's startup push arrives (no 403 window on restart).
-    """
-    global _REPL_AUTH_SECRET
-    path = _auth_secret_file
-    if not path:
-        return
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                s = f.read().strip()
-            if s:
-                _REPL_AUTH_SECRET = s
-                logger.info("auth_secret_loaded_from_file len=%d", len(s))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("auth_secret_load_failed %s", e)
 
 
 def _py_build_guard(per_call_dir: str) -> str:
@@ -1796,9 +1750,9 @@ if __name__ == "__main__":
     _REPL_AUTH_SECRET = args.auth_secret or os.environ.get("REPL_AUTH_SECRET")
     _auth_required = True
     _isolation_enabled = True
-    # Recover the secret persisted on the shared volume from a prior run so the
-    # workspace API is not 403-ing until the Backend's startup push lands.
-    _load_auth_secret_file()
+    # The REPL identity secret is pushed by the Backend at startup (with retry);
+    # until that push lands the workspace API will 403 (fail-closed), which is
+    # the intended safe default. No on-disk secret is loaded here.
     logger.info("auth_enabled — 每用户隔离强制开启（auth_required=%s）", _auth_required)
     logger.info("isolation_note — 容器需以 root 运行并持有 CAP_SETUID/SETGID/CHOWN，"
                 "否则子进程降权会失败（子进程将以退出码 1 结束）。")

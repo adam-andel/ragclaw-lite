@@ -394,7 +394,9 @@ class ConfigManager:
         # HTTPS cert/key are NEVER stored in config.enc (they live as plaintext
         # in the durable TLS volume, see set_https / ensure_tls_config). Only
         # llm/embedding API keys remain encrypted here.
-        await self._seed_repl_auth_from_file()
+        # REPL identity HMAC secret is auto-generated on first boot (see
+        # _ensure_repl_auth_secret) and rotated via the admin UI; it is no
+        # longer sourced from a mounted Docker secret file (Plan B).
         await self._ensure_repl_auth_secret()
 
     def _build_defaults(self, env_api_key: str = "") -> dict:
@@ -452,10 +454,9 @@ class ConfigManager:
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
-            # repl_auth_secret is seeded from the mounted Docker secret file
-            # (see _seed_repl_auth_from_file) or, as a last resort, generated on
-            # first boot by _ensure_repl_auth_secret. Not auto-generated here so
-            # the deploy-time secret always wins over a random default.
+            # repl_auth_secret is auto-generated on first boot by
+            # _ensure_repl_auth_secret and rotated via the admin UI. It is no
+            # longer sourced from a mounted Docker secret file (Plan B).
             "repl_auth_secret": "",
         }
 
@@ -514,12 +515,14 @@ class ConfigManager:
         self._config_file.write_bytes(_encrypt(plain))
 
     async def _ensure_repl_auth_secret(self):
-        """Guarantee a non-empty REPL_AUTH_SECRET exists (preset default).
+        """Guarantee a non-empty REPL_AUTH_SECRET exists (first-boot default).
 
-        Handles three cases:
-          * DB empty -> seeded by _load_from_db with env value or a fresh secret.
+        The secret is the single source of truth, persisted in the DB:
+          * DB empty -> a fresh secret is generated and persisted on first boot.
           * DB has rows but predates this key -> missing -> generate + persist.
           * Key present but blank -> regenerate (shouldn't happen, defensive).
+        UI rotation (POST /api/config/repl-auth/regenerate) is canonical and
+        survives restarts — no mounted secret file overrides it on boot.
         """
         with self._lock:
             current = self._config.get("repl_auth_secret", "") or ""
@@ -530,38 +533,6 @@ class ConfigManager:
             self._config["repl_auth_secret"] = new_secret
         await self._save_db_settings({"repl_auth_secret": new_secret})
         print("[ConfigManager] generated preset REPL_AUTH_SECRET")
-
-    async def _seed_repl_auth_from_file(self):
-        """Seed the REPL_AUTH_SECRET from the mounted Docker secret file.
-
-        The deploy-time secret (mounted at REPL_AUTH_SECRET_FILE, e.g.
-        /run/secrets/repl_auth_secret) is the CANONICAL value. We converge the
-        DB to it on every boot so the Backend and mcp-repl (which reads the same
-        file at startup) always agree — otherwise REPL identity isolation would
-        break with a 403 on every sandbox call.
-
-        Consequence: a UI-rotated value (stored in DB) is reverted on restart.
-        For a durable rotation, regenerate the secret file itself (or the k8s
-        Secret) and restart — that is the intended secret-based workflow.
-        """
-        path = os.environ.get("REPL_AUTH_SECRET_FILE")
-        if not path or not os.path.exists(path):
-            return
-        try:
-            s = Path(path).read_text(encoding="utf-8").strip()
-        except Exception as e:
-            print(f"[ConfigManager] repl_auth_secret file unreadable: {e}")
-            return
-        if not s:
-            return
-        with self._lock:
-            current = self._config.get("repl_auth_secret", "") or ""
-        if current == s:
-            return
-        with self._lock:
-            self._config["repl_auth_secret"] = s
-        await self._save_db_settings({"repl_auth_secret": s})
-        print(f"[ConfigManager] applied REPL_AUTH_SECRET from {path}")
 
     # ── Properties ──
 

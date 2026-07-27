@@ -10,12 +10,11 @@
 # Files produced (each 32 random bytes, stored as 64 hex chars):
 #   secrets/ragclaw_config_key   AES-256 key for config.enc
 #   secrets/ragclaw_jwt_secret  JWT HS256 signing secret
-#   secrets/repl_auth_secret     REPL identity HMAC secret (shared with mcp-repl)
 
 gen_secrets() {
   local dir="$ROOT/secrets"
   mkdir -p "$dir"
-  local names=("ragclaw_config_key" "ragclaw_jwt_secret" "repl_auth_secret")
+  local names=("ragclaw_config_key" "ragclaw_jwt_secret")
   local missing=0
   for n in "${names[@]}"; do
     if [ ! -f "$dir/$n" ]; then

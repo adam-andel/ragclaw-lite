@@ -22,7 +22,6 @@ services:
     secrets:
       - ragclaw_config_key      # AES key for config.enc (llm/embedding API keys)
       - ragclaw_jwt_secret      # JWT signing secret
-      - repl_auth_secret        # REPL identity HMAC secret (shared with mcp-repl)
     env_file:
       - path: .env
         required: false
@@ -35,11 +34,6 @@ services:
       # BEFORE python imports huggingface_hub, so it lives here at container start.
       - HF_HUB_DISABLE_XET=1
       - PUBLIC_URL=${PUBLIC_URL:-}
-      # REPL identity HMAC secret comes from the mounted Docker secret file
-      # /run/secrets/repl_auth_secret (deployment-provided; see `secrets:` above).
-      # The Backend seeds its DB from that file on first boot and hot-reloads it
-      # into mcp-repl via PUT /auth-secret (no restart) so both stay in sync.
-      - REPL_AUTH_SECRET_FILE=/run/secrets/repl_auth_secret
       # ── REPL sandbox per-user UID allocation (random, DB-backed) ──
       # Capacity = MAX - MIN. Expand MAX later to grow capacity WITHOUT
       # affecting existing users (their stored UIDs stay fixed).
@@ -115,13 +109,10 @@ services:
       # backend PUT /policy pushes are seen by the broker (hot-reload preserved).
       - REPL_POLICY_FILE=/repl-policy/repl_network_policy.json
       # ── Per-user UID isolation (Backend-signed identity) ──
-      # Auth + isolation are ALWAYS on (no single-account fallback). The
-      # REPL identity HMAC secret is mounted as a Docker secret
-      # (/run/secrets/repl_auth_secret) and read back at startup so the
-      # workspace API is ready immediately after a restart (no 403 window)
-      # before the Backend's push arrives. The Backend-pushed value (in-memory)
-      # takes over once the push lands. No REPL_AUTH_SECRET env var needed.
-      - REPL_AUTH_SECRET_FILE=/run/secrets/repl_auth_secret
+      # Auth + isolation are ALWAYS on (no single-account fallback). The REPL
+      # identity HMAC secret is owned by the Backend (auto-generated on first
+      # boot, rotated via admin UI) and pushed here at runtime via PUT
+      # /auth-secret. It is NOT mounted as a Docker secret / file.
     # ── Container security hardening ──
     # NOTE: /app/workspace is now a PERSISTENT named volume (ragclaw_workspace),
     # not tmpfs — user workspace files + REPL tool outputs survive mcp-repl
@@ -149,12 +140,8 @@ services:
     volumes:
       - ragclaw_workspace:/app/workspace
       - ragclaw_policy:/repl-policy
-    # Mounted Docker secret (see top-level `secrets:`). Read-only; mcp-repl
-    # reads it at startup for the 403-window avoidance, then the Backend's
-    # push (in-memory) takes over. The legacy ragclaw_auth_secret volume is
-    # gone — the secret is the single source of truth now.
-    secrets:
-      - repl_auth_secret
+    # The REPL identity HMAC secret is owned by the Backend and pushed at
+    # runtime via PUT /auth-secret (no mounted secret / file in this service).
     # ── Resource limits ──
     deploy:
       resources:
@@ -251,5 +238,3 @@ secrets:
     file: ./secrets/ragclaw_config_key
   ragclaw_jwt_secret:
     file: ./secrets/ragclaw_jwt_secret
-  repl_auth_secret:
-    file: ./secrets/repl_auth_secret

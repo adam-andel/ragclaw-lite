@@ -9,7 +9,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 import { useAuthStore } from '@/stores/auth'
@@ -80,9 +80,7 @@ const sandboxConfig = ref<SandboxNetworkConfig>({
 
 // ── REPL MCP identity secret ──
 const replAuthSecret = ref<string>('')
-const replAuthSaving = ref(false)
 const replAuthGenerating = ref(false)
-const replAuthDirty = ref(false)
 const replAuthPushed = ref<boolean | null>(null)
 
 // ── HTTPS / TLS (nginx reverse proxy, prod only) ──
@@ -719,40 +717,12 @@ async function doSave() {
   }
 }
 
-async function handleReplAuthSave() {
-  const secret = replAuthSecret.value.trim()
-  if (!secret) {
-    message.warning(t('settings.replAuthEmpty'))
-    return
-  }
-  if (secret.length < 16) {
-    message.warning(t('settings.replAuthTooShort'))
-    return
-  }
-  replAuthSaving.value = true
-  try {
-    const res = await updateReplAuth(secret)
-    replAuthPushed.value = res.mcp_pushed
-    replAuthDirty.value = false
-    if (res.mcp_pushed) {
-      message.success(t('settings.msg.replAuthSavedHot'))
-    } else {
-      message.warning(t('settings.msg.replAuthSavedRestart'))
-    }
-  } catch (e: any) {
-    message.error(saveErrorReason(e))
-  } finally {
-    replAuthSaving.value = false
-  }
-}
-
 async function handleReplAuthGenerate() {
   replAuthGenerating.value = true
   try {
     const res = await regenerateReplAuth()
     replAuthSecret.value = res.repl_auth_secret
     replAuthPushed.value = res.mcp_pushed
-    replAuthDirty.value = false
     if (res.mcp_pushed) {
       message.success(t('settings.msg.replAuthGeneratedHot'))
     } else {
@@ -1343,8 +1313,8 @@ async function handleTest() {
                 v-model:value="replAuthSecret"
                 type="password"
                 show-password-on="click"
+                readonly
                 :placeholder="t('settings.replAuthPlaceholder')"
-                @input="replAuthDirty = true"
               />
               <NSpace :size="8">
                 <NButton
@@ -1355,15 +1325,6 @@ async function handleTest() {
                 >
                   <template #icon><NIcon><Refresh /></NIcon></template>
                   {{ t('settings.replAuthGenerate') }}
-                </NButton>
-                <NButton
-                  type="primary"
-                  :disabled="replAuthSaving || !replAuthSecret.trim()"
-                  :loading="replAuthSaving"
-                  @click="handleReplAuthSave"
-                >
-                  <template #icon><NIcon><Save /></NIcon></template>
-                  {{ t('settings.replAuthSave') }}
                 </NButton>
                 <NButton :disabled="!replAuthSecret.trim()" @click="handleReplAuthCopy">
                   <template #icon><NIcon><Copy /></NIcon></template>
@@ -1380,7 +1341,6 @@ async function handleTest() {
                 <template v-else>
                   {{ t('settings.replAuthStatus', { on: replAuthSecret.trim() ? t('settings.replAuthOn') : t('settings.replAuthOff') }) }}
                 </template>
-                <template v-if="replAuthDirty"> · {{ t('settings.replAuthUnsaved') }}</template>
               </span>
             </NSpace>
           </NFormItem>
