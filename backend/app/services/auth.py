@@ -12,11 +12,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.services.config_manager import config_manager
 
 # --- Config ---
-SECRET_KEY = "ragclaw-jwt-secret-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+
+def get_jwt_secret() -> str:
+    """Return the JWT signing secret.
+
+    Sourced from the DB-backed ConfigManager (auto-generated on first boot,
+    rotated via the admin UI). No external mounted secret is required. The
+    value is read from ConfigManager's in-memory cache, which is updated
+    synchronously when the secret is rotated in the UI — so a rotation takes
+    effect on the very next token sign/verify with zero backend restart.
+    """
+    secret = config_manager.jwt_secret
+    if not secret:
+        raise RuntimeError(
+            "JWT secret is empty — ConfigManager failed to initialize it on startup."
+        )
+    return secret
 
 security = HTTPBearer(auto_error=False)
 
@@ -42,12 +59,12 @@ def create_access_token(user_id: str, username: str, role: str, tenant_id: str |
         "tenant_id": tenant_id,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict | None:
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
     except JWTError:
         return None
 

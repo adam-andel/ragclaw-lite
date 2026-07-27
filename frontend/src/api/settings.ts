@@ -81,13 +81,23 @@ export async function getReplAuth(): Promise<ReplAuthConfig> {
   return res.data
 }
 
-export async function updateReplAuth(secret: string): Promise<{ message: string; repl_auth_secret: string; mcp_pushed: boolean }> {
-  const res = await client.put('/config/repl-auth', { repl_auth_secret: secret })
+export async function regenerateReplAuth(): Promise<{ message: string; repl_auth_secret: string; mcp_pushed: boolean }> {
+  const res = await client.post('/config/repl-auth/regenerate')
   return res.data
 }
 
-export async function regenerateReplAuth(): Promise<{ message: string; repl_auth_secret: string; mcp_pushed: boolean }> {
-  const res = await client.post('/config/repl-auth/regenerate')
+// ── JWT signing secret (DB-backed, hot-reloadable) ──
+export interface JwtAuthConfig {
+  jwt_secret: string
+}
+
+export async function getJwtAuth(): Promise<JwtAuthConfig> {
+  const res = await client.get('/config/jwt-secret')
+  return res.data
+}
+
+export async function regenerateJwtAuth(): Promise<{ message: string; jwt_secret: string }> {
+  const res = await client.post('/config/jwt-secret/regenerate')
   return res.data
 }
 

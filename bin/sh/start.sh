@@ -16,6 +16,7 @@ CONTAINER_PORT=8000   # backend container port; host port = RAGCLAW_PORT / .env 
 
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/mirror.sh"
+source "$SCRIPT_DIR/lib/gen-secrets.sh"
 
 # Open a URL in the default browser: xdg-open (Linux) preferred, else open (macOS).
 open_browser() {
@@ -125,10 +126,34 @@ build_stack() {  # $1 = mirror
 # Actual host port docker published for the ragclaw container. Works for all three
 # cases uniformly: inline RAGCLAW_PORT, .env RAGCLAW_PORT, or a random ephemeral port.
 # Requires the container to be up (call after up_stack).
+# Host port docker published for the backend container port (8000).
+# The backend is NO LONGER published to the host in either mode — all traffic
+# flows through nginx (prod) or the Vite HMR frontend (dev). Kept only for
+# diagnostics; returns EMPTY when the port is unpublished (docker prints
+# "invalid IP:0" in that case, which we must NOT surface as 0).
 ragclaw_published_port() {
   local p
   p="$(compose port ragclaw "$CONTAINER_PORT" 2>/dev/null | sed -E 's#.*:##')"
-  echo "${p:-$CONTAINER_PORT}"
+  [ "$p" = "0" ] && p=""
+  echo "$p"
+}
+
+# Host port docker published for a given nginx listener (80 = HTTP, 443 = HTTPS).
+# When RAGCLAW_HTTP_PORT / RAGCLAW_HTTPS_PORT are unset, docker assigns RANDOM
+# host ports, so we MUST ask docker rather than assume 80/443. Returns EMPTY if
+# that listener is not published ("invalid IP:0" is normalized to empty).
+nginx_published_port() {
+  local cp="${1:-80}"
+  local p
+  p="$(compose port nginx "$cp" 2>/dev/null | sed -E 's#.*:##')"
+  [ "$p" = "0" ] && p=""
+  echo "$p"
+}
+
+# True when nginx is actually serving TLS (a 443 server block exists in the
+# rendered conf the backend wrote into the shared volume nginx mounts ro).
+nginx_https_enabled() {
+  compose exec -T nginx grep -q 'listen 443 ssl' /etc/nginx/conf.d/default.conf 2>/dev/null
 }
 
 # Actual host port docker published for the Vite HMR frontend (frontend-dev).
@@ -139,6 +164,31 @@ frontend_published_port() {
   local p
   p="$(compose port frontend-dev 5173 2>/dev/null | sed -E 's#.*:##')"
   echo "${p:-5173}"
+}
+
+# Resolve the user-facing entry URL(s) for the running stack.
+#   dev  -> Vite HMR frontend (frontend-dev) is the app.
+#   prod -> nginx is the sole entry: HTTP on :80 (always), HTTPS on :443 (when enabled).
+# Sets APP_URL (canonical), APP_HTTP_URL, APP_HTTPS_URL (empty if N/A).
+resolve_entry() {
+  if is_dev_mode; then
+    local fp; fp="$(frontend_published_port)"
+    APP_HTTP_URL="http://localhost:${fp}"
+    APP_HTTPS_URL=""
+    APP_URL="$APP_HTTP_URL"
+    return
+  fi
+  local h; h="$(nginx_published_port 80)"
+  local s; s="$(nginx_published_port 443)"
+  if nginx_https_enabled && [ -n "$s" ]; then
+    APP_HTTPS_URL="https://localhost:${s}"
+    APP_URL="$APP_HTTPS_URL"
+    [ -n "$h" ] && APP_HTTP_URL="http://localhost:${h}"
+  else
+    APP_HTTP_URL="http://localhost:${h}"
+    APP_URL="$APP_HTTP_URL"
+    APP_HTTPS_URL=""
+  fi
 }
 
 # ---- actions ----
@@ -154,23 +204,22 @@ case "${1:-start}" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    gen_secrets
     build_stack "$mirror" || exit 1
     echo
     c_cyan "=== Starting stack ==="
     up_stack || exit 1
     [ "$WATCH" = "1" ] && start_watcher
-    PORT="$(ragclaw_published_port)"
+    resolve_entry
+    HEALTH_URL="$APP_HTTP_URL"
     wait_for_backend
     echo
     c_green "=== All services started (Docker mode) ==="
-    c_dim "  App:     http://localhost:$PORT"
-    c_dim "  Swagger: http://127.0.0.1:$PORT/docs"
-    c_dim "  REPL:    http://127.0.0.1:9200/mcp  (if enabled)"
-    if is_dev_mode; then
-      c_dim "  Frontend (HMR): http://localhost:$(frontend_published_port)  (Vite dev server)"
-    fi
-    open_url="http://localhost:$PORT"
-    is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
+    c_dim "  App:     $APP_URL"
+    [ -n "$APP_HTTPS_URL" ] && [ "$APP_URL" != "$APP_HTTPS_URL" ] && c_dim "  HTTPS:   $APP_HTTPS_URL"
+    c_dim "  Swagger: ${APP_HTTP_URL}/docs"
+    c_dim "  REPL:    internal only (mcp-repl:9200)"
+    open_url="$APP_URL"
     sleep 1
     open_browser "$open_url"
     ;;
@@ -186,18 +235,21 @@ case "${1:-start}" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    gen_secrets
     build_stack "$mirror" || exit 1
     echo
     c_cyan "=== Recreating stack ==="
     up_stack force || exit 1
     [ "$WATCH" = "1" ] && start_watcher
-    PORT="$(ragclaw_published_port)"
+    resolve_entry
+    HEALTH_URL="$APP_HTTP_URL"
     wait_for_backend
     echo
     c_green "=== Reload complete (Docker mode) ==="
-    c_dim "  App: http://localhost:$PORT"
-    open_url="http://localhost:$PORT"
-    is_dev_mode && open_url="http://localhost:$(frontend_published_port)"
+    c_dim "  App: $APP_URL"
+    [ -n "$APP_HTTPS_URL" ] && [ "$APP_URL" != "$APP_HTTPS_URL" ] && c_dim "  HTTPS: $APP_HTTPS_URL"
+    c_dim "  Swagger: ${APP_HTTP_URL}/docs"
+    open_url="$APP_URL"
     sleep 1
     open_browser "$open_url"
     ;;
@@ -215,8 +267,8 @@ case "${1:-start}" in
     c_cyan "  Mode: Docker container"
     compose ps
     if [ -n "$(compose ps -q ragclaw 2>/dev/null)" ]; then
-      PORT="$(ragclaw_published_port)"
-      c_dim "  App URL: http://localhost:$PORT  (RAGCLAW_PORT: ${RAGCLAW_PORT:-<random>})"
+      resolve_entry
+      c_dim "  App URL: $APP_URL  (entry: $(is_dev_mode && echo frontend || echo nginx))"
     fi
     ;;
 

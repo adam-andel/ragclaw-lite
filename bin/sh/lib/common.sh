@@ -120,7 +120,11 @@ wait_for_backend() {
   local i code
   for i in $(seq 1 90); do
     sleep 1
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${PORT:-8000}/api/health" 2>/dev/null)"
+    # Prefer HEALTH_URL (set by start.sh to the real entry's HTTP URL: nginx
+    # in prod, Vite frontend in dev) since the backend is no longer published
+    # to the host. Fall back to 127.0.0.1:8000 for legacy/local setups.
+    local url="${HEALTH_URL:-http://127.0.0.1:${PORT:-8000}}/api/health"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url" 2>/dev/null)"
     if [ "$code" = "200" ]; then
       echo " OK"
       return 0

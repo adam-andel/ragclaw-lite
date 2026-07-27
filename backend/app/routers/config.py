@@ -293,35 +293,10 @@ async def notify_network_policy_changed() -> bool:
 # REPL MCP identity secret (HMAC) — hot-reloadable
 # ═══════════════════════════════════════════════════════════
 
-class ReplAuthUpdate(BaseModel):
-    repl_auth_secret: str | None = None  # explicit secret; empty/None => leave unchanged
-
-
 @router.get("/repl-auth")
 async def get_repl_auth(current_user=Depends(get_current_admin)):
     """Read the current REPL MCP identity secret (admin only, unmasked)."""
     return {"repl_auth_secret": config_manager.repl_auth_secret}
-
-
-@router.put("/repl-auth")
-async def update_repl_auth(
-    data: ReplAuthUpdate,
-    current_user=Depends(get_current_admin),
-):
-    """Set the REPL MCP identity secret explicitly; hot-reloaded into MCP (no restart)."""
-    secret = (data.repl_auth_secret or "").strip()
-    if not secret:
-        raise HTTPException(status_code=400, detail="CONFIG_REPL_SECRET_EMPTY")
-    if len(secret) < 16:
-        raise HTTPException(status_code=400, detail="CONFIG_REPL_SECRET_SHORT")
-    await config_manager.update({"repl_auth_secret": secret})
-    mcp_pushed = await notify_auth_secret_changed(secret)
-    return {
-        "message": "REPL_AUTH_SECRET 已更新，立即生效"
-        + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
-        "repl_auth_secret": config_manager.repl_auth_secret,
-        "mcp_pushed": mcp_pushed,
-    }
 
 
 @router.post("/repl-auth/regenerate")
@@ -336,6 +311,36 @@ async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
         + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
         "repl_auth_secret": config_manager.repl_auth_secret,
         "mcp_pushed": mcp_pushed,
+    }
+
+
+# ═══════════════════════════════════════════════════════════
+# JWT signing secret (HS256) — DB-backed, hot-reloadable
+# ═══════════════════════════════════════════════════════════
+
+@router.get("/jwt-secret")
+async def get_jwt_secret(current_user=Depends(get_current_admin)):
+    """Read the current JWT signing secret (admin only, unmasked)."""
+    return {"jwt_secret": config_manager.jwt_secret}
+
+
+@router.post("/jwt-secret/regenerate")
+async def regenerate_jwt_secret(current_user=Depends(get_current_admin)):
+    """Generate a new random JWT signing secret; takes effect immediately.
+
+    The auth layer reads the secret live from ConfigManager (auth.get_jwt_secret),
+    so no restart is needed. NOTE: this invalidates every currently issued token,
+    so all users (including the admin rotating it) must re-login.
+    """
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    await config_manager.update({"jwt_secret": new_secret})
+    return {
+        "message": (
+            "Generated a new JWT signing secret — it takes effect immediately. "
+            "All currently issued tokens are now invalid; every user must re-login."
+        ),
+        "jwt_secret": config_manager.jwt_secret,
     }
 
 

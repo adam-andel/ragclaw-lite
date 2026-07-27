@@ -10,7 +10,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, updateReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, getJwtAuth, regenerateJwtAuth, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig, type JwtAuthConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 import { useAuthStore } from '@/stores/auth'
@@ -43,6 +43,7 @@ const sections = [
   { id: 'plugins', label: 'settings.nav.plugins' },
   { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
   { id: 'repl-auth', label: 'settings.nav.replAuth' },
+  { id: 'jwt-auth', label: 'settings.nav.jwtAuth' },
   { id: 'https', label: 'settings.nav.https' },
 ]
 
@@ -81,10 +82,12 @@ const sandboxConfig = ref<SandboxNetworkConfig>({
 
 // ── REPL MCP identity secret ──
 const replAuthSecret = ref<string>('')
-const replAuthSaving = ref(false)
 const replAuthGenerating = ref(false)
-const replAuthDirty = ref(false)
 const replAuthPushed = ref<boolean | null>(null)
+
+// ── JWT signing secret ──
+const jwtAuthSecret = ref<string>('')
+const jwtAuthGenerating = ref(false)
 
 // ── HTTPS / TLS (nginx reverse proxy, prod only) ──
 const httpsEnabled = ref(false)
@@ -504,6 +507,13 @@ onMounted(async () => {
   }
 
   try {
+    const ja = await getJwtAuth()
+    jwtAuthSecret.value = ja.jwt_secret || ''
+  } catch (e: any) {
+    message.error(e.message || t('settings.msg.loadJwtAuthFailed'))
+  }
+
+  try {
     const hs = await getHttpsConfig()
     httpsEnabled.value = hs.https_enabled
     httpsMeta.value = hs.cert_meta
@@ -720,40 +730,12 @@ async function doSave() {
   }
 }
 
-async function handleReplAuthSave() {
-  const secret = replAuthSecret.value.trim()
-  if (!secret) {
-    message.warning(t('settings.replAuthEmpty'))
-    return
-  }
-  if (secret.length < 16) {
-    message.warning(t('settings.replAuthTooShort'))
-    return
-  }
-  replAuthSaving.value = true
-  try {
-    const res = await updateReplAuth(secret)
-    replAuthPushed.value = res.mcp_pushed
-    replAuthDirty.value = false
-    if (res.mcp_pushed) {
-      message.success(t('settings.msg.replAuthSavedHot'))
-    } else {
-      message.warning(t('settings.msg.replAuthSavedRestart'))
-    }
-  } catch (e: any) {
-    message.error(saveErrorReason(e))
-  } finally {
-    replAuthSaving.value = false
-  }
-}
-
 async function handleReplAuthGenerate() {
   replAuthGenerating.value = true
   try {
     const res = await regenerateReplAuth()
     replAuthSecret.value = res.repl_auth_secret
     replAuthPushed.value = res.mcp_pushed
-    replAuthDirty.value = false
     if (res.mcp_pushed) {
       message.success(t('settings.msg.replAuthGeneratedHot'))
     } else {
@@ -772,6 +754,29 @@ async function handleReplAuthCopy() {
     message.success(t('settings.replAuthCopied'))
   } catch {
     message.warning(t('settings.replAuthCopyFailed'))
+  }
+}
+
+async function handleJwtAuthGenerate() {
+  jwtAuthGenerating.value = true
+  try {
+    const res = await regenerateJwtAuth()
+    jwtAuthSecret.value = res.jwt_secret
+    // Rotation invalidates all issued tokens — warn the admin to re-login.
+    message.warning(t('settings.msg.jwtAuthGeneratedHot'))
+  } catch (e: any) {
+    message.error(saveErrorReason(e))
+  } finally {
+    jwtAuthGenerating.value = false
+  }
+}
+
+async function handleJwtAuthCopy() {
+  try {
+    await navigator.clipboard.writeText(jwtAuthSecret.value)
+    message.success(t('settings.jwtAuthCopied'))
+  } catch {
+    message.warning(t('settings.jwtAuthCopyFailed'))
   }
 }
 
@@ -1344,8 +1349,8 @@ async function handleTest() {
                 v-model:value="replAuthSecret"
                 type="password"
                 show-password-on="click"
+                readonly
                 :placeholder="t('settings.replAuthPlaceholder')"
-                @input="replAuthDirty = true"
               />
               <NSpace :size="8">
                 <NButton
@@ -1356,15 +1361,6 @@ async function handleTest() {
                 >
                   <template #icon><NIcon><Refresh /></NIcon></template>
                   {{ t('settings.replAuthGenerate') }}
-                </NButton>
-                <NButton
-                  type="primary"
-                  :disabled="replAuthSaving || !replAuthSecret.trim()"
-                  :loading="replAuthSaving"
-                  @click="handleReplAuthSave"
-                >
-                  <template #icon><NIcon><Save /></NIcon></template>
-                  {{ t('settings.replAuthSave') }}
                 </NButton>
                 <NButton :disabled="!replAuthSecret.trim()" @click="handleReplAuthCopy">
                   <template #icon><NIcon><Copy /></NIcon></template>
@@ -1381,8 +1377,42 @@ async function handleTest() {
                 <template v-else>
                   {{ t('settings.replAuthStatus', { on: replAuthSecret.trim() ? t('settings.replAuthOn') : t('settings.replAuthOff') }) }}
                 </template>
-                <template v-if="replAuthDirty"> · {{ t('settings.replAuthUnsaved') }}</template>
               </span>
+            </NSpace>
+          </NFormItem>
+        </NForm>
+      </section>
+    </NCard>
+
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <section id="jwt-auth">
+        <h3 class="section-title">{{ t('settings.jwtAuthTitle') }}</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.jwtAuthDesc')" />
+        <NForm label-placement="left" label-width="140">
+          <NFormItem :label="t('settings.jwtAuthSecretLabel')">
+            <NSpace vertical :size="8" style="width: 100%">
+              <NInput
+                v-model:value="jwtAuthSecret"
+                type="password"
+                show-password-on="click"
+                readonly
+                :placeholder="t('settings.jwtAuthPlaceholder')"
+              />
+              <NSpace :size="8">
+                <NButton
+                  type="primary"
+                  :loading="jwtAuthGenerating"
+                  :disabled="jwtAuthGenerating"
+                  @click="handleJwtAuthGenerate"
+                >
+                  <template #icon><NIcon><Refresh /></NIcon></template>
+                  {{ t('settings.jwtAuthGenerate') }}
+                </NButton>
+                <NButton :disabled="!jwtAuthSecret.trim()" @click="handleJwtAuthCopy">
+                  <template #icon><NIcon><Copy /></NIcon></template>
+                  {{ t('settings.jwtAuthCopy') }}
+                </NButton>
+              </NSpace>
             </NSpace>
           </NFormItem>
         </NForm>
