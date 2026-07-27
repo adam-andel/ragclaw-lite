@@ -1699,9 +1699,16 @@ def _extract_download_entries_from_state(state: dict) -> list[dict]:
     entries: list[dict] = []
     seen: set = set()
     for r in tool_results:
-        if not isinstance(r, dict):
+        # Production stores tool_results as plain strings (see agent_state:
+        # tool_results is Annotated[list[str], operator.add]); some test paths
+        # pass dicts with a "result" key. Normalize both so the [File] scan
+        # never silently skips every entry.
+        if isinstance(r, dict):
+            txt = r.get("result", "") or ""
+        elif isinstance(r, str):
+            txt = r
+        else:
             continue
-        txt = r.get("result", "") or ""
         for url_match in _re.finditer(
             r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', txt
         ):
