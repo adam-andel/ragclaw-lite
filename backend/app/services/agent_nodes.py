@@ -1682,6 +1682,43 @@ def _extract_download_links_from_state(state: dict) -> str:
         return "\n\n---\n" + "\n".join(links)
     return ""
 
+
+def _extract_download_entries_from_state(state: dict) -> list[dict]:
+    """Like _extract_download_links_from_state, but returns STRUCTURED entries
+    ({"url", "filename", "path"}) instead of markdown text.
+
+    Download links are system-generated (never from the model), so they should
+    travel through an LLM-independent channel — emitted as `stage="file_done"`
+    agent steps — rather than being appended to the answer text. Appending them
+    as markdown made the link vulnerable to the model leaving an unclosed code
+    fence or re-pasting source (the recurring "broken download link" bug).
+    """
+    from urllib.parse import urlparse, parse_qs
+
+    tool_results = state.get("tool_results", [])
+    entries: list[dict] = []
+    seen: set = set()
+    for r in tool_results:
+        if not isinstance(r, dict):
+            continue
+        txt = r.get("result", "") or ""
+        for url_match in _re.finditer(
+            r'\[File\]\s*((?:https?://\S+|/api/download/\S+|/api/workspace/download\S+))', txt
+        ):
+            url = _normalize_download_url(url_match.group(1))
+            if not url:
+                continue
+            filename = _filename_from_download_url(url)
+            path = ""
+            parsed = urlparse(url)
+            if parsed.query:
+                path = parse_qs(parsed.query).get("path", [""])[0]
+            key = (url, filename)
+            if key not in seen:
+                seen.add(key)
+                entries.append({"url": url, "filename": filename, "path": path})
+    return entries
+
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
     logger.warning(">>> tool_executor ENTER: tool_calls=%d round=%d <<<",

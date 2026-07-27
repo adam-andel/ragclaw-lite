@@ -851,7 +851,20 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         proxyMsg.citations.push(event.citation)
       } else if (event.type === 'agent_step') {
         if (!proxyMsg.agentSteps) proxyMsg.agentSteps = []
-        proxyMsg.agentSteps.push(event)
+        // Live SSE steps carry link fields (url/filename/path) at the top level,
+        // whereas persisted steps nest them under `extra`. Normalize so both
+        // shapes are uniform for the download-button UI.
+        const ev = event as any
+        const normalized = {
+          stage: ev.stage,
+          message: ev.message,
+          extra: ev.extra ?? {
+            ...(ev.url ? { url: ev.url } : {}),
+            ...(ev.filename ? { filename: ev.filename } : {}),
+            ...(ev.path ? { path: ev.path } : {}),
+          },
+        }
+        proxyMsg.agentSteps.push(normalized)
         // Drive the streaming placeholder with the REAL backend stage message so every
         // phase (routing / retrieval / skill_load / tool / generating …) is reflected honestly.
         assistantStage.value = (event as any).message || t('chat.thinking')

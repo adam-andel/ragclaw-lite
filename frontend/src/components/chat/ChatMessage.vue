@@ -3,7 +3,7 @@ import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MarkdownIt from 'markdown-it'
 import { NTag, NButton, NIcon, NSpin } from 'naive-ui'
-import { Copy, Refresh } from '@vicons/ionicons5'
+import { Copy, Refresh, Download } from '@vicons/ionicons5'
 import { currentLocale } from '@/i18n/useLocale'
 import AppModal from '@/components/common/AppModal.vue'
 import type { ChatMessage } from '@/types'
@@ -152,6 +152,37 @@ const STAGE_LABELS: Record<string, string> = {
 }
 function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] || stage.replace(/_/g, ' ').toUpperCase()
+}
+
+// Processing timeline shows every step EXCEPT file downloads, which travel
+// through a dedicated, LLM-independent "file_done" channel rendered separately.
+const processSteps = computed(() =>
+  (props.message.agentSteps || []).filter((s: any) => s.stage !== 'file_done'),
+)
+
+// Generated files surfaced as download buttons (system-generated, not from the
+// model), so they never depend on the answer text being well-formed.
+const fileDownloads = computed(() => {
+  const ds = (props.message.agentSteps || []).filter((s: any) => s.stage === 'file_done')
+  return ds
+    .map((s: any) => {
+      const extra = s.extra || {}
+      let path = (extra.path as string) || ''
+      if (!path && extra.url) {
+        try {
+          path = new URL(extra.url as string, window.location.origin).searchParams.get('path') || ''
+        } catch {
+          path = ''
+        }
+      }
+      const filename = (extra.filename as string) || path.split('/').pop() || s.message
+      return { filename, path }
+    })
+    .filter((d) => d.path)
+})
+
+function downloadFile(path: string) {
+  downloadAndSave(path).catch((e) => console.error('File download failed', e))
 }
 
 const copied = ref(false)
@@ -307,10 +338,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Processing timeline -->
-      <details v-if="steps.length" class="agent-steps" :open="isStreaming">
-        <summary>{{ t('chat.processSteps', { count: steps.length }) }}</summary>
+      <details v-if="processSteps.length" class="agent-steps" :open="isStreaming">
+        <summary>{{ t('chat.processSteps', { count: processSteps.length }) }}</summary>
         <ul class="agent-step-list">
-          <li v-for="(s, i) in steps" :key="i" :class="'step-' + s.stage">
+          <li v-for="(s, i) in processSteps" :key="i" :class="'step-' + s.stage">
             <span class="step-badge">{{ stageLabel(s.stage) }}</span>
             <span class="step-msg">{{ s.message }}</span>
           </li>
@@ -334,6 +365,21 @@ onBeforeUnmount(() => {
       <template v-else>
         <div class="message-content" v-html="displayHtml" @click="onContentClick"></div>
       </template>
+
+      <!-- Generated files: dedicated, LLM-independent download channel -->
+      <div v-if="fileDownloads.length" class="agent-files">
+        <span class="agent-files-label">{{ t('chat.generatedFiles') }}</span>
+        <button
+          v-for="(f, i) in fileDownloads"
+          :key="i"
+          class="file-chip"
+          type="button"
+          @click="downloadFile(f.path)"
+        >
+          <NIcon class="file-chip-icon"><Download /></NIcon>
+          <span class="file-chip-name">{{ f.filename }}</span>
+        </button>
+      </div>
 
       <div v-if="!isStreaming && auth.isAdmin && ((message as any)._ttft || (message as any).ttft_ms)" class="ttft-badge">
         ⏱ TTFT {{ (message as any)._ttft || (message as any).ttft_ms || 0 }}ms &nbsp;|&nbsp; 🔍 {{ t('chat.retrieval') }} {{ (message as any)._retrieval || (message as any).retrieval_ms || 0 }}ms &nbsp;|&nbsp; 🧠 LLM {{ (message as any)._llm || (message as any).llm_ms || 0 }}ms
@@ -592,6 +638,45 @@ mark.search-hit.active {
 .agent-step-list li.step-thinking .step-msg {
   color: var(--color-text);
   font-weight: 500;
+}
+
+/* Generated files — dedicated download channel below the answer */
+.agent-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.agent-files-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-right: 2px;
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--color-primary, #6366f1);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid var(--color-primary, #6366f1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.file-chip:hover {
+  background: rgba(99, 102, 241, 0.18);
+}
+.file-chip-icon {
+  font-size: 15px;
+}
+.file-chip-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .message-content { line-height: 1.65; word-break: break-word; }
 .message-content.streaming { display: flex; align-items: baseline; gap: 2px; }

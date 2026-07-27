@@ -93,6 +93,9 @@ export interface AgentStep {
   skill?: string
   tool?: string
   detail?: string
+  // Structured payload for special stages, e.g. file_done downloads
+  // ({ url, filename, path }). Present on both live SSE steps and persisted steps.
+  extra?: Record<string, unknown>
 }
 
 export interface ChatMessage {

@@ -70,6 +70,7 @@ export default {
   citationMissingChunk: 'This historical citation is missing a chunk index; full content cannot be loaded',
   citationLoadFailed: 'Failed to load; full content unavailable',
   processSteps: '🤖 Process ({count})',
+  generatedFiles: '📎 Generated files',
   queued: 'Queued — {count} ahead',
   thinking: 'Thinking…',
   retrieval: 'Retrieval',

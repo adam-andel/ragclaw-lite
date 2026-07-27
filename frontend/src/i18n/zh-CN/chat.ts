@@ -70,6 +70,7 @@ export default {
   citationMissingChunk: '该历史引用缺少分块索引，无法加载完整内容',
   citationLoadFailed: '加载失败，无法获取完整内容',
   processSteps: '🤖 处理过程（{count}）',
+  generatedFiles: '📎 生成的文件',
   queued: '排队中，前面还有 {count} 人',
   thinking: '思考中……',
   retrieval: '检索',

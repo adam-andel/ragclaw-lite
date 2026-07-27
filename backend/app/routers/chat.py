@@ -261,6 +261,32 @@ def _is_high_density(text: str) -> bool:
     return nl_ratio < 0.3
 
 
+def _strip_trailing_source_dump(content: str, threshold: int = 1500) -> str:
+    """When a downloadable file was just generated, the model is expected to give
+    only a short note — not re-paste the generated file's source. If it left a
+    trailing code block (open or closed) that is a large source dump, drop it so
+    the answer stays clean and the system download link isn't buried/neutralised.
+
+    Only the LAST code block is ever touched, and only when it is unclosed (always
+    an error) or clearly oversized (> threshold chars). Small/inline snippets are
+    left intact.
+    """
+    fence_positions = [m.start() for m in re.finditer(r"```", content)]
+    n = len(fence_positions)
+    if n == 0:
+        return content
+    if n % 2 == 1:
+        # Unclosed trailing block: drop from the opening fence to end of string.
+        return content[: fence_positions[-1]].rstrip()
+    # Even count: the last block is closed. Inspect its size.
+    start = fence_positions[-2]
+    end = fence_positions[-1] + 3  # include the closing fence
+    block = content[start:end]
+    if len(block) > threshold:
+        return content[:start].rstrip() + "\n"
+    return content
+
+
 async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, str | None]:
     """Read a text file from the user's sandbox via the MCP REPL proxy.
 
@@ -579,7 +605,10 @@ async def chat_stream(
                 from app.services.llm_client import (
                     llm_client,
                 )
-                from app.services.agent_nodes import _extract_download_links_from_state
+                from app.services.agent_nodes import (
+                    _extract_download_links_from_state,
+                    _extract_download_entries_from_state,
+                )
 
                # ── 0. Suspension triage: does this session have a pending quota suspension awaiting user confirmation (persisted snapshot) ───
                 pending = await _load_pending_state(db, conv_id)
@@ -805,44 +834,43 @@ async def chat_stream(
                         re.sub(r'\[TOOL_CALL\][\s\S]*', '', collected_content, flags=re.IGNORECASE)
                     )
 
-                    # Inject download links from tool results. These are
-                    # system-generated (never from the model). Make the injection
-                    # idempotent: never append a link whose URL already appears in
-                    # the answer (e.g. echoed by the model, or from a prior append)
-                    # so a duplicate download link can never be shown.
-                    dl_links = _extract_download_links_from_state(state)
-                    if dl_links:
-                        # The model may echo a legacy /api/download/user_u... link
-                        # from an earlier turn (the old route is gone). Rewrite it
-                        # to the uid-free workspace endpoint so it never leaks the
-                        # uid and never renders as a second, differently-shaped link.
+                    # Surface generated-file download links through a SEPARATE,
+                    # LLM-independent channel (agent_step stage="file_done") instead
+                    # of appending markdown to the answer. This makes the link immune
+                    # to the model leaving an unclosed code fence or re-pasting source
+                    # (the recurring "broken download link" bug) and keeps the answer
+                    # text clean. The frontend renders these as dedicated download
+                    # buttons, not as inline markdown.
+                    dl_entries = _extract_download_entries_from_state(state)
+                    if dl_entries:
+                        # The model may echo a legacy /api/download/user_u... link from
+                        # an earlier turn (the old route is gone). Rewrite it to the
+                        # uid-free workspace endpoint so it never leaks the uid nor
+                        # renders as a second, broken link.
                         collected_content = re.sub(
                             r'\[([^\]]*)\]\((/api/download/user_u\d+/[^)]+)\)',
                             lambda mo: f"[{mo.group(1)}]({_normalize_download_url(mo.group(2))})",
                             collected_content,
                         )
-                        # Normalize extracted links too (defensive) and dedupe
-                        # against ANY link URL already present in the answer — not
-                        # just the 📥-prefixed ones, since the model may echo the
-                        # old link with arbitrary link text.
-                        dl_links = re.sub(
-                            r'\((/api/download/user_u\d+/[^)]+)\)',
-                            lambda mo: f"({_normalize_download_url(mo.group(1))})",
-                            dl_links,
-                        )
-                        existing_urls = set(re.findall(r'\]\(([^)]+)\)', collected_content))
-                        kept = []
-                        for ln in dl_links.split("\n"):
-                            if not ln.strip():
-                                continue
-                            m = re.search(r"\(([^)]+)\)", ln)
-                            if m and m.group(1) in existing_urls:
-                                continue
-                            kept.append(ln)
-                        dl_links = "\n".join(kept)
-                    if dl_links:
-                        collected_content += dl_links
-                        enqueue("token", {"content": dl_links})
+                        # The model sometimes re-pastes the generated source as a
+                        # trailing code block; drop it so the answer stays clean.
+                        collected_content = _strip_trailing_source_dump(collected_content)
+                        for e in dl_entries:
+                            # Live UI update (SSE) + persisted trace (agent_steps),
+                            # so the download button also survives a page refresh.
+                            emit_agent_step(
+                                "file_done", e["filename"],
+                                url=e["url"], filename=e["filename"], path=e["path"],
+                            )
+                            state.setdefault("agent_steps", []).append({
+                                "stage": "file_done",
+                                "message": e["filename"],
+                                "extra": {
+                                    "url": e["url"],
+                                    "filename": e["filename"],
+                                    "path": e["path"],
+                                },
+                            })
 
                     collected_citations = state.get("citations", [])
                     for c in collected_citations:
