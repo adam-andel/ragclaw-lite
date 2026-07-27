@@ -8,7 +8,7 @@ import {
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag, NSwitch,
 } from 'naive-ui'
-import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Server, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
+import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, getJwtAuth, regenerateJwtAuth, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig, type JwtAuthConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
@@ -20,6 +20,15 @@ const message = useMessage()
 const dialog = useDialog()
 const route = useRoute()
 const auth = useAuthStore()
+
+const pluginStats = ref({ enabled: 0, total: 0, loading: true })
+const pluginSectionRef = ref()
+function onPluginStats(s: { enabled: number; total: number; loading: boolean }) {
+  pluginStats.value = s
+}
+function onPluginRefresh() {
+  pluginSectionRef.value?.refresh()
+}
 
 const providerOptions = computed(() => [
   { label: 'OpenAI', value: 'openai' },
@@ -38,13 +47,12 @@ const urlDefaults: Record<string, string> = {
 const sections = [
   { id: 'llm', label: 'settings.nav.llm' },
   { id: 'embedding-model', label: 'settings.nav.embeddingModel' },
-  { id: 'server', label: 'settings.nav.server' },
   { id: 'system-prompt', label: 'settings.nav.systemPrompt' },
-  { id: 'plugins', label: 'settings.nav.plugins' },
+  { id: 'https', label: 'settings.nav.https' },
   { id: 'sandbox-network', label: 'settings.nav.sandboxNetwork' },
   { id: 'repl-auth', label: 'settings.nav.replAuth' },
   { id: 'jwt-auth', label: 'settings.nav.jwtAuth' },
-  { id: 'https', label: 'settings.nav.https' },
+  { id: 'plugins', label: 'settings.nav.plugins' },
 ]
 
 const networkModeOptions = computed(() => [
@@ -63,7 +71,6 @@ const config = ref<LLMConfig>({
   llm_system_prompt: '',
   llm_system_prompt_en: '',
   prompt_language: 'en',
-  server_host: '0.0.0.0', server_port: 8000,
   cache_ttl_seconds: 3600,
   is_configured: false,
 })
@@ -694,8 +701,6 @@ async function doSave() {
     llm_system_prompt: config.value.llm_system_prompt,
     llm_system_prompt_en: config.value.llm_system_prompt_en,
     prompt_language: config.value.prompt_language,
-    server_host: config.value.server_host,
-    server_port: config.value.server_port,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
   }
   if (apiKeyInput.value.trim()) {
@@ -867,6 +872,8 @@ async function handleTest() {
 
         <!-- LLM -->
         <section id="llm">
+          <h3 class="section-title">{{ t('settings.llmTitle') }}</h3>
+          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.llmDesc')" />
           <!-- Provider -->
           <NFormItem :label="t('settings.providerLabel')">
             <NSelect
@@ -1011,9 +1018,11 @@ async function handleTest() {
           </NFormItem>
 
         </section>
+      </NForm>
+    </NCard>
 
-        <NDivider />
-
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <NForm label-placement="left" label-width="160">
         <!-- Embedding Model (on-demand install) -->
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
@@ -1220,48 +1229,15 @@ async function handleTest() {
           </NAlert>
           
         </section>
+      </NForm>
+    </NCard>
 
-        <NDivider />
-
-        <!-- Server -->
-        <section id="server">
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.listenHost') }}
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span v-html="t('settings.listenHostTip')" />
-                </NTooltip>
-              </span>
-            </template>
-            <NInput v-model:value="config.server_host" placeholder="0.0.0.0" @input="clearTest" @change="scheduleSave(t('settings.listenHost'))">
-              <template #prefix><NIcon :component="Server" /></template>
-            </NInput>
-          </NFormItem>
-
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.listenPort') }}
-                <NTooltip trigger="hover" :width="260">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span v-html="t('settings.listenPortTip')" />
-                </NTooltip>
-              </span>
-            </template>
-            <NInputNumber v-model:value="config.server_port" :min="1" :max="65535" :step="1" @update:value="clearTest" @change="scheduleSave(t('settings.listenPort'))" />
-          </NFormItem>
-        </section>
-
-        <NDivider />
-
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <NForm label-placement="left" label-width="160">
         <!-- System Prompt -->
         <section id="system-prompt">
+          <h3 class="section-title">{{ t('settings.systemPromptTitle') }}</h3>
+          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.systemPromptDesc')" />
           <NFormItem>
             <template #label>
               <span class="label-with-help">
@@ -1309,11 +1285,65 @@ async function handleTest() {
         </section>
 
       </NForm>
+    </NCard>
 
-      <NDivider />
-
-      <section id="plugins">
-        <PluginManagementSection />
+    <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
+      <section id="https">
+        <h3 class="section-title">{{ t('settings.httpsTitle') }}</h3>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.httpsDesc')" />
+        <NForm label-placement="left" label-width="140">
+          <NFormItem :label="t('settings.httpsEnableLabel')">
+            <div style="display: flex; align-items: center; gap: 12px">
+              <NSwitch v-model:value="httpsEnabled" @update:value="httpsDirty = true" />
+              <span class="muted" style="font-size: 12px">
+                <template v-if="httpsEnabled && httpsMeta">
+                  {{ t('settings.httpsStatusOn') }} · {{ t('settings.httpsCertInfo', { subject: httpsMeta.subject, expires: httpsMeta.expires }) }}
+                </template>
+                <template v-else-if="httpsEnabled">
+                  {{ t('settings.httpsStatusOn') }}
+                </template>
+                <template v-else>
+                  {{ t('settings.httpsStatusOff') }}
+                </template>
+                <template v-if="httpsDirty"> · {{ t('settings.httpsUnsaved') }}</template>
+                <br />{{ t('settings.httpsAccessHint') }}
+              </span>
+            </div>
+          </NFormItem>
+          <template v-if="httpsEnabled">
+            <NFormItem :label="t('settings.httpsCertLabel')">
+              <NInput
+                v-model:value="httpsCert"
+                type="textarea"
+                :rows="6"
+                :placeholder="t('settings.httpsCertPlaceholder')"
+                @input="httpsDirty = true"
+              />
+            </NFormItem>
+            <NFormItem :label="t('settings.httpsKeyLabel')">
+              <NInput
+                v-model:value="httpsKey"
+                type="textarea"
+                :rows="6"
+                :placeholder="t('settings.httpsKeyPlaceholder')"
+                @input="httpsDirty = true"
+              />
+            </NFormItem>
+          </template>
+          <NFormItem>
+            <div style="display: flex; justify-content: flex-end; width: 100%">
+              <NButton
+                type="primary"
+                :loading="httpsSaving"
+                :disabled="httpsSaving || (httpsEnabled && (!httpsCert.trim() || !httpsKey.trim()))"
+                @click="handleHttpsSave"
+              >
+                <template #icon><NIcon><Save /></NIcon></template>
+                {{ t('settings.httpsSave') }}
+              </NButton>
+            </div>
+          </NFormItem>
+        </NForm>
       </section>
     </NCard>
 
@@ -1420,62 +1450,19 @@ async function handleTest() {
     </NCard>
 
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
-      <section id="https">
-        <h3 class="section-title">{{ t('settings.httpsTitle') }}</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.httpsDesc')" />
-        <NForm label-placement="left" label-width="140">
-          <NFormItem :label="t('settings.httpsEnableLabel')">
-            <NSwitch v-model:value="httpsEnabled" @update:value="httpsDirty = true" />
-          </NFormItem>
-          <template v-if="httpsEnabled">
-            <NFormItem :label="t('settings.httpsCertLabel')">
-              <NInput
-                v-model:value="httpsCert"
-                type="textarea"
-                :rows="6"
-                :placeholder="t('settings.httpsCertPlaceholder')"
-                @input="httpsDirty = true"
-              />
-            </NFormItem>
-            <NFormItem :label="t('settings.httpsKeyLabel')">
-              <NInput
-                v-model:value="httpsKey"
-                type="textarea"
-                :rows="6"
-                :placeholder="t('settings.httpsKeyPlaceholder')"
-                @input="httpsDirty = true"
-              />
-            </NFormItem>
-          </template>
-          <NFormItem>
-            <NSpace vertical :size="8" style="width: 100%">
-              <NSpace :size="8">
-                <NButton
-                  type="primary"
-                  :loading="httpsSaving"
-                  :disabled="httpsSaving || (httpsEnabled && (!httpsCert.trim() || !httpsKey.trim()))"
-                  @click="handleHttpsSave"
-                >
-                  <template #icon><NIcon><Save /></NIcon></template>
-                  {{ t('settings.httpsSave') }}
-                </NButton>
-              </NSpace>
-              <span class="muted" style="font-size: 12px">
-                <template v-if="httpsEnabled && httpsMeta">
-                  {{ t('settings.httpsStatusOn') }} · {{ t('settings.httpsCertInfo', { subject: httpsMeta.subject, expires: httpsMeta.expires }) }}
-                </template>
-                <template v-else-if="httpsEnabled">
-                  {{ t('settings.httpsStatusOn') }}
-                </template>
-                <template v-else>
-                  {{ t('settings.httpsStatusOff') }}
-                </template>
-                <template v-if="httpsDirty"> · {{ t('settings.httpsUnsaved') }}</template>
-              </span>
-              <span class="muted" style="font-size: 12px">{{ t('settings.httpsAccessHint') }}</span>
-            </NSpace>
-          </NFormItem>
-        </NForm>
+      <section id="plugins">
+        <div style="display: flex; align-items: center; gap: 8px">
+          <h3 class="section-title" style="margin: 0">{{ t('settings.pluginsTitle') }}</h3>
+          <NTag v-if="!pluginStats.loading" size="small" type="info">
+            {{ t('plugins.enabledTag', { enabled: pluginStats.enabled, total: pluginStats.total }) }}
+          </NTag>
+          <NButton size="small" secondary style="margin-left: auto" @click="onPluginRefresh">
+            <template #icon><NIcon><Refresh /></NIcon></template>
+            {{ t('plugins.refreshCache') }}
+          </NButton>
+        </div>
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.pluginsDesc') }}</p>
+        <PluginManagementSection ref="pluginSectionRef" @stats="onPluginStats" />
       </section>
     </NCard>
   </div>

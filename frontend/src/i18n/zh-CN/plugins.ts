@@ -1,5 +1,4 @@
 export default {
-  title: '插件管理',
   enabledTag: '{enabled}/{total} 启用',
   refreshCache: '刷新缓存',
   empty: '暂无插件',

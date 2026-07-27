@@ -32,8 +32,6 @@ class LLMConfigUpdate(BaseModel):
     llm_system_prompt: str | None = None
     llm_system_prompt_en: str | None = None
     prompt_language: str | None = None
-    server_host: str | None = None
-    server_port: int | None = None
     cache_ttl_seconds: int | None = None
 
     @field_validator("llm_temperature")
@@ -41,13 +39,6 @@ class LLMConfigUpdate(BaseModel):
     def temp_range(cls, v):
         if v is not None and not (0 <= v <= 2):
             raise ValueError("temperature 必须在 0-2 之间")
-        return v
-
-    @field_validator("server_port")
-    @classmethod
-    def port_range(cls, v):
-        if v is not None and not (1 <= v <= 65535):
-            raise ValueError("port 必须在 1-65535 之间")
         return v
 
     @field_validator("llm_max_tokens")

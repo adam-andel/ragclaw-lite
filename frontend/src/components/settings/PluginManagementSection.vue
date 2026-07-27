@@ -6,13 +6,13 @@ import {
   NCard, NButton, NSwitch, NTag, NSpace, NSpin, NEmpty,
   NIcon, NInput, useMessage, NGrid, NGridItem, NText, NTooltip,
 } from 'naive-ui'
-import { Refresh, ExtensionPuzzle } from '@vicons/ionicons5'
 import {
   listPlugins, enablePlugin, disablePlugin, refreshPluginCache,
 } from '@/api/plugins'
 import type { PluginInfo } from '@/types'
 
 const { t } = useI18n()
+const emit = defineEmits(['stats'])
 const message = useMessage()
 
 const plugins = ref<PluginInfo[]>([])
@@ -49,6 +49,7 @@ async function load() {
     message.error(backendErrorMessage(e.message) || t('plugins.msg.loadFailed'))
   } finally {
     loading.value = false
+    emit('stats', { enabled: enabledCount.value, total: plugins.value.length, loading: false })
   }
 }
 
@@ -94,24 +95,12 @@ function formatTime(tm: string | null): string {
 const enabledCount = computed(() => plugins.value.filter(p => p.enabled).length)
 
 onMounted(load)
+
+defineExpose({ refresh: handleRefreshCache })
 </script>
 
 <template>
   <div class="plugin-section">
-    <div class="section-header">
-      <div class="section-title">
-        <NIcon size="20" color="var(--color-primary)"><ExtensionPuzzle /></NIcon>
-        <h3>{{ t('plugins.title') }}</h3>
-        <NTag v-if="!loading" size="small" type="info">
-          {{ t('plugins.enabledTag', { enabled: enabledCount, total: plugins.length }) }}
-        </NTag>
-      </div>
-      <NButton size="small" secondary @click="handleRefreshCache">
-        <template #icon><NIcon><Refresh /></NIcon></template>
-        {{ t('plugins.refreshCache') }}
-      </NButton>
-    </div>
-
     <NSpin :show="loading">
       <NEmpty v-if="!loading && plugins.length === 0" :description="t('plugins.empty')" />
       <NGrid v-else :cols="2" :x-gap="12" :y-gap="12" responsive="screen" item-responsive>
@@ -187,12 +176,6 @@ onMounted(load)
 
 <style scoped>
 .plugin-section { width: 100%; }
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
 .section-title {
   display: flex;
   align-items: center;

@@ -1,5 +1,4 @@
 export default {
-  title: 'Plugin Management',
   enabledTag: '{enabled}/{total} enabled',
   refreshCache: 'Refresh Cache',
   empty: 'No plugins',
