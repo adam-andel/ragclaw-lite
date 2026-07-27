@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm, NDrawer, NDrawerContent,
+  NCard, NIcon, useMessage, NSpace, NPopconfirm,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NEmpty, NSelect,
 } from 'naive-ui'
@@ -64,10 +64,16 @@ const form = ref<CronJobCreatePayload & { id?: string }>({
 const detailJob = ref<CronJob | null>(null)
 const showDetail = ref(false)
 
-const runsDrawerOpen = ref(false)
-const selectedJobId = ref('')
+// Run logs (shown inline inside the Detail Modal, front-end paginated)
+const showDetailRuns = ref(false)
+const runsPreviewTitle = ref<HTMLElement | null>(null)
 const runs = ref<CronJobRun[]>([])
 const runsLoading = ref(false)
+const runsPage = ref(1)
+const runsPerPage = 10
+const pagedRuns = computed(() =>
+  runs.value.slice((runsPage.value - 1) * runsPerPage, runsPage.value * runsPerPage),
+)
 const runningId = ref('')
 
 // ── Button style constants (consistent with SkillsView / DocumentManage) ──
@@ -247,21 +253,25 @@ async function handleReset(job: CronJob) {
 
 function openDetail(job: CronJob) {
   detailJob.value = job
+  showDetailRuns.value = false
+  runs.value = []
   showDetail.value = true
 }
 
 async function openRuns(job: CronJob) {
-  selectedJobId.value = job.id
-  runsDrawerOpen.value = true
+  runsPage.value = 1
+  showDetailRuns.value = true
   runsLoading.value = true
   try {
-    const data = await listCronJobRuns(job.id, 1, 50)
+    const data = await listCronJobRuns(job.id, 1, 100)
     runs.value = data.items
   } catch (e: any) {
     message.error(backendErrorMessage(e.message) || t('cron.loadLogFailed'))
   } finally {
     runsLoading.value = false
   }
+  await nextTick()
+  runsPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 // ── Helpers ──
@@ -395,7 +405,10 @@ function isPaused(job: CronJob) {
     <AppPagination always-show :page="page" :page-size="pageSize" :item-count="total" @update:page="onPageChange" />
 
     <!-- Detail Modal -->
-    <AppModal v-model:show="showDetail" :title="t('cron.detailTitle')" size="detail">
+    <AppModal
+      v-model:show="showDetail" :title="t('cron.detailTitle')" size="detail"
+      @after-leave="showDetailRuns = false; runs = []"
+    >
       <NDescriptions
         v-if="detailJob" :column="1" label-placement="left" bordered
         :label-style="{ whiteSpace: 'nowrap' }"
@@ -421,8 +434,40 @@ function isPaused(job: CronJob) {
         <NDescriptionsItem :label="t('cron.jobId')">{{ detailJob.id }}</NDescriptionsItem>
       </NDescriptions>
 
+      <!-- Run logs: revealed inline when the Logs button is clicked -->
+      <div v-if="showDetailRuns" class="detail-runs">
+        <h3 ref="runsPreviewTitle" class="runs-preview-title">{{ t('cron.execLog') }}</h3>
+        <div class="runs-modal">
+          <NSpin :show="runsLoading">
+            <div v-if="!runsLoading && runs.length === 0" class="empty">{{ t('cron.noRunRecords') }}</div>
+            <div v-else class="run-list">
+              <NCard v-for="run in pagedRuns" :key="run.id" size="small" style="margin-bottom: 12px">
+                <div class="run-meta">
+                  <NTag :type="run.status === 'success' ? 'success' : 'error'">{{ run.status }}</NTag>
+                  <span class="run-time">{{ formatTime(run.started_at) }}</span>
+                </div>
+                <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
+                <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>
+              </NCard>
+            </div>
+          </NSpin>
+        </div>
+        <AppPagination
+          always-show
+          class="runs-footer-pager"
+          :page="runsPage"
+          :page-size="runsPerPage"
+          :item-count="runs.length"
+          @update:page="runsPage = $event"
+        />
+      </div>
+
       <template #footer>
         <NSpace justify="end">
+          <NButton size="small" v-if="detailJob" @click="openRuns(detailJob)">
+            <template #icon><NIcon><Time /></NIcon></template>
+            {{ t('cron.logs') }}
+          </NButton>
           <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" @click="openEdit(detailJob)">
             <template #icon><NIcon><Create /></NIcon></template>
             {{ t('common.edit') }}
@@ -439,10 +484,6 @@ function isPaused(job: CronJob) {
           <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
             <template #icon><NIcon><Play /></NIcon></template>
             {{ t('cron.runNow') }}
-          </NButton>
-          <NButton size="small" v-if="detailJob" @click="openRuns(detailJob)">
-            <template #icon><NIcon><Time /></NIcon></template>
-            {{ t('cron.logs') }}
           </NButton>
           <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" @click="handleToggle(detailJob)" :style="isPaused(detailJob) ? greenStyle : yellowStyle">
             <template #icon>
@@ -505,24 +546,6 @@ function isPaused(job: CronJob) {
       </template>
     </AppModal>
 
-    <!-- Runs Drawer -->
-    <NDrawer v-model:show="runsDrawerOpen" width="720" placement="right">
-      <NDrawerContent :title="t('cron.execLog')" closable>
-        <NSpin :show="runsLoading">
-          <div v-if="runs.length === 0" class="empty">{{ t('cron.noRunRecords') }}</div>
-          <div v-else class="run-list">
-            <NCard v-for="run in runs" :key="run.id" size="small" style="margin-bottom: 12px">
-              <div class="run-meta">
-                <NTag :type="run.status === 'success' ? 'success' : 'error'">{{ run.status }}</NTag>
-                <span class="run-time">{{ formatTime(run.started_at) }}</span>
-              </div>
-              <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
-              <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>
-            </NCard>
-          </div>
-        </NSpin>
-      </NDrawerContent>
-    </NDrawer>
   </div>
 </template>
 
@@ -655,6 +678,36 @@ html.dark .cj-card-desc {
   color: var(--color-error);
   margin-top: 8px;
   font-size: var(--text-sm);
+}
+/* Inline run logs inside the detail modal (mirrors DocumentManage .detail-chunks) */
+.detail-runs {
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  margin-top: var(--space-6, 24px);
+  padding-top: var(--space-4, 16px);
+  border-top: 1px solid var(--color-border, #eee);
+}
+.runs-preview-title {
+  flex-shrink: 0;
+  margin: 0 0 var(--space-3, 12px);
+  font-size: var(--text-base, 15px);
+  font-weight: 600;
+  color: var(--color-text, #1f2937);
+}
+/* Inner scroll region: flex:1 + min-height:0 makes scrolling work inside a flex column */
+.runs-modal {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.detail-runs > .runs-footer-pager {
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border, #eee);
 }
 /* Sticky footer pagination: the list scrolls, the pager stays pinned at the
    bottom of the viewport (mirrors WorkspaceView.vue). */
