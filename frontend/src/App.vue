@@ -7,6 +7,7 @@ import { useTheme } from '@/composables/useTheme'
 import { currentLocale } from '@/i18n/useLocale'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import LoginView from '@/views/LoginView.vue'
+import MessageWrapper from '@/components/MessageWrapper.vue'
 
 const auth = useAuthStore()
 
@@ -66,11 +67,13 @@ onMounted(async () => {
 
 <template>
   <NConfigProvider :theme="theme" :theme-overrides="themeOverrides" :locale="naiveLocale" :date-locale="naiveDateLocale">
-    <NMessageProvider>
-      <NDialogProvider>
-        <LoginView v-if="!auth.isLoggedIn" />
-        <AppLayout v-else />
-      </NDialogProvider>
+    <NMessageProvider :duration="10000">
+      <MessageWrapper>
+        <NDialogProvider>
+          <LoginView v-if="!auth.isLoggedIn" />
+          <AppLayout v-else />
+        </NDialogProvider>
+      </MessageWrapper>
     </NMessageProvider>
   </NConfigProvider>
 </template>
