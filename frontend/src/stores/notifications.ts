@@ -162,26 +162,34 @@ export const useNotificationStore = defineStore('notifications', () => {
     }
   }
 
-  // Surface a browser notification when the chat "unread answer" red dot appears
-  // (the sidebar Chat label, or the history button dot in ChatView). `markUnread`
-  // is only called when an answer finishes for a conversation the user is NOT
-  // currently viewing, so this fires exactly when that red dot is shown.
+  // Surface a browser notification whenever a chat "unread" red dot appears —
+  // i.e. an assistant answer finished streaming, OR a tool-call round-limit
+  // pause happened, for a conversation the user is NOT currently viewing.
+  // `markUnread` is the single entry point that produces every such red dot
+  // (the sidebar Chat label, the history-button dot in ChatView, and the
+  // per-conversation "有未读消息" badge), so we watch the underlying id list and
+  // notify for EACH newly-unread conversation — not just the first one. This way
+  // a second red dot still notifies even if another is already showing.
+  // Sending itself is gated inside fireBrowserNotification by Notification.permission
+  // === 'granted', i.e. only when the user has enabled browser notifications.
   const chatUnread = useChatUnreadStore()
   const { t } = useI18n({ useScope: 'global' })
+  let prevUnreadIds = new Set<string>()
   watch(
-    () => chatUnread.hasUnread,
-    (val, old) => {
-      if (val && !old) {
+    () => chatUnread.unreadConvIds,
+    (ids) => {
+      const newIds = ids.filter(id => !prevUnreadIds.has(id))
+      prevUnreadIds = new Set(ids)
+      for (const id of newIds) {
         fireBrowserNotification({
-          id: 'chat-unread',
+          id: `chat-unread-${id}`,
           title: 'ragclaw',
           content: t('chat.hasUnread'),
-          link: chatUnread.lastConversationId
-            ? `/chat/${chatUnread.lastConversationId}`
-            : '/chat',
+          link: `/chat/${id}`,
         })
       }
     },
+    { deep: true },
   )
 
   // When a new unread arrives, push a browser desktop notification only if the user has ALREADY granted permission.

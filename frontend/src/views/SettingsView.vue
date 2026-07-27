@@ -4,7 +4,7 @@ import { backendErrorMessage } from '@/utils/backendError'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  NForm, NFormItem, NInput, NButton, NSelect, NSlider, NInputNumber,
+  NForm, NFormItem, NInput, NButton, NSelect, NInputNumber,
   NCard, NIcon, useMessage, useDialog, NAlert, NSpace, NDivider, NTooltip,
   NProgress, NTag, NSwitch,
 } from 'naive-ui'
@@ -925,10 +925,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NSpace align="center">
-              <NSlider v-model:value="config.llm_temperature" :min="0" :max="1" :step="0.05" style="width: 200px" @update:value="clearTest" @change="scheduleSave('Temperature')" />
-              <span class="slider-value">{{ config.llm_temperature.toFixed(2) }}</span>
-            </NSpace>
+            <NInputNumber v-model:value="config.llm_temperature" :min="0" :max="1" :step="0.05" @update:value="clearTest(); scheduleSave('Temperature')" />
           </NFormItem>
 
           <!-- Max Tokens -->
@@ -944,7 +941,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest" @change="scheduleSave('Max Tokens')" />
+            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest(); scheduleSave('Max Tokens')" />
           </NFormItem>
 
           <!-- LLM Concurrency -->
@@ -960,7 +957,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest" @change="scheduleSave(t('settings.maxConcurrency'))" />
+            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest(); scheduleSave(t('settings.maxConcurrency'))" />
           </NFormItem>
 
           <!-- Context Window -->
@@ -976,7 +973,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest" @change="scheduleSave(t('settings.contextWindow'))" />
+            <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest(); scheduleSave(t('settings.contextWindow'))" />
           </NFormItem>
 
           <!-- Cache TTL -->
@@ -992,7 +989,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest" @change="scheduleSave(t('settings.cacheTtl'))" />
+            <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest(); scheduleSave(t('settings.cacheTtl'))" />
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.cache_ttl_seconds === 0 ? t('common.disabled') : t('settings.cacheSecondsApprox', { seconds: config.cache_ttl_seconds, minutes: Math.round(config.cache_ttl_seconds / 60) }) }}
             </span>
@@ -1525,7 +1522,6 @@ async function handleTest() {
 
 .settings-card { background: var(--color-surface); border-radius: var(--radius-xl); }
 .settings-card section { scroll-margin-top: 0; }
-.slider-value { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--color-text-muted); }
 
 .label-with-help { display: inline-flex; align-items: center; gap: 4px; }
 .help-icon { color: var(--color-text-muted); cursor: help; transition: color 0.15s; }

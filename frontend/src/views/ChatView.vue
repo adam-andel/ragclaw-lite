@@ -872,20 +872,35 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         streamedText = t('chat.streamError', { msg: backendErrorMessage(event.message) })
         break
       } else if (event.type === 'need_user_input') {
-        // Suspension: the backend has saved an assistant message (the hint copy). The frontend renders it as a real message bubble,
-        // and after the user replies, reuses that message id so the backend replaces the content in place with the final answer.
-        messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
-        const pendingMsg: ChatMsg = {
-          id: event.message_id,
-          role: 'assistant',
-          content: event.message,
-          citations: [],
-          created_at: new Date().toISOString(),
-          agentSteps: [],
-          _pending: true,
+        // Suspension: the backend has saved an assistant message (the hint copy) and is
+        // waiting for the user to choose "continue" or "stop" because the tool-call round
+        // quota was hit.
+        // Mirror the finished-stream (done) rules:
+        //  - If the user is currently looking at THIS conversation, render the suspension
+        //    hint bubble inline and surface the continue/stop controls.
+        //  - If they have switched to another conversation (still in chat) or to another
+        //    page, flag the conversation as unread so a red dot appears on the sidebar Chat
+        //    label / history button / conversation row — instead of mutating the view they
+        //    are currently looking at. The suspension state is re-derived from the server
+        //    when they later open this conversation (see loadConversation → getPendingLimit).
+        const currentView = conversationId.value
+        const onChat = route.path.startsWith('/chat')
+        if (onChat && (currentView === event.conv_id || currentView === undefined)) {
+          messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
+          const pendingMsg: ChatMsg = {
+            id: event.message_id,
+            role: 'assistant',
+            content: event.message,
+            citations: [],
+            created_at: new Date().toISOString(),
+            agentSteps: [],
+            _pending: true,
+          }
+          messages.value.push(pendingMsg)
+          pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
+        } else {
+          chatUnread.markUnread(event.conv_id)
         }
-        messages.value.push(pendingMsg)
-        pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
         break
       } else if (event.type === 'done') {
         if (event.stopped) {
@@ -1402,30 +1417,31 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><Search /></NIcon></template>
           {{ t('chat.findRecords') }}
         </NButton>
-        <div
-          v-if="contextTokens > 0"
-          class="context-meter"
-          :class="contextRatioClass"
-          :title="t('chat.contextTokensTip')"
-        >
-          <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
-          <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
+        <div class="toolbar-right">
+          <div
+            v-if="contextTokens > 0"
+            class="context-meter"
+            :class="contextRatioClass"
+            :title="t('chat.contextTokensTip')"
+          >
+            <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
+            <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
+          </div>
+          <div class="send-mode-wrap">
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NSwitch
+                  v-model:value="sendMode"
+                  checked-value="shiftEnter"
+                  unchecked-value="enter"
+                  size="small"
+                  class="send-mode-switch"
+                />
+              </template>
+              {{ sendMode === 'shiftEnter' ? t('chat.sendModeShiftEnterHint') : t('chat.sendModeEnterHint') }}
+            </NTooltip>
+          </div>
         </div>
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NSwitch
-              v-model:value="sendMode"
-              checked-value="shiftEnter"
-              unchecked-value="enter"
-              size="small"
-              class="send-mode-switch"
-            >
-              <template #checked>{{ t('chat.sendModeShiftEnter') }}</template>
-              <template #unchecked>{{ t('chat.sendModeEnter') }}</template>
-            </NSwitch>
-          </template>
-          {{ sendMode === 'shiftEnter' ? t('chat.sendModeShiftEnterHint') : t('chat.sendModeEnterHint') }}
-        </NTooltip>
       </div>
       <div class="chat-input-area">
         <NButton
@@ -2051,10 +2067,21 @@ function handleKeydown(e: KeyboardEvent) {
   width: 180px;
 }
 
-/* ── Send-mode switch (Enter vs Shift+Enter), in the toolbar row ── */
+/* ── Right-aligned toolbar group: context meter + send-mode switch ── */
+.toolbar-right {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.send-mode-wrap {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
 .send-mode-switch {
   flex-shrink: 0;
-  margin-left: 8px;
 }
 
 /* ── Attach ("+") button left of the input box ── */
