@@ -1182,8 +1182,6 @@ async def _store_memory_and_cache(
                 memory_text,
                 user_id=user_id,
                 metadata={"kb_id": kb_id, "skill_id": skill_id},
-                agent_id=kb_id,
-                run_id=conversation_id,
             )
         except Exception:
             pass
