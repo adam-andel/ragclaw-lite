@@ -79,7 +79,6 @@ class Settings(BaseSettings):
     repl_uid_alloc_retries: int = 10  # cap on random-allocation collision retries
 
     # --- Conversation ---
-    conversation_max_history: int = 10
 
     # --- Memory (mem0) ---
     # Max chars of query/answer sent to Mem0 for memory extraction per turn.

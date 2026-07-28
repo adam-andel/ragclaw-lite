@@ -24,6 +24,7 @@ class RagclawAgentState(TypedDict):
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
+    conversation_summary: str          # Compressed oldest history; injected as a system message (see conversation_summary.py)
 
     # ── Runtime (not persisted) ──
     emit: Callable[[str, str, dict], None] | None   # SSE progress callback (agent_step); None = no streaming

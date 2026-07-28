@@ -1306,6 +1306,14 @@ async def tool_decision_node(state: dict) -> dict:
         {"role": "system", "content": tool_system},
         {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
     ]
+    # Compressed conversation summary (oldest history). Inserted as an independent
+    # system message AFTER the fixed system messages and BEFORE the verbatim
+    # history, so the stable prefix stays cacheable. Raw DB messages are untouched.
+    summary = state.get("conversation_summary")
+    if summary:
+        messages.append(
+            {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + summary}
+        )
     history = state.get("conversation_history", [])
     if history:
         messages.extend(history)

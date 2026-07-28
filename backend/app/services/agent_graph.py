@@ -253,6 +253,16 @@ class RagclawAgentGraph:
         file_rule = "\n\n## File-generation Answer Rule\n" + _t("file_answer_rule", config_manager.prompt_language)
         messages = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
 
+        # Compressed conversation summary (oldest history). Inserted as an
+        # independent system message AFTER the fixed cached prefix and BEFORE the
+        # verbatim history, so provider-side prompt caching of the stable prefix
+        # is preserved. Raw messages in the DB are never affected.
+        summary = state.get("conversation_summary")
+        if summary:
+            messages.append(
+                {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + summary}
+            )
+
         # Conversation history
         history = state.get("conversation_history", [])
         if history:

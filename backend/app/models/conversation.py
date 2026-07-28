@@ -19,6 +19,14 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Conversation compression: the oldest history is summarized to stay within
+    # the context window. summary_text holds the accumulated compressed transcript;
+    # summary_msg_count is the cursor for how many of the earliest messages are
+    # already summarized (and therefore must NOT be sent verbatim). Raw messages in
+    # the messages table are NEVER modified.
+    summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_msg_count: Mapped[int] = mapped_column(Integer, default=0)
+
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
     )
