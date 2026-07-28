@@ -9,7 +9,11 @@ WORKDIR /app/frontend
 # Copy package files
 COPY frontend/package.json ./
 
-RUN corepack enable && pnpm install --no-frozen-lockfile
+# BuildKit cache mount keeps the downloaded pnpm store across rebuilds — even when
+# this layer is invalidated (e.g. frontend package.json changed) pnpm reuses cached
+# tarballs instead of re-downloading. Shared id with the dev image's cache.
+RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
+    corepack enable && pnpm install --no-frozen-lockfile --store-dir /root/.pnpm-store
 
 # Copy source and build
 COPY frontend/ .

@@ -14,12 +14,11 @@ while true; do
   echo
   echo "    [1] Start All  (prod)"
   echo "    [2] Reload All (prod)"
-  echo "    [3] Start All  (dev: HMR + --reload)"
-  echo "    [4] Reload All (dev)"
-  echo "    [5] Stop All"
-  echo "    [6] Status"
-  echo "    [7] Backend Only (prod)"
-  echo "    [8] Backend Only (dev)"
+  echo "    [3] Start Or Reload All (dev: HMR + --reload)"
+  echo "    [4] Stop All"
+  echo "    [5] Status"
+  echo "    [6] Backend Only (prod)"
+  echo "    [7] Backend Only (dev)"
   echo "    [0] Exit"
   echo
   printf "Choose: "
@@ -27,12 +26,11 @@ while true; do
   case "$choice" in
     1) bash "$SCRIPT_DIR/start.sh" start ;;
     2) bash "$SCRIPT_DIR/start.sh" reload ;;
-    3) bash "$SCRIPT_DIR/start.sh" --dev start ;;
-    4) bash "$SCRIPT_DIR/start.sh" --dev reload ;;
-    5) bash "$SCRIPT_DIR/start.sh" stop ;;
-    6) bash "$SCRIPT_DIR/start.sh" status ;;
-    7) bash "$SCRIPT_DIR/backend.sh" start ;;
-    8) bash "$SCRIPT_DIR/backend.sh" --dev start ;;
+    3) bash "$SCRIPT_DIR/start.sh" --dev reload ;;
+    4) bash "$SCRIPT_DIR/start.sh" stop ;;
+    5) bash "$SCRIPT_DIR/start.sh" status ;;
+    6) bash "$SCRIPT_DIR/backend.sh" start ;;
+    7) bash "$SCRIPT_DIR/backend.sh" --dev start ;;
     0) echo "Bye."; exit 0 ;;
     *) echo "Invalid choice." ;;
   esac

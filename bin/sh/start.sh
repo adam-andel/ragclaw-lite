@@ -112,7 +112,7 @@ build_stack() {  # $1 = mirror
   fi
 }
 
-  up_stack() {  # $1 = "force" to --force-recreate
+up_stack() {  # $1 = "force" to --force-recreate
   local recreate=""
   [ "${1:-}" = "force" ] && recreate="--force-recreate"
   repair_egress_network
@@ -121,6 +121,69 @@ build_stack() {  # $1 = mirror
     repair_egress_network force
     compose up -d
   fi
+}
+
+# Reset the frontend-dev node_modules named volume for the CURRENT compose project.
+# frontend-dev keeps deps in a persistent named volume seeded ONCE from the image; it
+# is NOT refreshed when package.json changes, so a rebuild alone won't expose newly
+# added deps (e.g. cronstrue) to the running Vite server. We scope the removal to THIS
+# compose project via `compose config --volumes` (project-prefixed names like
+# ragclaw_frontend_node_modules), so a second clone (ragclaw1_*) on the same Docker
+# host is NEVER matched, running or stopped. No-op outside dev mode.
+reset_frontend_node_modules_volume() {
+  is_dev_mode || return 0
+  c_cyan "=== Resetting frontend-dev node_modules volume ==="
+  compose stop frontend-dev 2>/dev/null
+  compose rm -f frontend-dev 2>/dev/null
+  for v in $(compose config --volumes 2>/dev/null); do
+    case "$v" in
+      *frontend_node_modules)
+        if docker volume rm "$v" >/dev/null 2>&1; then
+          c_dim "  removed $v"
+        else
+          c_yellow "  skipped $v (still in use — remove manually if needed)"
+        fi
+        ;;
+    esac
+  done
+}
+
+# Shared pre-flight + build for `start` and `reload`: validate docker & compose
+# file, pick a working mirror, generate secrets, build images, and (dev only)
+# reset the frontend node_modules volume. Exits the script on hard failures.
+prepare_stack() {
+  assert_docker
+  [ -f "$COMPOSE_FILE" ] || { c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"; exit 1; }
+  local mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
+  [ -z "$mirror" ] && { c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"; exit 1; }
+  gen_secrets
+  build_stack "$mirror" || exit 1
+  reset_frontend_node_modules_volume
+}
+
+# Bring the stack up, wait for health, and print the post-start summary.
+#   $1 = force flag ("force" for --force-recreate, "" otherwise)
+#   $2 = done-banner label (e.g. "All services started" / "Reload complete")
+bring_up_stack() {
+  local force="$1" done_label="$2"
+  if [ "$force" = "force" ]; then
+    up_stack force || exit 1
+  else
+    up_stack || exit 1
+  fi
+  [ "$WATCH" = "1" ] && start_watcher
+  resolve_entry
+  HEALTH_URL="$APP_HTTP_URL"
+  wait_for_backend
+  echo
+  c_green "=== ${done_label} (Docker mode) ==="
+  c_dim "  App:     $APP_URL"
+  [ -n "$APP_HTTPS_URL" ] && [ "$APP_URL" != "$APP_HTTPS_URL" ] && c_dim "  HTTPS:   $APP_HTTPS_URL"
+  c_dim "  Swagger: ${APP_HTTP_URL}/docs"
+  c_dim "  REPL:    internal only (mcp-repl:9200)"
+  open_url="$APP_URL"
+  sleep 1
+  open_browser "$open_url"
 }
 
 # Actual host port docker published for the ragclaw container. Works for all three
@@ -194,64 +257,17 @@ resolve_entry() {
 # ---- actions ----
 case "${1:-start}" in
   start)
-    assert_docker
-    if [ ! -f "$COMPOSE_FILE" ]; then
-      c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"
-      exit 1
-    fi
-    mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-    if [ -z "$mirror" ]; then
-      c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-      exit 1
-    fi
-    gen_secrets
-    build_stack "$mirror" || exit 1
+    prepare_stack
     echo
     c_cyan "=== Starting stack ==="
-    up_stack || exit 1
-    [ "$WATCH" = "1" ] && start_watcher
-    resolve_entry
-    HEALTH_URL="$APP_HTTP_URL"
-    wait_for_backend
-    echo
-    c_green "=== All services started (Docker mode) ==="
-    c_dim "  App:     $APP_URL"
-    [ -n "$APP_HTTPS_URL" ] && [ "$APP_URL" != "$APP_HTTPS_URL" ] && c_dim "  HTTPS:   $APP_HTTPS_URL"
-    c_dim "  Swagger: ${APP_HTTP_URL}/docs"
-    c_dim "  REPL:    internal only (mcp-repl:9200)"
-    open_url="$APP_URL"
-    sleep 1
-    open_browser "$open_url"
+    bring_up_stack "$(is_dev_mode && echo force)" "All services started"
     ;;
 
   reload)
-    assert_docker
-    if [ ! -f "$COMPOSE_FILE" ]; then
-      c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"
-      exit 1
-    fi
-    mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-    if [ -z "$mirror" ]; then
-      c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-      exit 1
-    fi
-    gen_secrets
-    build_stack "$mirror" || exit 1
+    prepare_stack
     echo
     c_cyan "=== Recreating stack ==="
-    up_stack force || exit 1
-    [ "$WATCH" = "1" ] && start_watcher
-    resolve_entry
-    HEALTH_URL="$APP_HTTP_URL"
-    wait_for_backend
-    echo
-    c_green "=== Reload complete (Docker mode) ==="
-    c_dim "  App: $APP_URL"
-    [ -n "$APP_HTTPS_URL" ] && [ "$APP_URL" != "$APP_HTTPS_URL" ] && c_dim "  HTTPS: $APP_HTTPS_URL"
-    c_dim "  Swagger: ${APP_HTTP_URL}/docs"
-    open_url="$APP_URL"
-    sleep 1
-    open_browser "$open_url"
+    bring_up_stack force "Reload complete"
     ;;
 
   stop)

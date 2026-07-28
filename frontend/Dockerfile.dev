@@ -18,7 +18,12 @@ WORKDIR /app/frontend
 
 # Install deps from the lockfile first so this layer is cached across source edits.
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --prefer-offline
+# BuildKit cache mount keeps the downloaded pnpm store across rebuilds — even when
+# this layer is invalidated (e.g. package.json changed, or a `reload` rebuilds the
+# image) pnpm reuses cached tarballs instead of re-downloading. The store lives
+# outside the image, so it does NOT bloat the final layer.
+RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
+    pnpm install --prefer-offline --store-dir /root/.pnpm-store
 
 # Copy the rest of the source (node_modules already present from the step above;
 # the host dir has no node_modules, so this COPY does not clobber it).
