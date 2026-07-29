@@ -25,6 +25,8 @@ from app.services.repl_auth import get_user_repl_uid
 from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise, _normalize_download_url
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
+from app.services.config_manager import config_manager
+from app.services.conversation_summary import build_context_with_summary
 from app.services.llm_semaphore import llm_limiter
 from app.services.cron_parser import try_parse_cron_payload
 from app.services.cron_graph import run_cron_creation_subgraph
@@ -463,8 +465,12 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id) -> dict:
-    """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop)."""
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0) -> dict:
+    """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
+
+    The accumulated conversation summary (if any) is re-injected, and the already
+    summarized prefix of the history is dropped to avoid duplication with the summary.
+    """
     pl = pending.get("pending_limit") or {}
     if mode == "continue":
         quota_ss = pending["skill_switch_quota"] + MAX_SKILL_SWITCHES
@@ -476,13 +482,16 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         quota_tr = pending["tool_round_quota"]
         tool_calls = None
         resume_action = "stop"
+    # Skip the earliest messages already captured in the summary.
+    recent_history = history[summary_msg_count:] if summary_msg_count else history
     return {
         "query": pending.get("query") or request.query,
         "kb_id": request.kb_id,
         "skill_id": request.skill_id,
         "user_id": current_user.id,
         "tenant_id": current_user.tenant_id,
-        "conversation_history": history,
+        "conversation_history": recent_history,
+        "conversation_summary": summary_text,
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
         "active_skill": pending["active_skill"],
@@ -555,12 +564,14 @@ async def chat_stream(
     if not is_resume and not request.query:
         raise HTTPException(status_code=422, detail="query 不能为空")
 
-    # Build conversation history (last N messages)
+    # Build conversation history (ALL messages — no per-turn cap). The full
+    # history is loaded from the DB; compression (conversation_summary.py) decides
+    # at request time whether the oldest part must be summarized to fit the context
+    # window. Raw messages are never truncated here.
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
         .order_by(Message.created_at.asc())
-        .limit(20)
     )
     history_msgs = result.scalars().all()
     history = [{"role": m.role, "content": m.content} for m in history_msgs]
@@ -680,13 +691,22 @@ async def chat_stream(
                             msg += f"; {file_summary['failed']} failed to read"
                         emit_agent_step("file_context", msg)
 
+                    # Compress oldest history if it would overflow the context window.
+                    # Returns (recent_messages, summary_text); summary is persisted on
+                    # the conversation and injected as a system message downstream. Raw
+                    # messages are never modified.
+                    recent_history, summary_text = await build_context_with_summary(
+                        conv, history, db, config_manager.prompt_language, expanded_query
+                    )
+
                     initial_state = {
                         "query": expanded_query,
                         "kb_id": request.kb_id,
                         "skill_id": request.skill_id,
                         "user_id": current_user.id,
                         "tenant_id": current_user.tenant_id,
-                        "conversation_history": history,
+                        "conversation_history": recent_history,
+                        "conversation_summary": summary_text,
                         "conversation_id": conv_id,
                         # v2: user-selected workspace sub-directory ("" = root).
                         # Replaces the old per-conversation <ws> (conv_id) so all of a
@@ -717,7 +737,9 @@ async def chat_stream(
                 else:
                    # ── 1b. Resume: rebuild from snapshot, history untouched, only recharge / clear ───
                     initial_state = _build_resume_initial_state(
-                        pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id
+                        pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
+                        summary_text=conv.summary_text or "",
+                        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
                     )
 
                # ── 1c. User manually stops: do not replay tools, do not generate an answer,，
@@ -1182,8 +1204,6 @@ async def _store_memory_and_cache(
                 memory_text,
                 user_id=user_id,
                 metadata={"kb_id": kb_id, "skill_id": skill_id},
-                agent_id=kb_id,
-                run_id=conversation_id,
             )
         except Exception:
             pass

@@ -55,19 +55,17 @@ async def add_memory(
     text: str,
     user_id: str,
     metadata: dict | None = None,
-    agent_id: str | None = None,
-    run_id: str | None = None,
 ):
     """Extract and store a memory from conversation (runs in executor).
 
-    agent_id scopes memories to a knowledge base (kb_id);
-    run_id scopes them to a single conversation (conversation_id).
+    Memories are scoped only by user_id — shared across all of the user's
+    knowledge bases and conversations (cross-session personal memory).
     """
     try:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
-            _add_memory_sync, text, user_id, metadata, agent_id, run_id
+            _add_memory_sync, text, user_id, metadata
         )
     except Exception as e:
         logger.warning("Mem0 add error: %s", e)
@@ -78,15 +76,11 @@ def _add_memory_sync(
     text: str,
     user_id: str,
     metadata: dict | None = None,
-    agent_id: str | None = None,
-    run_id: str | None = None,
 ):
     m = _get_memory()
     return m.add(
         text,
         user_id=user_id,
-        agent_id=agent_id,
-        run_id=run_id,
         metadata=metadata or {},
     )
 
@@ -95,15 +89,13 @@ async def search_memories(
     query: str,
     user_id: str,
     limit: int = 5,
-    agent_id: str | None = None,
-    run_id: str | None = None,
 ) -> list[dict]:
     """Search relevant memories (runs in executor)."""
     try:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             _executor,
-            _search_memories_sync, query, user_id, limit, agent_id, run_id
+            _search_memories_sync, query, user_id, limit
         )
     except Exception as e:
         logger.warning("Mem0 search error: %s", e)
@@ -114,15 +106,11 @@ def _search_memories_sync(
     query: str,
     user_id: str,
     limit: int,
-    agent_id: str | None = None,
-    run_id: str | None = None,
 ) -> list[dict]:
     m = _get_memory()
     return m.search(
         query,
         user_id=user_id,
-        agent_id=agent_id,
-        run_id=run_id,
         limit=limit,
     ) or []
 

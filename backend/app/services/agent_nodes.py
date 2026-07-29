@@ -1134,11 +1134,7 @@ async def parallel_retrieval_node(state: dict) -> dict:
     # T_vec + T_bm25 to max(T_vec, T_bm25). fuse() then merges both result sets.
     v_task = loop.run_in_executor(None, vector_store.search, kb_id, query, settings.retrieval_vector_top_k)
     b_task = loop.run_in_executor(None, bm25_index.search, kb_id, query, settings.retrieval_bm25_top_k)
-    mem_coro = _search_memories_safe(
-        query, user_id,
-        agent_id=state.get("kb_id"),
-        run_id=state.get("conversation_id"),
-    ) if user_id else None
+    mem_coro = _search_memories_safe(query, user_id) if user_id else None
 
     if mem_coro:
         v_res, b_res, mem_raw = await asyncio.gather(v_task, b_task, mem_coro, return_exceptions=True)
@@ -1167,13 +1163,11 @@ async def parallel_retrieval_node(state: dict) -> dict:
 
 async def _search_memories_safe(
     query: str, user_id: str, limit: int = 5,
-    agent_id: str | None = None, run_id: str | None = None,
 ) -> list[dict]:
     try:
         from app.services.memory import search_memories
         return await search_memories(
             query, user_id=user_id, limit=limit,
-            agent_id=agent_id, run_id=run_id,
         ) or []
     except ImportError:
         return []
@@ -1312,6 +1306,14 @@ async def tool_decision_node(state: dict) -> dict:
         {"role": "system", "content": tool_system},
         {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
     ]
+    # Compressed conversation summary (oldest history). Inserted as an independent
+    # system message AFTER the fixed system messages and BEFORE the verbatim
+    # history, so the stable prefix stays cacheable. Raw DB messages are untouched.
+    summary = state.get("conversation_summary")
+    if summary:
+        messages.append(
+            {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + summary}
+        )
     history = state.get("conversation_history", [])
     if history:
         messages.extend(history)
