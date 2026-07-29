@@ -19,9 +19,11 @@ import {
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
 import { parseUtcTs } from '@/utils/datetime'
 import { backendErrorMessage } from '@/utils/backendError'
+import { useCronDescribe } from '@/composables/useCronDescribe'
 
 const message = useMessage()
 const { t } = useI18n()
+const { format: formatCron } = useCronDescribe()
 
 // ── Data ──
 
@@ -419,7 +421,7 @@ function isPaused(job: CronJob) {
           <NTag :type="statusType(detailJob.status)" size="tiny" :bordered="false">{{ statusLabel(detailJob.status) }}</NTag>
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.description')">{{ detailJob.description || '—' }}</NDescriptionsItem>
-        <NDescriptionsItem label="Crontab">{{ detailJob.cron_expr }}</NDescriptionsItem>
+        <NDescriptionsItem label="Crontab">{{ formatCron(detailJob.cron_expr) }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.timezone')">{{ detailJob.timezone }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.maxRuns')">{{ detailJob.max_runs ?? t('cron.unlimited') }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.runCount')">{{ detailJob.run_count }}</NDescriptionsItem>

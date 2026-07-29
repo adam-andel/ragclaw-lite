@@ -1427,20 +1427,6 @@ function handleKeydown(e: KeyboardEvent) {
             <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
             <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
           </div>
-          <div class="send-mode-wrap">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NSwitch
-                  v-model:value="sendMode"
-                  checked-value="shiftEnter"
-                  unchecked-value="enter"
-                  size="small"
-                  class="send-mode-switch"
-                />
-              </template>
-              {{ sendMode === 'shiftEnter' ? t('chat.sendModeShiftEnterHint') : t('chat.sendModeEnterHint') }}
-            </NTooltip>
-          </div>
         </div>
       </div>
       <div class="chat-input-area">
@@ -1462,7 +1448,22 @@ function handleKeydown(e: KeyboardEvent) {
           @keydown="handleKeydown"
           @compositionstart="isComposing = true"
           @compositionend="isComposing = false"
-        />
+        >
+          <template #suffix>
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NSwitch
+                  v-model:value="sendMode"
+                  checked-value="shiftEnter"
+                  unchecked-value="enter"
+                  size="small"
+                  class="send-mode-switch"
+                />
+              </template>
+              {{ sendMode === 'shiftEnter' ? t('chat.sendModeShiftEnterHint') : t('chat.sendModeEnterHint') }}
+            </NTooltip>
+          </template>
+        </NInput>
         <NButton v-if="queuePosition != null && queuePosition > 0" type="warning" @click="cancelQueue">
           <template #icon><NIcon><StopCircle /></NIcon></template>
           {{ t('chat.cancelQueue') }}
@@ -2074,11 +2075,6 @@ function handleKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.send-mode-wrap {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
 }
 .send-mode-switch {
   flex-shrink: 0;
