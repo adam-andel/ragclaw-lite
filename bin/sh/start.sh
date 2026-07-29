@@ -123,34 +123,12 @@ up_stack() {  # $1 = "force" to --force-recreate
   fi
 }
 
-# Reset the frontend-dev node_modules named volume for the CURRENT compose project.
-# frontend-dev keeps deps in a persistent named volume seeded ONCE from the image; it
-# is NOT refreshed when package.json changes, so a rebuild alone won't expose newly
-# added deps (e.g. cronstrue) to the running Vite server. We scope the removal to THIS
-# compose project via `compose config --volumes` (project-prefixed names like
-# ragclaw_frontend_node_modules), so a second clone (ragclaw1_*) on the same Docker
-# host is NEVER matched, running or stopped. No-op outside dev mode.
-reset_frontend_node_modules_volume() {
-  is_dev_mode || return 0
-  c_cyan "=== Resetting frontend-dev node_modules volume ==="
-  compose stop frontend-dev 2>/dev/null
-  compose rm -f frontend-dev 2>/dev/null
-  for v in $(compose config --volumes 2>/dev/null); do
-    case "$v" in
-      *frontend_node_modules)
-        if docker volume rm "$v" >/dev/null 2>&1; then
-          c_dim "  removed $v"
-        else
-          c_yellow "  skipped $v (still in use — remove manually if needed)"
-        fi
-        ;;
-    esac
-  done
-}
-
 # Shared pre-flight + build for `start` and `reload`: validate docker & compose
-# file, pick a working mirror, generate secrets, build images, and (dev only)
-# reset the frontend node_modules volume. Exits the script on hard failures.
+# file, pick a working mirror, generate secrets, and build images. Exits the
+# script on hard failures. frontend-dev dependency reconciliation (including
+# freshly added deps like cronstrue) is handled entirely by the container
+# entrypoint (docker-entrypoint.dev.sh), which runs `pnpm install` on every
+# start — no volume surgery is needed here.
 prepare_stack() {
   assert_docker
   [ -f "$COMPOSE_FILE" ] || { c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"; exit 1; }
@@ -158,7 +136,6 @@ prepare_stack() {
   [ -z "$mirror" ] && { c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"; exit 1; }
   gen_secrets
   build_stack "$mirror" || exit 1
-  reset_frontend_node_modules_volume
 }
 
 # Bring the stack up, wait for health, and print the post-start summary.

@@ -16,20 +16,36 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 WORKDIR /app/frontend
 
-# Install deps from the lockfile first so this layer is cached across source edits.
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# Install deps from package.json (NOT the lockfile) so adding a dependency to
+# package.json is picked up on the very next build — no lockfile-sync ceremony.
+# pnpm resolves fresh from package.json's semver ranges; --no-frozen-lockfile (the
+# default, made explicit) means a stale host lockfile never blocks the build.
+COPY frontend/package.json ./
 # BuildKit cache mount keeps the downloaded pnpm store across rebuilds — even when
 # this layer is invalidated (e.g. package.json changed, or a `reload` rebuilds the
-# image) pnpm reuses cached tarballs instead of re-downloading. The store lives
-# outside the image, so it does NOT bloat the final layer.
+# image) pnpm reuses cached tarballs instead of re-downloading.
 RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
-    pnpm install --prefer-offline --store-dir /root/.pnpm-store
+    pnpm install --prefer-offline --no-frozen-lockfile --store-dir /root/.pnpm-store && \
+    # Bake a copy of the store into the image so the runtime entrypoint can reuse
+    # it for self-healing `pnpm install` (the cache mount is detached after build
+    # and NOT present at container start). Dev-only image, so the extra size is fine.
+    cp -a /root/.pnpm-store /opt/pnpm-store
 
 # Copy the rest of the source (node_modules already present from the step above;
 # the host dir has no node_modules, so this COPY does not clobber it).
 COPY frontend/ ./
 
+# Self-healing entrypoint, installed outside /app/frontend so the runtime bind
+# mount of ./frontend can never shadow it.
+COPY frontend/docker-entrypoint.dev.sh /usr/local/bin/docker-entrypoint.dev.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.dev.sh
+
 EXPOSE 5173
 
-# --host 0.0.0.0 so the dev server is reachable through the container port mapping.
-CMD ["pnpm", "dev", "--host", "0.0.0.0"]
+# Run via the self-healing entrypoint. It reconciles node_modules against the
+# current package.json/lockfile on every container start, so adding a dependency
+# just needs `start.sh --dev reload` — no manual volume reset required.
+# Explicit `sh` + absolute path avoids PATH resolving to the bind-mounted host
+# copy (which Node would try to import as a module and crash with
+# ERR_UNKNOWN_FILE_EXTENSION), and never involves Node in launching the script.
+CMD ["sh", "/usr/local/bin/docker-entrypoint.dev.sh"]

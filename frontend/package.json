@@ -12,6 +12,7 @@
   "dependencies": {
     "@vicons/ionicons5": "^0.12.0",
     "axios": "^1.7.9",
+    "cronstrue": "^3.24.0",
     "date-fns": "^4.1.0",
     "markdown-it": "^14.2.0",
     "naive-ui": "^2.41.0",
