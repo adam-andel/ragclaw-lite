@@ -33,6 +33,7 @@ class LLMConfigUpdate(BaseModel):
     llm_system_prompt_en: str | None = None
     prompt_language: str | None = None
     cache_ttl_seconds: int | None = None
+    agent_round_quota: int | None = None  # max agent tool-decision rounds per run (chats + cron)
 
     @field_validator("llm_temperature")
     @classmethod
@@ -60,6 +61,13 @@ class LLMConfigUpdate(BaseModel):
     def concurrency_range(cls, v):
         if v is not None and not (1 <= v <= 50):
             raise ValueError("并发数必须在 1-50 之间")
+        return v
+
+    @field_validator("agent_round_quota")
+    @classmethod
+    def agent_round_quota_range(cls, v):
+        if v is not None and not (0 <= v <= 200):
+            raise ValueError("工具调用轮次配额必须在 0-200 之间（0 表示不限轮数）")
         return v
 
 

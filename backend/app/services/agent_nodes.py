@@ -1257,8 +1257,9 @@ async def tool_decision_node(state: dict) -> dict:
     if not available_tools:
         logger.info("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
-    if tool_round >= state.get("tool_round_quota", MAX_TOOL_ROUNDS):
-        quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
+    quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
+    # quota == 0 means unlimited rounds
+    if quota != 0 and tool_round >= quota:
         logger.info("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
        # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
         msg = (f"Tool-call round limit reached ({tool_round}/{quota}). "

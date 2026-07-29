@@ -15,6 +15,7 @@ export interface LLMConfig {
   llm_system_prompt_en: string    // English system prompt (used when prompt_language = 'en')
   prompt_language: string         // Agent-graph prompt language: 'zh' | 'en'
   cache_ttl_seconds: number   // cache TTL in seconds (default 3600 = 60 min)
+  agent_round_quota: number   // max agent tool-decision rounds per run, all chats + cron (default 10)
   is_configured: boolean       // whether LLM API key has been set
   api_key_source?: 'env' | 'stored'  // where the effective API key comes from
 }
@@ -34,6 +35,7 @@ export interface LLMConfigUpdate {
   llm_system_prompt_en?: string
   prompt_language?: string
   cache_ttl_seconds?: number
+  agent_round_quota?: number
 }
 
 export async function getLLMConfig(): Promise<LLMConfig> {

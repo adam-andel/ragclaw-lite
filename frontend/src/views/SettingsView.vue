@@ -72,6 +72,7 @@ const config = ref<LLMConfig>({
   llm_system_prompt_en: '',
   prompt_language: 'en',
   cache_ttl_seconds: 3600,
+  agent_round_quota: 10,
   is_configured: false,
 })
 
@@ -702,6 +703,7 @@ async function doSave() {
     llm_system_prompt_en: config.value.llm_system_prompt_en,
     prompt_language: config.value.prompt_language,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
+    agent_round_quota: config.value.agent_round_quota,
   }
   if (apiKeyInput.value.trim()) {
     payload.llm_api_key = apiKeyInput.value.trim()
@@ -992,6 +994,25 @@ async function handleTest() {
             <NInputNumber v-model:value="config.cache_ttl_seconds" :min="0" :max="864000" :step="300" @update:value="clearTest(); scheduleSave(t('settings.cacheTtl'))" />
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.cache_ttl_seconds === 0 ? t('common.disabled') : t('settings.cacheSecondsApprox', { seconds: config.cache_ttl_seconds, minutes: Math.round(config.cache_ttl_seconds / 60) }) }}
+            </span>
+          </NFormItem>
+
+          <!-- Agent round quota (applies to all chats + cron) -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.agentRoundQuota') }}
+                <NTooltip trigger="hover" :width="320">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span v-html="t('settings.tip.agentRoundQuota')" />
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.agent_round_quota" :min="0" :max="200" :step="1" @update:value="clearTest(); scheduleSave(t('settings.agentRoundQuota'))" />
+            <span class="muted" style="margin-left:8px;font-size:12px">
+              {{ config.agent_round_quota === 0 ? t('settings.agentRoundQuotaUnlimited') : t('settings.agentRoundQuotaHint', { n: config.agent_round_quota }) }}
             </span>
           </NFormItem>
 

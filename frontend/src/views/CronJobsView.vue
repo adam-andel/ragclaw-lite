@@ -393,7 +393,7 @@ function isPaused(job: CronJob) {
                 </template>
                 {{ t('cron.resetConfirm') }}
               </NPopconfirm>
-              <NButton v-if="job.status !== 'completed'" size="small" :loading="runningId === job.id" @click.stop="handleRunNow(job)">
+              <NButton v-if="job.status !== 'completed'" size="small" :loading="runningId === job.id" :disabled="job.status === 'running' || runningId === job.id" @click.stop="handleRunNow(job)">
                 <template #icon><NIcon><Play /></NIcon></template>
                 {{ t('cron.runNow') }}
               </NButton>
@@ -483,7 +483,7 @@ function isPaused(job: CronJob) {
             </template>
             {{ t('cron.resetConfirm') }}
           </NPopconfirm>
-          <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" :loading="runningId === detailJob.id" @click="handleRunNow(detailJob)">
+          <NButton size="small" v-if="detailJob && detailJob.status !== 'completed'" :loading="runningId === detailJob.id" :disabled="detailJob.status === 'running' || runningId === detailJob.id" @click="handleRunNow(detailJob)">
             <template #icon><NIcon><Play /></NIcon></template>
             {{ t('cron.runNow') }}
           </NButton>

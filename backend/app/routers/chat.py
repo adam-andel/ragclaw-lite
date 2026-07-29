@@ -474,7 +474,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
     pl = pending.get("pending_limit") or {}
     if mode == "continue":
         quota_ss = pending["skill_switch_quota"] + MAX_SKILL_SWITCHES
-        quota_tr = pending["tool_round_quota"] + MAX_TOOL_ROUNDS
+        quota_tr = pending["tool_round_quota"] + config_manager.agent_round_quota
         tool_calls = pl.get("deferred_tool_call")
         resume_action = "continue"
     else:  # stop
@@ -728,7 +728,7 @@ async def chat_stream(
                         "skip_cache": request.skip_cache,
                         "kb_prompt": kb_prompt,
                         "skill_switch_quota": MAX_SKILL_SWITCHES,
-                        "tool_round_quota": MAX_TOOL_ROUNDS,
+                        "tool_round_quota": config_manager.agent_round_quota,
                         "pending_limit": None,
                         "resume_action": None,
                         "agent_steps": [],
