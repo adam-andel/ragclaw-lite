@@ -431,7 +431,7 @@ class TestBuildGenerationMessagesIsolation:
             "active_skill": None,
             "kb_prompt": "",
         }
-        msgs = ragclaw_agent_graph.build_generation_messages(state)
+        msgs, _ = ragclaw_agent_graph.build_generation_messages(state)
         assert all(not m.get("agent_step") for m in msgs)
         joined = " ".join(m.get("content", "") for m in msgs)
         assert "LEAKED_STEP_TEXT" not in joined

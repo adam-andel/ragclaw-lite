@@ -14,6 +14,11 @@ export default {
   },
   alertTitle: 'LLM API Key Not Configured',
   alertDesc: 'Please enter the LLM provider API Key first; otherwise the system cannot start a conversation. Takes effect immediately after entry, no restart needed.',
+  contextWindowWarningTitle: 'Insufficient Context Window Headroom',
+  budgetWarningCodes: {
+    CONTEXT_WINDOW_LOW_HEADROOM:
+      'Context window is {cw} tokens, output limit {mt} tokens, estimated fixed overhead {ov} tokens — only about {left} tokens remain for conversation content. Long conversations may be auto-truncated to keep requests deliverable. Increase the context window or lower the output limit.',
+  },
   embeddingModel: 'Embedding Model',
   embeddingModelTip: 'Uses the local Embedding model by default.',
   embeddingModelMgmt: {

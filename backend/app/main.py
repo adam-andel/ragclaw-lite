@@ -135,6 +135,18 @@ async def lifespan(app: FastAPI):
     # Init runtime config manager (API keys from encrypted file, other settings from DB)
     from app.services.config_manager import config_manager
     await config_manager.init()
+    # Config-time sanity check: warn (non-blocking) if the context window is too
+    # small to hold the fixed overhead plus a usable content room. Runtime
+    # trimming still guarantees no 400; this only makes the risk visible.
+    _cfg_logger = _logging.getLogger("ragclaw")
+    for _w in config_manager.validate_compression_budget():
+        _p = _w.get("params", {})
+        _cfg_logger.warning(
+            "[config] context-window sanity: %s (window=%s, max_tokens=%s, "
+            "fixed_overhead=%s, content_room=%s) — long conversations may be "
+            "auto-truncated; increase the context window or lower max_tokens.",
+            _w.get("code"), _p.get("cw"), _p.get("mt"), _p.get("ov"), _p.get("left"),
+        )
     # Materialize TLS material (cert/key + nginx conf) into the shared volume so
     # the nginx reverse proxy can serve HTTPS. No-op if the TLS volume is not
     # mounted (e.g. dev stack).
