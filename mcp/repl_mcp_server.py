@@ -552,6 +552,149 @@ if _orig_create_conn is not None:
 _g_socket.getaddrinfo = lambda *a, **kw: _g_getaddrinfo(_orig_getaddrinfo, *a, **kw)
 _g_socket.socket.connect = _g_connect
 _g_ssl.SSLContext.wrap_socket = _g_wrap_socket
+
+# ── path-convergence shim ──
+# Background: third-party skills / LLM-generated code often hardcode absolute
+# paths at the workspace root (e.g. /app/workspace/x.html). The de-privileged
+# child has no write permission on the workspace root (root:root 0755); only
+# its per-user sandbox dir (cwd, root:<gid> 0770) is writable — so relative
+# paths succeed while absolute paths hit EPERM, showing up as intermittent
+# failures.
+# Approach: before user code runs, monkey-patch all file-write entry points
+# (builtins.open / io.open / os.open). Any WRITE whose target, after realpath
+# resolution, falls outside the sandbox cwd is redirected into cwd (keeping
+# the basename), with a clear stderr log line. Reads always pass through
+# (imports and system-file reads are unaffected). Writes under /tmp, /var/tmp,
+# /dev, /proc pass through to keep tempfile / /dev/null etc. working.
+# Bonus: `..` escapes like open("../../x", "w") are also normalized by
+# realpath and converged into the sandbox.
+import builtins as _g_builtins
+import io as _g_io
+import sys as _g_sys
+
+_G_CWD = _g_os.getcwd()
+_G_SANDBOX = _g_os.path.realpath(_G_CWD)
+_G_WRITE_OK_PREFIXES = ("/tmp", "/var/tmp", "/dev", "/proc")
+# Workspace root (e.g. /app/workspace), inherited from the server env. Used to
+# preserve sub-path structure on redirect: /app/workspace/reports/x.html ->
+# <sandbox>/reports/x.html (instead of flattening to the basename).
+_G_WSROOT = None
+try:
+    _g_ws = _g_os.environ.get("REPL_ALLOW_DIR")
+    if _g_ws:
+        _G_WSROOT = _g_os.path.realpath(_g_ws)
+except Exception:
+    pass
+_g_real_makedirs = _g_os.makedirs
+
+def _g_redir_path(p):
+    """Resolve a WRITE target; redirect it into the sandbox cwd if it escapes."""
+    try:
+        if isinstance(p, int):
+            return p  # already an fd
+        sp = _g_os.fsdecode(p)
+    except Exception:
+        return p
+    rp = _g_os.path.realpath(sp if _g_os.path.isabs(sp) else _g_os.path.join(_G_CWD, sp))
+    if rp == _G_SANDBOX or rp.startswith(_G_SANDBOX + _g_os.sep):
+        return rp
+    for _pre in _G_WRITE_OK_PREFIXES:
+        if rp == _pre or rp.startswith(_pre + _g_os.sep):
+            return rp
+    if _G_WSROOT and (rp == _G_WSROOT or rp.startswith(_G_WSROOT + _g_os.sep)):
+        # Under the workspace root: keep the relative sub-path structure.
+        rel = _g_os.path.relpath(rp, _G_WSROOT)
+        tgt = _G_SANDBOX if rel == "." else _g_os.path.join(_G_SANDBOX, rel)
+    else:
+        # Anywhere else on the filesystem: flatten to the basename.
+        base = _g_os.path.basename(rp.rstrip(_g_os.sep)) or "redirected"
+        tgt = _g_os.path.join(_G_SANDBOX, base)
+    try:
+        # Auto-create parent dirs of the redirected target so a direct write
+        # like open('/app/workspace/reports/x.html', 'w') succeeds even if the
+        # code never called makedirs.
+        _g_dir = _g_os.path.dirname(tgt)
+        if _g_dir and not _g_os.path.isdir(_g_dir):
+            _g_real_makedirs(_g_dir, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        _g_sys.stderr.write(
+            "[sandbox] write path '%s' escaped sandbox dir '%s'; redirected to '%s'\n"
+            % (sp, _G_SANDBOX, tgt))
+    except Exception:
+        pass
+    return tgt
+
+def _g_is_write_mode(mode):
+    m = mode if isinstance(mode, str) else ""
+    return ("w" in m) or ("a" in m) or ("x" in m) or ("+" in m)
+
+_g_real_open = _g_builtins.open
+def _g_open(file, mode="r", *a, **kw):
+    if _g_is_write_mode(mode):
+        file = _g_redir_path(file)
+    return _g_real_open(file, mode, *a, **kw)
+_g_builtins.open = _g_open
+_g_io.open = _g_open  # pathlib.Path.open/write_text/write_bytes go through io.open
+
+_G_OS_WRITE_FLAGS = (_g_os.O_WRONLY | _g_os.O_RDWR | _g_os.O_CREAT
+                     | _g_os.O_APPEND | getattr(_g_os, "O_TRUNC", 0))
+_g_real_os_open = _g_os.open
+def _g_os_open(path, flags, mode=0o777, *, dir_fd=None):
+    # dir_fd means "relative to an already-open directory fd"; rewriting the
+    # path would break that semantic, so skip.
+    if dir_fd is None and (flags & _G_OS_WRITE_FLAGS):
+        path = _g_redir_path(path)
+    return _g_real_os_open(path, flags, mode, dir_fd=dir_fd)
+_g_os.open = _g_os_open
+
+# Directory creation: converge escaped targets (sub-path structure preserved
+# via the workspace-root mapping above).
+_g_real_mkdir = _g_os.mkdir
+def _g_mkdir(path, mode=0o777, *, dir_fd=None):
+    if dir_fd is None:
+        path = _g_redir_path(path)
+    return _g_real_mkdir(path, mode, dir_fd=dir_fd)
+_g_os.mkdir = _g_mkdir
+
+def _g_makedirs(name, mode=0o777, exist_ok=False):
+    return _g_real_makedirs(_g_redir_path(name), mode, exist_ok=exist_ok)
+_g_os.makedirs = _g_makedirs
+
+# rename/replace: covers the common "write to /tmp then move into place"
+# pattern (incl. the os.rename fast path inside shutil.move). Only the
+# DESTINATION is a write target; the source is left untouched.
+# EXDEV fallback: /tmp and the workspace live on different filesystems in
+# this container, so a redirected rename/replace can hit EXDEV. Fall back to
+# copy2 + unlink (same strategy shutil.move uses; atomicity is lost but the
+# operation converges instead of failing).
+import errno as _g_errno
+import shutil as _g_shutil
+
+def _g_move_fallback(real_fn, src, dst, src_dir_fd, dst_dir_fd):
+    try:
+        return real_fn(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+    except OSError as e:
+        if e.errno != _g_errno.EXDEV or src_dir_fd is not None or dst_dir_fd is not None:
+            raise
+        _g_shutil.copy2(src, dst)
+        _g_os.unlink(src)
+        return None
+
+_g_real_rename = _g_os.rename
+def _g_rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+    if dst_dir_fd is None:
+        dst = _g_redir_path(dst)
+    return _g_move_fallback(_g_real_rename, src, dst, src_dir_fd, dst_dir_fd)
+_g_os.rename = _g_rename
+
+_g_real_replace = _g_os.replace
+def _g_replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+    if dst_dir_fd is None:
+        dst = _g_redir_path(dst)
+    return _g_move_fallback(_g_real_replace, src, dst, src_dir_fd, dst_dir_fd)
+_g_os.replace = _g_replace
 '''
     return preamble
 

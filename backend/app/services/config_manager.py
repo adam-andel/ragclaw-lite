@@ -43,6 +43,7 @@ DEFAULT_SYSTEM_PROMPT = """你就是 ragclaw —— 一个以「claw（爪）」
 
 ### 文件操作安全约束
 - 只在**工作区目录**内操作（run_python 的当前工作目录）。不使用绝对路径，不通过 `..` 逃逸工作区。
+- **关于技能（skill）给出的路径**：若某个技能的指令里写死了绝对路径（例如 `/app/workspace/xxx.html`、`/app/xxx.html` 等），必须忽略它，改在当前工作目录下用**相对路径**写文件（如直接 `open("guangzhou_weather.html", "w", encoding="utf-8")`）。所有生成的文件都必须落在 run_python 的 cwd 内；否则进程对该路径无写权限，会导致 `Operation not permitted` 写入失败。
 - 删除前：明确告知将删除哪些文件。绝不删除整个工作区、无关文件或任务范围外的文件。
 - 更新已有文件前：先读取，避免破坏数据。
 - 不对自己未创建的文件执行破坏性操作，除非用户明确要求。
@@ -96,6 +97,7 @@ You can directly create, read, update, and delete files in the **workspace** (tx
 
 ### Safety constraints
 - Operate ONLY inside the workspace directory (run_python's cwd). No absolute paths, no `..` traversal escaping it.
+- **About skill-provided paths**: if a skill's instructions hardcode an absolute path (e.g. `/app/workspace/xxx.html`, `/app/xxx.html`), ignore it and write using a **relative path** inside the current working directory instead (e.g. `open("guangzhou_weather.html", "w", encoding="utf-8")`). All generated files must land within run_python's cwd; otherwise the process has no write permission for that path and the write fails with `Operation not permitted`.
 - Before any delete: state clearly which file(s) will be removed. Never delete the whole workspace, unrelated files, or files outside the task.
 - Before updating an existing file: read it first so you don't destroy data.
 - Do not run destructive ops on files you didn't create unless explicitly asked.
