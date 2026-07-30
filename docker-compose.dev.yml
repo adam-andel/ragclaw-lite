@@ -122,24 +122,19 @@ services:
       #            frontend-dev 5173` (start.sh prints it after a successful up).
       - "${RAGCLAW_FRONTEND_PORT:+${RAGCLAW_FRONTEND_PORT}:}5173"
     volumes:
+      # Bind-mount the whole frontend dir (must be a WSL/ext4 path — NOT an
+      # NTFS D:\ mount: pnpm node_modules is thousands of symlinks and would be
+      # pathologically slow / break symlinks on NTFS). node_modules now lives
+      # HERE on the host, written by the entrypoint's unconditional
+      # `pnpm install`, so you get a full host-side node_modules for local
+      # debugging (pnpm dev / vue-tsc / IDE indexing) without entering the
+      # container. The entrypoint reconciles/relinks deps from the baked store
+      # (and online as a fallback) on every start, so adding a dep (e.g.
+      # cronstrue) is picked up automatically on the next `start`/`reload`; no
+      # manual volume reset is required (and the start.sh reset step has been
+      # removed on purpose).
       - ./frontend:/app/frontend
-      # Persist node_modules outside the host (host has none). This volume is
-      # seeded ONCE by Docker from the image on first creation, but it is NOT
-      # authoritative for dependency correctness — the container's
-      # docker-entrypoint.dev.sh runs `pnpm install` UNCONDITIONALLY on every
-      # start and reconciles/relinks deps from the baked store (and online as a
-      # fallback). So adding a dep (e.g. cronstrue) is picked up automatically on
-      # the next `start`/`reload`; no manual volume reset is required (and the
-      # start.sh reset step has been removed on purpose).
-      - frontend_node_modules:/app/frontend/node_modules
     networks:
       - ragclaw
     depends_on:
       - ragclaw
-
-volumes:
-  # Persists pnpm node_modules across container restarts (host has none). A
-  # one-time Docker seed from the image populates it on first creation, but the
-  # entrypoint's unconditional `pnpm install` is the real source of truth for
-  # dependency correctness — this volume just avoids re-linking from scratch.
-  frontend_node_modules:

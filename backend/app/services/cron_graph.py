@@ -547,6 +547,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
 
     # Imported lazily to avoid a circular import (agent_graph imports this module).
     from app.services.agent_graph import ragclaw_agent_graph
+    from app.services.config_manager import config_manager
 
     initial_state = {
         "query": task,
@@ -560,6 +561,8 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         "download_entries": [],
         "context": "",
         "tool_round": 0,
+        # Max agent tool-decision rounds (configurable, default 10; applies to all runs).
+        "tool_round_quota": config_manager.agent_round_quota,
         "route": None,
         "cache_hit": None,
         "final_answer": None,

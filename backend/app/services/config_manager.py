@@ -470,6 +470,8 @@ class ConfigManager:
             "llm_max_tokens": settings.llm_max_tokens,
             "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
+            # Agent tool-decision rounds (applies to all chats + cron, default 10)
+            "agent_round_quota": 10,  # max agent tool-decision rounds per run
             # Embedding
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
@@ -501,6 +503,8 @@ class ConfigManager:
             "llm_max_tokens": settings.llm_max_tokens,
             "llm_context_window": 128000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
+            # Agent tool-decision rounds (applies to all chats + cron, default 10)
+            "agent_round_quota": 10,  # max agent tool-decision rounds per run
             "embedding_model": settings.embedding_model,
             # HTTPS / TLS (nginx reverse proxy, prod only)
             "https_enabled": False,
@@ -663,6 +667,15 @@ class ConfigManager:
             return self._config.get("llm_concurrency", 3)
 
     @property
+    def agent_round_quota(self) -> int:
+        """Max agent tool-decision rounds per run, for all chats and cron jobs (default 10)."""
+        with self._lock:
+            try:
+                return int(self._config.get("agent_round_quota", 10))
+            except (TypeError, ValueError):
+                return 10
+
+    @property
     def embedding_model(self) -> str:
         with self._lock:
             return self._config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
@@ -792,6 +805,7 @@ class ConfigManager:
             "llm_context_window",
             "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
+            "agent_round_quota",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret", "jwt_secret",
             "https_enabled",
