@@ -26,7 +26,11 @@ from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
 from app.services.config_manager import config_manager
-from app.services.conversation_summary import build_context_with_summary
+from app.services.conversation_summary import (
+    build_context_with_summary,
+    ASSEMBLY_TRIM_WARNING_ZH,
+    ASSEMBLY_TRIM_WARNING_EN,
+)
 from app.services.llm_semaphore import llm_limiter
 from app.services.cron_parser import try_parse_cron_payload
 from app.services.cron_graph import run_cron_creation_subgraph
@@ -691,16 +695,24 @@ async def chat_stream(
                             msg += f"; {file_summary['failed']} failed to read"
                         emit_agent_step("file_context", msg)
 
-                    # Compress oldest history if it would overflow the context window.
-                    # Returns (recent_messages, summary_text); summary is persisted on
-                    # the conversation and injected as a system message downstream. Raw
+                    # Compress history / summary / query if it would overflow the
+                    # context window. Returns (recent_messages, summary_text,
+                    # condensed_query, warning); the summary is persisted on the
+                    # conversation and injected as a system message downstream. Raw
                     # messages are never modified.
-                    recent_history, summary_text = await build_context_with_summary(
+                    (
+                        recent_history,
+                        summary_text,
+                        condensed_query,
+                        summary_warning,
+                    ) = await build_context_with_summary(
                         conv, history, db, config_manager.prompt_language, expanded_query
                     )
+                    if summary_warning:
+                        emit_agent_step("context_compress", summary_warning)
 
                     initial_state = {
-                        "query": expanded_query,
+                        "query": condensed_query or expanded_query,
                         "kb_id": request.kb_id,
                         "skill_id": request.skill_id,
                         "user_id": current_user.id,
@@ -823,7 +835,14 @@ async def chat_stream(
 
                     # ── 3. Stream LLM generation ──
                     final_retr = state.get("retrieval_ms", 0)
-                    messages = ragclaw_agent_graph.build_generation_messages(state)
+                    messages, assembly_dropped = ragclaw_agent_graph.build_generation_messages(state)
+                    if assembly_dropped:
+                        emit_agent_step(
+                            "context_compress",
+                            ASSEMBLY_TRIM_WARNING_EN
+                            if config_manager.prompt_language == "en"
+                            else ASSEMBLY_TRIM_WARNING_ZH,
+                        )
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
                     # Signal the final-generation phase so the frontend can show it honestly

@@ -16,6 +16,7 @@ Graph topology:
 from langgraph.graph import StateGraph, END, START
 
 from app.services.config_manager import config_manager
+from app.services.conversation_summary import fit_assembly_context
 from app.services.i18n import t as _t
 from app.services.agent_state import RagclawAgentState
 from app.services.agent_nodes import (
@@ -172,7 +173,7 @@ class RagclawAgentGraph:
         if state["cache_hit"]:
             yield cached answer...
         else:
-            messages = graph.build_generation_messages(state)
+            messages, _ = graph.build_generation_messages(state)
             async for token in llm_client.chat_stream(messages):
                 yield SSE token
             yield SSE citations
@@ -190,7 +191,7 @@ class RagclawAgentGraph:
         result = await self._graph.ainvoke(initial_state)
         return result
 
-    def build_generation_messages(self, state: dict, include_cron_rule: bool = True) -> list[dict]:
+    def build_generation_messages(self, state: dict, include_cron_rule: bool = True) -> tuple:
         """Build the final message list for LLM generation.
 
         Assembles system prompt (from SKILL or default), conversation history,
@@ -251,53 +252,53 @@ class RagclawAgentGraph:
         # file_answer_rule is a constant suffix (like cron_rule) appended to every
         # turn so the model never re-pastes a generated file's source code.
         file_rule = "\n\n## File-generation Answer Rule\n" + _t("file_answer_rule", config_manager.prompt_language)
-        messages = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
+        # ── Assembly-point budget guard ──
+        # build_context_with_summary already compressed persistent history at turn
+        # start; this guard handles the in-turn overflow it cannot see -- the
+        # cumulative tool_results. Trim (summary -> history -> rag -> tool_results ->
+        # memory) on TRANSIENT copies, never touch the query, write nothing back.
+        def _assemble(s, h, rag, payload, memory):
+            msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
+            if s:
+                msgs.append(
+                    {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s}
+                )
+            if h:
+                msgs.extend(h)
+            user_parts = []
+            if memory:
+                user_parts.append(f"## User Preferences & History Memory\n{memory}")
+            if payload:
+                tool_text = "\n".join(f"- {r}" for r in payload)
+                user_parts.append(f"## Tool Call Results\n{tool_text}")
+            if rag:
+                # When a skill executed tools, the answer is built from the tool
+                # result, not from retrieval — so never surface the "no relevant
+                # documents" sentinel (it would make the model claim it found
+                # nothing). Genuine retrieved context is still injected.
+                if not (rag.strip() == "No relevant documents found" and active_skill and tool_results):
+                    user_parts.append(f"## Reference Documents\n{rag}")
+            user_parts.append(f"## Question\n{state['query']}")
+            # Final-stage constraint stays in the dynamic user region (only varies with
+            # tool execution); keeping it out of the system prefix preserves cache hits.
+            if final_note:
+                user_parts.append(final_note)
+            msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
+            return msgs
 
-        # Compressed conversation summary (oldest history). Inserted as an
-        # independent system message AFTER the fixed cached prefix and BEFORE the
-        # verbatim history, so provider-side prompt caching of the stable prefix
-        # is preserved. Raw messages in the DB are never affected.
-        summary = state.get("conversation_summary")
-        if summary:
-            messages.append(
-                {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + summary}
-            )
-
-        # Conversation history
-        history = state.get("conversation_history", [])
-        if history:
-            messages.extend(history)
-
-        # Build user message with all context
-        user_parts = []
-
-        if state.get("memory_context"):
-            user_parts.append(f"## User Preferences & History Memory\n{state['memory_context']}")
-
-        if state.get("tool_results"):
-            tool_text = "\n".join(
-                f"- {r}" for r in state["tool_results"]
-            )
-            user_parts.append(f"## Tool Call Results\n{tool_text}")
-
-        rag_context = state.get("rag_context") or ""
-        if rag_context:
-            # When a skill executed tools, the answer is built from the tool
-            # result, not from retrieval — so never surface the "no relevant
-            # documents" sentinel (it would make the model claim it found
-            # nothing). Genuine retrieved context is still injected.
-            if not (rag_context.strip() == "No relevant documents found" and active_skill and tool_results):
-                user_parts.append(f"## Reference Documents\n{rag_context}")
-
-        user_parts.append(f"## Question\n{state['query']}")
-        # Final-stage constraint stays in the dynamic user region (only varies with
-        # tool execution); keeping it out of the system prefix preserves cache hits.
-        if final_note:
-            user_parts.append(final_note)
-        messages.append({"role": "user", "content": "\n\n".join(user_parts)})
-
+        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m, dropped = fit_assembly_context(
+            summary_text=state.get("conversation_summary"),
+            history=state.get("conversation_history", []),
+            rag_context=state.get("rag_context"),
+            tool_payload=state.get("tool_results", []),
+            memory_context=state.get("memory_context"),
+            query=state.get("query"),
+            payload_kind="results",
+            build_messages=_assemble,
+        )
+        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
         messages = _sanitize_llm_messages(messages)
-        return messages
+        return messages, dropped
 
 
 def _sanitize_llm_messages(messages: list[dict]) -> list[dict]:

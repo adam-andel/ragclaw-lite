@@ -584,7 +584,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
     # Produce the final natural-language answer the same way the live chat does,
     # but without the cron-rule (the task must not be turned into a new cron job).
     try:
-        messages = ragclaw_agent_graph.build_generation_messages(state, include_cron_rule=False)
+        messages, _ = ragclaw_agent_graph.build_generation_messages(state, include_cron_rule=False)
         answer = ""
         async for chunk in llm_client.chat_stream(messages):
             if isinstance(chunk, dict):

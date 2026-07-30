@@ -21,6 +21,11 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
+from app.services.conversation_summary import (
+    fit_assembly_context,
+    ASSEMBLY_TRIM_WARNING_ZH,
+    ASSEMBLY_TRIM_WARNING_EN,
+)
 
 logger = logging.getLogger("ragclaw.agent")
 logger.setLevel(logging.INFO)
@@ -1302,58 +1307,76 @@ async def tool_decision_node(state: dict) -> dict:
     # the JSON instruction, its alternate output (Python code blocks) is caught
     # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
     tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
-    messages = [
-        {"role": "system", "content": tool_system},
-        {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
-    ]
-    # Compressed conversation summary (oldest history). Inserted as an independent
-    # system message AFTER the fixed system messages and BEFORE the verbatim
-    # history, so the stable prefix stays cacheable. Raw DB messages are untouched.
-    summary = state.get("conversation_summary")
-    if summary:
-        messages.append(
-            {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + summary}
+    # ── Assembly-point budget guard ──
+    # build_context_with_summary already compressed the persistent history into
+    # conversation_summary at turn start; this guard handles the in-turn overflow it
+    # cannot see -- the cumulative tool_messages. We trim (summary -> history -> rag
+    # -> tool_messages -> memory) on TRANSIENT copies and never touch the query, so
+    # the request always fits without writing anything back.
+    def _assemble(s, h, rag, payload, memory):
+        msgs = [
+            {"role": "system", "content": tool_system},
+            {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
+        ]
+        if s:
+            msgs.append({"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s})
+        if h:
+            msgs.extend(h)
+        user_parts = []
+        if memory:
+            user_parts.append(f"## User Preferences & History Memory\n{memory}")
+        if rag:
+            user_parts.append(f"## Reference Documents\n{rag}")
+        user_parts.append(f"## Question\n{state['query']}")
+        msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
+        if payload:
+            # ── Sanitize tool_messages before sending to LLM ──
+            # TokenHub validates that assistant.tool_calls[].function.arguments is valid JSON.
+            # If the LLM's output was truncated by max_tokens, the arguments string may be
+            # incomplete JSON → TokenHub returns 400 on the next round.
+            # Fix: validate each tool_call's arguments; if invalid, replace with error stub.
+            sanitized_msgs = []
+            for msg in payload:
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    clean_tcs = []
+                    for tc in msg["tool_calls"]:
+                        args_str = tc.get("function", {}).get("arguments", "")
+                        try:
+                            json.loads(args_str)
+                            clean_tcs.append(tc)  # valid JSON, keep as-is
+                        except json.JSONDecodeError:
+                            logger.warning("Tool decision: dropping invalid tool_call arguments (truncated?), preview=%.100s", args_str[:100])
+                            clean_tcs.append({
+                                "id": tc.get("id", "call_invalid"),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("function", {}).get("name", "unknown"),
+                                    "arguments": json.dumps({"error": "arguments were truncated/invalid"})
+                                }
+                            })
+                    sanitized_msgs.append({**msg, "tool_calls": clean_tcs})
+                else:
+                    sanitized_msgs.append(msg)
+            msgs.extend(sanitized_msgs)
+        return msgs
+
+    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m, dropped = fit_assembly_context(
+        summary_text=state.get("conversation_summary"),
+        history=state.get("conversation_history", []),
+        rag_context=state.get("rag_context"),
+        tool_payload=state.get("tool_messages", []),
+        memory_context=state.get("memory_context"),
+        query=state.get("query"),
+        payload_kind="messages",
+        build_messages=_assemble,
+    )
+    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
+    if dropped:
+        _emit(
+            state,
+            "context_compress",
+            ASSEMBLY_TRIM_WARNING_EN if config_manager.prompt_language == "en" else ASSEMBLY_TRIM_WARNING_ZH,
         )
-    history = state.get("conversation_history", [])
-    if history:
-        messages.extend(history)
-    user_parts = []
-    if state.get("memory_context"):
-        user_parts.append(f"## User Preferences & History Memory\n{state['memory_context']}")
-    if state.get("rag_context"):
-        user_parts.append(f"## Reference Documents\n{state['rag_context']}")
-    user_parts.append(f"## Question\n{state['query']}")
-    messages.append({"role": "user", "content": "\n\n".join(user_parts)})
-    tool_messages = state.get("tool_messages", [])
-    if tool_messages:
-        # ── Sanitize tool_messages before sending to LLM ──
-        # TokenHub validates that assistant.tool_calls[].function.arguments is valid JSON.
-        # If the LLM's output was truncated by max_tokens, the arguments string may be
-        # incomplete JSON → TokenHub returns 400 on the next round.
-        # Fix: validate each tool_call's arguments; if invalid, replace with error stub.
-        sanitized_msgs = []
-        for msg in tool_messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                clean_tcs = []
-                for tc in msg["tool_calls"]:
-                    args_str = tc.get("function", {}).get("arguments", "")
-                    try:
-                        json.loads(args_str)
-                        clean_tcs.append(tc)  # valid JSON, keep as-is
-                    except json.JSONDecodeError:
-                        logger.warning("Tool decision: dropping invalid tool_call arguments (truncated?), preview=%.100s", args_str[:100])
-                        clean_tcs.append({
-                            "id": tc.get("id", "call_invalid"),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("function", {}).get("name", "unknown"),
-                                "arguments": json.dumps({"error": "arguments were truncated/invalid"})
-                            }
-                        })
-                sanitized_msgs.append({**msg, "tool_calls": clean_tcs})
-            else:
-                sanitized_msgs.append(msg)
-        messages.extend(sanitized_msgs)
     try:
         # ── Dual-mode strategy: try native function calling first, fall back to text mode ──
         # TokenHub officially supports tools + tool_choice="auto", but some models may
