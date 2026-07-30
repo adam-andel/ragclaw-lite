@@ -46,7 +46,11 @@ from typing import Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import llm_client
-from app.services.config_manager import config_manager
+from app.services.config_manager import (
+    config_manager,
+    SUMMARY_FIXED_OVERHEAD_TOKENS,
+    SUMMARY_SAFETY_MARGIN,
+)
 from app.services.token_count import (
     _get_encoder,
     count_messages_tokens,
@@ -55,15 +59,9 @@ from app.services.token_count import (
 
 logger = logging.getLogger("ragclaw.summary")
 
-# Reserved output budget: mirrors the safety margin used by
-# agent_nodes._compute_agent_max_tokens so the trigger point is consistent with
-# how the model's output allowance is computed elsewhere.
-SUMMARY_SAFETY_MARGIN = 256
-
-# Estimate of fixed context overhead NOT part of `history`: system prompt,
-# file/cron rules, RAG context, memory, tool definitions, and the query. Tunable;
-# set conservatively so we trigger compression BEFORE overflow rather than after.
-SUMMARY_FIXED_OVERHEAD_TOKENS = 16000
+# NOTE: SUMMARY_SAFETY_MARGIN and SUMMARY_FIXED_OVERHEAD_TOKENS are imported
+# from app.services.config_manager (single source of truth) so that
+# ConfigManager.validate_compression_budget() has no circular import.
 
 # Cap a single summarization output so the summary can never dominate the context.
 SUMMARY_MAX_TOKENS = 2000

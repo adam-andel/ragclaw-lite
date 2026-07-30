@@ -375,6 +375,19 @@ def _render_nginx_conf(https_enabled: bool) -> str:
     return http_redirect + "\n" + https_server
 
 
+# ── Context-window sanity-check constants ──
+# These live here (not in conversation_summary) so validate_compression_budget()
+# has no circular import: conversation_summary already imports config_manager.
+# They are the single source of truth, also consumed by conversation_summary.
+SUMMARY_FIXED_OVERHEAD_TOKENS = 16000  # conservative estimate of fixed context
+# overhead NOT part of history: system prompt + RAG + memory + tool defs + query.
+SUMMARY_SAFETY_MARGIN = 256  # reserve for model output; matches _budget() in
+# conversation_summary.
+MIN_CONTENT_ROOM = 1024  # min tokens that must remain for real dialogue after
+# reserving output + fixed overhead. Below this, runtime Layer 2 trimming cannot
+# save the request (no 400 is guaranteed), so the admin should be warned.
+
+
 class ConfigManager:
     """Thread-safe singleton for runtime configuration."""
 
@@ -796,6 +809,40 @@ class ConfigManager:
             c["api_key_source"] = "stored"
             return c
 
+    def validate_compression_budget(self) -> list[dict]:
+        """Config-time sanity check: ensure the fixed context-overhead estimate
+        still fits the (possibly shrunk) context window.
+
+        Returns a list of structured warnings (empty = OK), each shaped as
+        ``{"code": <BARE_CODE>, "params": {...}}``. Per project convention the
+        backend never bakes user-facing copy: the frontend maps ``code`` to a
+        localized message via i18n (settings.budgetWarningCodes) using
+        ``params`` for interpolation. This is NON-BLOCKING: the runtime
+        ``_overhead()`` clamp in conversation_summary guarantees the LLM call
+        never overflows regardless of the result here — this check only makes
+        the risk *visible* so an admin shrinking the window (e.g. 128k -> 8k)
+        knows long conversations may be auto-truncated.
+
+        Trigger points: called at startup (main.py lifespan, after init) and
+        inside update() on every Settings save.
+        """
+        cw = self.context_window
+        mt = self.max_tokens
+        room = cw - (mt + SUMMARY_SAFETY_MARGIN) - SUMMARY_FIXED_OVERHEAD_TOKENS
+        if room < MIN_CONTENT_ROOM:
+            return [
+                {
+                    "code": "CONTEXT_WINDOW_LOW_HEADROOM",
+                    "params": {
+                        "cw": cw,
+                        "mt": mt,
+                        "ov": SUMMARY_FIXED_OVERHEAD_TOKENS,
+                        "left": max(room, 0),
+                    },
+                }
+            ]
+        return []
+
     async def update(self, data: dict) -> dict:
         """Partial update. API keys go to encrypted file; other settings go to DB."""
         allowed = {
@@ -825,7 +872,12 @@ class ConfigManager:
         if db_patch:
             await self._save_db_settings(db_patch)
 
-        return self.get_config_safe()
+        result = self.get_config_safe()
+        # Config-time sanity check: surface a non-blocking warning when the
+        # (possibly shrunk) window can no longer hold the fixed overhead plus
+        # a usable content room. The frontend shows it as a yellow bar.
+        result["warnings"] = self.validate_compression_budget()
+        return result
 
     async def _save_db_settings(self, patch: dict):
         """Persist non-sensitive settings to the database."""

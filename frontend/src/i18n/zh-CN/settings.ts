@@ -14,6 +14,11 @@ export default {
   },
   alertTitle: '尚未配置 LLM API Key',
   alertDesc: '请先录入 LLM 服务商的 API Key，否则系统无法进行对话。录入后立即生效，无需重启。',
+  contextWindowWarningTitle: '上下文窗口余量不足',
+  budgetWarningCodes: {
+    CONTEXT_WINDOW_LOW_HEADROOM:
+      '当前窗口 {cw} token、输出上限 {mt} token、固定开销估算 {ov} token，留给对话内容的空间仅约 {left} token。长对话可能被自动截断以保证请求成功发送。建议增大上下文窗口或减小输出上限。',
+  },
   embeddingModel: 'Embedding 模型',
   embeddingModelTip: '默认使用本地 Embedding 模型。',
   embeddingModelMgmt: {

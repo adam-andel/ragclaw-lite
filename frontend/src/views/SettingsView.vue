@@ -640,6 +640,25 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 // status (e.g. "API Key 已保存"). A Set dedupes and collapses multiple edits.
 const pendingLabels = new Set<string>()
 
+// Non-blocking warnings returned by the backend config sanity check (e.g. the
+// context window is too small to hold the fixed overhead). Shown as a yellow
+// bar after a save; cleared when the next save reports no warnings.
+// Structured as { code, params } per project convention: the backend emits a
+// bare code and the frontend localizes it via settings.budgetWarningCodes.
+interface BudgetWarning {
+  code: string
+  params?: Record<string, unknown>
+}
+const budgetWarnings = ref<BudgetWarning[]>([])
+
+// Map a structured backend warning to a localized message; unknown codes fall
+// back to the raw code so nothing is silently swallowed.
+function budgetWarningText(w: BudgetWarning): string {
+  const key = `settings.budgetWarningCodes.${w.code}`
+  const msg = t(key, (w.params || {}) as Record<string, string>)
+  return msg === key ? w.code : msg
+}
+
 function scheduleSave(label?: unknown) {
   // Only accept string labels; control events may pass the event/value object.
   if (typeof label === 'string' && label) pendingLabels.add(label)
@@ -711,6 +730,9 @@ async function doSave() {
   try {
     const res = await updateLLMConfig(payload)
     config.value = res.config
+    // Surface non-blocking config sanity warnings (e.g. context-window headroom)
+    // as a yellow bar. Empty when the backend reports no issue.
+    budgetWarnings.value = res.config?.warnings || []
     if (config.value.prompt_language === 'system' || !config.value.prompt_language) {
       config.value.prompt_language = 'en'
     }
@@ -867,6 +889,20 @@ async function handleTest() {
     >
       <template #icon><NIcon :component="AlertCircle" /></template>
       {{ t('settings.alertDesc') }}
+    </NAlert>
+
+    <!-- Context-window headroom warning (non-blocking, backend sanity check) -->
+    <NAlert
+      v-if="budgetWarnings.length"
+      type="warning"
+      :title="t('settings.contextWindowWarningTitle')"
+      :bordered="false"
+      style="margin-bottom: 16px"
+    >
+      <template #icon><NIcon :component="AlertCircle" /></template>
+      <ul style="margin: 0;padding-left: 18px">
+        <li v-for="(w, i) in budgetWarnings" :key="i" style="margin-bottom: 4px">{{ budgetWarningText(w) }}</li>
+      </ul>
     </NAlert>
 
     <NCard :bordered="false" class="settings-card">
