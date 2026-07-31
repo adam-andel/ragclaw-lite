@@ -6,14 +6,17 @@ FROM ${REGISTRY}/library/node:22-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy package files
-COPY frontend/package.json ./
+# Copy package manifests (package.json + committed lockfile) so the frozen
+# install resolves exactly from the pinned lockfile, not from semver ranges.
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
 
 # BuildKit cache mount keeps the downloaded pnpm store across rebuilds — even when
 # this layer is invalidated (e.g. frontend package.json changed) pnpm reuses cached
-# tarballs instead of re-downloading. Shared id with the dev image's cache.
+# tarballs instead of re-downloading. The mount id (pnpm-store) is scoped to this
+# builder stage; the dev image no longer uses a cache mount (it bakes the store
+# into an image layer instead), so this stage is now the only consumer.
 RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
-    corepack enable && pnpm install --no-frozen-lockfile --store-dir /root/.pnpm-store
+    corepack enable && pnpm install --frozen-lockfile --store-dir /root/.pnpm-store
 
 # Copy source and build
 COPY frontend/ .

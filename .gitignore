@@ -11,10 +11,7 @@ venv/
 node_modules/
 frontend/dist/
 pnpm-workspace.yaml
-# Lockfile intentionally untracked: keeps the one-command deploy barrier low. Deps are
-# resolved from package.json at build time (pnpm --no-frozen-lockfile); direct deps are
-# pinned to exact versions. The dev self-heal still writes a local lockfile (unused by git).
-frontend/pnpm-lock.yaml
+
 *.tsbuildinfo
 
 # Data
