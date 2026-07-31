@@ -105,7 +105,7 @@ build_stack() {  # $1 = mirror
   c_cyan "=== Building stack (registry: $1, mode: $(mode_label)) ==="
   # All services consume REGISTRY (base-image mirror). frontend/Dockerfile.dev
   # now declares ARG REGISTRY too, so it gets the same mirror as everything else.
-  compose build --build-arg REGISTRY="$1" ragclaw mcp-repl ragclaw-egress || return 1
+  compose build --build-arg REGISTRY="$1" ragclaw mcp-repl ragclaw-egress nginx || return 1
   if is_dev_mode; then
     c_cyan "=== Building frontend-dev (Vite HMR) ==="
     compose build --build-arg REGISTRY="$1" frontend-dev || return 1

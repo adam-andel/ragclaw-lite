@@ -20,16 +20,16 @@ WORKDIR /app/frontend
 # package.json is picked up on the very next build — no lockfile-sync ceremony.
 # pnpm resolves fresh from package.json's semver ranges; --no-frozen-lockfile (the
 # default, made explicit) means a stale host lockfile never blocks the build.
+#
+# The store is baked DIRECTLY into an image layer (no BuildKit cache mount). Layer
+# caching keyed on package.json means a rebuild whose deps did NOT change simply
+# hits CACHED and skips this step — same speed as a cache mount, but deterministic
+# and with no orphan cache snapshots that silently grow the WSL vhdx. The generated
+# lockfile is also baked to /opt/frontend-lock.yaml (outside the runtime bind-mount
+# area) so build and runtime always use the SAME resolution — see the entrypoint.
 COPY frontend/package.json ./
-# BuildKit cache mount keeps the downloaded pnpm store across rebuilds — even when
-# this layer is invalidated (e.g. package.json changed, or a `reload` rebuilds the
-# image) pnpm reuses cached tarballs instead of re-downloading.
-RUN --mount=type=cache,id=pnpm-store,target=/root/.pnpm-store \
-    pnpm install --prefer-offline --no-frozen-lockfile --store-dir /root/.pnpm-store && \
-    # Bake a copy of the store into the image so the runtime entrypoint can reuse
-    # it for self-healing `pnpm install` (the cache mount is detached after build
-    # and NOT present at container start). Dev-only image, so the extra size is fine.
-    cp -a /root/.pnpm-store /opt/pnpm-store
+RUN pnpm install --prefer-offline --no-frozen-lockfile --store-dir /opt/pnpm-store && \
+    cp /app/frontend/pnpm-lock.yaml /opt/frontend-lock.yaml
 
 # Copy the rest of the source (node_modules already present from the step above;
 # the host dir has no node_modules, so this COPY does not clobber it).
