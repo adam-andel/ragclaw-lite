@@ -495,13 +495,29 @@ def fit_assembly_context(
     overflow that build_context_with_summary cannot see: the in-turn accumulation of
     tool_messages / tool_results.
 
-    Trimming order (each step always keeps at least one item, so we never delete
-    everything but the query):
+    Trimming runs in two phases.
+
+    PHASE 1 -- "keep >= 1" (preferred). Every step leaves at least one item alive so
+    a normal overflow degrades gracefully instead of blanking the context:
         1. summary        -> drop oldest paragraph (compressed context is least costly)
         2. history        -> drop oldest message, keep >= 1 (most recent)
         3. rag_context    -> drop least-relevant (tail) chunk, keep >= 1 (most relevant)
         4. tool_payload   -> drop oldest unit/entry, keep >= 1 (most recent)
-        5. memory_context -> LAST RESORT: drop entirely (user profile)
+        5. memory_context -> drop entirely (user profile)
+
+    PHASE 2 -- "no floor" (safety net). Phase 1 can still overflow when a SINGLE
+    surviving item is itself huge (e.g. one tool result holding a 200k-char scrape,
+    one oversized RAG chunk, or one very long history message). Once phase 1 has
+    nothing left to give, we re-run the same order and drop the last survivors too:
+        6. history      -> drop the final message
+        7. rag_context  -> drop the final chunk
+        8. tool_payload -> drop the final unit/entry
+    (summary is already empty after phase 1, so it is a no-op here.)
+
+    If even an empty context overflows, the fixed system prefix plus the query alone
+    exceed the window. Nothing further can be done here -- the query is off-limits by
+    contract -- so we log a warning and return; ``build_context_with_summary``'s
+    Layer 2 owns that case at turn start.
 
     The query is never modified (it was already handled by build_context_with_summary,
     and re-trimming it could break task execution). The result is purely transient:
@@ -522,11 +538,19 @@ def fit_assembly_context(
     cur_m = memory_context
     dropped = False
 
+    def _tool_units(payload: list) -> int:
+        if payload_kind == "messages":
+            return sum(
+                1 for m in payload if m.get("role") == "assistant" and m.get("tool_calls")
+            )
+        return len(payload)
+
     while True:
         msgs = build_messages(cur_s, cur_h, cur_r, cur_p, cur_m)
         if count_messages_tokens(msgs) <= budget:
             return cur_s, cur_h, cur_r, cur_p, cur_m, dropped
 
+        # ---- Phase 1: trim while keeping at least one item per component ---- #
         # 1. summary
         if cur_s:
             ns = _trim_summary_oldest(cur_s)
@@ -547,23 +571,41 @@ def fit_assembly_context(
                 dropped = True
                 continue
         # 4. tool_payload (keep >= 1)
-        if payload_kind == "messages":
-            units = sum(
-                1 for m in cur_p if m.get("role") == "assistant" and m.get("tool_calls")
-            )
-            if units > 1:
-                cur_p = _trim_tool_messages_oldest(cur_p)
-                dropped = True
-                continue
-        else:  # "results"
-            if len(cur_p) > 1:
-                cur_p = cur_p[1:]
-                dropped = True
-                continue
-        # 5. memory (last resort)
+        if _tool_units(cur_p) > 1:
+            cur_p = _trim_tool_messages_oldest(cur_p) if payload_kind == "messages" else cur_p[1:]
+            dropped = True
+            continue
+        # 5. memory
         if cur_m:
             cur_m = ""
             dropped = True
             continue
-        # nothing left to trim
+
+        # ---- Phase 2: floors reached, drop the last survivors (same order) ---- #
+        # (summary is already empty here, so it needs no phase-2 step)
+        # 6. history -> drop the final message
+        if cur_h:
+            cur_h = []
+            dropped = True
+            continue
+        # 7. rag -> drop the final chunk
+        if cur_r:
+            cur_r = ""
+            dropped = True
+            continue
+        # 8. tool_payload -> drop the final unit/entry
+        if cur_p:
+            cur_p = []
+            dropped = True
+            continue
+
+        # Everything trimmable is gone and we are still over budget: the fixed
+        # system prefix + query alone exceed the window. The query is off-limits
+        # here by contract, so surface it and let the call proceed.
+        logger.warning(
+            "fit_assembly_context exhausted: %d tokens still over budget %d "
+            "with an empty context (system prefix + query alone overflow).",
+            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_m)),
+            budget,
+        )
         return cur_s, cur_h, cur_r, cur_p, cur_m, dropped
