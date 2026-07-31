@@ -28,69 +28,10 @@ $RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
 # =====================================================================
 # Helpers
+# Shared Docker / egress helpers (Test-Docker, Assert-Docker,
+# Repair-EgressNetwork) are sourced from lib/common.ps1. Only
+# start.ps1-specific helpers remain below.
 # =====================================================================
-
-function Test-Docker {
-    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
-    catch { return $false }
-}
-
-function Assert-Docker {
-    if (-not (Test-Docker)) {
-        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
-        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
-        exit 1
-    }
-}
-
-# Free the fixed egress IP (172.30.0.2) on the "$(Get-ProjectName)_ragclaw-internal" network so `up`
-# does not fail with "Address already in use". Removes a stale (non-running)
-# ragclaw-egress container, and with -ForceNetwork also tears down the network to
-# release a stuck Docker IPAM lease left behind by a prior `down`.
-function Repair-EgressNetwork {
-    param([switch]$ForceNetwork)
-
-    if (-not (Test-Docker)) { return }
-
-    # Resolve the project name the SAME way compose does, then derive the
-    # egress container name ("{project}-egress"). Never hardcode "ragclaw-egress"
-    # — a second instance (COMPOSE_PROJECT_NAME=dev) would otherwise never match.
-    $proj = Get-ProjectName
-    $egressName = "$proj-egress"
-
-    $egressId = docker ps -a -q -f "name=$egressName" 2>$null
-    if ($egressId) {
-        $running = docker ps -q -f "name=$egressName" 2>$null
-        if (-not $running) {
-            Write-Host "  Removing stale $egressName container to free its fixed IP..." -ForegroundColor DarkGray
-            docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
-        }
-    }
-
-    if (-not $ForceNetwork) { return }
-
-    $net = "$proj`_ragclaw-internal"
-    # Force mode frees the egress IP IPAM lease by removing the internal network.
-    # The backend ({project}-lite) and mcp-repl are NORMAL members of that network,
-    # so removing it requires detaching all endpoints first — but we must NOT
-    # `docker rm -f` them (that would take down the live backend). Delete ONLY the
-    # egress broker; merely `disconnect` every other container so the network can
-    # be removed; `up` reconnects them.
-    $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
-    if ($attached) {
-        $attached | ForEach-Object {
-            if (-not $_) { return }
-            $name = (docker inspect --format '{{.Name}}' $_ 2>$null) -replace '^/',''
-            if ($name -eq $egressName -or $_ -eq $egressId) {
-                docker rm -f $_ 2>$null | Out-Null                            # the broken broker — safe to delete
-            } else {
-                docker network disconnect -f $net $_ 2>$null | Out-Null       # keep the container, just detach
-            }
-        }
-    }
-    docker network rm $net 2>$null | Out-Null
-    Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
-}
 
 function Wait-ForBackend {
     $realPort = Get-RagclawPublishedPort

@@ -1,9 +1,11 @@
 # =====================================================================
-# Shared helpers for bin/psl/*.ps1 — dot-source AFTER setting $ComposeFile.
+# Shared helpers for bin/psl/*.ps1 — dot-source AFTER $Root/$ComposeFile are set.
 #
-# Faithful PowerShell counterpart of bin/sh/lib/common.sh. Currently exposes
-# the ragclaw published-port resolver so every script reports the REAL host port
-# (inline RAGCLAW_PORT > .env RAGCLAW_PORT > random), not a hardcoded :8000.
+# Faithful PowerShell counterpart of bin/sh/lib/common.sh. Centralizes the
+# cross-script Docker / egress / compose helpers so backend.ps1, mcp_repl.ps1,
+# run_all_tests.ps1 and start.ps1 share ONE definition instead of copying it.
+# Also exposes the ragclaw published-port resolver (Get-RagclawPublishedPort)
+# and project-name resolver (Get-ProjectName).
 # =====================================================================
 
 # ---- Resolve the actual host port the ragclaw service is published on ----
@@ -35,4 +37,91 @@ function Get-ProjectName {
     }
     if (-not $p) { $p = Split-Path -Leaf $Root }
     return $p
+}
+
+# =====================================================================
+# Shared Docker / compose / egress helpers (centralized from the individual
+# bin/psl/*.ps1 scripts so backend.ps1, mcp_repl.ps1, run_all_tests.ps1 and
+# start.ps1 share ONE definition instead of copying it).
+# =====================================================================
+
+function Test-Docker {
+    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
+    catch { return $false }
+}
+
+function Assert-Docker {
+    if (-not (Test-Docker)) {
+        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
+        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
+        exit 1
+    }
+}
+
+function Repair-EgressNetwork {
+    <#
+    .SYNOPSIS
+    Frees the fixed egress IP on the internal network so a subsequent
+    `docker compose up` does not fail with "Address already in use".
+    .PARAMETER ForceNetwork
+    Also removes the internal network itself (releasing the stuck IPAM
+    lease left behind by a prior `down`). Used on the retry attempt when a
+    stale container alone was not the cause.
+    #>
+    param([switch]$ForceNetwork)
+
+    if (-not (Test-Docker)) { return }
+
+    # Resolve the project name the SAME way compose does, then derive the
+    # egress container name ("{project}-egress"). Never hardcode "ragclaw-egress"
+    # — a second instance (COMPOSE_PROJECT_NAME=dev) would otherwise never match.
+    $proj = Get-ProjectName
+    $egressName = "$proj-egress"
+
+    # 1) Remove any stale (non-running) egress broker container holding the IP.
+    $egressId = docker ps -a -q -f "name=$egressName" 2>$null
+    if ($egressId) {
+        $running = docker ps -q -f "name=$egressName" 2>$null
+        if (-not $running) {
+            Write-Host "  Removing stale $egressName container to free its fixed IP..." -ForegroundColor DarkGray
+            docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
+        }
+    }
+
+    if (-not $ForceNetwork) { return }
+
+    # 2) Force-remove the egress broker and then the internal network, releasing
+    #    the daemon's IPAM lease. The internal network is named by compose as
+    #    {project}_ragclaw-internal. IMPORTANT: {project}-lite (backend) and
+    #    mcp-repl are NORMAL members — we must NOT `docker rm -f` them (that would
+    #    kill the live backend). Delete ONLY the egress broker; merely
+    #    `disconnect` every other attached container; `up` then reconnects them.
+    $net = "$proj`_ragclaw-internal"
+    $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
+    if ($attached) {
+        $attached | ForEach-Object {
+            if (-not $_) { return }
+            $name = (docker inspect --format '{{.Name}}' $_ 2>$null) -replace '^/',''
+            if ($name -eq $egressName -or $_ -eq $egressId) {
+                docker rm -f $_ 2>$null | Out-Null                            # the broken broker — safe to delete
+            } else {
+                docker network disconnect -f $net $_ 2>$null | Out-Null       # keep the container, just detach
+            }
+        }
+    }
+    docker network rm $net 2>$null | Out-Null
+    Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
+}
+
+function Test-ComposeAvailable {
+    param(
+        [string]$ComposePath,
+        [string]$Service        # compose service to verify, e.g. "ragclaw" or "mcp-repl"
+    )
+    if (-not (Test-Path $ComposePath)) { return $false }
+    $yml = Get-Content $ComposePath -Raw
+    # Service block present — matches the backend "ragclaw" service and the
+    # REPL "mcp-repl" service. Callers pass $Service so a single definition
+    # serves both scripts (previously duplicated with divergent guards).
+    return $yml -match "(?m)^\s*$Service:"
 }

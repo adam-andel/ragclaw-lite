@@ -16,6 +16,10 @@ $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 $Port = 9200
 
+# Shared Docker/compose/egress helpers (Test-Docker, Assert-Docker,
+# Test-ComposeAvailable, Repair-EgressNetwork, Get-ProjectName) — also
+# resolves the latent Get-ProjectName dependency used below.
+. (Join-Path $PSScriptRoot "lib\common.ps1")
 # Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
 
@@ -26,25 +30,9 @@ $RequiredImages = @("library/python:3.12-slim")
 # Helpers
 # =====================================================================
 
-function Assert-Docker {
-    if (-not (Test-Docker)) {
-        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
-        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
-        exit 1
-    }
-}
-
-function Test-Docker {
-    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
-    catch { return $false }
-}
-
-function Test-ComposeAvailable {
-    param([string]$ComposePath)
-    if (-not (Test-Path $ComposePath)) { return $false }
-    $yml = Get-Content $ComposePath -Raw
-    return $yml -match 'mcp-repl:'
-}
+# Shared Docker / compose / egress helpers (Assert-Docker, Test-Docker,
+# Test-ComposeAvailable, Repair-EgressNetwork) are sourced from
+# lib/common.ps1. Only REPL-specific helpers remain below.
 
 function Test-DockerRepl {
     if (-not (Test-Docker)) { return $false }
@@ -64,61 +52,6 @@ function Test-DockerEgress {
     catch { return $false }
 }
 
-function Repair-EgressNetwork {
-    <#
-    .SYNOPSIS
-    Frees the fixed egress IP on the internal network so a subsequent
-    `docker compose up` does not fail with "Address already in use".
-    .PARAMETER ForceNetwork
-    Also removes the internal network itself (releasing the stuck IPAM
-    lease left behind by a prior `down`). Used on the retry attempt when a
-    stale container alone was not the cause.
-    #>
-    param([switch]$ForceNetwork)
-
-    if (-not (Test-Docker)) { return }
-
-    # Resolve the project name the SAME way compose does, then derive the
-    # egress container name ("{project}-egress"). Never hardcode "ragclaw-egress"
-    # — a second instance (COMPOSE_PROJECT_NAME=dev) would otherwise never match.
-    $proj = Get-ProjectName
-    $egressName = "$proj-egress"
-
-    # 1) Remove any stale (non-running) egress broker container holding the IP.
-    $egressId = docker ps -a -q -f "name=$egressName" 2>$null
-    if ($egressId) {
-        $running = docker ps -q -f "name=$egressName" 2>$null
-        if (-not $running) {
-            Write-Host "  Removing stale $egressName container to free its fixed IP..." -ForegroundColor DarkGray
-            docker compose -f $ComposeFile rm -f ragclaw-egress 2>$null | Out-Null
-        }
-    }
-
-    if (-not $ForceNetwork) { return }
-
-    # 2) Force-remove the egress broker and then the internal network, releasing
-    #    the daemon's IPAM lease. The internal network is named by compose as
-    #    {project}_ragclaw-internal. IMPORTANT: {project}-lite (backend) and
-    #    mcp-repl are NORMAL members — we must NOT `docker rm -f` them (that would
-    #    kill the live backend). Delete ONLY the egress broker; merely
-    #    `disconnect` every other attached container; `up` then reconnects them.
-    $net = "$proj`_ragclaw-internal"
-    $attached = docker network inspect $net --format '{{range $k,$v := .Containers}}{{$k}}{{"\n"}}{{end}}' 2>$null
-    if ($attached) {
-        $attached | ForEach-Object {
-            if (-not $_) { return }
-            $name = (docker inspect --format '{{.Name}}' $_ 2>$null) -replace '^/',''
-            if ($name -eq $egressName -or $_ -eq $egressId) {
-                docker rm -f $_ 2>$null | Out-Null                            # the broken broker — safe to delete
-            } else {
-                docker network disconnect -f $net $_ 2>$null | Out-Null       # keep the container, just detach
-            }
-        }
-    }
-    docker network rm $net 2>$null | Out-Null
-    Write-Host "  Released $net network IPAM lease; will recreate on up." -ForegroundColor DarkGray
-}
-
 # =====================================================================
 # Actions: Docker mode (container mode only)
 # =====================================================================
@@ -132,7 +65,7 @@ function Start-DockerRepl {
         return
     }
 
-    if (-not (Test-ComposeAvailable $ComposeFile)) {
+    if (-not (Test-ComposeAvailable $ComposeFile "mcp-repl")) {
         Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
         return
     }
@@ -281,7 +214,7 @@ switch ($Action) {
 
     "reload" {
         Assert-Docker
-        if (-not (Test-ComposeAvailable $ComposeFile)) {
+        if (-not (Test-ComposeAvailable $ComposeFile "mcp-repl")) {
             Write-Host "ERROR: docker-compose.yml missing or lacks mcp-repl service" -ForegroundColor Red
             return
         }

@@ -22,27 +22,10 @@ $RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
 # =====================================================================
 # Helpers
+# Shared Docker / compose helpers (Assert-Docker, Test-Docker,
+# Test-ComposeAvailable) are sourced from lib/common.ps1. Only
+# backend-specific helpers remain below.
 # =====================================================================
-
-function Assert-Docker {
-    if (-not (Test-Docker)) {
-        Write-Host "ERROR: Docker is not installed or not running." -ForegroundColor Red
-        Write-Host "       This project runs in container mode only. Please install Docker Desktop." -ForegroundColor Yellow
-        exit 1
-    }
-}
-
-function Test-Docker {
-    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
-    catch { return $false }
-}
-
-function Test-ComposeAvailable {
-    param([string]$ComposePath)
-    if (-not (Test-Path $ComposePath)) { return $false }
-    $yml = Get-Content $ComposePath -Raw
-    return $yml -match '(?m)^\s+ragclaw:' -and ($yml -match 'container_name:\s*\S*-lite')
-}
 
 function Test-DockerBackend {
     if (-not (Test-Docker)) { return $false }
@@ -76,7 +59,7 @@ function Start-DockerBackend {
         return
     }
 
-    if (-not (Test-ComposeAvailable $ComposeFile)) {
+    if (-not (Test-ComposeAvailable $ComposeFile "ragclaw")) {
         Write-Host "ERROR: docker-compose.yml missing or lacks 'ragclaw' service" -ForegroundColor Red
         return
     }
@@ -186,7 +169,7 @@ switch ($Action) {
 
     "reload" {
         Assert-Docker
-        if (-not (Test-ComposeAvailable $ComposeFile)) {
+        if (-not (Test-ComposeAvailable $ComposeFile "ragclaw")) {
             Write-Host "ERROR: docker-compose.yml missing or lacks 'ragclaw' service" -ForegroundColor Red
             return
         }

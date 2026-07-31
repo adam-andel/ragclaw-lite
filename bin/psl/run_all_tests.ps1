@@ -13,10 +13,8 @@ $BinDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = Split-Path -Parent (Split-Path -Parent $BinDir)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
-function Test-Docker {
-    try { $null = docker --version 2>$null; return ($LASTEXITCODE -eq 0) }
-    catch { return $false }
-}
+# Shared Docker helper (Test-Docker) sourced from lib/common.ps1
+. (Join-Path $PSScriptRoot "lib\common.ps1")
 
 if (-not (Test-Docker)) {
     Write-Host "ERROR: Docker is not installed or not running. Container mode only." -ForegroundColor Red
