@@ -3,42 +3,51 @@
 #
 # Dev-only entrypoint for the Vite HMR container (frontend-dev).
 #
-# node_modules lives in ./frontend/node_modules on the HOST — bind-mounted into
-# the container at /app/frontend, written here by this entrypoint. It is NOT
-# refreshed by a build when package.json changes, so a bare `reload` could
-# leave the running Vite server unable to resolve a newly added dep (e.g.
-# cronstrue).
-#
-# Instead of requiring a manual reset, this entrypoint self-heals by
-# ALWAYS re-running `pnpm install --force` at startup, reusing the baked pnpm
-# store at /opt/pnpm-store for speed (reuses baked store, no download). We deliberately
-# do NOT gate this behind a "deps up-to-date" marker: a stale marker can lie
-# after a half-failed install and leave the container stuck skipping forever.
-# This makes adding a dependency safe: edit package.json, then
-# `bash bin/sh/start.sh --dev reload` and the container reconciles itself.
+# The baked lockfile (/opt/frontend-lock.yaml) and baked store (/opt/pnpm-store)
+# both came from the SAME `pnpm install` during image build, so they are always
+# consistent. We copy the baked lockfile over whatever the host bind-mount brings
+# in, then install strictly offline from the baked store.
+# --offline is the only hard guard: pnpm never touches the network. pnpm's
+# default (non-frozen) behaviour re-resolves if package.json drifted from the
+# lockfile; --offline then either finds the packages in the store (works) or
+# fails loudly — the error below tells you to rebuild the image.
 set -eu
 
 APP_DIR=/app/frontend
 NODE_MODULES="$APP_DIR/node_modules"
 STORE_DIR=/opt/pnpm-store
+LOCKFILE_BAKED=/opt/frontend-lock.yaml
 
-# Always reconcile node_modules against package.json/lockfile. node_modules lives
-# on the host bind-mount, but that copy (or a prior half-failed install that
-# wrote a stale checksum) can drift out of sync with package.json — e.g.
-# cronstrue added but never actually linked. Re-syncing from the baked store is
-# fast (reuses baked store, no download), so we ALWAYS do it instead of
-# trusting an up-to-date marker, which can lie after a failed install and leave
-# the container stuck skipping forever. `--force` also skips pnpm's interactive
-# "remove and reinstall from scratch" prompt, which would otherwise hang with no TTY.
-if [ ! -x "$NODE_MODULES/.bin/vite" ]; then
-  echo "[dev-entrypoint] node_modules missing — installing deps..."
-else
-  echo "[dev-entrypoint] reconciling node_modules against package.json (fast re-link from store)..."
+echo "[dev-entrypoint] syncing lockfile from baked copy..."
+cp "$LOCKFILE_BAKED" "$APP_DIR/pnpm-lock.yaml"
+
+echo "[dev-entrypoint] installing deps from baked store (offline)..."
+rm -rf "$NODE_MODULES"
+
+if ! pnpm install --offline --store-dir "$STORE_DIR"; then
+  cat <<'EOF'
+
+============================================================
+ OFFLINE INSTALL FAILED
+============================================================
+ The baked pnpm store (/opt/pnpm-store) does not contain the
+ packages required by the current package.json.
+
+ Likely cause: you added/changed dependencies in package.json
+ but did NOT rebuild the frontend-dev image.
+
+ Fix: rebuild to refresh the baked store.
+   ->  bash bin/sh/start.sh --dev reload
+      (or press [3] in the main menu)
+
+ If the error persists after a rebuild:
+   ->  docker compose -f docker-compose.yml \
+         -f docker-compose.dev.yml build --no-cache frontend-dev
+============================================================
+
+EOF
+  exit 1
 fi
-if ! pnpm install --force --prefer-offline --store-dir "$STORE_DIR"; then
-  echo "[dev-entrypoint] offline install failed, retrying online..."
-  pnpm install --force --store-dir "$STORE_DIR"
-fi
+
 echo "[dev-entrypoint] deps synced."
-
 exec pnpm dev --host 0.0.0.0

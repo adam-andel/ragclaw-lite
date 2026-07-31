@@ -109,7 +109,9 @@ function Wait-ForBackend {
 
 function Build-Stack([string]$Mirror) {
     Write-Host "=== Building (registry: $Mirror) ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile build --build-arg REGISTRY=$Mirror
+    # All services consume REGISTRY (base-image mirror). Build them explicitly so
+    # each receives the --build-arg, matching the bash build_stack().
+    docker compose -f $ComposeFile build --build-arg REGISTRY=$Mirror ragclaw mcp-repl ragclaw-egress nginx
     return ($LASTEXITCODE -eq 0)
 }
 
