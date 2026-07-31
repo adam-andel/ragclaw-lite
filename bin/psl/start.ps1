@@ -19,6 +19,8 @@ $ComposeFile = Join-Path $Root "docker-compose.yml"
 . (Join-Path $PSScriptRoot "lib\mirror.ps1")
 # Shared helpers (Get-RagclawPublishedPort — real host port resolver)
 . (Join-Path $PSScriptRoot "lib\common.ps1")
+# Secret generation (Initialize-RagclawSecrets — idempotent first-run generator)
+. (Join-Path $PSScriptRoot "lib\gen-secrets.ps1")
 
 # start builds the whole stack; ragclaw is multi-stage (node + python), the other
 # services are python-only, so the union is python:3.12-slim + node:22-alpine.
@@ -107,6 +109,39 @@ function Wait-ForBackend {
     return $false
 }
 
+# ---- nginx host-port resolvers (prod entry) ----
+# Mirror bin/sh/lib/common.sh::nginx_published_port / nginx_https_enabled and
+# bin/sh/start.sh::resolve_entry (prod branch). nginx is the sole entry in prod.
+function Get-NginxPublishedPort([int]$ContainerPort = 80) {
+    $out = docker compose -f $ComposeFile port nginx $ContainerPort 2>$null
+    if ($out) {
+        $port = ($out -split ':' | Select-Object -Last 1).Trim()
+        if ($port -match '^\d+$') { return $port }
+    }
+    return $null
+}
+
+function Test-NginxHttpsEnabled {
+    docker compose -f $ComposeFile exec -T nginx grep -q 'listen 443 ssl' /etc/nginx/conf.d/default.conf 2>$null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Resolve the user-facing entry URL for the running (prod) stack: HTTP :80 always,
+# HTTPS :443 when nginx serves TLS. Sets $AppUrl, $AppHttpUrl, $AppHttpsUrl.
+function Resolve-Entry {
+    $h = Get-NginxPublishedPort 80
+    $s = Get-NginxPublishedPort 443
+    if (Test-NginxHttpsEnabled -and $s) {
+        $script:AppHttpsUrl = "https://localhost:$s"
+        $script:AppUrl      = $script:AppHttpsUrl
+        if ($h) { $script:AppHttpUrl = "http://localhost:$h" }
+    } else {
+        $script:AppHttpUrl = "http://localhost:$h"
+        $script:AppUrl     = $script:AppHttpUrl
+        $script:AppHttpsUrl = $null
+    }
+}
+
 function Build-Stack([string]$Mirror) {
     Write-Host "=== Building (registry: $Mirror) ===" -ForegroundColor Cyan
     # All services consume REGISTRY (base-image mirror). Build them explicitly so
@@ -152,19 +187,21 @@ switch ($Action) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
         }
+        Initialize-RagclawSecrets
         if (-not (Build-Stack $mirror)) { return }
         Write-Host ""
         Write-Host "=== Starting stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack)) { return }
+        Resolve-Entry
         Wait-ForBackend
-        $appPort = Get-RagclawPublishedPort
         Write-Host ""
         Write-Host "=== All services started (Docker mode) ===" -ForegroundColor Green
-        Write-Host "  App:     http://localhost:$appPort" -ForegroundColor Gray
-        Write-Host "  Swagger: http://127.0.0.1:$appPort/docs" -ForegroundColor Gray
-        Write-Host "  REPL:    http://127.0.0.1:9200/mcp  (if enabled)" -ForegroundColor Gray
+        Write-Host "  App:     $AppUrl" -ForegroundColor Gray
+        if ($AppHttpsUrl -and $AppHttpsUrl -ne $AppUrl) { Write-Host "  HTTPS:   $AppHttpsUrl" -ForegroundColor Gray }
+        Write-Host "  Swagger: $AppHttpUrl/docs" -ForegroundColor Gray
+        Write-Host "  REPL:    internal only (mcp-repl:9200)" -ForegroundColor Gray
         Start-Sleep 1
-        Start-Process "http://localhost:$appPort"
+        Start-Process $AppUrl
     }
 
     "reload" {
@@ -179,17 +216,21 @@ switch ($Action) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
         }
+        Initialize-RagclawSecrets
         if (-not (Build-Stack $mirror)) { return }
         Write-Host ""
         Write-Host "=== Recreating stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack -ForceRecreate)) { return }
+        Resolve-Entry
         Wait-ForBackend
-        $appPort = Get-RagclawPublishedPort
         Write-Host ""
         Write-Host "=== Reload complete (Docker mode) ===" -ForegroundColor Green
-        Write-Host "  App: http://localhost:$appPort" -ForegroundColor Gray
+        Write-Host "  App:     $AppUrl" -ForegroundColor Gray
+        if ($AppHttpsUrl -and $AppHttpsUrl -ne $AppUrl) { Write-Host "  HTTPS:   $AppHttpsUrl" -ForegroundColor Gray }
+        Write-Host "  Swagger: $AppHttpUrl/docs" -ForegroundColor Gray
+        Write-Host "  REPL:    internal only (mcp-repl:9200)" -ForegroundColor Gray
         Start-Sleep 1
-        Start-Process "http://localhost:$appPort"
+        Start-Process $AppUrl
     }
 
     "stop" {
@@ -206,9 +247,9 @@ switch ($Action) {
         docker compose -f $ComposeFile ps
         $running = docker ps -q -f "name=$(Get-ProjectName)-lite" 2>$null
         if ($running) {
-            $appPort = Get-RagclawPublishedPort
+            Resolve-Entry
             $portSrc = if ($env:RAGCLAW_PORT) { $env:RAGCLAW_PORT } else { "<random>" }
-            Write-Host "  App URL: http://localhost:$appPort  (RAGCLAW_PORT: $portSrc)" -ForegroundColor Gray
+            Write-Host "  App URL: $AppUrl  (entry: nginx, RAGCLAW_PORT: $portSrc)" -ForegroundColor Gray
         }
     }
 
