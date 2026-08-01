@@ -159,6 +159,15 @@ export type SSEEvent =
   | { type: 'citation'; citation: Citation }
   | { type: 'error'; message: string }
   | { type: 'agent_step'; stage: string; message: string; skill?: string; tool?: string; detail?: string }
+  // Emitted once per LLM submission (each tool round, then the final
+  // generation). Later events overwrite earlier ones — the meter always shows
+  // the most recent payload.
+  | {
+      type: 'context_usage'
+      prompt_tokens: number
+      persistent_tokens: number
+      transient_tokens: number
+    }
   | {
       type: 'done'
       conversation_id: string
@@ -168,6 +177,10 @@ export type SSEEvent =
       retrieval_ms: number
       llm_ms: number
       prompt_tokens?: number
+      persistent_tokens?: number
+      transient_tokens?: number
+      summary_msg_count?: number
+      total_messages?: number
       stopped?: boolean
     }
   | {

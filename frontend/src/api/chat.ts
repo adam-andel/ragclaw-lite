@@ -97,6 +97,40 @@ export const getConversationMessages = (id: string, page: number | string = 'las
 export const deleteConversation = (id: string) =>
   fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)
 
+// ── Persistent context (compressed summary + folding cursor) ──
+export interface ConversationSummaryState {
+  conversation_id: string
+  summary_text: string
+  summary_msg_count: number
+  total_messages: number
+}
+
+// The backend throws bare error codes (SUMMARY_LLM_FAILED / NOTHING_TO_COMPACT /
+// CONVERSATION_BUSY); pass them through untouched so backendErrorMessage() can
+// localize them at the call site.
+async function summaryStateResponse(r: Response): Promise<ConversationSummaryState> {
+  handleResponse(r)
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(body?.detail || `HTTP_${r.status}`)
+  return body as ConversationSummaryState
+}
+
+// Replace the summary text. The folding cursor is server-side immutable here.
+export const updateConversationSummary = (id: string, summaryText: string) =>
+  fetch(`/api/conversations/${id}/summary`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ summary_text: summaryText }),
+  }).then(summaryStateResponse)
+
+// Fold the oldest `fraction` of the un-summarized history into the summary.
+export const compactConversation = (id: string, fraction = 0.5) =>
+  fetch(`/api/conversations/${id}/compact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ fraction }),
+  }).then(summaryStateResponse)
+
 // Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)
 export const getPendingLimit = (id: string) =>
   fetch(`/api/conversations/${id}/pending`, { headers: authHeaders() })

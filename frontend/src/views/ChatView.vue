@@ -10,7 +10,8 @@ import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations, updateConversationSummary, compactConversation } from '@/api/chat'
+import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
 import { useAuthStore } from '@/stores/auth'
@@ -311,6 +312,15 @@ const queuePosition = ref<number | null>(null)
 const assistantStage = ref<string | null>(null)
 // LLM context token count: total tokens of the latest request body (system prompt + history + RAG + memory + tools + question)
 const contextTokens = ref(0)
+// Split of that same submission. `persistent` = compressed summary + verbatim
+// history (the only part manual compaction can shrink); `transient` = system
+// prefix + RAG + memory + tool records + the current question.
+const persistentTokens = ref(0)
+const transientTokens = ref(0)
+// Summary-folding cursor: how many of the oldest messages are already
+// represented by the summary, out of the conversation total.
+const summaryMsgCount = ref(0)
+const totalMessages = ref(0)
 // Suspension hint (pushed by the backend as need_user_input when the limit is hit): { copy, backend-supplied conv_id, reason }
 const pendingLimit = ref<{ message: string; convId: string; kind: string; messageId: string } | null>(null)
 let abortCtl: AbortController | null = null
@@ -376,8 +386,13 @@ async function loadOlder() {
   }
 }
 
-// Restore the context token count from loaded messages (take the last assistant message that has token_count)
+// Restore the context token count from loaded messages (take the last assistant message that has token_count).
+// The persistent/transient split is NOT persisted (it describes one submission,
+// not the message), so it is cleared here and the modal hides that row until
+// the next live turn reports it.
 function syncContextFromMessages() {
+  persistentTokens.value = 0
+  transientTokens.value = 0
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
     if (m.role === 'assistant' && typeof m.token_count === 'number' && m.token_count > 0) {
@@ -628,6 +643,118 @@ const contextRatioClass = computed(() => {
   if (r >= 0.7) return 'warn'
   return 'ok'
 })
+
+// ── Context inspector modal (click the meter) ──
+// Shows the persistent/transient split of the last submission, the summary
+// paragraphs, and the two manual actions (edit summary / compact).
+const showContextModal = ref(false)
+const ctxSummaryText = ref('')
+const ctxDraft = ref('')
+const ctxEditing = ref(false)
+const ctxLoading = ref(false)
+const ctxBusy = ref(false)
+
+// Shares of the WINDOW (not of each other), so the two numbers add up to the
+// same percentage the meter shows.
+const contextPersistentPct = computed(() => {
+  const w = auth.contextWindow || 1
+  return Math.round(Math.min(1, persistentTokens.value / w) * 100)
+})
+const contextTransientPct = computed(() => {
+  const w = auth.contextWindow || 1
+  return Math.round(Math.min(1, transientTokens.value / w) * 100)
+})
+const hasBreakdown = computed(() => persistentTokens.value + transientTokens.value > 0)
+
+// The summary is a single TEXT column whose paragraphs are joined with "\n"
+// (one paragraph per fold). Split it back for display; there is deliberately no
+// per-paragraph "which messages did this cover" mapping.
+const ctxSummaryParagraphs = computed(() =>
+  ctxSummaryText.value.split('\n').map(s => s.trim()).filter(Boolean),
+)
+const ctxDirty = computed(() => ctxDraft.value.trim() !== ctxSummaryText.value.trim())
+
+function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_count?: number; total_messages?: number }) {
+  ctxSummaryText.value = s.summary_text || ''
+  ctxDraft.value = ctxSummaryText.value
+  summaryMsgCount.value = s.summary_msg_count || 0
+  totalMessages.value = s.total_messages || 0
+}
+
+async function openContextModal() {
+  if (!conversationId.value) return
+  showContextModal.value = true
+  ctxEditing.value = false
+  ctxLoading.value = true
+  try {
+    // include_messages=false keeps this cheap: we only need the summary state,
+    // which rides on the existing conversation-detail endpoint.
+    const detail = await getConversation(conversationId.value, false)
+    applySummaryState(detail)
+  } catch (e: any) {
+    nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
+  } finally {
+    ctxLoading.value = false
+  }
+}
+
+function guardContextAction(): boolean {
+  if (isStreaming.value) {
+    nmessage.warning(t('chat.contextModal.streamingDisabled'))
+    return false
+  }
+  return !!conversationId.value && !isReadonly.value
+}
+
+async function persistSummary(text: string) {
+  ctxBusy.value = true
+  try {
+    applySummaryState(await updateConversationSummary(conversationId.value!, text))
+    ctxEditing.value = false
+    nmessage.success(t('chat.contextModal.saved'))
+  } catch (e: any) {
+    nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
+  } finally {
+    ctxBusy.value = false
+  }
+}
+
+function saveSummaryEdit() {
+  if (!guardContextAction()) return
+  const text = ctxDraft.value.trim()
+  // Clearing the text while the cursor is advanced permanently hides
+  // history[:cursor] from the model (the cursor is intentionally immutable),
+  // so this destructive case needs an explicit second confirmation.
+  if (!text && summaryMsgCount.value > 0) {
+    dialog.warning({
+      title: t('chat.contextModal.clearConfirmTitle'),
+      content: t('chat.contextModal.clearConfirmBody', { count: summaryMsgCount.value }),
+      positiveText: t('chat.contextModal.clearConfirmOk'),
+      negativeText: t('chat.contextModal.cancel'),
+      onPositiveClick: () => { persistSummary('') },
+    })
+    return
+  }
+  persistSummary(text)
+}
+
+async function runCompact() {
+  if (!guardContextAction()) return
+  ctxBusy.value = true
+  try {
+    const state = await compactConversation(conversationId.value!, 0.5)
+    applySummaryState(state)
+    ctxEditing.value = false
+    nmessage.success(t('chat.contextModal.compacted', {
+      done: state.summary_msg_count,
+      total: state.total_messages,
+    }))
+  } catch (e: any) {
+    nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
+  } finally {
+    ctxBusy.value = false
+  }
+}
 
 
 const showPicker = computed(() => emptyMode.value !== '' && messages.value.length === 0 && !conversationId.value)
@@ -902,6 +1029,12 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
           chatUnread.markUnread(event.conv_id)
         }
         break
+      } else if (event.type === 'context_usage') {
+        // One event per LLM submission (each tool round, then the final
+        // generation): the latest simply overwrites the previous one.
+        contextTokens.value = event.prompt_tokens
+        persistentTokens.value = event.persistent_tokens
+        transientTokens.value = event.transient_tokens
       } else if (event.type === 'done') {
         if (event.stopped) {
           proxyMsg.content = (proxyMsg.content || '') + '\n\n' + t('chat.userStoppedNote')
@@ -912,6 +1045,12 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
           contextTokens.value = event.prompt_tokens
           proxyMsg.token_count = event.prompt_tokens
         }
+        if (typeof event.persistent_tokens === 'number') persistentTokens.value = event.persistent_tokens
+        if (typeof event.transient_tokens === 'number') transientTokens.value = event.transient_tokens
+        // Summary-folding cursor: the automatic compressor may have advanced it
+        // during this turn, so keep the modal's counters honest without a refetch.
+        if (typeof event.summary_msg_count === 'number') summaryMsgCount.value = event.summary_msg_count
+        if (typeof event.total_messages === 'number') totalMessages.value = event.total_messages
         proxyMsg._pending = false
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
         ;(proxyMsg as any)._retrieval = event.retrieval_ms || 0
@@ -1418,15 +1557,18 @@ function handleKeydown(e: KeyboardEvent) {
           {{ t('chat.findRecords') }}
         </NButton>
         <div class="toolbar-right">
-          <div
+          <button
             v-if="contextTokens > 0"
+            type="button"
             class="context-meter"
-            :class="contextRatioClass"
-            :title="t('chat.contextTokensTip')"
+            :class="[contextRatioClass, { clickable: !!conversationId }]"
+            :disabled="!conversationId"
+            :title="t('chat.contextTokensTip', { pct: contextRatioPct })"
+            @click="openContextModal"
           >
             <span class="context-meter-text">{{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}</span>
             <span class="context-meter-bar"><span class="context-meter-fill" :style="{ width: contextRatioPct + '%' }"></span></span>
-          </div>
+          </button>
         </div>
       </div>
       <div class="chat-input-area">
@@ -1476,6 +1618,79 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon><Send /></NIcon></template>
         </NButton>
       </div>
+
+      <AppModal
+        v-model:show="showContextModal"
+        :title="t('chat.contextModal.title')"
+        size="wide"
+      >
+        <NSpin :show="ctxLoading">
+          <div class="ctx-head">
+            <div class="ctx-total" :class="contextRatioClass">
+              {{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}
+              <span class="ctx-pct">{{ contextRatioPct }}%</span>
+            </div>
+            <div v-if="hasBreakdown" class="ctx-breakdown">
+              {{ t('chat.contextModal.breakdown', { persistent: contextPersistentPct, transient: contextTransientPct }) }}
+            </div>
+            <div class="ctx-cursor">
+              {{ t('chat.contextModal.cursor', { done: summaryMsgCount, total: totalMessages }) }}
+            </div>
+          </div>
+
+          <div class="ctx-section-title">{{ t('chat.contextModal.summaryTitle') }}</div>
+
+          <NInput
+            v-if="ctxEditing"
+            v-model:value="ctxDraft"
+            type="textarea"
+            :autosize="{ minRows: 8, maxRows: 18 }"
+            :disabled="ctxBusy"
+          />
+          <template v-else>
+            <div v-if="ctxSummaryParagraphs.length === 0" class="ctx-empty">
+              {{ t('chat.contextModal.empty') }}
+            </div>
+            <ol v-else class="ctx-para-list">
+              <li v-for="(p, i) in ctxSummaryParagraphs" :key="i" class="ctx-para">{{ p }}</li>
+            </ol>
+          </template>
+
+          <div class="ctx-hint">
+            {{ ctxEditing ? t('chat.contextModal.editHint') : t('chat.contextModal.compactHint') }}
+          </div>
+        </NSpin>
+
+        <template #footer>
+          <div class="ctx-footer">
+            <template v-if="ctxEditing">
+              <NButton :disabled="ctxBusy" @click="ctxEditing = false; ctxDraft = ctxSummaryText">
+                {{ t('chat.contextModal.cancel') }}
+              </NButton>
+              <NButton type="primary" :loading="ctxBusy" :disabled="!ctxDirty" @click="saveSummaryEdit">
+                {{ t('chat.contextModal.save') }}
+              </NButton>
+            </template>
+            <template v-else>
+              <NButton
+                :disabled="ctxBusy || isStreaming || isReadonly || ctxSummaryParagraphs.length === 0"
+                @click="ctxEditing = true"
+              >
+                <template #icon><NIcon size="14"><Create /></NIcon></template>
+                {{ t('chat.contextModal.edit') }}
+              </NButton>
+              <NButton
+                type="primary"
+                :loading="ctxBusy"
+                :disabled="ctxBusy || isStreaming || isReadonly || summaryMsgCount >= totalMessages"
+                @click="runCompact"
+              >
+                {{ t('chat.contextModal.compact') }}
+              </NButton>
+            </template>
+          </div>
+        </template>
+      </AppModal>
 
       <AppModal
         v-model:show="showWsModal"
@@ -2238,6 +2453,12 @@ function handleKeydown(e: KeyboardEvent) {
   border: 1px solid var(--color-border);
   font-variant-numeric: tabular-nums;
   max-width: 220px;
+  /* Rendered as a <button> so the meter is keyboard-focusable; strip the UA
+     button chrome so it still looks like the original inline badge. */
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: default;
 }
 .context-meter-text {
   font-size: 11px;
@@ -2263,6 +2484,83 @@ function handleKeydown(e: KeyboardEvent) {
 .context-meter.danger .context-meter-fill { background: #e0413e; }
 .context-meter.warn .context-meter-text { color: #f0a020; }
 .context-meter.danger .context-meter-text { color: #e0413e; }
+.context-meter.clickable {
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease;
+}
+.context-meter.clickable:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-hover, var(--color-surface));
+}
+.context-meter:disabled { cursor: default; }
+
+/* ── Context inspector modal ── */
+.ctx-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  margin-bottom: 14px;
+}
+.ctx-total {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.ctx-total.warn { color: #f0a020; }
+.ctx-total.danger { color: #e0413e; }
+.ctx-pct { margin-left: 8px; }
+.ctx-breakdown,
+.ctx-cursor {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+.ctx-para-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.ctx-para {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ctx-empty {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  padding: 16px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+}
+.ctx-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+.ctx-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 /* ── Scroll-to-bottom button ── */
 .scroll-bottom-btn {
