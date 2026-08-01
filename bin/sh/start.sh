@@ -103,12 +103,21 @@ stop_watcher() {
 # ---- helpers ----
 build_stack() {  # $1 = mirror
   c_cyan "=== Building stack (registry: $1, mode: $(mode_label)) ==="
+  local arg=()
+  # REGISTRY defaults to docker.io in every Dockerfile. Only pass --build-arg
+  # when the working mirror is actually NOT the default, so that on the common
+  # path (official registry reachable) BuildKit sees NO build-arg change and
+  # keeps all the FROM + apt/pip layers cached. This is what prevents the
+  # "cache keeps growing because REGISTRY is always re-injected" problem.
+  if [ "$1" != "docker.io" ]; then
+    arg=(--build-arg REGISTRY="$1")
+  fi
   # All services consume REGISTRY (base-image mirror). frontend/Dockerfile.dev
   # now declares ARG REGISTRY too, so it gets the same mirror as everything else.
-  compose build --build-arg REGISTRY="$1" ragclaw mcp-repl ragclaw-egress nginx || return 1
+  compose build "${arg[@]}" ragclaw mcp-repl ragclaw-egress nginx || return 1
   if is_dev_mode; then
     c_cyan "=== Building frontend-dev (Vite HMR) ==="
-    compose build --build-arg REGISTRY="$1" frontend-dev || return 1
+    compose build "${arg[@]}" frontend-dev || return 1
   fi
 }
 

@@ -18,7 +18,7 @@
 # docker.io are all unusable.
 $MirrorList = @(
     "https://docker.m.daocloud.io"
-    "https://docker.1ms.run"
+    # "https://docker.1ms.run"
 )
 
 function Get-ExistingMirrors {

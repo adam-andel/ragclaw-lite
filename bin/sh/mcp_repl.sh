@@ -62,8 +62,12 @@ start_docker_repl() {
     c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
     return 1
   fi
+  local arg=()
+  if [ "$build_mirror" != "docker.io" ]; then
+    arg=(--build-arg REGISTRY="$build_mirror")
+  fi
   c_cyan "=== Building (registry: $build_mirror) ==="
-  compose build --build-arg REGISTRY="$build_mirror" mcp-repl || { c_red "ERROR: build failed"; return 1; }
+  compose build "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
   # ragclaw-egress owns a fixed internal IP (172.30.0.2) on $(proj_name)_ragclaw-internal.
@@ -168,8 +172,12 @@ case "$ACTION" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    local arg=()
+    if [ "$build_mirror" != "docker.io" ]; then
+      arg=(--build-arg REGISTRY="$build_mirror")
+    fi
     c_dim "Rebuilding mcp-repl image (registry: $build_mirror, --no-cache) ..."
-    compose build --build-arg REGISTRY="$build_mirror" --no-cache mcp-repl
+    compose build "${arg[@]}" --no-cache mcp-repl
     ;;
   reload)
     assert_docker
@@ -183,8 +191,12 @@ case "$ACTION" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    local arg=()
+    if [ "$build_mirror" != "docker.io" ]; then
+      arg=(--build-arg REGISTRY="$build_mirror")
+    fi
     c_cyan "=== Building (registry: $build_mirror) ==="
-    compose build --build-arg REGISTRY="$build_mirror" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
+    compose build "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
     echo
     c_cyan "=== Starting container ==="
     repair_egress_network

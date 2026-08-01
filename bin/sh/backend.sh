@@ -64,8 +64,12 @@ start_docker_backend() {
     c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
     return 1
   fi
+  local arg=()
+  if [ "$build_mirror" != "docker.io" ]; then
+    arg=(--build-arg REGISTRY="$build_mirror")
+  fi
   c_cyan "=== Building (registry: $build_mirror) ==="
-  compose build --build-arg REGISTRY="$build_mirror" ragclaw || { c_red "ERROR: build failed"; return 1; }
+  compose build "${arg[@]}" ragclaw || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
   compose up -d ragclaw || { c_red "ERROR: docker compose up failed"; return 1; }
@@ -123,8 +127,12 @@ case "$ACTION" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    local arg=()
+    if [ "$build_mirror" != "docker.io" ]; then
+      arg=(--build-arg REGISTRY="$build_mirror")
+    fi
     c_dim "Rebuilding ragclaw image (registry: $build_mirror, --no-cache) ..."
-    compose build --build-arg REGISTRY="$build_mirror" --no-cache ragclaw
+    compose build "${arg[@]}" --no-cache ragclaw
     ;;
   reload)
     assert_docker
@@ -138,8 +146,12 @@ case "$ACTION" in
       c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
       exit 1
     fi
+    local arg=()
+    if [ "$build_mirror" != "docker.io" ]; then
+      arg=(--build-arg REGISTRY="$build_mirror")
+    fi
     c_cyan "=== Building (registry: $build_mirror) ==="
-    compose build --build-arg REGISTRY="$build_mirror" ragclaw || { c_red "ERROR: build failed"; exit 1; }
+    compose build "${arg[@]}" ragclaw || { c_red "ERROR: build failed"; exit 1; }
     echo
     c_cyan "=== Starting container ==="
     compose up -d ragclaw || { c_red "ERROR: docker compose up failed"; exit 1; }

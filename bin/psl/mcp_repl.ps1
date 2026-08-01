@@ -76,8 +76,10 @@ function Start-DockerRepl {
         Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
         return
     }
+    $arg = @()
+    if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
     Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
+    docker compose -f $ComposeFile build @arg mcp-repl
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: build failed" -ForegroundColor Red
         return
@@ -208,8 +210,10 @@ switch ($Action) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
         }
+        $arg = @()
+        if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
         Write-Host "Rebuilding mcp-repl image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
-        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror --no-cache mcp-repl
+        docker compose -f $ComposeFile build @arg --no-cache mcp-repl
     }
 
     "reload" {
@@ -228,8 +232,10 @@ switch ($Action) {
             Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
             return
         }
+        $arg = @()
+        if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
         Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile build --build-arg REGISTRY=$buildMirror mcp-repl
+        docker compose -f $ComposeFile build @arg mcp-repl
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: build failed" -ForegroundColor Red
             return

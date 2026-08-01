@@ -85,9 +85,15 @@ function Resolve-Entry {
 
 function Build-Stack([string]$Mirror) {
     Write-Host "=== Building (registry: $Mirror) ===" -ForegroundColor Cyan
-    # All services consume REGISTRY (base-image mirror). Build them explicitly so
-    # each receives the --build-arg, matching the bash build_stack().
-    docker compose -f $ComposeFile build --build-arg REGISTRY=$Mirror ragclaw mcp-repl ragclaw-egress nginx
+    # REGISTRY defaults to docker.io in every Dockerfile. Only pass --build-arg
+    # when the working mirror is actually NOT the default, so that on the common
+    # path (official registry reachable) BuildKit sees NO build-arg change and
+    # keeps all the FROM + apt/pip layers cached. Matches the bash build_stack().
+    $arg = @()
+    if ($Mirror -ne "docker.io") {
+        $arg += "--build-arg", "REGISTRY=$Mirror"
+    }
+    docker compose -f $ComposeFile build @arg ragclaw mcp-repl ragclaw-egress nginx
     return ($LASTEXITCODE -eq 0)
 }
 

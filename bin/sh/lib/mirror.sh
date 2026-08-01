@@ -21,7 +21,7 @@
 
 MIRROR_LIST=(
   "https://docker.m.daocloud.io"
-  "https://docker.1ms.run"
+  # "https://docker.1ms.run"
 )
 
 # Echo space-separated daemon.json registry-mirrors (honors user edits).

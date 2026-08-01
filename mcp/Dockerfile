@@ -19,9 +19,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies into a shared site.
-# BuildKit cache mount keeps pip's HTTP/wheel cache across builds for faster rebuilds.
+# BuildKit cache mount (id=pip-cache) keeps pip's HTTP/wheel cache across builds
+# for faster rebuilds. The named id is shared with the main image's pip cache so
+# the same wheels are reused and no orphan mounts accumulate when REGISTRY drifts.
 COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install -r requirements.txt || \
     (pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
      pip install -r requirements.txt)

@@ -53,24 +53,26 @@ ENV HF_HUB_DISABLE_XET=1
 ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 # Try the official PyPI first, fall back to the domestic mirror on failure
 # (consistent with the apt source fallback rule above).
-# BuildKit cache mount (target=/root/.cache/pip) keeps downloaded wheels across
-# rebuilds — even when this layer is invalidated (e.g. base image bump) pip
-# reuses cached wheels instead of re-downloading. Wheels live outside the image.
-RUN --mount=type=cache,target=/root/.cache/pip \
+# BuildKit cache mount (id=pip-cache) keeps downloaded wheels across rebuilds —
+# even when this layer is invalidated (e.g. base image bump) pip reuses cached
+# wheels instead of re-downloading. The named id means the same cache is reused
+# regardless of build-arg drift (REGISTRY switching between mirrors), avoiding
+# anonymous orphan mounts that pile up reclaimable space.
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install --quiet "huggingface_hub>=0.26.0" || \
     pip install --quiet --index-url ${PYPI_MIRROR} "huggingface_hub>=0.26.0"
 
 # ── Layer 3: Python deps (changes more often than model, less than code) ──
 # Single source of truth: backend/pyproject.toml. Avoids drift between
 # pyproject.toml and a separate flat list here.
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # Copy only pyproject.toml first to maximize layer caching of pip install.
 COPY backend/pyproject.toml ./backend/
 # A minimal placeholder so pip install . works without full source; we will
 # overwrite with the real source in Layer 4.
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     mkdir -p backend/app && touch backend/app/__init__.py && \
     (pip install ./backend || \
      pip install --index-url ${PYPI_MIRROR} ./backend)
