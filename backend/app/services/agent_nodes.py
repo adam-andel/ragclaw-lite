@@ -22,6 +22,7 @@ from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
 from app.services.conversation_summary import (
+    context_breakdown,
     fit_assembly_context,
     ASSEMBLY_TRIM_WARNING_ZH,
     ASSEMBLY_TRIM_WARNING_EN,
@@ -882,6 +883,26 @@ def _emit(state: dict, stage: str, message: str, **extra) -> None:
         pass
 
 
+def _emit_context_usage(state: dict, summary_text, history, messages: list[dict]) -> None:
+    """Report the token footprint of the payload about to be sent to the LLM.
+
+    Fires on EVERY submission (each tool round, then the final generation), so
+    the frontend meter always reflects the most recent one -- later reports
+    simply overwrite earlier ones.
+
+    Pure transient telemetry: it goes straight to the SSE stream and is NOT
+    accumulated into ``state["agent_steps"]`` (it would be meaningless on
+    replay and would bloat the persisted trace).
+    """
+    fn = state.get("emit_usage")
+    if not fn:
+        return
+    try:
+        fn(context_breakdown(summary_text, history, count_messages_tokens(messages)))
+    except Exception:
+        pass
+
+
 async def skill_loader_node(state: dict) -> dict:
     """Layer 2 — load SKILL.md full text, discover script tools, load MCP tools.
 
@@ -1372,6 +1393,7 @@ async def tool_decision_node(state: dict) -> dict:
         build_messages=_assemble,
     )
     messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
+    _emit_context_usage(state, trimmed_s, trimmed_h, messages)
     if dropped:
         _emit(
             state,

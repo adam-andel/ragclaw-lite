@@ -437,6 +437,98 @@ async def build_context_with_summary(
 
 
 # --------------------------------------------------------------------------- #
+# Per-submission context telemetry
+# --------------------------------------------------------------------------- #
+def context_breakdown(
+    summary_text: str | None,
+    history: list[dict] | None,
+    total_tokens: int,
+) -> dict:
+    """Split an assembled payload into persistent vs transient token shares.
+
+    - ``persistent``: the compressed summary plus the verbatim history. This is
+      the only part that accumulates across turns, and the only part the manual
+      "compact" action can shrink.
+    - ``transient``: everything else in the same submission (system prefix, RAG
+      chunks, memory, tool records, the current question). Recomputed each turn.
+
+    Callers must pass the ALREADY-TRIMMED summary/history so the two shares add
+    up to ``total_tokens`` exactly.
+    """
+    persistent = (count_text_tokens(summary_text) if summary_text else 0) + (
+        count_messages_tokens(history) if history else 0
+    )
+    persistent = max(0, min(persistent, total_tokens))
+    return {
+        "prompt_tokens": total_tokens,
+        "persistent_tokens": persistent,
+        "transient_tokens": max(0, total_tokens - persistent),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Manual compaction (user-triggered, unconditional)
+# --------------------------------------------------------------------------- #
+class CompactionError(RuntimeError):
+    """Raised with a BARE error code when manual compaction cannot proceed.
+
+    The code (e.g. ``SUMMARY_LLM_FAILED``) is surfaced verbatim to the frontend,
+    which localizes it via ``errors.backendErrorCodes``. Never bake user-facing
+    prose in here.
+    """
+
+
+async def compact_conversation(
+    conv,
+    history: list[dict],
+    db: AsyncSession,
+    prompt_language: str,
+    fraction: float = 0.5,
+) -> Tuple[int, int]:
+    """Fold the oldest ``fraction`` of the un-summarized history into the summary.
+
+    Returns ``(new_cursor, total_messages)``.
+
+    Unlike :func:`build_context_with_summary` this is UNCONDITIONAL: it ignores
+    the token budget entirely because it is driven by the user pressing
+    "compact" in the UI, not by an overflow.
+
+    Atomicity: when the summarization LLM call fails (``_summarize_text``
+    returns ""), the cursor is NOT advanced and nothing is committed, so a
+    failed compaction can never make part of the history invisible to the model.
+
+    The ``max(1, ...)`` guard mirrors the Layer-2 Phase-B fix: integer scaling
+    degenerates to 0 for a small remainder, which would leave the cursor
+    unchanged and make the button silently do nothing.
+    """
+    n = len(history)
+    k = getattr(conv, "summary_msg_count", 0) or 0
+    if k > n:
+        k = n
+    if k >= n:
+        raise CompactionError("NOTHING_TO_COMPACT")
+
+    frac = min(max(fraction, 0.0), 1.0)
+    split = min(n, k + max(1, int((n - k) * frac)))
+
+    new_para = await _summarize_text(
+        _transcript(history[k:split]), prompt_language
+    )
+    if not new_para:
+        raise CompactionError("SUMMARY_LLM_FAILED")
+
+    base = conv.summary_text or ""
+    conv.summary_text = f"{base}\n{new_para}".strip() if base else new_para
+    conv.summary_msg_count = split
+    await db.commit()
+    logger.info(
+        "Manual compaction: conv=%s cursor %d -> %d of %d messages",
+        getattr(conv, "id", "?"), k, split, n,
+    )
+    return split, n
+
+
+# --------------------------------------------------------------------------- #
 # Assembly-point hard ceiling (per-submission, transient)
 # --------------------------------------------------------------------------- #
 def _trim_summary_oldest(summary: str) -> str:

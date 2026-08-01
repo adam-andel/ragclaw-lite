@@ -85,8 +85,39 @@ class ConversationDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[MessageResponse] = []
+    # Persistent-context state (see ConversationSummaryState). Returned here as
+    # well so the context modal can be opened with a single cheap
+    # ``?include_messages=false`` fetch instead of a dedicated endpoint.
+    summary_text: str = ""
+    summary_msg_count: int = 0
+    total_messages: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class ConversationSummaryState(BaseModel):
+    """Persistent-context state: the compressed summary plus its folding cursor.
+
+    ``summary_msg_count`` is the number of oldest messages already folded into
+    ``summary_text``; messages after it are still sent verbatim to the model.
+    """
+
+    conversation_id: str
+    summary_text: str = ""
+    summary_msg_count: int = 0
+    total_messages: int = 0
+
+
+class SummaryUpdateRequest(BaseModel):
+    """Manual summary edit. The folding cursor is intentionally NOT editable."""
+
+    summary_text: str = Field(default="")
+
+
+class CompactRequest(BaseModel):
+    """Manual compaction: fold this fraction of the un-summarized tail."""
+
+    fraction: float = Field(default=0.5, gt=0.0, le=1.0)
 
 
 class ConversationMessagesPage(BaseModel):

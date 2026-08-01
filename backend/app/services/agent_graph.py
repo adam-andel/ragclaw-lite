@@ -16,8 +16,9 @@ Graph topology:
 from langgraph.graph import StateGraph, END, START
 
 from app.services.config_manager import config_manager
-from app.services.conversation_summary import fit_assembly_context
+from app.services.conversation_summary import context_breakdown, fit_assembly_context
 from app.services.i18n import t as _t
+from app.services.token_count import count_messages_tokens
 from app.services.agent_state import RagclawAgentState
 from app.services.agent_nodes import (
     entry_node,
@@ -298,6 +299,15 @@ class RagclawAgentGraph:
         )
         messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
         messages = _sanitize_llm_messages(messages)
+        # Stash the persistent/transient split of THIS submission so the caller can
+        # report it without re-deriving the post-trim components. Kept on `state`
+        # (not in the return tuple) so existing 2-tuple unpacking keeps working.
+        try:
+            state["context_breakdown"] = context_breakdown(
+                trimmed_s, trimmed_h, count_messages_tokens(messages)
+            )
+        except Exception:  # telemetry must never break generation
+            pass
         return messages, dropped
 
 

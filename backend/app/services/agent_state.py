@@ -28,6 +28,15 @@ class RagclawAgentState(TypedDict):
 
     # ── Runtime (not persisted) ──
     emit: Callable[[str, str, dict], None] | None   # SSE progress callback (agent_step); None = no streaming
+    # Per-submission context telemetry callback (context_usage SSE event).
+    # Fired every time a payload is handed to the LLM so the frontend meter
+    # tracks the LATEST submission, including intermediate tool rounds.
+    # Deliberately separate from `emit`: this is transient telemetry and must
+    # NOT be accumulated into agent_steps / persisted.
+    emit_usage: Callable[[dict], None] | None
+    # Persistent-vs-transient token split of the last submission (see
+    # conversation_summary.context_breakdown).
+    context_breakdown: dict | None
 
     # ── Router output (Layer 1: name + description only) ──
     active_skill: dict | None     # {id, name, description, folder_name, system_prompt} — top of skill_stack
