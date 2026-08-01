@@ -123,5 +123,7 @@ function Test-ComposeAvailable {
     # Service block present — matches the backend "ragclaw" service and the
     # REPL "mcp-repl" service. Callers pass $Service so a single definition
     # serves both scripts (previously duplicated with divergent guards).
-    return $yml -match "(?m)^\s*$Service:"
+    # NOTE: use ${Service} to delimit the variable name — "$Service:" would be
+    # parsed as a PSDrive reference (like $env:Foo) and fail to compile.
+    return $yml -match "(?m)^\s*${Service}:"
 }
