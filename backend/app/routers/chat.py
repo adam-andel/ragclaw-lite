@@ -28,6 +28,8 @@ from app.services.token_count import count_messages_tokens
 from app.services.config_manager import config_manager
 from app.services.conversation_summary import (
     build_context_with_summary,
+    compact_conversation,
+    CompactionError,
     ASSEMBLY_TRIM_WARNING_ZH,
     ASSEMBLY_TRIM_WARNING_EN,
 )
@@ -36,10 +38,13 @@ from app.services.cron_parser import try_parse_cron_payload
 from app.services.cron_graph import run_cron_creation_subgraph
 from app.schemas.chat import (
     ChatRequest,
+    CompactRequest,
     ConversationResponse,
     ConversationDetail,
     ConversationMessagesPage,
+    ConversationSummaryState,
     PendingLimitResponse,
+    SummaryUpdateRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
@@ -147,6 +152,31 @@ async def _save_assistant_message(
         await session.commit()
 
     return assistant_msg
+
+
+async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
+    """Return ``(summary_msg_count, total_messages)`` for a conversation.
+
+    Read in its own session (mirrors ``_save_assistant_message``) because it is
+    called from inside the SSE producer, after the request-scoped session has
+    already been used for the turn. Failures degrade to ``(0, 0)`` -- this is
+    telemetry for the context meter and must never break the stream.
+    """
+    try:
+        async with db_mod.async_session() as session:
+            conv = await session.get(Conversation, conv_id)
+            total = await session.execute(
+                select(func.count())
+                .select_from(Message)
+                .where(Message.conversation_id == conv_id)
+            )
+            return (
+                (getattr(conv, "summary_msg_count", 0) or 0) if conv else 0,
+                total.scalar() or 0,
+            )
+    except Exception as e:
+        logger.warning("Failed to read context cursor for %s: %s", conv_id, e)
+        return 0, 0
 
 
 async def _persist_agent_steps(conv_id: str, message_id: str, steps: list[dict]) -> None:
@@ -469,7 +499,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -518,6 +548,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "resume_action": resume_action,
         "agent_steps": [],
         "emit": emit_fn,
+        "emit_usage": emit_usage_fn,
     }
 
 
@@ -534,7 +565,16 @@ async def chat_stream(
         data: {"type": "token", "content": "..."}
         data: {"type": "citation", "citation": {...}}
         data: {"type": "error", "message": "..."}
-        data: {"type": "done", "conversation_id": "...", "message_id": "...", "cache_hit": ...}
+        data: {"type": "context_usage", "prompt_tokens": N,
+               "persistent_tokens": N, "transient_tokens": N}
+        data: {"type": "done", "conversation_id": "...", "message_id": "...",
+               "cache_hit": ..., "prompt_tokens": N,
+               "summary_msg_count": N, "total_messages": N}
+
+    ``context_usage`` fires once per LLM submission (every tool round, then the
+    final generation), so the frontend context meter always reflects the most
+    recent payload. ``done`` repeats the final numbers and adds the
+    summary-folding cursor used by the context modal.
     """
 
     # Get or create conversation
@@ -614,6 +654,15 @@ async def chat_stream(
             """Stream an agent_step progress event (Route D observability)."""
             enqueue("agent_step", {"stage": stage, "message": message, **extra})
 
+        def emit_context_usage(breakdown: dict) -> None:
+            """Stream the token footprint of the submission just handed to the LLM.
+
+            Emitted once per LLM submission (each tool round, then the final
+            generation). The frontend meter shows the LATEST value, so a later
+            event simply overwrites an earlier one within the same turn.
+            """
+            enqueue("context_usage", dict(breakdown))
+
         async def producer():
             try:
                 from app.services.agent_graph import ragclaw_agent_graph
@@ -663,6 +712,7 @@ async def chat_stream(
                                 cached.citations or [],
                                 cache_hit=True,
                             )
+                            cursor, total_msgs = await _read_context_cursor(conv_id)
                             enqueue("done", {
                                 "conversation_id": conv_id,
                                 "message_id": assistant_msg.id,
@@ -670,6 +720,8 @@ async def chat_stream(
                                 "ttft_ms": 0,
                                 "retrieval_ms": 0,
                                 "llm_ms": 0,
+                                "summary_msg_count": cursor,
+                                "total_messages": total_msgs,
                             })
                             return
 
@@ -745,6 +797,7 @@ async def chat_stream(
                         "resume_action": None,
                         "agent_steps": [],
                         "emit": emit_agent_step,
+                        "emit_usage": emit_context_usage,
                     }
                 else:
                    # ── 1b. Resume: rebuild from snapshot, history untouched, only recharge / clear ───
@@ -752,6 +805,7 @@ async def chat_stream(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
                         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+                        emit_usage_fn=emit_context_usage,
                     )
 
                # ── 1c. User manually stops: do not replay tools, do not generate an answer,，
@@ -767,6 +821,7 @@ async def chat_stream(
                         msg_id=pending_msg_id,
                         status="stopped",
                     )
+                    cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
                         "conversation_id": conv_id,
                         "message_id": assistant_msg.id,
@@ -775,6 +830,8 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "llm_ms": 0,
                         "stopped": True,
+                        "summary_msg_count": cursor,
+                        "total_messages": total_msgs,
                     })
                     return
 
@@ -823,6 +880,7 @@ async def chat_stream(
                             cache_hit=True,
                             msg_id=pending_msg_id if resume_mode is not None else None,
                         )
+                        cursor, total_msgs = await _read_context_cursor(conv_id)
                         enqueue("done", {
                             "conversation_id": conv_id,
                             "message_id": assistant_msg.id,
@@ -830,6 +888,8 @@ async def chat_stream(
                             "ttft_ms": 0,
                             "retrieval_ms": 0,
                             "llm_ms": 0,
+                            "summary_msg_count": cursor,
+                            "total_messages": total_msgs,
                         })
                         return
 
@@ -845,6 +905,14 @@ async def chat_stream(
                         )
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
+                    # Final submission of this turn: overwrite whatever the tool
+                    # rounds reported so the meter ends on the real payload.
+                    breakdown = state.get("context_breakdown") or {
+                        "prompt_tokens": prompt_tokens,
+                        "persistent_tokens": 0,
+                        "transient_tokens": prompt_tokens,
+                    }
+                    emit_context_usage(breakdown)
                     # Signal the final-generation phase so the frontend can show it honestly
                     # (the graph handles everything up to here; the actual LLM stream starts now).
                     emit_agent_step("generating", "Generating answer…")
@@ -955,6 +1023,7 @@ async def chat_stream(
                         prompt_tokens=prompt_tokens,
                     )
                     await _persist_agent_steps(conv_id, assistant_msg.id, state.get("agent_steps") or [])
+                    cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
                         "conversation_id": conv_id,
                         "message_id": assistant_msg.id,
@@ -963,6 +1032,10 @@ async def chat_stream(
                         "retrieval_ms": final_retr,
                         "llm_ms": 0,
                         "prompt_tokens": prompt_tokens,
+                        "persistent_tokens": breakdown.get("persistent_tokens", 0),
+                        "transient_tokens": breakdown.get("transient_tokens", prompt_tokens),
+                        "summary_msg_count": cursor,
+                        "total_messages": total_msgs,
                     })
 
             except asyncio.CancelledError:
@@ -1066,6 +1139,14 @@ async def get_conversation(
             .order_by(Message.created_at.asc())
         )
         messages_list = msg_result.scalars().all()
+        total_messages = len(messages_list)
+    else:
+        total_result = await db.execute(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conv_id)
+        )
+        total_messages = total_result.scalar() or 0
 
     return ConversationDetail(
         id=conv.id,
@@ -1075,6 +1156,9 @@ async def get_conversation(
         created_at=conv.created_at,
         updated_at=conv.updated_at,
         messages=messages_list,
+        summary_text=conv.summary_text or "",
+        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        total_messages=total_messages,
     )
 
 
@@ -1173,6 +1257,101 @@ async def get_pending_limit(
         message=pl.get("message", ""),
         kind=pl.get("kind", ""),
     )
+
+
+async def _load_owned_conversation(conv_id: str, current_user: User, db: AsyncSession) -> Conversation:
+    """Fetch a conversation, enforcing the owner-or-admin rule.
+
+    Mirrors the check used by ``delete_conversation``: legacy rows with no
+    ``user_id`` stay accessible, otherwise only the owner (or an admin) may
+    touch the row.
+    """
+    result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
+        raise HTTPException(403, "无权访问")
+    return conv
+
+
+async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSummaryState:
+    total_result = await db.execute(
+        select(func.count())
+        .select_from(Message)
+        .where(Message.conversation_id == conv.id)
+    )
+    return ConversationSummaryState(
+        conversation_id=conv.id,
+        summary_text=conv.summary_text or "",
+        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        total_messages=total_result.scalar() or 0,
+    )
+
+
+@router.put("/conversations/{conv_id}/summary", response_model=ConversationSummaryState)
+async def update_conversation_summary(
+    conv_id: str,
+    payload: SummaryUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace the compressed summary text of a conversation.
+
+    The folding cursor (``summary_msg_count``) is deliberately left untouched:
+    it records which raw messages are already represented by the summary, and
+    rewinding it would either duplicate content or permanently hide messages
+    from the model. Clearing the text therefore makes ``history[:cursor]``
+    invisible -- the frontend must double-confirm that case.
+    """
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    if await _load_pending_state(db, conv_id) is not None:
+        raise HTTPException(409, "CONVERSATION_BUSY")
+    conv.summary_text = payload.summary_text.strip()
+    conv.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(conv)
+    return await _summary_state(conv, db)
+
+
+@router.post("/conversations/{conv_id}/compact", response_model=ConversationSummaryState)
+async def compact_conversation_endpoint(
+    conv_id: str,
+    payload: CompactRequest | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually fold the oldest part of the un-summarized history into the summary.
+
+    Unconditional (ignores the token budget) because it is user-initiated. The
+    compaction is atomic: if the summarization LLM call fails the cursor is not
+    advanced, so no message can ever be lost from the model's view.
+    """
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    if await _load_pending_state(db, conv_id) is not None:
+        raise HTTPException(409, "CONVERSATION_BUSY")
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conv_id)
+        .order_by(Message.created_at.asc())
+    )
+    history = [{"role": m.role, "content": m.content} for m in result.scalars().all()]
+
+    try:
+        await compact_conversation(
+            conv,
+            history,
+            db,
+            config_manager.prompt_language,
+            fraction=(payload.fraction if payload else 0.5),
+        )
+    except CompactionError as e:
+        await db.rollback()
+        raise HTTPException(400, str(e))
+
+    await db.refresh(conv)
+    return await _summary_state(conv, db)
 
 
 @router.delete("/conversations/{conv_id}")
