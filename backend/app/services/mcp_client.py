@@ -7,6 +7,7 @@ All operations are async-safe, with configurable timeouts.
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -14,6 +15,52 @@ import httpx
 from app.services.repl_auth import build_auth_envelope, get_user_repl_uid, REPL_AUTH_TOOLS
 
 logger = logging.getLogger("ragclaw.mcp")
+
+# JSON-RPC error code the REPL sandbox returns when the rejection is
+# *secret-related* (no secret pushed yet, or the signature does not match the
+# secret it currently holds). Kept in sync with ``_AUTH_ERR_SECRET`` in
+# ``mcp/repl_mcp_server.py``. Any other auth failure (malformed/expired
+# envelope) uses -32001 and must NOT trigger a re-push.
+REPL_AUTH_SECRET_ERROR_CODE = -32002
+
+# Debounce window for the lazy re-push: concurrent tool calls hitting the same
+# post-restart gap collapse into a single PUT /auth-secret.
+_REPUSH_DEBOUNCE_SECONDS = 5.0
+_repush_lock = asyncio.Lock()
+_last_repush_at: float = 0.0
+
+
+async def _repush_repl_auth_secret() -> bool:
+    """Re-push the REPL auth secret to the sandbox (debounced, best-effort).
+
+    Called only when the sandbox reported a secret-related auth failure, which
+    is the "mcp-repl restarted and lost its in-memory secret" case. The Backend
+    is the single source of truth for the secret, so re-pushing the current
+    value is always the correct repair. Returns True when the secret should be
+    considered freshly applied (either this call pushed it, or another call did
+    within the debounce window).
+    """
+    global _last_repush_at
+    async with _repush_lock:
+        now = time.monotonic()
+        if now - _last_repush_at < _REPUSH_DEBOUNCE_SECONDS:
+            # A concurrent call already re-pushed a moment ago; reuse its result
+            # instead of hammering the sandbox with duplicate PUTs.
+            return True
+        try:
+            from app.routers.config import _push_mcp_auth_secret
+            from app.services.config_manager import config_manager
+
+            ok = await _push_mcp_auth_secret(config_manager.repl_auth_secret)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("repl_auth_secret_repush_failed error=%s", e)
+            return False
+        if ok:
+            _last_repush_at = now
+            logger.info("repl_auth_secret_repushed reason=sandbox_auth_error")
+        else:
+            logger.warning("repl_auth_secret_repush_unreachable")
+        return ok
 
 
 async def _attach_repl_auth(arguments: dict, tool_name: str, auth_user: str | None) -> dict:
@@ -60,6 +107,7 @@ class ToolResult:
     result: str = ""       # success output as string
     error: str = ""        # error message if ok=False
     files: list[dict] | None = None  # structured file refs (MCP structuredContent.files)
+    error_code: int | None = None    # JSON-RPC error code when the server returned one
 
 
 class MCPClient:
@@ -122,7 +170,37 @@ class MCPClient:
 
         Returns:
             ToolResult with ok, result, error
+
+        Self-heal: the REPL sandbox holds the shared secret in memory only (the
+        Backend is the single source of truth and pushes it at runtime), so a
+        sandbox restart opens a window where every signed call is rejected. When
+        the sandbox reports a *secret-related* auth failure, the secret is
+        re-pushed once and the call is replayed. Other failures — including
+        malformed/expired envelopes — are returned as-is, because re-pushing
+        would not help.
         """
+        res = await self._call_tool_once(server_config, tool_name, arguments, auth_user)
+        if (
+            res.ok
+            or res.error_code != REPL_AUTH_SECRET_ERROR_CODE
+            or tool_name not in REPL_AUTH_TOOLS
+            or not auth_user
+        ):
+            return res
+
+        logger.warning("repl_auth_secret_error tool=%s user=%s — re-pushing secret and retrying",
+                       tool_name, auth_user)
+        if not await _repush_repl_auth_secret():
+            return res
+        # Single retry only: if it fails again the mismatch is not a transient
+        # restart gap, and the original fail-closed error must surface.
+        return await self._call_tool_once(server_config, tool_name, arguments, auth_user)
+
+    async def _call_tool_once(
+        self, server_config: dict, tool_name: str, arguments: dict,
+        auth_user: str | None = None,
+    ) -> ToolResult:
+        """Single tool invocation without the auth-secret self-heal retry."""
         transport = server_config.get("transport_type", "http")
         timeout = server_config.get("timeout_seconds", 30)
 
@@ -184,9 +262,12 @@ class MCPClient:
         }, timeout)
 
         if "error" in resp:
+            err = resp["error"]
+            code = err.get("code") if isinstance(err, dict) else None
             return ToolResult(
                 tool_name=tool_name, ok=False,
-                error=json.dumps(resp["error"], ensure_ascii=False),
+                error=json.dumps(err, ensure_ascii=False),
+                error_code=code if isinstance(code, int) else None,
             )
 
         result = resp.get("result", {})

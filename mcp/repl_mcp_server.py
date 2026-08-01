@@ -200,55 +200,79 @@ def _subprocess_flags() -> int:
     return subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
 
 
-def _verify_auth(auth) -> dict | None:
-    """Verify a Backend-signed identity envelope (auth is always required).
+# JSON-RPC error codes for a rejected tools/call.
+#   -32001  generic auth failure (malformed / expired / missing envelope) —
+#           re-pushing the secret would NOT help, so the Backend must not retry.
+#   -32002  secret-related auth failure (no secret configured yet, or the
+#           signature does not match the secret this server currently holds).
+#           This is exactly the "mcp-repl restarted and lost its in-memory
+#           secret" / "secret drifted" case, so the Backend re-pushes the
+#           secret once and replays the call.
+_AUTH_ERR_GENERIC = -32001
+_AUTH_ERR_SECRET = -32002
+
+
+def _verify_auth_ex(auth) -> tuple[dict | None, str | None]:
+    """Verify a Backend-signed identity envelope and report *why* it failed.
 
     Envelope (sent by Backend inside tools/call arguments):
         {"user": "<id>", "uid": <int>, "exp": <int>, "sig": "<hex>"}
     sig = HMAC-SHA256(secret, f"{user}|{uid}|{exp}")
 
-    Returns ``{"user": <id>, "uid": <int>}`` on success, or ``None`` when the
-    secret is not yet configured (fail-closed until pushed), or the envelope is
-    missing / malformed / expired / missing the mandatory uid / has a bad
-    signature. The uid is part of the signed message, so a forged uid fails
-    verification and the sandbox drops privileges to that exact UID
-    **statelessly**. There is no legacy hash-pool fallback — every envelope must
-    carry the signed uid.
+    Returns ``({"user": <id>, "uid": <int>}, None)`` on success, otherwise
+    ``(None, reason)`` where ``reason`` is:
+      * ``"no_secret"``  – the secret has not been pushed yet (fail-closed);
+      * ``"bad_sig"``    – a well-formed envelope whose signature does not match
+                           the current secret (typically a stale/rotated secret);
+      * ``"malformed"``  – missing / malformed / expired / uid-less envelope.
+    Only the first two are secret-related and worth a Backend re-push.
+
+    The uid is part of the signed message, so a forged uid fails verification
+    and the sandbox drops privileges to that exact UID **statelessly**. There is
+    no legacy hash-pool fallback — every envelope must carry the signed uid.
     """
     if _REPL_AUTH_SECRET is None:
-        return None
+        return (None, "no_secret")
     if not isinstance(auth, dict):
-        return None
+        return (None, "malformed")
     user = auth.get("user")
     sig = auth.get("sig")
     if not isinstance(user, str) or not user:
-        return None
+        return (None, "malformed")
     if not isinstance(sig, str) or not sig:
-        return None
+        return (None, "malformed")
     # uid is mandatory in every envelope — no legacy hash-pool fallback.
     uid = auth.get("uid")
     if uid is None:
-        return None
+        return (None, "malformed")
     try:
         uid = int(uid)
     except (TypeError, ValueError):
-        return None
+        return (None, "malformed")
     # Sanity-clamp: a valid Linux uid is a non-negative 32-bit integer.
     if uid < 0 or uid > 2147483647:
-        return None
+        return (None, "malformed")
     try:
         exp = int(auth.get("exp", 0))
     except (TypeError, ValueError):
-        return None
+        return (None, "malformed")
     if exp and time.time() > exp:
-        return None
+        return (None, "malformed")
 
     msg = f"{user}|{uid}|{exp}".encode("utf-8")
     expected = _hmac_module.new(_REPL_AUTH_SECRET.encode("utf-8"), msg,
                                  _hashlib_module.sha256).hexdigest()
     if not _hmac_module.compare_digest(expected, sig):
-        return None
-    return {"user": user, "uid": uid}
+        # Well-formed envelope, wrong signature: the Backend is the source of
+        # truth for the secret, so this is almost always secret drift.
+        return (None, "bad_sig")
+    return ({"user": user, "uid": uid}, None)
+
+
+def _verify_auth(auth) -> dict | None:
+    """Backwards-compatible wrapper: returns the identity or ``None``."""
+    info, _reason = _verify_auth_ex(auth)
+    return info
 
 
 def _set_auth_secret(secret):
@@ -1674,14 +1698,25 @@ class MCPHandler(BaseHTTPRequestHandler):
 
             # ── Identity: verify Backend-signed envelope (fail closed) ──
             auth = arguments.get("auth") or params.get("auth")
-            auth_info = _verify_auth(auth)
+            auth_info, auth_reason = _verify_auth_ex(auth)
             user = auth_info["user"] if auth_info else None
             if _auth_required and user is None:
-                logger.warning("auth_reject tool=%s reason=invalid_or_missing_sig", tool_name)
-                resp = {"jsonrpc": "2.0", "id": req_id,
-                        "error": {"code": -32001,
-                                  "message": "Authentication failed: missing or invalid signature "
-                                             "(a Backend-signed auth envelope is required)"}}
+                logger.warning("auth_reject tool=%s reason=%s", tool_name, auth_reason)
+                # Secret-related rejections get a dedicated code so the Backend
+                # can re-push the secret and replay the call (self-heal after an
+                # mcp-repl restart). Malformed envelopes keep the generic code —
+                # re-pushing would be pointless there.
+                if auth_reason in ("no_secret", "bad_sig"):
+                    err = {"code": _AUTH_ERR_SECRET,
+                           "message": "Authentication failed: REPL auth secret is missing or "
+                                      "out of sync with the Backend",
+                           "data": {"reason": auth_reason}}
+                else:
+                    err = {"code": _AUTH_ERR_GENERIC,
+                           "message": "Authentication failed: missing or invalid signature "
+                                      "(a Backend-signed auth envelope is required)",
+                           "data": {"reason": auth_reason}}
+                resp = {"jsonrpc": "2.0", "id": req_id, "error": err}
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
