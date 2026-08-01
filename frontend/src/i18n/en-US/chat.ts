@@ -85,6 +85,7 @@ export default {
   stopResume: 'Stop',
   resumeHint: 'Or just type a new question below (this is treated as "Stop" and ends this turn)',
   userStoppedNote: 'The user manually stopped this turn.',
+  generationFailedNote: '⚠️ Generation failed for this turn. Please retry. The completed processing steps are kept above.',
   you: 'You',
   thinkingProcess: '💭 Thinking process',
   citationMissingChunk: 'This historical citation is missing a chunk index; full content cannot be loaded',
@@ -103,4 +104,5 @@ export default {
   regenerate: 'Regenerate',
   streamError: '❌ Error: {msg}',
   sendFailed: 'Failed to send: {msg}. Input restored',
+  loadConversationFailed: 'Failed to load conversation: {msg}',
 }

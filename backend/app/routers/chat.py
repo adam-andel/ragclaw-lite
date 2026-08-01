@@ -650,9 +650,32 @@ async def chat_stream(
         async def on_queue_position(pos: int) -> None:
             await sse_queue.put(_sse("queue", {"position": pos}))
 
+        # Incremental-persistence scratchpad for this turn. agent_steps accumulate
+        # here (independent of `state`) and are flushed to the DB on every emit, so
+        # a mid-stream client disconnect still leaves the already-produced
+        # processing trace in the database instead of a blank conversation.
+        stream_msg_id: dict = {"id": None}
+        stream_agent_steps: list = []
+
         def emit_agent_step(stage: str, message: str, **extra) -> None:
             """Stream an agent_step progress event (Route D observability)."""
             enqueue("agent_step", {"stage": stage, "message": message, **extra})
+            # Persist the step immediately so it survives a disconnect. The flush
+            # is fire-and-forget: emit happens during normal generation (before any
+            # disconnect), so these tasks complete well before the client leaves.
+            stream_agent_steps.append({
+                "stage": stage,
+                "message": message,
+                "extra": extra or None,
+            })
+            mid = stream_msg_id["id"]
+            if mid is not None:
+                try:
+                    asyncio.ensure_future(
+                        _persist_agent_steps(conv_id, mid, list(stream_agent_steps))
+                    )
+                except Exception:
+                    pass
 
         def emit_context_usage(breakdown: dict) -> None:
             """Stream the token footprint of the submission just handed to the LLM.
@@ -724,6 +747,18 @@ async def chat_stream(
                                 "total_messages": total_msgs,
                             })
                             return
+
+                    # ── 1b. Pre-create the assistant message so agent_steps and
+                    # partial content can be persisted incrementally (surviving a
+                    # mid-stream disconnect). The final content is upserted onto
+                    # this same row at the end of the turn.
+                    if stream_msg_id["id"] is None:
+                        init_msg = await _save_assistant_message(
+                            conv_id, "", [], cache_hit=False,
+                            msg_id=pending_msg_id if resume_mode is not None else None,
+                            status="generating",
+                        )
+                        stream_msg_id["id"] = init_msg.id
 
                     # ── 1a. Expand [[file:rel_path]] references (adaptive placement) ──
                     # The original tokenised query stays the cache/history key; only
@@ -920,12 +955,25 @@ async def chat_stream(
                     collected_citations = []
                     _stream_buf = ""  # holds back [TOOL_CALL] spans from live display
 
+                    _stream_flush = 0
                     async for token in llm_client.chat_stream(messages, conversation_id=conv_id):
                         collected_content += token
                         _stream_buf += token
                         emit_text, _stream_buf = _suppress_tool_call_span(_stream_buf)
                         if emit_text:
                             enqueue("token", {"content": emit_text})
+                        # Periodically upsert the partial answer so a disconnect
+                        # mid-generation still leaves recoverable content in the DB.
+                        if len(collected_content) - _stream_flush >= 64:
+                            _stream_flush = len(collected_content)
+                            try:
+                                await _save_assistant_message(
+                                    conv_id, collected_content, [], cache_hit=False,
+                                    msg_id=stream_msg_id["id"],
+                                    status="generating",
+                                )
+                            except Exception:
+                                pass
 
                     # Flush any trailing buffer (e.g. an unclosed [TOOL_CALL] span)
                     # and strip it so it never reaches the visible answer.
@@ -1019,10 +1067,11 @@ async def chat_stream(
                         collected_citations,
                         cache_hit=False,
                         retrieval_ms=final_retr,
-                        msg_id=pending_msg_id if resume_mode is not None else None,
+                        msg_id=stream_msg_id["id"],
                         prompt_tokens=prompt_tokens,
+                        status="complete",
                     )
-                    await _persist_agent_steps(conv_id, assistant_msg.id, state.get("agent_steps") or [])
+                    await _persist_agent_steps(conv_id, assistant_msg.id, list(stream_agent_steps))
                     cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
                         "conversation_id": conv_id,
@@ -1045,6 +1094,33 @@ async def chat_stream(
             except Exception as e:
                 import traceback
                 traceback.print_exc()
+                # Persist the partial turn onto the pre-created assistant message so a
+                # page-refresh / mid-stream disconnect can still recover it. Steps that
+                # were already emitted are flushed via stream_agent_steps (independent
+                # of `state`, so this works even if the failure happened before the
+                # agent graph built its state).
+                mid = stream_msg_id["id"]
+                try:
+                    partial_content = collected_content
+                except NameError:
+                    partial_content = ""
+                try:
+                    partial_citations = collected_citations
+                except NameError:
+                    partial_citations = []
+                try:
+                    if mid:
+                        err_msg = await _save_assistant_message(
+                            conv_id,
+                            partial_content or "",
+                            partial_citations or [],
+                            cache_hit=False,
+                            msg_id=mid,
+                            status="error",
+                        )
+                        await _persist_agent_steps(conv_id, mid, list(stream_agent_steps))
+                except Exception as persist_err:
+                    logger.warning("Failed to persist errored turn: %s", persist_err)
                 enqueue("error", {"message": str(e)})
             finally:
                 await sse_queue.put(None)
@@ -1057,10 +1133,19 @@ async def chat_stream(
                     break
                 yield event
         finally:
-            producer_task.cancel()
+            # Do NOT cancel the producer when the client disconnects (e.g. the
+            # user navigates away mid-stream). Cancelling abandons the in-flight
+            # generation, so the assistant message + agent_steps are never
+            # persisted and the conversation reloads blank. Instead, let the
+            # producer run to completion on its own -- it opens its own DB
+            # sessions for persistence, so the writes succeed regardless of the
+            # request lifecycle. Swallow only non-cancellation errors so a
+            # finished/errored producer never crashes the already-closed stream.
             try:
                 await producer_task
             except asyncio.CancelledError:
+                raise
+            except Exception:
                 pass
 
     return StreamingResponse(
