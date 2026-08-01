@@ -243,6 +243,10 @@ class LLMClient:
 
         url = f"{self.base_url}/chat/completions"
 
+        # Surface any LLM-side error to the caller immediately so the chat
+        # producer can stream it to the frontend without delay. We intentionally
+        # do NOT retry here: a failed provider call (auth/quota/connect error)
+        # must reach the user as-is, and silent retries only delay that signal.
         async with self._client.stream("POST", url, headers=headers, json=body) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():

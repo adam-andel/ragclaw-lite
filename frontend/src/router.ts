@@ -20,13 +20,13 @@ const router = createRouter({
       path: '/chat',
       name: 'chat',
       component: () => import('@/views/ChatView.vue'),
-      meta: { titleKey: 'nav.chat', requiresAuth: true },
+      meta: { titleKey: 'nav.chat', requiresAuth: true, keepAlive: true },
     },
     {
       path: '/chat/:id',
       name: 'chat-conversation',
       component: () => import('@/views/ChatView.vue'),
-      meta: { titleKey: 'nav.chat', requiresAuth: true },
+      meta: { titleKey: 'nav.chat', requiresAuth: true, keepAlive: true },
     },
     {
       path: '/knowledge',

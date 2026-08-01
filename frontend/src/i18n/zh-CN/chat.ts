@@ -85,6 +85,7 @@ export default {
   stopResume: '停止',
   resumeHint: '或直接在下方输入新问题（将视为「停止」并结束本轮）',
   userStoppedNote: '用户已手动终止本轮对话。',
+  generationFailedNote: '⚠️ 本轮生成失败，请重试。已在上文保留处理过程中已完成的系统步骤。',
   you: '你',
   thinkingProcess: '💭 思考过程',
   citationMissingChunk: '该历史引用缺少分块索引，无法加载完整内容',
@@ -103,4 +104,5 @@ export default {
   regenerate: '重新生成',
   streamError: '❌ 错误: {msg}',
   sendFailed: '发送失败: {msg}，已恢复输入',
+  loadConversationFailed: '加载对话失败：{msg}',
 }

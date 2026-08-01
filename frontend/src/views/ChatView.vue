@@ -339,6 +339,8 @@ function onScroll() {
   if (!el) return
   const threshold = 60
   isPinnedToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  // Track the current offset so we can restore it when returning from another page.
+  savedScrollTop.value = el.scrollTop
   // Scroll up to the top → automatically load earlier conversations (previous page)
   if (el.scrollTop <= 48 && hasMoreOlder.value && !isLoadingOlder.value) {
     loadOlder()
@@ -355,9 +357,18 @@ function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
     // ChatMessage component already renders message.agentSteps).
     const steps = (m as any).agent_steps || m.agentSteps || []
     const base = { ...m, agentSteps: steps }
-    return m.status === 'stopped'
-      ? { ...base, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
-      : base
+    if (m.status === 'stopped') {
+      // A manually terminated turn: the DB keeps the original hint copy and we
+      // overlay a localized termination note based on the current UI language.
+      return { ...base, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
+    }
+    if (m.status === 'error') {
+      // A failed generation: show whatever partial text we captured (if any)
+      // plus a localized failure note so the turn is never silently blank after
+      // a page refresh / reopen. The agent steps above are replayed too.
+      return { ...base, content: (m.content || '') + '\n\n' + t('chat.generationFailedNote') }
+    }
+    return base
   })
 }
 
@@ -766,6 +777,11 @@ function selectAndClose(convId: string) {
   emptyMode.value = ''
   showMoreConv.value = false
   chatUnread.clearConversation(convId)
+  // If we're already viewing this conversation, the route param won't change so the
+  // watcher won't re-fire — just close the modal. The mounted instance already
+  // preserves all state (messages, draft, scroll), so there is nothing to reload.
+  // Otherwise push the route; the watcher picks it up and loads it exactly once.
+  if ((route.params.id as string | undefined) === convId) return
   router.push(`/chat/${convId}`)
 }
 
@@ -856,7 +872,43 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopLlmPolling()
+  stopFollowTimer()
+  // NOTE: we intentionally do NOT abort the in-flight stream here. The backend
+  // keeps generating server-side and persists incrementally, so letting the
+  // background stream finish lets the unread/red-dot signal fire for a turn that
+  // completes while the user is on another page. Returning to a still-generating
+  // conversation is handled by followInProgress() (progressive server replay).
 })
+
+// ── State retention across navigation ──
+// AppLayout keeps this ChatView instance mounted for the whole session and only
+// toggles its visibility with `visibility:hidden` (NEVER display:none) when the user
+// navigates to another page — so the DOM node stays laid out and the browser
+// preserves the message list's scrollTop, the draft input, and all in-component
+// state naturally. We only (re)load when the conversation id actually changes.
+const isActive = ref(true)
+// Mirror of the message list scrollTop, continuously updated on scroll (and captured
+// explicitly when leaving the page), used to re-apply the position when returning to
+// the conversation (belt-and-suspenders in case any browser resets it on toggle).
+const savedScrollTop = ref(0)
+
+// Single entry point for switching which conversation is shown. The draft input is
+// NEVER cleared here — inputText is only reset on an actual send — so a half-typed
+// message survives every navigation (switch page, open history modal, etc.).
+async function openConversation(targetId: string | null | undefined) {
+  if (!targetId) {
+    // No explicit target (e.g. route /chat with no id, or the id flipping to
+    // undefined while navigating AWAY from the chat page). We MUST NOT reset here:
+    // the mounted instance already holds the user's state (messages, scroll, draft),
+    // and the sidebar restores the last/finished conversation via last-conv. A true
+    // "new conversation" is only triggered by the explicit New Conversation button
+    // (newConversation()) — never by merely navigating to /chat. So just preserve
+    // whatever is currently shown.
+    return
+  }
+  if (targetId === conversationId.value) return // already shown — preserve state, no reload
+  await loadConversation(targetId)
+}
 
 // Persist the current workspace dir / KB / skill whenever any of them changes,
 // as long as we are inside an existing conversation with messages.
@@ -866,35 +918,100 @@ watch([selectedKbId, selectedSkillId, workspaceDir], () => {
   }
 })
 
-// Watch route param changes (conversation selected from sidebar)
-watch(() => route.params.id, async (id) => {
-  const cid = id as string | undefined
-  if (cid && cid !== conversationId.value) {
-    await loadConversation(cid)
-  } else if (!cid) {
-    // Navigated to /chat without id — new conversation: show the KB picker.
-    // (Unless an answer just finished streaming while the user was away: open
-    // it and clear the dot.)
-    if (chatUnread.hasUnread && chatUnread.lastConversationId) {
-      const pendingId = chatUnread.lastConversationId
-      chatUnread.clearUnread()
-      await loadConversation(pendingId)
-      return
-    }
-    messages.value = []
-    currentPage.value = 1
-    totalPages.value = 1
-    totalRounds.value = 0
-    conversationId.value = undefined
-    contextTokens.value = 0
-    isReadonly.value = false
-    emptyMode.value = 'kb'
-    localStorage.removeItem('ragclaw:last-conv')
-    await loadConversations()
+// Drive loading + visibility from the full route path. Because ChatView is kept
+// mounted (visibility toggle, never detached), this fires on every navigation. When
+// the user leaves the chat page we just mark inactive and keep all state; when they
+// return to the SAME conversation we preserve everything (scroll, draft, messages)
+// and only re-apply the saved scroll offset; when they switch to a DIFFERENT
+// conversation we load it.
+watch(() => route.fullPath, async () => {
+  if (!route.meta.keepAlive) {
+    // Navigated to a non-chat page. Capture the current scroll offset explicitly
+    // (definitive, not relying on the last onScroll event) and keep the instance
+    // alive but inactive. The DOM node is hidden via visibility (not display), so the
+    // browser preserves the scroll position, draft and all in-component state.
+    const el = messagesContainer.value
+    if (el) savedScrollTop.value = el.scrollTop
+    isActive.value = false
+    return
+  }
+  isActive.value = true
+  const id = route.params.id as string | undefined
+  if (id !== conversationId.value) {
+    await openConversation(id)
+  } else {
+    // Same conversation we left: the DOM (and its scrollTop) was never detached, so the
+    // browser already preserved the offset. Re-apply it after the next paint as a safety
+    // net in case anything reset it.
+    const target = savedScrollTop.value
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = messagesContainer.value
+      if (el) el.scrollTop = target
+    }))
   }
 })
 
+// ── Follow an in-progress generation after navigating back ──
+// If the user switches away mid-stream and returns, the live SSE connection from
+// the previous component instance is gone, so the view would otherwise freeze on a
+// stale snapshot. The backend keeps generating in the background and persists
+// incrementally (status "generating" → "complete"), so we replay server state on a
+// short timer until the turn reaches a terminal status.
+let followTimer: ReturnType<typeof setInterval> | null = null
+
+function stopFollowTimer() {
+  if (followTimer !== null) {
+    clearInterval(followTimer)
+    followTimer = null
+  }
+}
+
+async function followInProgress(convId: string) {
+  stopFollowTimer()
+  // Safety cap so a follow-poll can never run forever (e.g. if the backend
+  // message status never flips to a terminal value). ~48s is far longer than
+  // any legitimate generation; after that we force a clean load.
+  let polls = 0
+  const MAX_POLLS = 40
+  followTimer = setInterval(async () => {
+    try {
+      polls++
+      const data = await getConversationMessages(convId, 'last', PAGE_SIZE_ROUNDS)
+      const msgs = applyStoppedNote(data.messages)
+      const last = msgs[msgs.length - 1]
+      if (!last || last.role !== 'assistant') {
+        stopFollowTimer()
+        return
+      }
+      if (last.status && last.status !== 'generating') {
+        // Turn finished: do a clean full reload (restores scroll + final state) and stop.
+        stopFollowTimer()
+        await loadInitialPage(convId)
+        return
+      }
+      if (polls >= MAX_POLLS) {
+        // Safety net: stop polling and do a clean load so the conversation always
+        // becomes visible even if the backend status never flips to terminal.
+        stopFollowTimer()
+        await loadInitialPage(convId)
+        return
+      }
+      // Still generating: patch the in-progress message in place (no scroll fight).
+      const idx = messages.value.findIndex((m) => m.id === last.id)
+      if (idx !== -1) messages.value[idx] = last
+      else messages.value = msgs
+      // Keep the stage hint alive by mirroring the latest step message.
+      const steps = (last as any).agentSteps || []
+      const lastStep = steps[steps.length - 1]
+      if (lastStep?.message) assistantStage.value = lastStep.message
+    } catch {
+      // transient network blip — keep polling (within the MAX_POLLS cap)
+    }
+  }, 1200)
+}
+
 async function loadConversation(id: string) {
+  stopFollowTimer()
   try {
     // Fetch only conversation metadata (no messages); messages are loaded via the server-side pagination API
     const conv = await getConversation(id, false)
@@ -913,29 +1030,47 @@ async function loadConversation(id: string) {
     }
     // Server-side pagination: load the newest page (last page) and scroll to the bottom
     await loadInitialPage(id)
-    // Restore suspension state after refresh: if a pending quota suspension awaiting confirmation exists, rebuild the inline bubble and hide that hint message
-    const pending = await getPendingLimit(id)
-    if (pending && pending.message_id) {
-      pendingLimit.value = {
-        message: pending.message,
-        convId: pending.conversation_id,
-        kind: pending.kind,
-        messageId: pending.message_id,
-      }
-      const pm = messages.value.find(m => m.id === pending.message_id)
-      if (pm) pm._pending = true
+    // Only follow an in-progress generation if THIS client is actively streaming
+    // this conversation (the user switched away mid-stream and came back). Never
+    // infer "generating" from the DB message status: cache-hit answers are
+    // persisted with status="generating" yet already finished, and relying on the
+    // status would start a follow-poll that never resolves (red dot + blank view).
+    if (isStreaming.value) {
+      followInProgress(id)
     }
-  } catch {
+    // Restore suspension state after refresh: if a pending quota suspension awaiting
+    // confirmation exists, rebuild the inline bubble. Best-effort only — a failure
+    // here must not wipe the conversation we just loaded.
+    try {
+      const pending = await getPendingLimit(id)
+      if (pending && pending.message_id) {
+        pendingLimit.value = {
+          message: pending.message,
+          convId: pending.conversation_id,
+          kind: pending.kind,
+          messageId: pending.message_id,
+        }
+        const pm = messages.value.find(m => m.id === pending.message_id)
+        if (pm) pm._pending = true
+      }
+    } catch {
+      /* ignore — suspension UI is optional */
+    }
+  } catch (e) {
+    console.error('[ChatView] loadConversation failed for', id, e)
+    nmessage.error(t('chat.loadConversationFailed', { msg: backendErrorMessage((e as any)?.message) }))
+    // Keep the URL on the intended conversation. Do NOT silently bounce to /chat
+    // (a brand-new conversation) — that hides the failure and strands the user.
+    conversationId.value = id
     messages.value = []
-    conversationId.value = undefined
     currentPage.value = 1
     totalPages.value = 1
     totalRounds.value = 0
-    router.replace('/chat')
   }
 }
 
 async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
+  stopFollowTimer()  // a live stream takes over; cancel any in-progress follow poll
   // Selections captured at stream start (so they stay correct even if the user
   // switches to another conversation while this one is still streaming).
   const streamKbId = selectedKbId.value
