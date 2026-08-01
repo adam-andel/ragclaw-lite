@@ -160,7 +160,7 @@ def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
 
     Behaviour:
       * ``workspace_id`` empty → the user's **root** directory
-        (``user_<name>/``). This is the default "工作空间" the user manages
+        (``user_<name>/``). This is the default "workspace" the user manages
         through the UI; REPL tool outputs land here and persist.
       * ``workspace_id`` set → a user-chosen **sub-directory** (nested paths
         like ``myproject/data`` are allowed). Invalid/traversing values fall
@@ -471,8 +471,8 @@ def _g_create_connection(orig, *a, **kw):
     if _G_MODE == "allowlist":
         if _g_host_allowed(host):
             return orig(*a, **kw)
-        raise PermissionError("网络访问被拒绝（目标不在白名单中）: %s" % (host,))
-    raise PermissionError("网络访问已被禁止（deny 模式）。如需外部数据，请通过 MCP 工具获取。")
+        raise PermissionError("Network access denied (host not in allowlist): %s" % (host,))
+    raise PermissionError("Network access is disabled (deny mode). Use an MCP tool to fetch external data.")
 
 def _g_getaddrinfo(orig, *a, **kw):
     host = a[0] if a else None
@@ -492,8 +492,8 @@ def _g_getaddrinfo(orig, *a, **kw):
                 except Exception:
                     pass
             return res
-        raise PermissionError("DNS 解析被拒绝（目标不在白名单中）: %s" % (host,))
-    raise PermissionError("网络访问已被禁止（deny 模式，DNS 解析被阻断）。")
+        raise PermissionError("DNS resolution denied (host not in allowlist): %s" % (host,))
+    raise PermissionError("Network access is disabled (deny mode; DNS resolution blocked).")
 
 # Optional L7 method allowlist (Phase 2 reserved field).
 def _g_method_allowed(method):
@@ -517,12 +517,12 @@ def _g_connect(self, address, *a, **kw):
         if host and not _g_is_ip(host):
             if _g_host_allowed(host):
                 return _orig_connect(self, address, *a, **kw)
-            raise PermissionError("网络访问被拒绝（目标不在白名单中）: %s" % (host,))
+            raise PermissionError("Network access denied (host not in allowlist): %s" % (host,))
         # bare IP literal
         if host in _g_resolved_ips:
             return _orig_connect(self, address, *a, **kw)
-        raise PermissionError("网络访问被拒绝（裸 IP 不在解析缓存中）: %s" % (host,))
-    raise PermissionError("网络访问已被禁止（deny 模式）。")
+        raise PermissionError("Network access denied (bare IP not in the resolution cache): %s" % (host,))
+    raise PermissionError("Network access is disabled (deny mode).")
 
 def _g_wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
                    suppress_ragged_eofs=True, server_hostname=None, session=None):
@@ -535,11 +535,11 @@ def _g_wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
                           suppress_ragged_eofs, server_hostname, session)
     if _G_MODE == "allowlist":
         if server_hostname and not _g_host_allowed(server_hostname):
-            raise PermissionError("TLS 连接被拒绝（目标不在白名单中）: %s" % (server_hostname,))
+            raise PermissionError("TLS connection denied (host not in allowlist): %s" % (server_hostname,))
         # server_hostname None (IP-based TLS) is covered by the connect cache.
         return _orig_wrap(self, sock, server_side, do_handshake_on_connect,
                           suppress_ragged_eofs, server_hostname, session)
-    raise PermissionError("网络访问已被禁止（deny 模式）。")
+    raise PermissionError("Network access is disabled (deny mode).")
 
 _orig_create_conn = getattr(_g_socket, 'create_connection', None)
 _orig_getaddrinfo = _g_socket.getaddrinfo
@@ -586,6 +586,56 @@ try:
 except Exception:
     pass
 _g_real_makedirs = _g_os.makedirs
+# Capture the pristine primitives BEFORE any patching. The fallbacks below must
+# use these directly: os.path.exists() is implemented on top of os.stat(), so
+# calling the patched versions from inside a fallback would redirect twice.
+_g_real_stat = _g_os.stat
+_g_real_lstat = _g_os.lstat
+
+def _g_real_lexists(path):
+    """Unpatched existence probe (follows the same semantics as os.path.exists,
+    but also reports dangling symlinks as present)."""
+    try:
+        _g_real_stat(path)
+        return True
+    except (OSError, ValueError):
+        try:
+            _g_real_lstat(path)
+            return True
+        except (OSError, ValueError):
+            return False
+
+def _g_redir_path_quiet(p):
+    """Pure mapping: original path -> sandbox-local target.
+
+    No logging, no directory creation, no side effects. Returns None when the
+    path needs no redirect (already inside the sandbox / an allowed prefix) or
+    cannot be decoded. Shared by the write shim and the read fallback so both
+    directions agree on exactly the same target.
+    """
+    try:
+        if isinstance(p, int):
+            return None
+        sp = _g_os.fsdecode(p)
+    except Exception:
+        return None
+    try:
+        rp = _g_os.path.realpath(
+            sp if _g_os.path.isabs(sp) else _g_os.path.join(_G_CWD, sp))
+    except Exception:
+        return None
+    if rp == _G_SANDBOX or rp.startswith(_G_SANDBOX + _g_os.sep):
+        return None
+    for _pre in _G_WRITE_OK_PREFIXES:
+        if rp == _pre or rp.startswith(_pre + _g_os.sep):
+            return None
+    if _G_WSROOT and (rp == _G_WSROOT or rp.startswith(_G_WSROOT + _g_os.sep)):
+        # Under the workspace root: keep the relative sub-path structure.
+        rel = _g_os.path.relpath(rp, _G_WSROOT)
+        return _G_SANDBOX if rel == "." else _g_os.path.join(_G_SANDBOX, rel)
+    # Anywhere else on the filesystem: flatten to the basename.
+    base = _g_os.path.basename(rp.rstrip(_g_os.sep)) or "redirected"
+    return _g_os.path.join(_G_SANDBOX, base)
 
 def _g_redir_path(p):
     """Resolve a WRITE target; redirect it into the sandbox cwd if it escapes."""
@@ -595,20 +645,14 @@ def _g_redir_path(p):
         sp = _g_os.fsdecode(p)
     except Exception:
         return p
-    rp = _g_os.path.realpath(sp if _g_os.path.isabs(sp) else _g_os.path.join(_G_CWD, sp))
-    if rp == _G_SANDBOX or rp.startswith(_G_SANDBOX + _g_os.sep):
-        return rp
-    for _pre in _G_WRITE_OK_PREFIXES:
-        if rp == _pre or rp.startswith(_pre + _g_os.sep):
-            return rp
-    if _G_WSROOT and (rp == _G_WSROOT or rp.startswith(_G_WSROOT + _g_os.sep)):
-        # Under the workspace root: keep the relative sub-path structure.
-        rel = _g_os.path.relpath(rp, _G_WSROOT)
-        tgt = _G_SANDBOX if rel == "." else _g_os.path.join(_G_SANDBOX, rel)
-    else:
-        # Anywhere else on the filesystem: flatten to the basename.
-        base = _g_os.path.basename(rp.rstrip(_g_os.sep)) or "redirected"
-        tgt = _g_os.path.join(_G_SANDBOX, base)
+    tgt = _g_redir_path_quiet(sp)
+    if tgt is None:
+        # No redirect needed; still normalize so callers get a stable path.
+        try:
+            return _g_os.path.realpath(
+                sp if _g_os.path.isabs(sp) else _g_os.path.join(_G_CWD, sp))
+        except Exception:
+            return p
     try:
         # Auto-create parent dirs of the redirected target so a direct write
         # like open('/app/workspace/reports/x.html', 'w') succeeds even if the
@@ -630,13 +674,97 @@ def _g_is_write_mode(mode):
     m = mode if isinstance(mode, str) else ""
     return ("w" in m) or ("a" in m) or ("x" in m) or ("+" in m)
 
+def _g_redir_read(p):
+    """READ counterpart of _g_redir_path — resolves the read/write asymmetry.
+
+    Writes are redirected into the sandbox, so code that later reads back the
+    SAME original path (the very common "write then read / verify" pattern)
+    would otherwise get FileNotFoundError — a new failure mode introduced by
+    the write shim, and more confusing than the original EPERM.
+
+    This is a pure FALLBACK: it only kicks in when the original path does NOT
+    exist AND the redirected path DOES. Normal reads (imports, system files,
+    real files) are never touched.
+    """
+    try:
+        if isinstance(p, int):
+            return p
+        sp = _g_os.fsdecode(p)
+    except Exception:
+        return p
+    try:
+        if _g_real_lexists(sp):
+            return p  # original exists — never interfere
+        tgt = _g_redir_path_quiet(sp)
+        # tgt is None => already sandbox-local (or an allowed prefix); the file
+        # is genuinely missing, so let the real error surface unchanged.
+        if tgt is not None and _g_real_lexists(tgt):
+            return tgt
+    except Exception:
+        pass
+    return p
+
 _g_real_open = _g_builtins.open
 def _g_open(file, mode="r", *a, **kw):
     if _g_is_write_mode(mode):
         file = _g_redir_path(file)
+    else:
+        file = _g_redir_read(file)
     return _g_real_open(file, mode, *a, **kw)
 _g_builtins.open = _g_open
 _g_io.open = _g_open  # pathlib.Path.open/write_text/write_bytes go through io.open
+
+# Existence / stat checks must follow the same fallback, otherwise verification
+# code (os.path.exists(out) after writing it) reports False for a file that was
+# successfully written to the redirected location.
+# All of these are built on the PRISTINE primitives captured above, so a single
+# lookup never redirects more than once.
+def _g_fallback_target(path):
+    """Redirected target for a missing path, or None if there is nothing to try."""
+    try:
+        if isinstance(path, int):
+            return None
+        tgt = _g_redir_path_quiet(path)
+    except Exception:
+        return None
+    return tgt
+
+_g_real_isfile = _g_os.path.isfile
+_g_real_isdir = _g_os.path.isdir
+
+def _g_exists(path):
+    if _g_real_lexists(path):
+        return True
+    tgt = _g_fallback_target(path)
+    return bool(tgt) and _g_real_lexists(tgt)
+_g_os.path.exists = _g_exists
+
+def _g_isfile(path):
+    if _g_real_isfile(path):
+        return True
+    tgt = _g_fallback_target(path)
+    return bool(tgt) and _g_real_isfile(tgt)
+_g_os.path.isfile = _g_isfile
+
+def _g_isdir(path):
+    if _g_real_isdir(path):
+        return True
+    tgt = _g_fallback_target(path)
+    return bool(tgt) and _g_real_isdir(tgt)
+_g_os.path.isdir = _g_isdir
+
+# Patched LAST among the lookup helpers: os.path.* above deliberately bypass it.
+def _g_stat(path, *a, **kw):
+    try:
+        return _g_real_stat(path, *a, **kw)
+    except (FileNotFoundError, NotADirectoryError):
+        if kw.get("dir_fd") is not None:
+            raise
+        tgt = _g_fallback_target(path)
+        if tgt is None:
+            raise
+        return _g_real_stat(tgt, *a, **kw)
+_g_os.stat = _g_stat
 
 _G_OS_WRITE_FLAGS = (_g_os.O_WRONLY | _g_os.O_RDWR | _g_os.O_CREAT
                      | _g_os.O_APPEND | getattr(_g_os, "O_TRUNC", 0))
@@ -704,7 +832,7 @@ def _py_ast_prescreen(code: str) -> str | None:
     try:
         _ast_module.parse(code)
     except SyntaxError as e:
-        return f"语法错误 (行 {e.lineno}): {e.msg}"
+        return f"Syntax error (line {e.lineno}): {e.msg}"
     return None
 
 
@@ -725,6 +853,13 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
             pass
 
         env = _sanitize_env()
+        # The path-convergence shim reads REPL_ALLOW_DIR to map workspace-root
+        # absolute paths onto the sandbox while preserving sub-path structure.
+        # It must be injected explicitly: when the server is started with
+        # --allow-dir, the variable is absent from os.environ, so relying on
+        # inheritance would silently disable sub-path preservation.
+        if _allow_dir:
+            env["REPL_ALLOW_DIR"] = _allow_dir
         if acct is not None:
             env["HOME"] = workdir
 
@@ -740,8 +875,8 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
         if proc.stderr.strip():
             parts.append(f"[stderr]\n{proc.stderr.strip()}")
         if proc.returncode != 0 and not proc.stdout.strip():
-            parts.insert(0, f"(进程退出码: {proc.returncode})")
-        return "\n".join(parts) or "(无输出)"
+            parts.insert(0, f"(process exit code: {proc.returncode})")
+        return "\n".join(parts) or "(no output)"
     finally:
         try:
             os.unlink(script_path)
@@ -828,8 +963,56 @@ def _sh_prescreen(code: str) -> str | None:
         if _network_mode == "allowlist" and reason in _SHELL_PROXY_AWARE:
             continue
         if re.search(pattern, code, re.IGNORECASE):
-            return f"禁止执行 Shell 命令（匹配危险模式: {reason}）"
+            return f"Shell command rejected (matched dangerous pattern: {reason})"
     return None
+
+
+_SHELL_PERM_MARKERS = (
+    "permission denied",
+    "operation not permitted",
+    "read-only file system",
+    "cannot create directory",
+    "cannot touch",
+)
+
+
+def _shell_permission_hint(code: str, stderr: str, returncode: int,
+                           workdir: str) -> str | None:
+    """Turn a cryptic EPERM into an actionable, self-correctable message.
+
+    The de-privileged shell can only write inside its per-user sandbox dir.
+    Writing to the workspace ROOT (root:root 0755) fails with a bare
+    "Permission denied", which an LLM can only parrot back. Detecting that
+    case and naming the writable directory lets the next attempt succeed.
+    """
+    if returncode == 0 or not stderr:
+        return None
+    low = stderr.lower()
+    if not any(m in low for m in _SHELL_PERM_MARKERS):
+        return None
+    # Only fire when the command actually referenced a path outside the
+    # sandbox — otherwise the EPERM has some other cause and the hint
+    # would be misleading.
+    if not _allow_dir:
+        return None
+    root = _allow_dir.rstrip("/")
+    if root not in code:
+        return None
+    referenced_outside = False
+    for m in re.finditer(re.escape(root) + r"(/[^\s'\"|;&>)]*)?", code):
+        candidate = os.path.normpath(m.group(0))
+        if not (candidate == workdir or candidate.startswith(workdir + os.sep)):
+            referenced_outside = True
+            break
+    if not referenced_outside:
+        return None
+    return (
+        f"[sandbox] Write denied: the workspace root '{root}' is read-only for "
+        f"the current sandbox user.\n"
+        f"The only writable directory is the current working directory: {workdir}\n"
+        f"Retry using a relative path (e.g. ./output.html) or the $SANDBOX_DIR "
+        f"environment variable (e.g. \"$SANDBOX_DIR/output.html\")."
+    )
 
 
 def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
@@ -842,6 +1025,13 @@ def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
         shell_cmd = ["/bin/sh", "-c", f"cd '{workdir}' && {code}"]
 
     env = _sanitize_env()
+    # Shell cannot be shimmed the way Python/JS are (writes happen at syscall
+    # level via >, cp, tee...). LD_PRELOAD would need to shorten paths and
+    # bind-mount would need CAP_SYS_ADMIN + the mount syscall that seccomp
+    # deliberately blocks — both break the "zero host setup" guarantee.
+    # Instead: expose the real sandbox path so code can target it deterministic-
+    # ally, and turn the resulting EPERM into an actionable message below.
+    env["SANDBOX_DIR"] = workdir
     if acct is not None:
         env["HOME"] = workdir
     try:
@@ -857,10 +1047,13 @@ def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
         if proc.stderr.strip():
             parts.append(f"[stderr]\n{proc.stderr.strip()}")
         if proc.returncode != 0:
-            parts.insert(0, f"(进程退出码: {proc.returncode})")
-        return "\n".join(parts) or "(无输出)"
+            parts.insert(0, f"(process exit code: {proc.returncode})")
+        hint = _shell_permission_hint(code, proc.stderr, proc.returncode, workdir)
+        if hint:
+            parts.append(hint)
+        return "\n".join(parts) or "(no output)"
     except subprocess.TimeoutExpired:
-        return f"执行超时（>{timeout}秒），已终止进程"
+        return f"Execution timed out (>{timeout}s); the process was terminated"
 
 
 # ═══════════════════════════════════════════════════════════
@@ -931,6 +1124,150 @@ _JS_GUARD_PREAMBLE = r"""
 
   // ── Block global setTimeout/setInterval from spawning infinite loops ──
   // (allow them, but warn if extremely large values)
+
+  // ── path-convergence shim (mirrors the Python guard) ──
+  // Third-party skills / LLM code often hardcode workspace-root absolute paths
+  // (e.g. /app/workspace/x.html). The de-privileged child cannot write there
+  // (root:root 0755) — only its per-user sandbox dir (cwd) is writable, so
+  // relative paths work while absolute ones hit EPERM intermittently.
+  // Every Node filesystem write funnels through the `fs` module, so patching
+  // it here gives full coverage with zero host dependencies (no LD_PRELOAD,
+  // no bind-mount, no CAP_SYS_ADMIN).
+  var _fs = require('fs');
+  var _pathm = require('path');
+  var _SANDBOX;
+  try { _SANDBOX = _fs.realpathSync(process.cwd()); } catch (e) { _SANDBOX = process.cwd(); }
+  var _WSROOT = null;
+  if (_allowDirNorm) {
+    try { _WSROOT = _fs.realpathSync(_allowDirNorm); } catch (e) { _WSROOT = _allowDirNorm; }
+  }
+  var _OK_PREFIXES = ['/tmp', '/var/tmp', '/dev', '/proc'];
+
+  // Pristine references captured BEFORE wrapping. The helpers below must use
+  // these: _redirWrite() calls mkdirSync, which is itself a wrapped function,
+  // so going through the patched version would recurse infinitely.
+  var _realMkdirSync = _fs.mkdirSync;
+  var _realExistsSync = _fs.existsSync;
+
+  function _under(p, root) {
+    return p === root || p.indexOf(root + _pathm.sep) === 0;
+  }
+
+  // Pure mapping: returns the sandbox-local target, or null if no redirect is
+  // needed. Mirrors _g_redir_path_quiet on the Python side.
+  function _redirQuiet(p) {
+    if (typeof p !== 'string') return null;
+    if (p.indexOf('\u0000') !== -1) return null;
+    var rp;
+    try {
+      rp = _pathm.resolve(_SANDBOX, p);
+    } catch (e) { return null; }
+    if (_under(rp, _SANDBOX)) return null;
+    for (var i = 0; i < _OK_PREFIXES.length; i++) {
+      if (_under(rp, _OK_PREFIXES[i])) return null;
+    }
+    if (_WSROOT && _under(rp, _WSROOT)) {
+      // Preserve sub-path structure under the workspace root.
+      var rel = _pathm.relative(_WSROOT, rp);
+      return (!rel || rel === '.') ? _SANDBOX : _pathm.join(_SANDBOX, rel);
+    }
+    // Anywhere else: flatten to the basename.
+    return _pathm.join(_SANDBOX, _pathm.basename(rp) || 'redirected');
+  }
+
+  // WRITE redirect: also creates parent dirs and logs, like the Python shim.
+  function _redirWrite(p) {
+    var tgt = _redirQuiet(p);
+    if (tgt === null) return p;
+    try {
+      var d = _pathm.dirname(tgt);
+      if (d) _realMkdirSync(d, { recursive: true });
+    } catch (e) {}
+    try {
+      process.stderr.write("[sandbox] write path '" + p + "' escaped sandbox dir '"
+        + _SANDBOX + "'; redirected to '" + tgt + "'\n");
+    } catch (e) {}
+    return tgt;
+  }
+
+  // READ fallback: only when the original is missing and the target exists,
+  // so "write then read back the same path" keeps working.
+  function _redirRead(p) {
+    if (typeof p !== 'string') return p;
+    try {
+      if (_realExistsSync(p)) return p;
+      var tgt = _redirQuiet(p);
+      if (tgt !== null && _realExistsSync(tgt)) return tgt;
+    } catch (e) {}
+    return p;
+  }
+
+  // Only rewrite plain string paths; Buffer/URL/fd arguments pass through
+  // untouched so nothing that relies on those semantics breaks.
+  function _wrapFirstArg(obj, name, mapper) {
+    var orig = obj[name];
+    if (typeof orig !== 'function') return;
+    obj[name] = function () {
+      if (typeof arguments[0] === 'string') arguments[0] = mapper(arguments[0]);
+      return orig.apply(this, arguments);
+    };
+  }
+  // Two-path ops (src, dest): only the DESTINATION is a write target.
+  function _wrapSecondArg(obj, name) {
+    var orig = obj[name];
+    if (typeof orig !== 'function') return;
+    obj[name] = function () {
+      if (typeof arguments[0] === 'string') arguments[0] = _redirRead(arguments[0]);
+      if (typeof arguments[1] === 'string') arguments[1] = _redirWrite(arguments[1]);
+      return orig.apply(this, arguments);
+    };
+  }
+
+  // CREATE-style writes: the target may not exist yet, so parent dirs are
+  // created and the redirect is logged.
+  var _WRITE_FNS = [
+    'writeFile', 'writeFileSync', 'appendFile', 'appendFileSync',
+    'createWriteStream', 'mkdir', 'mkdirSync', 'mkdtemp', 'mkdtempSync'
+  ];
+  // Lookup-style ops (reads AND mutations of an EXISTING path). These must use
+  // the read fallback: the file was already redirected at creation time, so we
+  // only need to find it — creating parent dirs or logging here would be wrong
+  // (e.g. unlink of a non-existent path must still fail normally).
+  var _READ_FNS = [
+    'readFile', 'readFileSync', 'createReadStream',
+    'readdir', 'readdirSync', 'stat', 'statSync', 'lstat', 'lstatSync',
+    'access', 'accessSync', 'realpath', 'realpathSync',
+    'exists', 'existsSync',
+    'truncate', 'truncateSync', 'unlink', 'unlinkSync',
+    'rm', 'rmSync', 'rmdir', 'rmdirSync', 'chmod', 'chmodSync'
+  ];
+  var _TWO_PATH_FNS = ['rename', 'renameSync', 'copyFile', 'copyFileSync'];
+
+  [_fs, _fs.promises].forEach(function (target) {
+    if (!target) return;
+    _WRITE_FNS.forEach(function (n) { _wrapFirstArg(target, n, _redirWrite); });
+    _READ_FNS.forEach(function (n) { _wrapFirstArg(target, n, _redirRead); });
+    _TWO_PATH_FNS.forEach(function (n) { _wrapSecondArg(target, n); });
+  });
+
+  // fs.open / fs.openSync: direction depends on the flags argument.
+  ['open', 'openSync'].forEach(function (n) {
+    [_fs, _fs.promises].forEach(function (target) {
+      if (!target) return;
+      var orig = target[n];
+      if (typeof orig !== 'function') return;
+      target[n] = function () {
+        if (typeof arguments[0] === 'string') {
+          var fl = arguments[1];
+          var isWrite = (typeof fl === 'string')
+            ? /[wax+]/.test(fl)
+            : (typeof fl === 'number' ? (fl & 3) !== 0 || (fl & 64) !== 0 : false);
+          arguments[0] = isWrite ? _redirWrite(arguments[0]) : _redirRead(arguments[0]);
+        }
+        return orig.apply(this, arguments);
+      };
+    });
+  });
 })();
 
 // ── USER CODE BELOW ──
@@ -957,11 +1294,11 @@ def _js_prescreen(code: str) -> str | None:
     ]
     for pattern in blocked_requires_patterns:
         if re.search(pattern, lowered):
-            return f"禁止 require 该模块: {re.search(pattern, lowered).group(0)}"
+            return f"require of this module is not allowed: {re.search(pattern, lowered).group(0)}"
 
     # Block obvious OS command construction
     if 'process.mainModule' in lowered:
-        return "禁止访问 process.mainModule"
+        return "Access to process.mainModule is not allowed"
 
     return None
 
@@ -981,7 +1318,11 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
             pass
 
         env = _sanitize_env()
-        env["REPL_ALLOW_DIR"] = workdir
+        # Workspace ROOT (not workdir): the path-convergence shim maps
+        # <wsroot>/a/b onto <sandbox>/a/b, preserving sub-path structure. Using
+        # workdir here would make wsroot == sandbox and silently disable that.
+        # Falls back to workdir so the shim still converges escaped writes.
+        env["REPL_ALLOW_DIR"] = _allow_dir or workdir
         env["NODE_OPTIONS"] = "--no-warnings"
         if acct is not None:
             env["HOME"] = workdir
@@ -1001,8 +1342,8 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
         if proc.stderr.strip():
             parts.append(f"[stderr]\n{proc.stderr.strip()}")
         if proc.returncode != 0 and not proc.stdout.strip():
-            parts.insert(0, f"(进程退出码: {proc.returncode})")
-        return "\n".join(parts) or "(无输出)"
+            parts.insert(0, f"(process exit code: {proc.returncode})")
+        return "\n".join(parts) or "(no output)"
     finally:
         try:
             os.unlink(script_path)
@@ -1095,12 +1436,12 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
         if err:
             logger.warning("%s_prescreen_reject reason=%s code_preview=%.60s",
                           lang, err, code[:60].replace("\n", " "))
-            return f"{lang} 代码审查未通过: {err}", []
+            return f"{lang} code review failed: {err}", []
 
         # Concurrency gate
         if not _acquire_slot():
             logger.warning("exec_busy max_concurrent=%d lang=%s", _max_concurrent, lang)
-            return f"服务器繁忙（并发执行数已达上限 {_max_concurrent}），请稍后重试", []
+            return f"Server busy (concurrency limit {_max_concurrent} reached); please retry shortly", []
 
         # Resolve per-user account from the UID carried in the signed envelope
         # (stateless, exact). The envelope is always verified and uid-pinned by
@@ -1125,12 +1466,12 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.warning("exec_timeout lang=%s timeout=%d elapsed_ms=%d",
                           lang, timeout, elapsed_ms)
-            return f"执行超时（>{timeout}秒），已终止进程", []
+            return f"Execution timed out (>{timeout}s); the process was terminated", []
         except Exception as e:
             elapsed_ms = int((time.time() - t0) * 1000)
             logger.error("exec_error lang=%s error=%s elapsed_ms=%d",
                         lang, type(e).__name__, elapsed_ms)
-            return f"执行异常: {str(e)}", []
+            return f"Execution error: {str(e)}", []
         finally:
             _exec_semaphore.release()
 
@@ -1339,7 +1680,8 @@ class MCPHandler(BaseHTTPRequestHandler):
                 logger.warning("auth_reject tool=%s reason=invalid_or_missing_sig", tool_name)
                 resp = {"jsonrpc": "2.0", "id": req_id,
                         "error": {"code": -32001,
-                                  "message": "身份校验失败：缺少或无效的签名（需 Backend 签名的 auth 信封）"}}
+                                  "message": "Authentication failed: missing or invalid signature "
+                                             "(a Backend-signed auth envelope is required)"}}
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -1355,7 +1697,7 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if generated:
                     result["structuredContent"] = {"files": generated}
             else:
-                result = {"content": [{"type": "text", "text": f"未知工具: {tool_name}"}]}
+                result = {"content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}]}
         else:
             self.send_error(404)
             return
@@ -1823,34 +2165,38 @@ if __name__ == "__main__":
     p = ArgumentParser(description="REPL MCP Server — multi-language sandbox execution")
     p.add_argument("--port", type=int, default=9200)
     p.add_argument("--allow-dir", type=str,
-                   help="仅允许子进程访问此目录")
+                   help="Restrict subprocess access to this directory only")
     p.add_argument("--no-network", action="store_true",
-                   help="禁止子进程网络访问（= --network-mode deny，向后兼容）")
+                   help="Block subprocess network access (= --network-mode deny, kept for compatibility)")
     p.add_argument("--network-mode", type=str, default=None,
                    choices=["deny", "allow", "allowlist"],
-                   help="网络策略: deny(默认,禁止) / allow(全放开,调试) / allowlist(白名单域名)")
+                   help="Network policy: deny (default, blocked) / allow (fully open, debugging) / "
+                        "allowlist (allowed domains)")
     p.add_argument("--allow-domains", type=str, default="",
-                   help="allowlist 模式下允许的域名，逗号分隔，如 api.github.com,raw.githubusercontent.com")
+                   help="Comma-separated domains allowed in allowlist mode, "
+                        "e.g. api.github.com,raw.githubusercontent.com")
     p.add_argument("--allow-methods", type=str, default="",
-                   help="allowlist 模式下允许的 HTTP 方法（保留字段，暂未启用）")
+                   help="HTTP methods allowed in allowlist mode (reserved field, not yet enforced)")
     p.add_argument("--max-memory-mb", type=int, default=DEFAULT_MAX_MEMORY_MB,
-                   help=f"子进程最大内存（MB），默认 {DEFAULT_MAX_MEMORY_MB}")
+                   help=f"Max subprocess memory in MB (default {DEFAULT_MAX_MEMORY_MB})")
     p.add_argument("--max-nproc", type=int, default=DEFAULT_MAX_NPROC,
-                   help=f"子进程最大进程数，默认 {DEFAULT_MAX_NPROC}")
+                   help=f"Max subprocess count (default {DEFAULT_MAX_NPROC})")
     p.add_argument("--max-concurrent", type=int, default=DEFAULT_MAX_CONCURRENT,
-                   help=f"最大并发执行数，默认 {DEFAULT_MAX_CONCURRENT}")
+                   help=f"Max concurrent executions (default {DEFAULT_MAX_CONCURRENT})")
     p.add_argument("--public-url", type=str, default="",
-                   help="对外可访问的完整地址，用于生成 File 下载链接")
+                   help="Publicly reachable base URL, used to build File download links")
     p.add_argument("--enable-shell", action="store_true",
-                   help="启用 Shell 执行支持")
+                   help="Enable Shell execution support")
     p.add_argument("--enable-shell-local", action="store_true",
-                   help="Windows 本地模式启用 Shell（⚠️ 安全风险，仅限开发环境）")
+                   help="Enable Shell in Windows local mode (WARNING: security risk, development only)")
     p.add_argument("--enable-javascript", action="store_true",
-                   help="启用 JavaScript (Node.js) 执行支持")
+                   help="Enable JavaScript (Node.js) execution support")
     p.add_argument("--auth-secret", type=str, default=None,
-                   help="Backend 与 MCP server 共享的 HMAC 密钥。身份校验与每用户 UID 隔离强制开启"
-                        "（无单账户回退）；密钥通常由 Backend 在运行时通过 PUT /auth-secret 注入/轮换，"
-                        "也可在此或经 REPL_AUTH_SECRET 环境变量预设初始值。")
+                   help="HMAC secret shared between the Backend and this MCP server. Authentication "
+                        "and per-user UID isolation are always enforced (there is no single-account "
+                        "fallback); the secret is normally injected/rotated by the Backend at runtime "
+                        "via PUT /auth-secret, but an initial value can be preset here or through the "
+                        "REPL_AUTH_SECRET environment variable.")
     args = p.parse_args()
 
     # ── Config: CLI args > env vars > defaults ──
@@ -1898,23 +2244,24 @@ if __name__ == "__main__":
     # The REPL identity secret is pushed by the Backend at startup (with retry);
     # until that push lands the workspace API will 403 (fail-closed), which is
     # the intended safe default. No on-disk secret is loaded here.
-    logger.info("auth_enabled — 每用户隔离强制开启（auth_required=%s）", _auth_required)
-    logger.info("isolation_note — 容器需以 root 运行并持有 CAP_SETUID/SETGID/CHOWN，"
-                "否则子进程降权会失败（子进程将以退出码 1 结束）。")
+    logger.info("auth_enabled — per-user isolation is always on (auth_required=%s)", _auth_required)
+    logger.info("isolation_note — the container must run as root and hold "
+                "CAP_SETUID/SETGID/CHOWN, otherwise dropping subprocess privileges "
+                "fails (the child exits with code 1).")
 
     # ── Shell safety gate for local (non-Docker) Windows mode ──
     if _enable_shell and os.name == 'nt' and not _enable_shell_local:
         logger.warning(
-            "shell_local_disabled — Shell 在 Windows 本地模式默认禁用（安全原因）。"
-            "如需启用，请加 --enable-shell-local 参数（⚠️ 仅限开发环境）。"
-            "Docker 容器模式下此限制不适用。"
+            "shell_local_disabled — Shell is disabled by default in Windows local mode "
+            "(for security). Pass --enable-shell-local to enable it (development only). "
+            "This restriction does not apply in Docker container mode."
         )
         _enable_shell = False
 
     if _enable_shell_local and os.name == 'nt':
         logger.warning(
-            "⚠️ shell_local_enabled — Shell 在非 Docker 环境下运行，安全隔离较弱。"
-            "生产环境请使用 Docker 部署。"
+            "shell_local_enabled — Shell is running outside Docker, so isolation is weak. "
+            "Use a Docker deployment in production."
         )
 
     # ── Register executors ──
@@ -1933,8 +2280,8 @@ if __name__ == "__main__":
             _EXECUTORS["run_javascript"] = _executor_template(
                 "JavaScript", _js_prescreen, _run_javascript)
         else:
-            logger.warning("javascript_disabled — Node.js 未安装，跳过 JS 执行器注册。"
-                          "请 apt-get install nodejs 或安装 Node.js。")
+            logger.warning("javascript_disabled — Node.js is not installed; skipping JS executor "
+                          "registration. Install it via apt-get install nodejs or another method.")
             _enable_javascript = False
 
     # ── Start server ──
