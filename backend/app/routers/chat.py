@@ -9,7 +9,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -190,6 +190,16 @@ async def _persist_agent_steps(conv_id: str, message_id: str, steps: list[dict])
         return
     try:
         async with db_mod.async_session() as session:
+            # Replace, don't append: callers pass the full snapshot for a message,
+            # so stale steps from a previous run on the same message must be cleared
+            # first. Without this, re-running the agent on one message accumulates
+            # duplicate steps across runs (e.g. 14 logical steps -> 119 rows).
+            await session.execute(
+                text(
+                    "DELETE FROM agent_steps WHERE message_id = :mid"
+                ),
+                {"mid": message_id},
+            )
             objs = []
             for i, s in enumerate(steps):
                 extra = s.get("extra")
@@ -648,32 +658,25 @@ async def chat_stream(
         async def on_queue_position(pos: int) -> None:
             await sse_queue.put(_sse("queue", {"position": pos}))
 
-        # Incremental-persistence scratchpad for this turn. agent_steps accumulate
-        # here (independent of `state`) and are flushed to the DB on every emit, so
-        # a mid-stream client disconnect still leaves the already-produced
-        # processing trace in the database instead of a blank conversation.
+        # In-memory scratchpad for this turn. agent_steps accumulate here
+        # (independent of `state`) and are written to the DB ONCE at the end of the
+        # turn (see the success path at ~1071 and the error path at ~1118). This
+        # avoids re-inserting the whole list on every emit, which previously blew
+        # up the row count (e.g. 14 logical steps -> 119 rows) on multi-run turns.
+        # Trade-off: a process crash mid-turn loses that turn's trace (client
+        # disconnects are fine — the producer keeps running and still flushes).
         stream_msg_id: dict = {"id": None}
         stream_agent_steps: list = []
 
         def emit_agent_step(stage: str, message: str, **extra) -> None:
             """Stream an agent_step progress event (Route D observability)."""
             enqueue("agent_step", {"stage": stage, "message": message, **extra})
-            # Persist the step immediately so it survives a disconnect. The flush
-            # is fire-and-forget: emit happens during normal generation (before any
-            # disconnect), so these tasks complete well before the client leaves.
+            # Accumulate only; persistence happens once at turn end.
             stream_agent_steps.append({
                 "stage": stage,
                 "message": message,
                 "extra": extra or None,
             })
-            mid = stream_msg_id["id"]
-            if mid is not None:
-                try:
-                    asyncio.ensure_future(
-                        _persist_agent_steps(conv_id, mid, list(stream_agent_steps))
-                    )
-                except Exception:
-                    pass
 
         def emit_context_usage(breakdown: dict) -> None:
             """Stream the token footprint of the submission just handed to the LLM.
@@ -746,10 +749,10 @@ async def chat_stream(
                             })
                             return
 
-                    # ── 1b. Pre-create the assistant message so agent_steps and
-                    # partial content can be persisted incrementally (surviving a
-                    # mid-stream disconnect). The final content is upserted onto
-                    # this same row at the end of the turn.
+                    # ── 1b. Pre-create the assistant message so the final content
+                    # and the accumulated agent_steps can be persisted at the end
+                    # of the turn (written once, not incrementally). The final
+                    # content is upserted onto this same row at the end of the turn.
                     if stream_msg_id["id"] is None:
                         init_msg = await _save_assistant_message(
                             conv_id, "", [], cache_hit=False,

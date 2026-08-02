@@ -120,7 +120,7 @@ async def test_llm_connection(data: TestRequest, current_user=Depends(get_curren
                     "model": config_manager.model,
                     "messages": [{"role": "user", "content": data.query}],
                     "max_tokens": 50,
-                    "temperature": 0,
+                    "temperature": config_manager.temperature,
                 },
             )
             if resp.status_code == 200:
