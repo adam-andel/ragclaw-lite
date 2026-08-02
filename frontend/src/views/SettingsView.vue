@@ -79,6 +79,22 @@ const config = ref<LLMConfig>({
 const apiKeyInput = ref('')
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
+
+// Local mirror of backend config_manager.is_valid_llm_config: all three fields
+// present AND free of obvious errors (api_key/model non-empty, base_url a valid
+// http(s) URL). Used to disable the Test button without a round-trip.
+function isValidLlmConfig() {
+  const key = (apiKeyInput.value || config.value.llm_api_key || '').trim()
+  const model = (config.value.llm_model || '').trim()
+  const url = (config.value.llm_base_url || '').trim()
+  if (!key || !model) return false
+  try {
+    const u = new URL(url)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 const activeSection = ref('llm')
 const isManualScrolling = ref(false)
 
@@ -751,9 +767,6 @@ async function doSave() {
       label: changed.join('、'),
       msg: sres.mcp_pushed ? undefined : t('settings.msg.sandboxSavedRestart'),
     }
-    // The save may have just configured the LLM API key — refresh the chat
-    // input state immediately so it enables without a reload.
-    if (payload.llm_api_key) await auth.checkLlmStatusNow()
   } catch (e: any) {
     saveState.value = { status: 'error', label: changed.join('、'), msg: saveErrorReason(e) }
   }
@@ -910,8 +923,27 @@ async function handleTest() {
 
         <!-- LLM -->
         <section id="llm">
-          <h3 class="section-title">{{ t('settings.llmTitle') }}</h3>
-          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.llmDesc')" />
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px">
+            <div>
+              <h3 class="section-title" style="margin: 0 0 4px">{{ t('settings.llmTitle') }}</h3>
+              <p class="muted" style="margin: 0;font-size: 13px" v-html="t('settings.llmDesc')" />
+            </div>
+            <NSpace align="center">
+              <NButton
+                type="info"
+                :loading="testing"
+                :disabled="!isValidLlmConfig()"
+                @click="handleTest"
+              >
+                <template #icon><NIcon><Flash /></NIcon></template>
+                {{ t('settings.testConnection') }}
+              </NButton>
+              <div v-if="testResult" :class="['test-result', testResult.ok ? 'test-ok' : 'test-fail']" style="max-width: 320px; white-space: normal; word-break: break-word">
+                <NIcon :component="testResult.ok ? CheckmarkCircle : AlertCircle" size="16" />
+                <span>{{ testResult.text }}</span>
+              </div>
+            </NSpace>
+          </div>
           <!-- Provider -->
           <NFormItem :label="t('settings.providerLabel')">
             <NSelect
@@ -1050,25 +1082,6 @@ async function handleTest() {
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.agent_round_quota === 0 ? t('settings.agentRoundQuotaUnlimited') : t('settings.agentRoundQuotaHint', { n: config.agent_round_quota }) }}
             </span>
-          </NFormItem>
-
-          <!-- Test Connection -->
-          <NFormItem :show-feedback="false">
-            <NSpace align="center">
-              <NButton
-                type="info"
-                :loading="testing"
-                :disabled="!apiKeyInput.trim() && !config.is_configured"
-                @click="handleTest"
-              >
-                <template #icon><NIcon><Flash /></NIcon></template>
-                {{ t('settings.testConnection') }}
-              </NButton>
-              <div v-if="testResult" :class="['test-result', testResult.ok ? 'test-ok' : 'test-fail']">
-                <NIcon :component="testResult.ok ? CheckmarkCircle : AlertCircle" size="16" />
-                <span>{{ testResult.text }}</span>
-              </div>
-            </NSpace>
           </NFormItem>
 
         </section>
@@ -1585,9 +1598,11 @@ async function handleTest() {
 .help-icon:hover { color: var(--color-primary); }
 
 .test-result {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 12px; border-radius: 6px; font-size: var(--text-sm); white-space: nowrap; line-height: 1;
+  display: inline-flex; align-items: flex-start; gap: 6px;
+  padding: 4px 12px; border-radius: 6px; font-size: var(--text-sm);
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.4;
 }
+.test-result :deep(.n-icon) { flex-shrink: 0; margin-top: 1px; }
 .test-ok { background: rgba(34,197,94,0.1); color: #16a34a; }
 .test-fail { background: rgba(239,68,68,0.1); color: #dc2626; }
 

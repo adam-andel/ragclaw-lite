@@ -358,12 +358,17 @@ async def _ensure_logging_middleware(request: Request, call_next):
 @app.get("/api/health")
 async def health_check():
     from app.services.config_manager import config_manager
-    from app.database import engine
+    # llm_reachable reflects whether the configured LLM API has been verified
+    # reachable with a real request. If configured but not yet verified, probe
+    # once now (and cache the result) so the chat input state is accurate.
+    llm_reachable = config_manager.is_reachable
+    if config_manager.is_configured and not llm_reachable:
+        llm_reachable = await config_manager.test_reachability()
     return {
         "status": "ok",
         "service": "RAGClaw-Lite",
         "version": "0.5.0",
-        "llm_configured": config_manager.is_configured,
+        "llm_reachable": llm_reachable,
         "context_window": config_manager.context_window,
     }
 
