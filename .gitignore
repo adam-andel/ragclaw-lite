@@ -12,6 +12,11 @@ node_modules/
 frontend/dist/
 pnpm-workspace.yaml
 
+# Vite: compiled artifacts of vite.config.ts (emitted by `vue-tsc -b`).
+# Vite resolves *.config.js before *.config.ts, so these must never be committed.
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
 *.tsbuildinfo
 
 # Data

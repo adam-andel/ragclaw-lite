@@ -32,7 +32,7 @@ class UserResponse(BaseModel):
     is_active: bool
     avatar_url: str | None = None
     tenant_id: str | None = None
-    memory: str = ""
+    memory: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

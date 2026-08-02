@@ -233,21 +233,6 @@ const roleColor = computed(() => {
           </NInput>
         </NFormItem>
 
-        <!-- Memory & Preferences -->
-        <div class="memory-section">
-          <NFormItem :label="t('profile.memory')" class="memory-form-item">
-            <NInput
-              v-model:value="form.memory"
-              type="textarea"
-              :placeholder="t('profile.memoryPlaceholder')"
-              :autosize="{ minRows: 3, maxRows: 8 }"
-              show-count
-              :maxlength="2000"
-            />
-          </NFormItem>
-          <p class="memory-hint">{{ t('profile.memoryHint') }}</p>
-        </div>
-
         <NFormItem :label="t('profile.newPassword')">
           <NInput
             v-model:value="form.password"
@@ -275,6 +260,21 @@ const roleColor = computed(() => {
             </template>
           </NInput>
         </NFormItem>
+
+        <!-- Memory & Preferences -->
+        <div class="memory-section">
+          <NFormItem :label="t('profile.memory')" class="memory-form-item">
+            <NInput
+              v-model:value="form.memory"
+              type="textarea"
+              :placeholder="t('profile.memoryPlaceholder')"
+              :autosize="{ minRows: 3, maxRows: 8 }"
+              show-count
+              :maxlength="2000"
+            />
+          </NFormItem>
+          <p class="memory-hint">{{ t('profile.memoryHint') }}</p>
+        </div>
       </NForm>
     </NCard>
   </div>
