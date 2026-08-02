@@ -28,6 +28,16 @@ export default {
     CONFIG_REPL_SECRET_EMPTY: 'REPL_AUTH_SECRET 不能为空',
     CONFIG_REPL_SECRET_SHORT: 'REPL_AUTH_SECRET 至少 16 个字符',
 
+    CONFIG_UPDATED: '配置已更新，立即生效。',
+    CONFIG_TEMPERATURE_RANGE: 'temperature 必须在 0-2 之间。',
+    CONFIG_MAX_TOKENS_RANGE: 'max_tokens 必须在 128-131072 之间。',
+    CONFIG_CONTEXT_WINDOW_RANGE: '上下文窗口必须在 1-10,000,000 之间。',
+    CONFIG_CONCURRENCY_RANGE: '并发数必须在 1-50 之间。',
+    CONFIG_AGENT_ROUND_QUOTA_RANGE: '工具调用轮次配额必须在 0-200 之间（0 表示不限轮数）。',
+    CONFIG_SANDBOX_NETWORK_MODE: 'network mode 必须是 deny / allow / allowlist 之一。',
+    SANDBOX_POLICY_UPDATED: '沙盒策略已更新，立即生效。',
+    REPL_AUTH_SECRET_REGENERATED: '已生成新的 REPL_AUTH_SECRET，立即生效。',
+
     EMBEDDING_MODEL_UNKNOWN: '未知模型：{detail}',
     EMBEDDING_MODEL_DIM_UNKNOWN: '无法确定模型维度，请先安装 {detail} 后再切换',
     EMBEDDING_MODEL_NOT_INSTALLED_SWITCH: '模型 {detail} 尚未安装，请先下载安装后再切换。',

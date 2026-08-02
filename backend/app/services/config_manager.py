@@ -8,11 +8,14 @@ them in through the UI.
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import sys
 import threading
 from pathlib import Path
+
+logger = logging.getLogger("ragclaw.config")
 
 from cryptography import x509
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -410,6 +413,16 @@ class ConfigManager:
             return
         self._config: dict = {}
         self._config_file = settings.data_dir / "config.enc"
+        # Whether the configured LLM API has been verified reachable with a real
+        # request. In-memory only: reset to False on each process start, then
+        # flipped True by a successful test (health probe or /llm/test).
+        self._llm_reachable: bool = False
+        # Set True when a real test proves the config is unusable (e.g. the
+        # provider rejects the API key with HTTP 401). Keeps is_valid_llm_config
+        # False even if the three fields are formally well-formed. Reset to False
+        # when the config is edited (update_llm_config zeroes it via set_reachable
+        # path / successful test).
+        self._llm_config_invalid: bool = False
         self._initialized = True
 
     # ── Lifecycle ──
@@ -473,6 +486,10 @@ class ConfigManager:
         # on first boot (mirrors repl_auth_secret) and rotated via the admin UI.
         # No mounted Docker secret is used (see auth.get_jwt_secret).
         await self._ensure_jwt_secret()
+        # Derive the cached format-validity from the freshly loaded config so a
+        # restart re-evaluates the three LLM fields (the property no longer
+        # re-parses them on each access).
+        self.refresh_valid_llm_config()
 
     def _build_defaults(self) -> dict:
         return {
@@ -648,6 +665,96 @@ class ConfigManager:
         return bool(self.api_key)
 
     @property
+    def is_valid_llm_config(self) -> bool:
+        """True when no real test has proven the config unusable.
+
+        The field-format check (api_key / model / base_url well-formed) is
+        computed once and cached in ``_llm_config_invalid`` — see
+        ``_compute_llm_config_invalid`` and ``refresh_valid_llm_config``.
+        """
+        with self._lock:
+            return not self._llm_config_invalid
+
+    def _compute_llm_config_invalid(self) -> bool:
+        """Return True when the three LLM fields are missing or malformed.
+
+        This is the single source of truth for the *format* part of validity:
+          - api_key: non-empty (after trim)
+          - model: non-empty (after trim)
+          - base_url: a well-formed http(s) URL
+        It does NOT account for a real test proving the config unusable
+        (e.g. HTTP 401) — that is tracked separately via set_valid_llm_config.
+        """
+        key = (self.api_key or "").strip()
+        if not key:
+            return True
+        model = (self.model or "").strip()
+        if not model:
+            return True
+        url = (self.base_url or "").strip()
+        if not url:
+            return True
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return True
+        return False
+
+    def refresh_valid_llm_config(self) -> None:
+        """Recompute the cached format-validity from the current config.
+
+        Call after loading config at startup and after every update so that
+        ``is_valid_llm_config`` reflects the latest three fields without
+        re-parsing them on every access.
+        """
+        with self._lock:
+            self._llm_config_invalid = self._compute_llm_config_invalid()
+
+    def set_valid_llm_config(self, value: bool) -> None:
+        """Mark the config as proven-valid (True) or proven-invalid (False).
+
+        Called by /llm/test: a successful test clears the invalid flag, while an
+        auth failure (HTTP 401) sets it so is_valid_llm_config goes False even
+        though the three fields are formally well-formed.
+        """
+        with self._lock:
+            self._llm_config_invalid = not bool(value)
+
+    @property
+    def is_reachable(self) -> bool:
+        """True only if a real LLM request has succeeded at least once this process."""
+        with self._lock:
+            return self._llm_reachable
+
+    def set_reachable(self, value: bool) -> None:
+        with self._lock:
+            self._llm_reachable = bool(value)
+
+    async def test_reachability(self) -> bool:
+        """Issue one real (minimal) LLM request to verify the API is reachable.
+
+        Returns True on success (and caches it via set_reachable), False on any
+        failure. Does NOT raise — callers decide how to surface errors.
+        """
+        if not self.is_valid_llm_config:
+            self.set_reachable(False)
+            return False
+        from app.services.llm_client import llm_client
+        try:
+            await llm_client.chat(
+                messages=[{"role": "user", "content": "Ping. Reply with 'OK' only."}],
+                temperature=0,
+                max_tokens=5,
+            )
+            self.set_reachable(True)
+            self.set_valid_llm_config(True)
+            return True
+        except Exception as e:
+            logger.warning("[ConfigManager] LLM reachability test failed: %s", str(e)[:200])
+            self.set_reachable(False)
+            return False
+
+    @property
     def base_url(self) -> str:
         with self._lock:
             return self._config.get("llm_base_url", "")
@@ -806,6 +913,8 @@ class ConfigManager:
             c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
 
             c["is_configured"] = bool(self._config.get("llm_api_key", ""))
+            c["is_reachable"] = self._llm_reachable
+            c["is_valid_llm_config"] = self.is_valid_llm_config
             # API keys are always sourced from the Settings UI (encrypted into
             # config.enc); there is no .env / mounted-secret default path.
             c["api_key_source"] = "stored"

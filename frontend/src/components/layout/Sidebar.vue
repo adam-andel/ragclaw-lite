@@ -105,7 +105,7 @@ function goToNotifications() {
 <template>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <span class="logo">🔍 RAGClaw</span>
+      <span class="logo">RAGClaw</span>
       <span class="version">Lite</span>
     </div>
 

@@ -28,6 +28,16 @@ export default {
     CONFIG_REPL_SECRET_EMPTY: 'REPL_AUTH_SECRET cannot be empty',
     CONFIG_REPL_SECRET_SHORT: 'REPL_AUTH_SECRET must be at least 16 characters',
 
+    CONFIG_UPDATED: 'Configuration updated — changes take effect immediately.',
+    CONFIG_TEMPERATURE_RANGE: 'temperature must be between 0 and 2.',
+    CONFIG_MAX_TOKENS_RANGE: 'max_tokens must be between 128 and 131072.',
+    CONFIG_CONTEXT_WINDOW_RANGE: 'Context window must be between 1 and 10,000,000.',
+    CONFIG_CONCURRENCY_RANGE: 'Concurrency must be between 1 and 50.',
+    CONFIG_AGENT_ROUND_QUOTA_RANGE: 'Agent round quota must be between 0 and 200 (0 = unlimited).',
+    CONFIG_SANDBOX_NETWORK_MODE: "Sandbox network mode must be one of: deny / allow / allowlist.",
+    SANDBOX_POLICY_UPDATED: 'Sandbox policy updated — changes take effect immediately.',
+    REPL_AUTH_SECRET_REGENERATED: 'A new REPL_AUTH_SECRET was generated — changes take effect immediately.',
+
     EMBEDDING_MODEL_UNKNOWN: 'Unknown embedding model: {detail}',
     EMBEDDING_MODEL_DIM_UNKNOWN: 'Unable to determine model dimensions. Please install {detail} before switching.',
     EMBEDDING_MODEL_NOT_INSTALLED_SWITCH: 'Model {detail} is not installed yet. Please download and install it before switching.',

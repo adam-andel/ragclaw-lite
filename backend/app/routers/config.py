@@ -39,35 +39,35 @@ class LLMConfigUpdate(BaseModel):
     @classmethod
     def temp_range(cls, v):
         if v is not None and not (0 <= v <= 2):
-            raise ValueError("temperature 必须在 0-2 之间")
+            raise ValueError("CONFIG_TEMPERATURE_RANGE")
         return v
 
     @field_validator("llm_max_tokens")
     @classmethod
     def tokens_range(cls, v):
         if v is not None and not (128 <= v <= 131072):
-            raise ValueError("max_tokens 必须在 128-131072 之间")
+            raise ValueError("CONFIG_MAX_TOKENS_RANGE")
         return v
 
     @field_validator("llm_context_window")
     @classmethod
     def context_window_range(cls, v):
         if v is not None and not (1 <= v <= 10_000_000):
-            raise ValueError("上下文窗口必须在 1-10,000,000 之间")
+            raise ValueError("CONFIG_CONTEXT_WINDOW_RANGE")
         return v
 
     @field_validator("llm_concurrency")
     @classmethod
     def concurrency_range(cls, v):
         if v is not None and not (1 <= v <= 50):
-            raise ValueError("并发数必须在 1-50 之间")
+            raise ValueError("CONFIG_CONCURRENCY_RANGE")
         return v
 
     @field_validator("agent_round_quota")
     @classmethod
     def agent_round_quota_range(cls, v):
         if v is not None and not (0 <= v <= 200):
-            raise ValueError("工具调用轮次配额必须在 0-200 之间（0 表示不限轮数）")
+            raise ValueError("CONFIG_AGENT_ROUND_QUOTA_RANGE")
         return v
 
 
@@ -83,9 +83,19 @@ async def update_llm_config(data: LLMConfigUpdate, current_user=Depends(get_curr
     if data.llm_api_key is not None and not data.llm_api_key.strip():
         raise HTTPException(status_code=400, detail="CONFIG_API_KEY_EMPTY")
     result = await config_manager.update(data.model_dump(exclude_none=True))
+    # Recompute the cached format-validity from the new config. Editing the
+    # config also clears any prior "proven-unusable" verdict (e.g. a previous
+    # HTTP 401), so the three fields get a clean slate.
+    config_manager.refresh_valid_llm_config()
+    # Editing the config invalidates any prior "proven-reachable" verdict (a
+    # successful probe from before the edit). Clear it so the next /api/health
+    # re-probes; the fresh probe will fail format checks (e.g. an emptied
+    # model) and correctly disable the chat input. Without this, a stale
+    # llm_reachable=True would mask the now-invalid config.
+    config_manager.set_reachable(False)
     if data.llm_concurrency is not None:
         await llm_limiter.update_max(data.llm_concurrency)
-    return {"message": "配置已更新，立即生效", "config": result}
+    return {"message": "CONFIG_UPDATED", "config": result}
 
 
 class TestRequest(BaseModel):
@@ -115,16 +125,26 @@ async def test_llm_connection(data: TestRequest, current_user=Depends(get_curren
             )
             if resp.status_code == 200:
                 body = resp.json()
+                config_manager.set_reachable(True)
+                config_manager.set_valid_llm_config(True)
                 return {
                     "ok": True,
                     "reply": body["choices"][0]["message"]["content"][:200],
                     "model": config_manager.model,
                 }
             detail = resp.text[:500]
+            config_manager.set_reachable(False)
+            # Any 4xx means the provider rejected the request (e.g. HTTP 401
+            # "API key does not exist / signature failed"). The three fields are
+            # formally valid but the config is unusable, so mark it invalid.
+            if 400 <= resp.status_code < 500:
+                config_manager.set_valid_llm_config(False)
             return {"ok": False, "error": f"HTTP {resp.status_code}: {detail}"}
     except httpx.ConnectError as e:
-        return {"ok": False, "error": f"连接失败: {str(e)}"}
+        config_manager.set_reachable(False)
+        return {"ok": False, "error": f"Connection failed: {str(e)}"}
     except Exception as e:
+        config_manager.set_reachable(False)
         return {"ok": False, "error": str(e)}
 
 
@@ -141,7 +161,7 @@ class SandboxNetworkUpdate(BaseModel):
     @classmethod
     def _mode_range(cls, v):
         if v is not None and v not in ("deny", "allow", "allowlist"):
-            raise ValueError("network mode 必须是 deny / allow / allowlist")
+            raise ValueError("CONFIG_SANDBOX_NETWORK_MODE")
         return v
 
 
@@ -170,8 +190,8 @@ async def update_sandbox_network(
     await config_manager.update(patch)
     mcp_pushed = await notify_network_policy_changed()
     return {
-        "message": "沙盒策略已更新，立即生效"
-        + ("" if mcp_pushed else "（MCP 暂不可达，请确认 mcp-repl 已启动后重新保存以应用；系统会每 60 秒自动重试）"),
+        "message": "SANDBOX_POLICY_UPDATED"
+        + ("" if mcp_pushed else " (MCP unreachable; restart mcp-repl and re-save, or wait for the 60s auto-retry)"),
         "config": {
             "sandbox_network_mode": config_manager.sandbox_network_mode,
             "sandbox_allow_domains": config_manager.sandbox_allow_domains,
@@ -306,8 +326,8 @@ async def regenerate_repl_auth(current_user=Depends(get_current_admin)):
     await config_manager.update({"repl_auth_secret": new_secret})
     mcp_pushed = await notify_auth_secret_changed(new_secret)
     return {
-        "message": "已生成新的 REPL_AUTH_SECRET，立即生效"
-        + ("" if mcp_pushed else "（MCP 暂不可达，系统会每 60 秒自动重试）"),
+        "message": "REPL_AUTH_SECRET_REGENERATED"
+        + ("" if mcp_pushed else " (MCP unreachable; will auto-retry every 60s)"),
         "repl_auth_secret": config_manager.repl_auth_secret,
         "mcp_pushed": mcp_pushed,
     }
