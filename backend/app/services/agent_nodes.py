@@ -1301,9 +1301,16 @@ async def tool_decision_node(state: dict) -> dict:
     # -> tool_messages -> memory) on TRANSIENT copies and never touch the query, so
     # the request always fits without writing anything back.
     def _assemble(s, h, rag, payload):
+        # User-authored memory & preferences (from the profile page), appended to
+        # the task background so the LLM can personalize. Kept separate from the
+        # auto-extracted MEM0 memory graph. Empty string when nothing is set.
+        user_memory = (state.get("user_memory") or "").strip()
+        task_background = skill_prompt + kb_context + ws_context
+        if user_memory:
+            task_background += f"\n\n## User Memory & Preferences\n{user_memory}"
         msgs = [
             {"role": "system", "content": tool_system},
-            {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
+            {"role": "system", "content": "## Task Background (reference only)\n" + task_background},
         ]
         if s:
             msgs.append({"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s})

@@ -20,6 +20,10 @@ class RagclawAgentState(TypedDict):
     query: str
     user_id: str
     tenant_id: str
+    # User-authored free-text memory & preferences (from the profile page).
+    # Injected into the system prompt so the LLM can personalize. Empty when
+    # the user has not written anything.
+    user_memory: str
     skill_id: str | None          # Optional: force a specific SKILL
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt

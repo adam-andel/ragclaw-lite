@@ -86,6 +86,7 @@ async function removeCustomAvatar() {
 const form = ref({
   display_name: auth.user?.display_name || '',
   email: auth.user?.email || '',
+  memory: auth.user?.memory || '',
   password: '',
   passwordConfirm: '',
 })
@@ -102,6 +103,7 @@ async function handleSave() {
     const payload: Record<string, string> = {
       display_name: form.value.display_name,
       email: form.value.email || '',
+      memory: form.value.memory,
     }
     if (form.value.password) {
       payload.password = form.value.password
@@ -230,6 +232,21 @@ const roleColor = computed(() => {
             </template>
           </NInput>
         </NFormItem>
+
+        <!-- Memory & Preferences -->
+        <div class="memory-section">
+          <NFormItem :label="t('profile.memory')" class="memory-form-item">
+            <NInput
+              v-model:value="form.memory"
+              type="textarea"
+              :placeholder="t('profile.memoryPlaceholder')"
+              :autosize="{ minRows: 3, maxRows: 8 }"
+              show-count
+              :maxlength="2000"
+            />
+          </NFormItem>
+          <p class="memory-hint">{{ t('profile.memoryHint') }}</p>
+        </div>
 
         <NFormItem :label="t('profile.newPassword')">
           <NInput
@@ -376,5 +393,22 @@ const roleColor = computed(() => {
   gap: var(--space-2);
   font-weight: 600;
   font-size: var(--text-sm);
+}
+
+/* ── Memory & Preferences ── */
+.memory-section {
+  padding-top: var(--space-4);
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+.memory-form-item {
+  margin-bottom: var(--space-1);
+}
+.memory-hint {
+  margin: 0 0 var(--space-2);
+  padding-left: calc(100px + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
 }
 </style>

@@ -12,6 +12,7 @@ export interface UserInfo {
   is_active: boolean
   avatar_url: string | null
   tenant_id: string | null
+  memory: string
   created_at: string
 }
 

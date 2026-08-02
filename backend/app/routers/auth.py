@@ -52,6 +52,8 @@ async def update_me(
         current_user.display_name = data.display_name
     if data.email is not None:
         current_user.email = data.email
+    if data.memory is not None:
+        current_user.memory = data.memory
     if data.password is not None:
         current_user.hashed_password = hash_password(data.password)
     await db.commit()

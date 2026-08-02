@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, Enum as SAEnum, Integer
+from sqlalchemy import String, Boolean, DateTime, Enum as SAEnum, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
@@ -39,3 +39,9 @@ class User(Base):
     # gets one, so the sandbox always has an exact UID to drop privileges to.
     # Expanding the UID range never touches existing rows.
     repl_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True, index=True)
+
+    # User-authored free-text memory & preferences (manual, NOT MEM0-extracted).
+    # Injected into the LLM system prompt as part of the task background so the
+    # model can personalize. Deliberately kept separate from the auto-extracted
+    # MEM0 memory graph (see agent_nodes.py).
+    memory: Mapped[str | None] = mapped_column(Text, nullable=True)
