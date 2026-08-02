@@ -51,8 +51,12 @@ services:
       # precedence over the pip-installed copy in site-packages, so the mounted
       # source is what actually runs. No :cached needed — we're on ext4.
       - ./backend:/app/backend
-    # Replace the image CMD with a reload-enabled uvicorn.
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
+    # The image bakes the resolved lock at /opt/backend-requirements.lock (outside
+    # this bind-mount). This dev entrypoint copies it onto /app/backend/requirements.lock
+    # at startup, writing through the bind-mount to the HOST ./backend so the lock can
+    # be committed — mirroring frontend/docker-entrypoint.dev.sh. Then it launches
+    # uvicorn with --reload (same as the prod CMD, just hot-reloading).
+    entrypoint: ["sh", "-c", "cp /opt/backend-requirements.lock /app/backend/requirements.lock 2>/dev/null; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend"]
 
   # ── REPL MCP Server (dev: bind-mount local source) ───────────────────────────
   # Mirror the `ragclaw` dev pattern: overlay ./mcp (host) on top of the image's

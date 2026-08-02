@@ -80,6 +80,27 @@ RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
 # ── Layer 4: Backend code (most frequent changes) ──
 COPY backend/ backend/
 
+# ── Layer 4.5: Generate a fully-pinned lockfile (mirrors frontend pnpm-lock.yaml) ──
+# `pip freeze` snapshots the EXACT resolved versions of every installed package
+# (project deps + their transitive deps + torch/huggingface_hub installed above).
+#
+# Baked to /opt/backend-requirements.lock — OUTSIDE /app/backend so the dev
+# bind-mount (./backend -> /app/backend) can never shadow it. The dev entrypoint
+# (docker-compose.dev.yml) copies it back onto /app/backend/requirements.lock at
+# container start, which writes through the bind-mount to the HOST ./backend so the
+# lock can be committed and reused — exactly how frontend/docker-entrypoint.dev.sh
+# syncs /opt/frontend-lock.yaml -> ./frontend/pnpm-lock.yaml.
+#
+# To make builds cross-machine reproducible, COMMIT ./backend/requirements.lock and
+# switch the `pip install ./backend` step (Layer 3) to
+# `pip install -r backend/requirements.lock` (add
+# --extra-index-url https://download.pytorch.org/whl/cpu so torch+cpu still
+# resolves — PyPI/pip has no CPU-only torch wheel). Until then this step merely
+# records the resolved versions each build as a reproducibility reference.
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+    pip freeze > /opt/backend-requirements.lock && \
+    cp /opt/backend-requirements.lock /app/backend/requirements.lock
+
 # ── Layer 5: Frontend dist ──
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
