@@ -17,21 +17,6 @@ from httpx import AsyncClient, ASGITransport
 _BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_BACKEND))
 
-# Mock mem0 package (not installed in test env, blocks app import chain)
-import types as _types
-_mock_mem0 = _types.ModuleType("mem0")
-class _MockMemory:
-    @staticmethod
-    async def add(*a, **kw): return None
-    @staticmethod
-    async def search(*a, **kw): return []
-    @staticmethod
-    async def get_all(*a, **kw): return []
-    @staticmethod
-    async def delete(*a, **kw): return None
-_mock_mem0.Memory = type("Memory", (), {"from_config": classmethod(lambda c, **kw: _MockMemory())})
-sys.modules["mem0"] = _mock_mem0
-
 from app.config import settings
 from app.models.user import User, UserRole
 

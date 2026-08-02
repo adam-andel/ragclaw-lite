@@ -44,7 +44,6 @@ def _sample_snapshot() -> dict:
         "available_tools": [{"function": {"name": "run_python"}}],
         "rag_context": "",
         "citations": [],
-        "memory_context": "",
         "tool_results": [],
         "tool_messages": [],
         "download_entries": [],

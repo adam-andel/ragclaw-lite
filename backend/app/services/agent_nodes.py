@@ -1140,16 +1140,10 @@ async def parallel_retrieval_node(state: dict) -> dict:
     kb_id = state.get("kb_id")
     user_id = state.get("user_id", "")
     # When the user has not selected any knowledge base there is nothing to
-    # retrieve over, so skip the (vector + BM25) hybrid search entirely. Only
-    # the user-scoped memory search still runs.
+    # retrieve over, so skip the (vector + BM25) hybrid search entirely.
     if not kb_id:
         _emit(state, "retrieval_done", "No knowledge base selected - skipping retrieval", detail="skip")
-        memory_context = ""
-        if user_id:
-            mem_raw = await _search_memories_safe(query, user_id)
-            memory_context = _build_memory_context(mem_raw) if mem_raw else ""
-        return {"rag_context": "", "citations": [], "memory_context": memory_context,
-                "retrieval_ms": 0}
+        return {"rag_context": "", "citations": [], "retrieval_ms": 0}
     _emit(state, "retrieval", "Retrieving from knowledge base…")
     t_start = time.time()
     loop = asyncio.get_running_loop()
@@ -1160,13 +1154,7 @@ async def parallel_retrieval_node(state: dict) -> dict:
     # T_vec + T_bm25 to max(T_vec, T_bm25). fuse() then merges both result sets.
     v_task = loop.run_in_executor(None, vector_store.search, kb_id, query, settings.retrieval_vector_top_k)
     b_task = loop.run_in_executor(None, bm25_index.search, kb_id, query, settings.retrieval_bm25_top_k)
-    mem_coro = _search_memories_safe(query, user_id) if user_id else None
-
-    if mem_coro:
-        v_res, b_res, mem_raw = await asyncio.gather(v_task, b_task, mem_coro, return_exceptions=True)
-    else:
-        v_res, b_res = await asyncio.gather(v_task, b_task, return_exceptions=True)
-        mem_raw = []
+    v_res, b_res = await asyncio.gather(v_task, b_task, return_exceptions=True)
 
     if isinstance(v_res, Exception):
         logger.warning("Vector search error: %s", v_res)
@@ -1174,32 +1162,13 @@ async def parallel_retrieval_node(state: dict) -> dict:
     if isinstance(b_res, Exception):
         logger.warning("BM25 search error: %s", b_res)
         b_res = []
-    if isinstance(mem_raw, Exception):
-        logger.warning("Mem0 search error: %s", mem_raw)
-        mem_raw = []
 
     retrieved = hybrid_search.fuse(v_res, b_res)
     rag_context, citations = _build_context(retrieved)
-    memory_context = _build_memory_context(mem_raw) if mem_raw else ""
     chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
     _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
-    return {"rag_context": rag_context, "citations": citations, "memory_context": memory_context,
+    return {"rag_context": rag_context, "citations": citations,
             "retrieval_ms": round((time.time() - t_start) * 1000)}
-
-
-async def _search_memories_safe(
-    query: str, user_id: str, limit: int = 5,
-) -> list[dict]:
-    try:
-        from app.services.memory import search_memories
-        return await search_memories(
-            query, user_id=user_id, limit=limit,
-        ) or []
-    except ImportError:
-        return []
-    except Exception as e:
-        logger.warning("Mem0 search failed: %s", e)
-        return []
 
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
@@ -1225,10 +1194,6 @@ def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
                           "chunk_index": r.get("chunk_index", 0), "heading": heading,
                           "page": page, "score": round(r.get("fusion_score", 0), 4)})
     return "\n\n---\n\n".join(parts), citations
-
-
-def _build_memory_context(memories: list[dict]) -> str:
-    return "\n".join(f"- {m.get('memory', m.get('text', str(m)))}" for m in memories if m.get('memory') or m.get('text'))
 
 
 # ── Tool Decision ──
@@ -1335,7 +1300,7 @@ async def tool_decision_node(state: dict) -> dict:
     # cannot see -- the cumulative tool_messages. We trim (summary -> history -> rag
     # -> tool_messages -> memory) on TRANSIENT copies and never touch the query, so
     # the request always fits without writing anything back.
-    def _assemble(s, h, rag, payload, memory):
+    def _assemble(s, h, rag, payload):
         msgs = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## Task Background (reference only)\n" + skill_prompt + kb_context + ws_context},
@@ -1345,8 +1310,6 @@ async def tool_decision_node(state: dict) -> dict:
         if h:
             msgs.extend(h)
         user_parts = []
-        if memory:
-            user_parts.append(f"## User Preferences & History Memory\n{memory}")
         if rag:
             user_parts.append(f"## Reference Documents\n{rag}")
         user_parts.append(f"## Question\n{state['query']}")
@@ -1382,17 +1345,16 @@ async def tool_decision_node(state: dict) -> dict:
             msgs.extend(sanitized_msgs)
         return msgs
 
-    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m, dropped = fit_assembly_context(
+    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, dropped = fit_assembly_context(
         summary_text=state.get("conversation_summary"),
         history=state.get("conversation_history", []),
         rag_context=state.get("rag_context"),
         tool_payload=state.get("tool_messages", []),
-        memory_context=state.get("memory_context"),
         query=state.get("query"),
         payload_kind="messages",
         build_messages=_assemble,
     )
-    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
+    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p)
     _emit_context_usage(state, trimmed_s, trimmed_h, messages)
     if dropped:
         _emit(

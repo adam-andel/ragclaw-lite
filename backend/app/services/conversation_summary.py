@@ -573,7 +573,6 @@ def fit_assembly_context(
     history: list,
     rag_context: str | None,
     tool_payload: list,
-    memory_context: str | None,
     query: str,
     payload_kind: str,
     build_messages,
@@ -595,15 +594,14 @@ def fit_assembly_context(
         2. history        -> drop oldest message, keep >= 1 (most recent)
         3. rag_context    -> drop least-relevant (tail) chunk, keep >= 1 (most relevant)
         4. tool_payload   -> drop oldest unit/entry, keep >= 1 (most recent)
-        5. memory_context -> drop entirely (user profile)
 
     PHASE 2 -- "no floor" (safety net). Phase 1 can still overflow when a SINGLE
     surviving item is itself huge (e.g. one tool result holding a 200k-char scrape,
     one oversized RAG chunk, or one very long history message). Once phase 1 has
     nothing left to give, we re-run the same order and drop the last survivors too:
-        6. history      -> drop the final message
-        7. rag_context  -> drop the final chunk
-        8. tool_payload -> drop the final unit/entry
+        5. history      -> drop the final message
+        6. rag_context  -> drop the final chunk
+        7. tool_payload -> drop the final unit/entry
     (summary is already empty after phase 1, so it is a no-op here.)
 
     If even an empty context overflows, the fixed system prefix plus the query alone
@@ -616,7 +614,7 @@ def fit_assembly_context(
     callers assemble THIS submission's messages from the trimmed components and must
     NOT write anything back to the database or mutate state.
 
-    Returns ``(summary, history, rag, payload, memory, dropped)``.
+    Returns ``(summary, history, rag, payload, dropped)``.
     """
     if budget is None:
         budget = _budget()
@@ -627,7 +625,6 @@ def fit_assembly_context(
     cur_h = list(history)
     cur_r = rag_context
     cur_p = list(tool_payload)
-    cur_m = memory_context
     dropped = False
 
     def _tool_units(payload: list) -> int:
@@ -638,9 +635,9 @@ def fit_assembly_context(
         return len(payload)
 
     while True:
-        msgs = build_messages(cur_s, cur_h, cur_r, cur_p, cur_m)
+        msgs = build_messages(cur_s, cur_h, cur_r, cur_p)
         if count_messages_tokens(msgs) <= budget:
-            return cur_s, cur_h, cur_r, cur_p, cur_m, dropped
+            return cur_s, cur_h, cur_r, cur_p, dropped
 
         # ---- Phase 1: trim while keeping at least one item per component ---- #
         # 1. summary
@@ -667,12 +664,6 @@ def fit_assembly_context(
             cur_p = _trim_tool_messages_oldest(cur_p) if payload_kind == "messages" else cur_p[1:]
             dropped = True
             continue
-        # 5. memory
-        if cur_m:
-            cur_m = ""
-            dropped = True
-            continue
-
         # ---- Phase 2: floors reached, drop the last survivors (same order) ---- #
         # (summary is already empty here, so it needs no phase-2 step)
         # 6. history -> drop the final message
@@ -697,7 +688,7 @@ def fit_assembly_context(
         logger.warning(
             "fit_assembly_context exhausted: %d tokens still over budget %d "
             "with an empty context (system prefix + query alone overflow).",
-            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_m)),
+            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p)),
             budget,
         )
-        return cur_s, cur_h, cur_r, cur_p, cur_m, dropped
+        return cur_s, cur_h, cur_r, cur_p, dropped

@@ -485,7 +485,6 @@ def _snapshot_state(state: dict) -> dict:
         "available_tools": state.get("available_tools"),
         "rag_context": state.get("rag_context"),
         "citations": state.get("citations"),
-        "memory_context": state.get("memory_context"),
         "tool_results": state.get("tool_results"),
         "tool_messages": state.get("tool_messages"),
         "skill_stack": state.get("skill_stack"),
@@ -532,7 +531,6 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "available_tools": pending["available_tools"],
         "rag_context": pending["rag_context"],
         "citations": pending["citations"],
-        "memory_context": pending["memory_context"],
         "tool_calls": tool_calls,
         "tool_round": pending["tool_round"],
         "tool_results": pending["tool_results"],
@@ -815,7 +813,6 @@ async def chat_stream(
                         "available_tools": [],
                         "rag_context": "",
                         "citations": [],
-                        "memory_context": "",
                         "tool_calls": None,
                         "tool_round": 0,
                         "tool_results": [],
@@ -1465,29 +1462,9 @@ async def _store_memory_and_cache(
     query: str, answer: str, kb_id: str, conversation_id: str, user_id: str,
     citations: list[dict], skill_id: str, kb_prompt: str = "",
 ):
-    """Background task: store answer cache + Mem0 memory."""
+    """Background task: store the answer cache after a completed turn."""
     try:
         answer_cache.put(query, kb_id, answer, citations, skill_id=skill_id, kb_prompt=kb_prompt)
     except Exception:
         pass
-
-    if user_id and answer:
-        try:
-            from app.services.memory import add_memory
-            import json as _json
-            # Structured format for better Mem0 extraction
-            memory_text = _json.dumps({
-                "type": "qa",
-                "query": query[:settings.mem0_query_max_chars],
-                "answer": answer[:settings.mem0_answer_max_chars],
-                "kb_id": kb_id,
-                "skill_id": skill_id or "",
-            }, ensure_ascii=False)
-            await add_memory(
-                memory_text,
-                user_id=user_id,
-                metadata={"kb_id": kb_id, "skill_id": skill_id},
-            )
-        except Exception:
-            pass
 

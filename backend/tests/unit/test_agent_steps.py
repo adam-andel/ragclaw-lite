@@ -427,7 +427,6 @@ class TestBuildGenerationMessagesIsolation:
             "tool_results": [],
             "download_entries": [],
             "rag_context": "",
-            "memory_context": "",
             "active_skill": None,
             "kb_prompt": "",
         }

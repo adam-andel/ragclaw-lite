@@ -194,25 +194,6 @@ class TestMultipleBearer:
 
 
 # ---------------------------------------------------------------------------
-# get_optional_user via protected endpoints
-# ---------------------------------------------------------------------------
-
-class TestOptionalUser:
-    @pytest.mark.asyncio
-    async def test_valid_token_returns_user(self, client, user_token):
-        """Valid token → authenticated access to protected endpoint."""
-        r = await client.get("/api/memory", headers=_auth(user_token))
-        # memory endpoint requires get_current_user; 200 means user resolved
-        assert r.status_code == 200
-
-    @pytest.mark.asyncio
-    async def test_invalid_token_returns_none(self, client):
-        """Invalid token → 401 (get_current_user raises)."""
-        r = await client.get("/api/memory", headers=_auth("invalid.token.here"))
-        assert r.status_code == 401
-
-
-# ---------------------------------------------------------------------------
 # Health — no auth
 # ---------------------------------------------------------------------------
 

@@ -256,9 +256,9 @@ class RagclawAgentGraph:
         # ── Assembly-point budget guard ──
         # build_context_with_summary already compressed persistent history at turn
         # start; this guard handles the in-turn overflow it cannot see -- the
-        # cumulative tool_results. Trim (summary -> history -> rag -> tool_results ->
-        # memory) on TRANSIENT copies, never touch the query, write nothing back.
-        def _assemble(s, h, rag, payload, memory):
+        # cumulative tool_results. Trim (summary -> history -> rag -> tool_results)
+        # on TRANSIENT copies, never touch the query, write nothing back.
+        def _assemble(s, h, rag, payload):
             msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
             if s:
                 msgs.append(
@@ -267,8 +267,6 @@ class RagclawAgentGraph:
             if h:
                 msgs.extend(h)
             user_parts = []
-            if memory:
-                user_parts.append(f"## User Preferences & History Memory\n{memory}")
             if payload:
                 tool_text = "\n".join(f"- {r}" for r in payload)
                 user_parts.append(f"## Tool Call Results\n{tool_text}")
@@ -287,17 +285,16 @@ class RagclawAgentGraph:
             msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
             return msgs
 
-        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m, dropped = fit_assembly_context(
+        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, dropped = fit_assembly_context(
             summary_text=state.get("conversation_summary"),
             history=state.get("conversation_history", []),
             rag_context=state.get("rag_context"),
             tool_payload=state.get("tool_results", []),
-            memory_context=state.get("memory_context"),
             query=state.get("query"),
             payload_kind="results",
             build_messages=_assemble,
         )
-        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_m)
+        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p)
         messages = _sanitize_llm_messages(messages)
         # Stash the persistent/transient split of THIS submission so the caller can
         # report it without re-deriving the post-trim components. Kept on `state`
