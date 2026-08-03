@@ -193,7 +193,7 @@ async def _agent_node(state: CronGraphState, tools: list[BaseTool]) -> dict:
         response = await llm_client.chat_with_tools(
             messages=dict_messages,
             tools=tool_dicts,
-            temperature=0.3,
+            temperature=0.0,
             max_tokens=config_manager.max_tokens,
         )
         ai_message = AIMessage(
@@ -252,7 +252,6 @@ async def _agent_node_prompt_based(state: CronGraphState, tools: list[BaseTool])
     dict_messages = [_message_to_dict(m) for m in modified_messages]
     response_text = await llm_client.chat(
         messages=dict_messages,
-        temperature=0.3,
         max_tokens=config_manager.max_tokens,
     )
 

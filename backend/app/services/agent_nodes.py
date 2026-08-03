@@ -1394,7 +1394,7 @@ async def tool_decision_node(state: dict) -> dict:
                        len(available_tools), tool_round, forced_tool)
             response = await _chat_with_tools_resilient(
                 messages, available_tools, tool_choice,
-                temperature=0.1, max_tokens=_compute_agent_max_tokens(messages),
+                temperature=0.0, max_tokens=_compute_agent_max_tokens(messages),
             )
             tool_calls = response.get("tool_calls")
             content = response.get("content") or ""
@@ -1409,13 +1409,13 @@ async def tool_decision_node(state: dict) -> dict:
                     logger.info("Tool decision: retrying with tool_choice=auto (forced tool rejected)")
                     response = await _chat_with_tools_resilient(
                         messages, available_tools, "auto",
-                        temperature=0.1, max_tokens=_compute_agent_max_tokens(messages),
+                        temperature=0.0, max_tokens=_compute_agent_max_tokens(messages),
                     )
                     tool_calls = response.get("tool_calls")
                     content = response.get("content") or ""
                 except Exception as retry_err:
                     logger.warning("Tool decision: auto retry failed (%s), text mode", str(retry_err)[:200])
-                    content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
+                    content = await llm_client.chat(messages=messages, max_tokens=_compute_agent_max_tokens(messages))
             else:
                 logger.info("Tool decision: falling back to text mode")
                 content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
