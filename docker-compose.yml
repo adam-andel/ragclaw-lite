@@ -42,6 +42,14 @@ services:
       - REPL_UID_RANGE_MIN=${REPL_UID_RANGE_MIN:-10000}
       - REPL_UID_RANGE_MAX=${REPL_UID_RANGE_MAX:-110000}
     restart: unless-stopped
+    # ── Log rotation ── bounded json-file logs so they never grow unbounded.
+    # Apply with: docker compose up -d --force-recreate <svc> (reuses the image,
+    # only recreates the container + starts a fresh empty log).
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     # Backend keeps its public bridge (internet egress) AND joins the internal
     # sandbox network so it can still reach mcp-repl (which is internal-only).
     # NOTE: ragclaw-internal reserves a FIXED IP (.3) so it never races the
@@ -82,6 +90,11 @@ services:
     networks:
       - ragclaw
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ── REPL MCP Server (Python + Shell + JavaScript) ─────
   mcp-repl:
@@ -151,6 +164,11 @@ services:
           cpus: '2'
           memory: 896M
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - ragclaw-egress
     # Internal-only: no route to the internet, only to ragclaw-internal peers
@@ -197,6 +215,11 @@ services:
     volumes:
       - ragclaw_policy:/repl-policy
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       ragclaw-internal:
         ipv4_address: ${RAGCLAW_INTERNAL_NET:-172.30.0}.2
