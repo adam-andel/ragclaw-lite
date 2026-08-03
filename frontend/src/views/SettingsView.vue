@@ -63,8 +63,8 @@ const networkModeOptions = computed(() => [
 
 const config = ref<LLMConfig>({
   llm_provider: 'openai', llm_model: '', llm_api_key: '',
-  llm_base_url: '', llm_temperature: 0.4,   llm_max_tokens: 4096,
-  llm_context_window: 128000,
+  llm_base_url: '', llm_temperature: 0.3,   llm_max_tokens: 4096,
+  llm_context_window: 192000,
   llm_concurrency: 3,
   embedding_model: 'BAAI/bge-small-zh-v1.5',
   embedding_api_key: '',

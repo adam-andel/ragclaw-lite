@@ -743,7 +743,7 @@ class ConfigManager:
         try:
             await llm_client.chat(
                 messages=[{"role": "user", "content": "Ping. Reply with 'OK' only."}],
-                temperature=0,
+                temperature=config_manager.temperature,
                 max_tokens=5,
             )
             self.set_reachable(True)
