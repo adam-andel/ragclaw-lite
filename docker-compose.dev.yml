@@ -154,5 +154,10 @@ services:
       - ./frontend:/app/frontend
     networks:
       - ragclaw
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - ragclaw
