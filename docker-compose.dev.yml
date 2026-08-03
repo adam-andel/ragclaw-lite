@@ -41,17 +41,23 @@
 
 services:
   ragclaw:
+    # Build the DEV image (backend/Dockerfile.dev) instead of the prod Dockerfile.
+    # The dev image installs deps from requirements.txt's floating ranges and bakes
+    # the resolved lock at /opt/backend-requirements.lock for the entrypoint to sync.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
     environment:
       # Dev: emit ragclaw.* INFO logs (tool decisions, LLM calls) to docker logs.
       # Production (base compose) omits this -> defaults to WARNING, so INFO is suppressed.
       - RAGCLAW_ENV=development
     volumes:
       # Overlay the host source on top of the image's /app/backend.
-      # PYTHONPATH=/app/backend (set in Dockerfile) points here and takes
+      # PYTHONPATH=/app/backend (set in backend/Dockerfile.dev) points here and takes
       # precedence over the pip-installed copy in site-packages, so the mounted
       # source is what actually runs. No :cached needed — we're on ext4.
       - ./backend:/app/backend
-    # The image bakes the resolved lock at /opt/backend-requirements.lock (outside
+    # The DEV image bakes the resolved lock at /opt/backend-requirements.lock (outside
     # this bind-mount). This dev entrypoint copies it onto /app/backend/requirements.lock
     # at startup, writing through the bind-mount to the HOST ./backend so the lock can
     # be committed — mirroring frontend/docker-entrypoint.dev.sh. Then it launches

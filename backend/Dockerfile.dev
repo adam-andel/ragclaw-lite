@@ -1,0 +1,73 @@
+# backend/Dockerfile.dev
+# Local dev image for the RAGClaw backend (hot-reload via docker-compose.dev.yml).
+#
+# Dependencies are installed from requirements.txt's FLOATING semver ranges (NOT the
+# committed requirements.lock) so adding/upgrading a dependency in requirements.txt is
+# picked up on the very next dev build with no lockfile-sync ceremony. After install
+# we `pip freeze` to regenerate requirements.lock, mirroring the frontend's
+# frontend/Dockerfile.dev -> /opt/frontend-lock.yaml flow.
+#
+# The regenerated lock is baked to /opt/backend-requirements.lock (OUTSIDE the runtime
+# bind-mount area) and the dev entrypoint (docker-compose.dev.yml) copies it back onto
+# /app/backend/requirements.lock at container start, writing through the bind-mount to
+# the HOST ./backend so the lock can be committed for production to consume.
+#
+# REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
+#   docker compose build --build-arg REGISTRY=docker.m.daocloud.io
+ARG REGISTRY=docker.io
+FROM ${REGISTRY}/library/python:3.12-slim
+
+WORKDIR /app
+
+# ── Layer 1: System deps (rarely changes) ──
+# Note: libgl1-mesa-glx was removed in Debian 12 (Bookworm), use libgl1 instead.
+RUN (apt-get update && \
+     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) || \
+    (sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
+     apt-get update && \
+     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Layer 2: Build config & mirror fallback (no installs here) ──
+# HF_HOME points into the persistent /app/data volume so a BGE model installed
+# on demand from the Settings UI at runtime survives container restarts.
+ENV HF_HOME=/app/data/hf_cache
+# Disable the Xet CAS storage backend (default since huggingface_hub 0.26.0).
+ENV HF_HUB_DISABLE_XET=1
+# Domestic PyPI mirror (overridable at build time); used only as a fallback.
+ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# ── Layer 3: Python deps from requirements.txt (FLOATING, dev-style) ──
+# Installed from requirements.txt (third-party deps ONLY — the project itself is
+# never pip-installed; it runs via PYTHONPATH=/app/backend). Because the project is
+# not pip-installed, the later `pip freeze` produces a CLEAN lock with no
+# `ragclaw-backend @ file://` self-reference to strip — and the dep layer stays
+# cacheable even as backend source changes (only requirements.txt is COPYed here).
+#
+# CRITICAL: torch (+cpu wheel) lives ONLY on the pytorch index, so it is passed as an
+# EXTRA index — NOT --index-url, which would shadow PyPI for the other ~160 pkgs.
+# This MUST match the prod Dockerfile's index so the regenerated lock pins torch==*+cpu.
+COPY backend/requirements.txt ./backend/
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+    (pip install -r backend/requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu || \
+     pip install -r backend/requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        --index-url ${PYPI_MIRROR})
+
+# ── Layer 4: Regenerate the lockfile from the freshly-resolved dev install ──
+# pip freeze snapshots the exact RESOLVED versions of every third-party package.
+# Bake to /opt/backend-requirements.lock — OUTSIDE /app/backend so the dev
+# bind-mount (./backend -> /app/backend) can never shadow it. The dev entrypoint
+# (docker-compose.dev.yml) copies it back onto /app/backend/requirements.lock at
+# container start, writing through the bind-mount to the HOST ./backend so the lock
+# can be committed for production to consume — mirroring frontend/docker-entrypoint.dev.sh.
+RUN pip freeze > /opt/backend-requirements.lock
+
+# ── Layer 5: Backend code (bind-mounted at runtime in dev) ──
+COPY backend/ backend/
+
+ENV PYTHONPATH=/app/backend
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

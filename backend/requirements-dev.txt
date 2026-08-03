@@ -1,0 +1,5 @@
+# Dev/test dependencies (previously the [project.optional-dependencies].dev extra
+# in pyproject.toml). Not installed in the Docker images — install locally with
+# `pip install -r requirements-dev.txt` when running tests outside the container.
+pytest>=8.0
+pytest-asyncio>=0.23.0
