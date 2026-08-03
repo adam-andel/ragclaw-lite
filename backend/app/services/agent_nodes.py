@@ -21,6 +21,7 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
+from app.services.cron_parser import try_parse_cron_payload
 from app.services.conversation_summary import (
     context_breakdown,
     fit_assembly_context,
@@ -1550,6 +1551,12 @@ async def tool_decision_node(state: dict) -> dict:
         # (tool budget intact) force ONE run_python retry so the graph never
         # silently reaches the final-answer stage and its final_stage_note
         # ("sorry, can't call tools") for such requests. ──
+        # BUT: if the model already emitted a valid scheduled-task (cron) JSON,
+        # do NOT force a tool call — that JSON is consumed by chat.py to create
+        # the cron job, and forcing run_python would loop and re-emit the JSON.
+        if tool_round == 0 and content and try_parse_cron_payload(content):
+            logger.info("Tool decision: content is a cron payload — skip tool interception, let final stage create it")
+            return {"tool_calls": None}
         if tool_round == 0 and _query_obviously_needs_tool(state.get("query", ""), available_tools):
             logger.info(
                 "Tool decision: intent obviously needs a tool but none produced — intercepting with forced run_python retry"

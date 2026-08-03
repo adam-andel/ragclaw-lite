@@ -1039,7 +1039,7 @@ async function loadConversation(id: string) {
       if (pending && pending.message_id) {
         pendingLimit.value = {
           message: pending.message,
-          convId: pending.conversation_id,
+          convId: pending.conversation_id || id,
           kind: pending.kind,
           messageId: pending.message_id,
         }
@@ -1141,18 +1141,27 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         const currentView = conversationId.value
         const onChat = route.path.startsWith('/chat')
         if (onChat && (currentView === event.conv_id || currentView === undefined)) {
-          messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
+          // Set the bubble FIRST so a later error (e.g. a stale proxyMsg) can never
+          // suppress the continue/stop controls — the message text alone is not enough.
+          pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
           const pendingMsg: ChatMsg = {
             id: event.message_id,
             role: 'assistant',
             content: event.message,
             citations: [],
             created_at: new Date().toISOString(),
-            agentSteps: [],
+            // Preserve the processing steps already produced during this run so they
+            // remain visible (collapsible) after suspension instead of disappearing.
+            agentSteps: (proxyMsg?.agentSteps as any) || [],
             _pending: true,
           }
+          // Remove the live streaming placeholder if it is still in the list. Guard against
+          // proxyMsg being undefined (stale closure / HMR) so we never throw before the bubble
+          // is shown.
+          if (proxyMsg && proxyMsg.id) {
+            messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
+          }
           messages.value.push(pendingMsg)
-          pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
         } else {
           chatUnread.markUnread(event.conv_id)
         }
@@ -1463,9 +1472,9 @@ function handleKeydown(e: KeyboardEvent) {
       </div>
       <template v-for="msg in messages" :key="msg.id">
         <ChatMessage
-          v-if="!msg._pending"
           :message="msg"
-          :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1]"
+          :pending="!!msg._pending"
+          :is-streaming="isStreaming && msg.role === 'assistant' && msg === messages[messages.length - 1] && !msg._pending"
           :queue-position="queuePosition"
           :stage-hint="assistantStage"
           :search-keyword="searchKw"
@@ -1475,7 +1484,7 @@ function handleKeydown(e: KeyboardEvent) {
       </template>
 
       <!-- Inline suspension bubble (shown when the limit is hit, blends into the message stream) -->
-      <div v-if="pendingLimit" :key="pendingLimit.convId + ':' + pendingLimit.message" class="resume-inline-bubble" role="alert">
+      <div v-if="pendingLimit" key="resume-inline-bubble" class="resume-inline-bubble" role="alert">
         <div class="resume-bubble-icon">⏸️</div>
         <div class="resume-bubble-body">
           <div class="resume-bubble-msg">{{ pendingLimit.message }}</div>

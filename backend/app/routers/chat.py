@@ -154,6 +154,39 @@ async def _save_assistant_message(
     return assistant_msg
 
 
+async def _cleanup_orphan_messages(conv_id: str, keep_id: str | None = None) -> int:
+    """Delete dangling assistant messages stuck in ``generating`` state.
+
+    These accumulate when a turn is suspended / hit the round limit / errored
+    mid-stream: the per-round assistant bubble is pre-created with
+    ``status='generating'`` but never finalized. Left alone they clutter the
+    chat with empty or half-written duplicates. The one message we are about to
+    finalize (``keep_id``) is preserved.
+    """
+    try:
+        async with db_mod.async_session() as session:
+            stmt = select(Message).where(
+                Message.conversation_id == conv_id,
+                Message.role == "assistant",
+                Message.status == "generating",
+            )
+            if keep_id:
+                stmt = stmt.where(Message.id != keep_id)
+            rows = (await session.execute(stmt)).scalars().all()
+            for m in rows:
+                await session.delete(m)
+            if keep_id:
+                # Also clear any leftover 'generating' flag on the kept message.
+                kept = await session.get(Message, keep_id)
+                if kept and kept.status == "generating":
+                    kept.status = "complete"
+            await session.commit()
+            return len(rows)
+    except Exception as e:
+        logger.warning("Failed to clean up orphan messages for %s: %s", conv_id, e)
+        return 0
+
+
 async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
     """Return ``(summary_msg_count, total_messages)`` for a conversation.
 
@@ -899,6 +932,8 @@ async def chat_stream(
                             "kind": state["pending_limit"]["kind"],
                             "message_id": pending_msg.id,
                         })
+                        # Drop any dangling 'generating' bubbles from earlier rounds.
+                        await _cleanup_orphan_messages(conv_id, keep_id=pending_msg.id)
                         return
 
                     if state.get("cache_hit"):
@@ -1089,6 +1124,9 @@ async def chat_stream(
                         status="complete",
                     )
                     await _persist_agent_steps(conv_id, assistant_msg.id, list(stream_agent_steps))
+                    # Drop any dangling 'generating' bubbles left by suspended
+                    # rounds earlier in this conversation.
+                    await _cleanup_orphan_messages(conv_id, keep_id=assistant_msg.id)
                     cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
                         "conversation_id": conv_id,

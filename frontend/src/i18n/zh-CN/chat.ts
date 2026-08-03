@@ -84,6 +84,7 @@ export default {
   stop: '停止',
   continueResume: '继续',
   stopResume: '停止',
+  suspended: '已挂起',
   resumeHint: '或直接在下方输入新问题（将视为「停止」并结束本轮）',
   userStoppedNote: '用户已手动终止本轮对话。',
   generationFailedNote: '⚠️ 本轮生成失败，请重试。已在上文保留处理过程中已完成的系统步骤。',

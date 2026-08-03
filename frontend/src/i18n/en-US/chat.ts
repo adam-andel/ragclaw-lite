@@ -84,6 +84,7 @@ export default {
   stop: 'Stop',
   continueResume: 'Continue',
   stopResume: 'Stop',
+  suspended: 'Suspended',
   resumeHint: 'Or just type a new question below (this is treated as "Stop" and ends this turn)',
   userStoppedNote: 'The user manually stopped this turn.',
   generationFailedNote: '⚠️ Generation failed for this turn. Please retry. The completed processing steps are kept above.',

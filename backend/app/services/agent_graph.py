@@ -298,7 +298,11 @@ class RagclawAgentGraph:
             '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
             '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
             '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
-            "Do not wrap the JSON in markdown code fences.\n\n"
+            "Output ONLY that JSON object and nothing else — no markdown code fences, "
+            "no surrounding prose, and do NOT call any tool (run_python etc.) for it. "
+            "The system automatically creates the scheduled task from the JSON, so once "
+            "you emit it your turn is finished. If you are unsure about fields, fill them "
+            "as best you can rather than emitting prose or repeated JSON blocks.\n\n"
             # A scheduled task runs unattended: a script that silently falls back to
             # placeholder data would report success forever while emitting garbage.
             # Both rules below are also appended at execution time (cron_graph), so

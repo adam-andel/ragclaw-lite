@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores/auth'
 const props = defineProps<{
   message: ChatMessage
   isStreaming?: boolean
+  pending?: boolean
   queuePosition?: number | null
   stageHint?: string | null
   searchKeyword?: string
@@ -333,7 +334,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['message-wrapper', message.role, { 'active-search-hit': activeMatch }]" :id="'msg-' + message.id">
+  <div :class="['message-wrapper', message.role, { 'active-search-hit': activeMatch, 'pending-message': pending }]" :id="'msg-' + message.id">
     <div class="message-avatar">
       {{ message.role === 'user' ? '👤' : '🤖' }}
     </div>
@@ -341,6 +342,7 @@ onBeforeUnmount(() => {
     <div class="message-body">
       <div class="message-meta">
         <span class="role-label">{{ message.role === 'user' ? t('chat.you') : 'RAGClaw' }}</span>
+        <span v-if="pending" class="pending-badge">⏸ {{ t('chat.suspended') }}</span>
         <span class="time">{{ formatTime(message.created_at) }}</span>
       </div>
 
@@ -581,6 +583,21 @@ mark.search-hit.active {
 .role-label { font-weight: 600; }
 .time { color: var(--color-text-muted); }
 .user .time { color: rgba(255,255,255,0.7); }
+
+/* Suspended message (limit hit, awaiting continue/stop): subtle visual cue */
+.message-wrapper.pending-message .message-body {
+  border-left: 3px solid var(--color-warning, #f59e0b);
+}
+.pending-badge {
+  background: var(--color-warning-soft, rgba(245, 158, 11, 0.15));
+  color: var(--color-warning, #b45309);
+  border: 1px solid var(--color-warning, #f59e0b);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.72em;
+  font-weight: 600;
+  line-height: 1.6;
+}
 
 /* Dim the user bubble in dark mode — var(--color-primary) reads too bright on the dark surface */
 :global(html.dark) .user .message-body {
