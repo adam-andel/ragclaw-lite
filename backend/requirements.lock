@@ -115,7 +115,6 @@ python-multipart==0.0.32
 python-pptx==1.0.2
 pytz==2026.3.post1
 PyYAML==6.0.3
-ragclaw-backend @ file:///app/backend
 rank-bm25==0.2.2
 red-black-tree-mod==1.22
 referencing==0.37.0
