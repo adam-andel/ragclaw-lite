@@ -545,11 +545,25 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         return "(任务内容为空，未执行)"
 
     # Imported lazily to avoid a circular import (agent_graph imports this module).
-    from app.services.agent_graph import ragclaw_agent_graph
+    from app.services.agent_graph import ragclaw_agent_graph, sandbox_network_rule
     from app.services.config_manager import config_manager
+    from app.services.i18n import t as _t
+
+    # The cron rule (which carries these two constraints at creation time) is
+    # deliberately disabled during execution so the task is never re-scheduled.
+    # But the executing agent is the one that actually WRITES and RUNS the code,
+    # so the same constraints must be restated here — otherwise a run that cannot
+    # reach the network improvises placeholder data and still reports success.
+    task_query = (
+        task
+        + "\n\n---\n"
+        + sandbox_network_rule(execution=True)
+        + "\n\n"
+        + _t("cron_no_fallback_rule", config_manager.prompt_language)
+    )
 
     initial_state = {
-        "query": task,
+        "query": task_query,
         "available_tools": [],
         "active_skill": None,
         "skill_stack": [],

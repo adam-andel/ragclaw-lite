@@ -77,6 +77,56 @@ MESSAGES = {
         "fence turns the rest of your answer into unreadable code and hides the summary you wrote."
     ),
 
+    # Appended to the Scheduled Task Rule at creation time. Forbids the model from
+    # writing scripts that silently substitute placeholder data when a real external
+    # fetch fails. No placeholders.
+    "cron_no_fallback_rule": (
+        "### Data Integrity (MANDATORY for any script you write)\n"
+        "A scheduled task runs unattended, so a script that silently invents data will "
+        "keep reporting success forever while producing garbage. Therefore:\n"
+        "- If the task depends on external data (an HTTP API, a web page, a feed), the "
+        "script MUST actually perform that request at runtime.\n"
+        "- If the request fails for ANY reason (network blocked, DNS failure, timeout, "
+        "non-2xx status, unparseable body), the script MUST write the error to stderr and "
+        "exit with a NON-ZERO status code (e.g. `sys.exit(1)`). A failed run must be "
+        "visible as a FAILED run.\n"
+        "- NEVER substitute hard-coded, cached, simulated, estimated or 'example' values "
+        "for data you could not fetch. No silent fallback, no `try/except` that swallows "
+        "the error and continues with placeholder numbers.\n"
+        "- NEVER label output with a data source you did not actually reach. Writing "
+        "'Source: <API name>' in a report built from invented values is strictly "
+        "forbidden.\n"
+        "- Do not write a partial-success path that still exits 0 after producing an "
+        "incomplete artifact."
+    ),
+
+    # Tells the model the live sandbox egress policy BEFORE it writes task code, so it
+    # can refuse impossible tasks up front instead of improvising at runtime.
+    # Used on the CREATION path (the model may still decline to create the job).
+    # Placeholders: {mode_line}
+    "sandbox_network_rule": (
+        "### Sandbox Network Policy (current, authoritative)\n"
+        "{mode_line}\n"
+        "Take this into account BEFORE writing any code. If the task requires reaching a "
+        "host that this policy forbids, the task is IMPOSSIBLE — do NOT emit the cron "
+        "JSON, and do NOT write a script that pretends to work. Instead reply in plain "
+        "text explaining that the sandbox network policy blocks the required access, name "
+        "the host(s) needed, and tell the user to allow them in Settings → Sandbox "
+        "Network (or switch the task to something that needs no external data)."
+    ),
+
+    # Same policy statement, but for the EXECUTION path, where the job already exists
+    # and declining to "create" it is not an option — the run must fail loudly instead.
+    # Placeholders: {mode_line}
+    "sandbox_network_rule_exec": (
+        "### Sandbox Network Policy (current, authoritative)\n"
+        "{mode_line}\n"
+        "Take this into account BEFORE writing any code. If this task requires reaching a "
+        "host that the policy forbids, do NOT try to work around it and do NOT substitute "
+        "placeholder data. Report the run as FAILED and state plainly that the sandbox "
+        "network policy blocked the required access, naming the host(s) needed."
+    ),
+
     # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}
     "skill_switch_limit": (
         'use_skill: skill-switch limit reached ({switch_count}/{quota}); '

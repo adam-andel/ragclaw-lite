@@ -36,6 +36,61 @@ from app.services.agent_nodes import (
 )
 
 
+def sandbox_network_rule(execution: bool = False) -> str:
+    """Render the live sandbox egress policy as a prompt fragment.
+
+    The policy is read at call time (not import time) so a change saved in
+    Settings takes effect on the very next turn, matching the hot-reload the
+    MCP REPL server already gets via PUT /policy.
+
+    Exposed at module level because both the creation path (the cron rule in
+    ``build_generation_messages``) and the execution path (``cron_graph``) need
+    the same authoritative text.
+
+    Args:
+        execution: True when a cron job is being RUN. The job already exists, so
+            "don't create it" is meaningless; the run must fail loudly instead.
+    """
+    mode = (config_manager.sandbox_network_mode or "deny").strip().lower()
+
+    if mode == "allow":
+        mode_line = (
+            "Mode: ALLOW — the sandbox has unrestricted outbound network access. "
+            "Any host may be reached."
+        )
+    elif mode == "allowlist":
+        domains = [
+            d.strip()
+            for d in (config_manager.sandbox_allow_domains or "").split(",")
+            if d.strip()
+        ]
+        if domains:
+            mode_line = (
+                "Mode: ALLOWLIST — outbound requests are permitted ONLY to these "
+                "domains: " + ", ".join(domains) + ". Every other host is blocked "
+                "(the request will fail; it is proxied and filtered)."
+            )
+        else:
+            # allowlist with an empty list denies everything in practice.
+            mode_line = (
+                "Mode: ALLOWLIST, but the allowlist is EMPTY — in practice every "
+                "outbound request is blocked, exactly like DENY."
+            )
+    else:
+        mode_line = (
+            "Mode: DENY — the sandbox has NO outbound network access at all. "
+            "DNS resolution itself fails. Every HTTP/API/web request from task code "
+            "WILL fail. Libraries such as requests/urllib/httpx, and tools such as "
+            "curl/wget, cannot reach anything."
+        )
+
+    return _t(
+        "sandbox_network_rule_exec" if execution else "sandbox_network_rule",
+        config_manager.prompt_language,
+        mode_line=mode_line,
+    )
+
+
 def _build_graph() -> StateGraph:
     """Construct the RAGClaw agent state graph.
 
@@ -243,7 +298,16 @@ class RagclawAgentGraph:
             '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
             '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
             '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
-            "Do not wrap the JSON in markdown code fences."
+            "Do not wrap the JSON in markdown code fences.\n\n"
+            # A scheduled task runs unattended: a script that silently falls back to
+            # placeholder data would report success forever while emitting garbage.
+            # Both rules below are also appended at execution time (cron_graph), so
+            # the constraint holds whether the code is written now or at run time.
+            + _t("cron_no_fallback_rule", config_manager.prompt_language)
+            + "\n\n"
+            # Surface the live egress policy at CREATION time so the model can refuse
+            # an impossible task up front instead of improvising a fake one at runtime.
+            + sandbox_network_rule()
         ) if include_cron_rule else ""
 
         # final_note is intentionally kept OUT of the system prompt — it lives in

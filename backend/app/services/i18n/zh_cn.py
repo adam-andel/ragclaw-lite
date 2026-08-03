@@ -63,6 +63,47 @@ MESSAGES = {
         "变成不可读的代码，并掩盖你写好的总结。"
     ),
 
+    # Appended to the Scheduled Task Rule at creation time. Forbids the model from
+    # writing scripts that silently substitute placeholder data when a real external
+    # fetch fails. No placeholders.
+    "cron_no_fallback_rule": (
+        "### 数据真实性（编写任何脚本时必须遵守）\n"
+        "定时任务是无人值守运行的，一个会悄悄编造数据的脚本会永远报告成功，却一直产出垃圾结果。因此：\n"
+        "- 如果任务依赖外部数据（HTTP 接口、网页、订阅源），脚本在运行时**必须真的发起该请求**。\n"
+        "- 如果请求因**任何**原因失败（网络被拦截、DNS 解析失败、超时、非 2xx 状态码、响应无法解析），"
+        "脚本**必须**把错误写入 stderr 并以**非零状态码退出**（例如 `sys.exit(1)`）。失败的运行必须"
+        "表现为失败。\n"
+        "- **绝不允许**用硬编码、缓存、模拟、估算或「示例」数值来顶替没能取到的数据。不许有静默兜底，"
+        "不许用 `try/except` 吞掉异常后继续拿占位数字往下跑。\n"
+        "- **绝不允许**给输出标注一个你根本没访问成功的数据来源。在用编造数值生成的报告里写"
+        "「数据来源：某某 API」是严格禁止的。\n"
+        "- 不要写那种产出残缺结果却仍然以 0 退出的「部分成功」分支。"
+    ),
+
+    # Tells the model the live sandbox egress policy BEFORE it writes task code, so it
+    # can refuse impossible tasks up front instead of improvising at runtime.
+    # Used on the CREATION path (the model may still decline to create the job).
+    # Placeholders: {mode_line}
+    "sandbox_network_rule": (
+        "### 沙盒网络策略（当前生效，以此为准）\n"
+        "{mode_line}\n"
+        "在动手写代码**之前**就要把这条策略考虑进去。如果任务需要访问该策略禁止的主机，那么这个任务"
+        "就是**做不到**的——此时**不要**输出 cron JSON，也**不要**写一个假装能用的脚本。而应当用纯文本"
+        "回复：说明沙盒网络策略阻断了所需访问，指出需要放行的主机，并告知用户可在「设置 → 沙盒网络」"
+        "中放行（或把任务改成不需要外部数据的形式）。"
+    ),
+
+    # Same policy statement, but for the EXECUTION path, where the job already exists
+    # and declining to "create" it is not an option — the run must fail loudly instead.
+    # Placeholders: {mode_line}
+    "sandbox_network_rule_exec": (
+        "### 沙盒网络策略（当前生效，以此为准）\n"
+        "{mode_line}\n"
+        "在动手写代码**之前**就要把这条策略考虑进去。如果本任务需要访问该策略禁止的主机，**不要**想办法"
+        "绕过，也**不要**用占位数据顶替。应当把本次运行判定为**失败**，并明确说明是沙盒网络策略阻断了"
+        "所需访问，同时指出需要放行的主机。"
+    ),
+
     # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}
     "skill_switch_limit": (
         "use_skill：已达技能切换上限（{switch_count}/{quota}），"
