@@ -55,6 +55,7 @@ export default {
   contextTokens: '上下文 ≈ {used} / {total}',
   contextTokensTip: '最近一次提交占用 {pct}% 上下文窗口，点击查看与压缩',
   contextModal: {
+    intro: '自动压缩已开启。以下是系统压缩后形成的摘要，将作为对话上下文的一部分。您可以编辑摘要，补充重要的信息或者删除无用信息，也可以手动压缩上下文（规则是把尚未摘要部分中最早的一半折叠进摘要）。',
     title: '上下文占用',
     breakdown: '持久部分（摘要+历史）{persistent}% · 本轮瞬态（RAG/工具）{transient}%',
     cursor: '已摘要 {done} / 共 {total} 条',

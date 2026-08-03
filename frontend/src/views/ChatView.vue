@@ -1752,6 +1752,7 @@ function handleKeydown(e: KeyboardEvent) {
         size="wide"
       >
         <NSpin :show="ctxLoading">
+          <p class="ctx-intro">{{ t('chat.contextModal.intro') }}</p>
           <div class="ctx-head">
             <div class="ctx-total" :class="contextRatioClass">
               {{ t('chat.contextTokens', { used: formatTokens(contextTokens), total: formatTokens(auth.contextWindow) }) }}
@@ -1782,10 +1783,6 @@ function handleKeydown(e: KeyboardEvent) {
               <li v-for="(p, i) in ctxSummaryParagraphs" :key="i" class="ctx-para">{{ p }}</li>
             </ol>
           </template>
-
-          <div class="ctx-hint">
-            {{ ctxEditing ? t('chat.contextModal.editHint') : t('chat.contextModal.compactHint') }}
-          </div>
         </NSpin>
 
         <template #footer>
@@ -2641,6 +2638,12 @@ function handleKeydown(e: KeyboardEvent) {
 .ctx-total.warn { color: #f0a020; }
 .ctx-total.danger { color: #e0413e; }
 .ctx-pct { margin-left: 8px; }
+.ctx-intro {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--color-text-muted);
+}
 .ctx-breakdown,
 .ctx-cursor {
   font-size: 12px;
@@ -2676,12 +2679,6 @@ function handleKeydown(e: KeyboardEvent) {
   padding: 16px 12px;
   border: 1px dashed var(--color-border);
   border-radius: 8px;
-}
-.ctx-hint {
-  margin-top: 12px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--color-text-muted);
 }
 .ctx-footer {
   display: flex;

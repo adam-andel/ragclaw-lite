@@ -55,6 +55,7 @@ export default {
   contextTokens: 'Context ≈ {used} / {total}',
   contextTokensTip: 'The latest submission used {pct}% of the context window — click to inspect and compact',
   contextModal: {
+    intro: 'Automatic compression is on. The summary below is produced by the system and becomes part of the conversation context. You can edit it to add important details or remove noise, and you can also compact the context manually (this folds the oldest half of the not-yet-summarized turns into the summary).',
     title: 'Context usage',
     breakdown: 'Persistent (summary + history) {persistent}% · This turn (RAG / tools) {transient}%',
     cursor: 'Summarized {done} of {total} messages',
