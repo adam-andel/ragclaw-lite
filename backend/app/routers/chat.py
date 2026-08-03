@@ -1014,7 +1014,22 @@ async def chat_stream(
                         # The model sometimes re-pastes the generated source as a
                         # trailing code block; drop it so the answer stays clean.
                         collected_content = _strip_trailing_source_dump(collected_content)
-                        for e in dl_entries:
+                        # `download_entries` uses an `operator.add` reducer, so it
+                        # ACCUMULATES across tool rounds instead of being overwritten.
+                        # `_build_download_entries` only de-dupes within a single
+                        # round, so the same file returned by multiple tool calls/rounds
+                        # ends up duplicated here — which would render as multiple
+                        # identical download buttons. De-dupe the final list by url.
+                        seen_urls: set[str] = set()
+                        deduped_dl: list[dict] = []
+                        for _e in dl_entries:
+                            _u = _e.get("url")
+                            if _u in seen_urls:
+                                continue
+                            seen_urls.add(_u)
+                            deduped_dl.append(_e)
+
+                        for e in deduped_dl:
                             # Live UI update (SSE) + persisted trace (agent_steps),
                             # so the download button also survives a page refresh.
                             emit_agent_step(

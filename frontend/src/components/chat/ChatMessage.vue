@@ -164,21 +164,28 @@ const processSteps = computed(() =>
 // model), so they never depend on the answer text being well-formed.
 const fileDownloads = computed(() => {
   const ds = (props.message.agentSteps || []).filter((s: any) => s.stage === 'file_done')
-  return ds
-    .map((s: any) => {
-      const extra = s.extra || {}
-      let path = (extra.path as string) || ''
-      if (!path && extra.url) {
-        try {
-          path = new URL(extra.url as string, window.location.origin).searchParams.get('path') || ''
-        } catch {
-          path = ''
-        }
+  const seen = new Set<string>()
+  const out: { filename: string; path: string }[] = []
+  for (const s of ds) {
+    const extra = s.extra || {}
+    let path = (extra.path as string) || ''
+    if (!path && extra.url) {
+      try {
+        path = new URL(extra.url as string, window.location.origin).searchParams.get('path') || ''
+      } catch {
+        path = ''
       }
-      const filename = (extra.filename as string) || path.split('/').pop() || s.message
-      return { filename, path }
-    })
-    .filter((d) => d.path)
+    }
+    if (!path) continue
+    // De-dupe by path: the same file can appear in multiple `file_done`
+    // steps (returned by several tool rounds / persisted across runs),
+    // which would otherwise render as duplicate download buttons.
+    if (seen.has(path)) continue
+    seen.add(path)
+    const filename = (extra.filename as string) || path.split('/').pop() || s.message
+    out.push({ filename, path })
+  }
+  return out
 })
 
 function downloadFile(path: string) {
