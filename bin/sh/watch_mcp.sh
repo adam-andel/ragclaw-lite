@@ -103,7 +103,7 @@ echo
 if [ "$WATCHER" = "inotifywait" ]; then
   inotifywait -m -r \
     -e close_write -e moved_to -e create \
-    --exclude '(/workspace/|__pycache__/|\.pyc$)' \
+    --exclude '(/workspace/|__pycache__/|\.pyc$|requirements\.lock$|requirements\.txt$)' \
     --format '%w%f' \
     "$WATCH_DIR" > "$FIFO" &
   WATCHER_PID=$!
@@ -112,6 +112,7 @@ else
   # events so saves coalesce into a single restart like inotifywait does.
   fswatch -r -E \
     -e '/workspace/' -e '__pycache__' -e '\.pyc$' \
+    -e 'requirements\.lock$' -e 'requirements\.txt$' \
     --event Created --event Updated --event Renamed \
     "$WATCH_DIR" > "$FIFO" &
   WATCHER_PID=$!

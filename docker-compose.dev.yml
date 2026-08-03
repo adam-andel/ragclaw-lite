@@ -15,11 +15,15 @@
 #             uvicorn to --reload, so saving a .py file hot-restarts the server
 #             WITHOUT rebuilding the image. PYTHONPATH=/app/backend (Dockerfile)
 #             makes the mounted source what actually runs.
-#   * mcp-repl — bind-mounts ./mcp over the image's /app, so editing the REPL
-#             sandbox server (.py) takes effect WITHOUT rebuilding the image.
-#             The base image still supplies Python + Node + pip deps; only the
-#             server source is overlaid by the bind mount. Unlike the backend,
-#             the MCP server has no uvicorn-style --reload. To get hot-reload in
+#   * mcp-repl — built from the DEV image (mcp/Dockerfile.dev), which installs
+#             FLOATING deps from requirements.txt then `pip freeze` pins them to
+#             /opt/mcp-requirements.lock; this dev entrypoint copies that lock
+#             back to HOST ./mcp/requirements.lock at startup so it can be
+#             committed. The PROD image (mcp/Dockerfile) installs from the
+#             committed (pinned) requirements.lock. Server source is bind-mounted
+#             (./mcp -> /app) so editing a sandbox .py takes effect WITHOUT a
+#             rebuild. Unlike the backend, the MCP server has no uvicorn-style
+#             --reload. To get hot-reload in
 #             dev WITHOUT touching the image or prod, just start the dev stack —
 #             `--dev` automatically launches the host-side watcher in the
 #             background (no separate terminal needed):
@@ -65,10 +69,20 @@ services:
     entrypoint: ["sh", "-c", "cp /opt/backend-requirements.lock /app/backend/requirements.lock 2>/dev/null; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend"]
 
   # ── REPL MCP Server (dev: bind-mount local source) ───────────────────────────
-  # Mirror the `ragclaw` dev pattern: overlay ./mcp (host) on top of the image's
-  # /app so edits to the sandbox server take effect WITHOUT rebuilding the image.
-  # The base image (built from ./mcp) still supplies Python + Node + pip deps —
-  # only the server source is replaced by the bind mount.
+  # Built from the DEV image (mcp/Dockerfile.dev): installs FLOATING deps from
+  # requirements.txt, then `pip freeze` pins them to /opt/mcp-requirements.lock
+  # (baked OUTSIDE the /app bind-mount). This dev entrypoint copies that lock onto
+  # /app/requirements.lock at startup, writing through the bind-mount to the HOST
+  # ./mcp/requirements.lock so it can be committed — mirroring backend/Dockerfile.dev.
+  # The PROD image (mcp/Dockerfile) installs from the committed (pinned)
+  # requirements.lock and never freezes.
+  #
+  # Server source is overlaid by the ./mcp bind-mount, so editing a sandbox .py
+  # takes effect WITHOUT rebuilding the image (the host-side watcher in
+  # watch_mcp.sh fires `compose restart mcp-repl` on change). The watcher EXCLUDES
+  # requirements.txt / requirements.lock so (a) dependency edits need an image
+  # rebuild, not a restart, and (b) the lock write-back above can't trigger a
+  # restart storm.
   #
   # The named volumes ragclaw_workspace / ragclaw_policy (declared in the base
   # file) continue to mount on /app/workspace and /repl-policy, on top of this
@@ -79,31 +93,25 @@ services:
   #
   # NOTE: the host entrypoint.sh is *not* executable, so we can't rely on the
   # image's `ENTRYPOINT ["./entrypoint.sh"]` under a bind mount (permission
-  # denied). We wrap it with `sh` instead — the script's setup (workspace chown
-  # + egress DNS via /etc/resolv.conf) still runs. PYTHONDONTWRITEBYTECODE=1 in
-  # the image keeps /app from being written.
+  # denied). We wrap it with `sh` in the entrypoint below — the script's setup
+  # (workspace chown + egress DNS via /etc/resolv.conf) still runs. PYTHONDONTWRITEBYTECODE=1
+  # in the image keeps /app from being written.
   mcp-repl:
+    # Build the DEV image (mcp/Dockerfile.dev) instead of the prod mcp/Dockerfile.
+    # The dev image installs floating deps and bakes the resolved lock at
+    # /opt/mcp-requirements.lock for the entrypoint to sync back to the host.
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile.dev
     volumes:
       - ./mcp:/app
-    # The host entrypoint.sh is not executable, so bypass the image's
-    # `ENTRYPOINT ["./entrypoint.sh"]` (would fail with permission denied under
-    # the bind mount) by launching it via `sh`. Replicates the base CMD args.
-    entrypoint: ["sh"]
-    command:
-      - /app/entrypoint.sh
-      - "--port"
-      - "9200"
-      - "--allow-dir"
-      - "/app/workspace"
-      - "--no-network"
-      - "--max-memory-mb"
-      - "512"
-      - "--max-nproc"
-      - "64"
-      - "--max-concurrent"
-      - "4"
-      - "--enable-shell"
-      - "--enable-javascript"
+    # The DEV image baked the resolved lock at /opt/mcp-requirements.lock (outside
+    # this bind-mount). Copy it onto /app/requirements.lock at startup, writing
+    # through the bind-mount to HOST ./mcp so the lock can be committed — mirroring
+    # the backend dev flow. Then launch the server via `sh` (host entrypoint.sh is
+    # not executable under the bind mount). SINGLE-ELEMENT list — NEVER split into
+    # entrypoint + command (docker-compose tokenizes that and breaks `cp`).
+    entrypoint: ["sh", "-c", "cp /opt/mcp-requirements.lock /app/requirements.lock 2>/dev/null; exec sh /app/entrypoint.sh --port 9200 --allow-dir /app/workspace --no-network --max-memory-mb 512 --max-nproc 64 --max-concurrent 4 --enable-shell --enable-javascript"]
 
   # ── Frontend Vite dev server (HMR) ────────────────────────────────────────
   # Runs `vite` with hot-module-replacement. Source is bind-mounted so edits on

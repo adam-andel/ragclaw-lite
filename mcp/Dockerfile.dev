@@ -1,8 +1,14 @@
-# REPL MCP Server — Docker image (Python + Shell + JavaScript sandbox)
-# Isolated execution environment for LLM-generated code
+# REPL MCP Server — DEV Docker image (Python + Shell + JavaScript sandbox)
+# DEV build ONLY: installs FLOATING deps from requirements.txt, then `pip freeze`
+# pins the fully-resolved tree to /opt/mcp-requirements.lock (baked OUTSIDE the
+# /app bind-mount). The dev entrypoint (docker-compose.dev.yml) copies it back
+# onto /app/requirements.lock at container start — writing through the bind-mount
+# to the HOST ./mcp so the lock can be committed. Mirrors backend/Dockerfile.dev.
+# The PROD image (mcp/Dockerfile) installs from the committed requirements.lock
+# and never freezes.
+#
 # REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
-#   docker build --build-arg REGISTRY=docker.xuanyuan.me ...
-#   Or via compose: docker compose build --build-arg REGISTRY=docker.xuanyuan.me mcp-repl
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml build --build-arg REGISTRY=docker.xuanyuan.me mcp-repl
 ARG REGISTRY=docker.io
 FROM ${REGISTRY}/library/python:3.12-slim
 
@@ -18,19 +24,16 @@ RUN apt-get update && \
         npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies into a shared site from the PINNED lockfile.
-# requirements.lock is produced by `pip freeze` (fully resolved, incl. transitives)
-# and committed for reproducible builds; requirements.txt stays the floating
-# "intent" source. Regenerate the lock after editing requirements.txt:
-#   pip install -r requirements.txt && pip freeze > requirements.lock
-# BuildKit cache mount (id=pip-cache) keeps pip's HTTP/wheel cache across builds
-# for faster rebuilds. The named id is shared with the main image's pip cache so
-# the same wheels are reused and no orphan mounts accumulate when REGISTRY drifts.
-COPY requirements.lock .
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
-    pip install -r requirements.lock || \
+# Python deps from the FLOATING requirements.txt (dev intent source). Freeze the
+# resolved tree to /opt (OUTSIDE /app bind-mount) so the dev entrypoint can sync
+# it back to the host ./mcp/requirements.lock at startup. BuildKit cache mount
+# (id=mcp-pip-cache) keeps pip's wheel cache across dev rebuilds.
+COPY requirements.txt .
+RUN --mount=type=cache,id=mcp-pip-cache,target=/root/.cache/pip \
+    pip install -r requirements.txt || \
     (pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-     pip install -r requirements.lock)
+     pip install -r requirements.txt) && \
+    pip freeze > /opt/mcp-requirements.lock
 
 # Copy server code (kept minimal — no venv, no tests)
 COPY repl_mcp_server.py .
