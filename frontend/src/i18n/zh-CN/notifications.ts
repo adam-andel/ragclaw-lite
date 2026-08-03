@@ -27,4 +27,10 @@ export default {
     blocked: '浏览器已拦截通知',
     unsupported: '浏览器不支持桌面通知',
   },
+  cron: {
+    executed: '定时任务已执行：{name}',
+    failed: '定时任务执行失败：{name}',
+    taskExecuted: '任务已执行',
+    taskFailed: '任务执行失败',
+  },
 }

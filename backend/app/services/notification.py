@@ -45,12 +45,12 @@ async def create_cron_job_notification(
     if not job.user_id:
         return None
 
-    if status == "success":
-        title = f"定时任务执行成功：{job.name}"
-        content = (result or "任务已执行完成")[:500]
+    if status == "executed":
+        title = f"Cron job executed: {job.name}"
+        content = (result or "Task executed")[:10000]
     else:
-        title = f"定时任务执行失败：{job.name}"
-        content = (error or "任务执行失败")[:500]
+        title = f"Cron job failed: {job.name}"
+        content = (error or "Task failed")[:10000]
 
     return await create_notification(
         db,

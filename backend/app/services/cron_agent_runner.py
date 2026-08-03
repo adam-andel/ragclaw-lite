@@ -102,7 +102,7 @@ async def _execute_and_record_locked(cron_job_id: str) -> dict:
         output = None
         try:
             output = await run_cron_execution_subgraph(job)
-            run.status = "success"
+            run.status = "executed"
             run.output = output
             job.last_result = output
             run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -142,7 +142,7 @@ async def _execute_and_record_locked(cron_job_id: str) -> dict:
         )
 
         return {
-            "output": output if run.status == "success" else None,
+            "output": output if run.status == "executed" else None,
             "result": job.last_result,
             "status": run.status,
             "error": run.error,

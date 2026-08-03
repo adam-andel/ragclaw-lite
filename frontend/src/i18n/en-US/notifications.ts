@@ -27,4 +27,10 @@ export default {
     blocked: 'Notifications blocked in browser',
     unsupported: 'Desktop notifications unsupported',
   },
+  cron: {
+    executed: 'Cron job executed: {name}',
+    failed: 'Cron job failed: {name}',
+    taskExecuted: 'Task executed',
+    taskFailed: 'Task failed',
+  },
 }

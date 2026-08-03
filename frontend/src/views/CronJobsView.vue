@@ -445,7 +445,7 @@ function isPaused(job: CronJob) {
             <div v-else class="run-list">
               <NCard v-for="run in pagedRuns" :key="run.id" size="small" style="margin-bottom: 12px">
                 <div class="run-meta">
-                  <NTag :type="run.status === 'success' ? 'success' : 'error'">{{ run.status }}</NTag>
+                  <NTag :type="run.status === 'executed' ? 'success' : 'error'">{{ run.status }}</NTag>
                   <span class="run-time">{{ formatTime(run.started_at) }}</span>
                 </div>
                 <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
