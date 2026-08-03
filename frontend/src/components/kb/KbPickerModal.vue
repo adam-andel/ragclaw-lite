@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NCard, NInput, NSelect, NIcon, NEmpty, NButton } from 'naive-ui'
+import { NInput, NSelect, NIcon, NEmpty, NButton } from 'naive-ui'
 import { Search, Create } from '@vicons/ionicons5'
 import AppModal from '@/components/common/AppModal.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 
 const { t } = useI18n()
@@ -117,11 +118,10 @@ function onAfterLeave() {
     </div>
 
     <div class="kb-picker-grid">
-      <NCard
+      <AppCard
         v-if="showNone"
-        size="small"
         class="kb-picker-card"
-        :class="{ active: noneActive }"
+        :active="noneActive"
         role="button"
         tabindex="0"
         @click="onCardClick(null)"
@@ -134,13 +134,12 @@ function onAfterLeave() {
             <strong class="kb-picker-name">{{ noneLabel || t('kb.noneKb') }}</strong>
           </div>
         </div>
-      </NCard>
+      </AppCard>
 
-      <NCard
+      <AppCard
         v-if="showAll && kbs.length > 0"
-        size="small"
         class="kb-picker-card"
-        :class="{ active: allActive }"
+        :active="allActive"
         role="button"
         tabindex="0"
         @click="onCardClick(null)"
@@ -157,14 +156,13 @@ function onAfterLeave() {
             <span v-if="allMeta" class="kb-picker-meta">{{ allMeta }}</span>
           </div>
         </div>
-      </NCard>
+      </AppCard>
 
-      <NCard
+      <AppCard
         v-for="kb in paged"
         :key="kb.id"
-        size="small"
         class="kb-picker-card"
-        :class="{ active: kb.id === selectedId }"
+        :active="kb.id === selectedId"
         role="button"
         tabindex="0"
         @click="onCardClick(kb.id)"
@@ -182,7 +180,7 @@ function onAfterLeave() {
             </div>
           </div>
         </div>
-      </NCard>
+      </AppCard>
     </div>
 
     <NEmpty v-if="filtered.length === 0 && kbs.length > 0" :description="t('kb.noMatch')" style="padding:16px 0" />
@@ -211,27 +209,8 @@ function onAfterLeave() {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
-.kb-picker-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
-}
-.kb-picker-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.kb-picker-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-.kb-picker-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-picker-inner { display: flex; align-items: flex-start; gap: 10px; }
 .kb-picker-avatar {
   flex-shrink: 0;

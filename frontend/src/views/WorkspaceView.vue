@@ -13,6 +13,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import type { WorkspaceEntry } from '@/api/workspace'
 import {
   listWorkspace, downloadAndSave, downloadZip, mkdirWorkspace,
@@ -812,11 +813,11 @@ onMounted(load)
         />
 
         <div v-else class="ws-grid">
-          <div
+          <AppCard
             v-for="row in pagedEntries"
             :key="row.rel_path"
             class="ws-grid-card"
-            :class="{ 'ws-grid-card--selected': checkedRowKeys.includes(row.rel_path) }"
+            :active="checkedRowKeys.includes(row.rel_path)"
             @click="openEntry(row)"
           >
             <div class="ws-grid-check" @click.stop>
@@ -841,7 +842,7 @@ onMounted(load)
             <div class="ws-grid-actions" @click.stop>
               <RowActions :row="row" />
             </div>
-          </div>
+          </AppCard>
         </div>
       </NSpin>
     </NCard>
@@ -1109,19 +1110,8 @@ onMounted(load)
   text-align: left;
   gap: 6px;
   padding: 10px 12px;
-  border: 1px solid var(--color-border);
   border-radius: 8px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
   overflow: hidden;
-}
-.ws-grid-card:hover {
-  border-color: var(--color-primary);
-  background: rgba(59, 130, 246, 0.04);
-}
-.ws-grid-card--selected {
-  border-color: var(--color-primary);
-  background: rgba(59, 130, 246, 0.08);
 }
 .ws-grid-check {
   position: absolute;

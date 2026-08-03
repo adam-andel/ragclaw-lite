@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { backendErrorMessage } from '@/utils/backendError'
 import {
   NButton, NForm, NFormItem, NInput,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
+  NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
   NEmpty, NSpin,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh, Search } from '@vicons/ionicons5'
@@ -12,6 +12,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import {
   listServers, createServer, updateServer, deleteServer, testServer, refreshTools,
 } from '@/api/mcp'
@@ -227,12 +228,12 @@ async function handleRefresh() {
     <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && servers.length === 0" :description="t('mcp.empty')" />
       <div class="mcp-list" v-if="servers.length > 0">
-        <NCard
+        <AppCard
           v-for="server in servers"
           :key="server.id"
-          size="small"
-          :class="['mcp-card', { 'mcp-card-disabled': !server.is_active }]"
-          hoverable
+          class="mcp-card"
+          :disabled="!server.is_active"
+          :clickable="false"
         >
           <div class="mcp-card-header">
             <div class="mcp-card-title-wrap">
@@ -285,7 +286,7 @@ async function handleRefresh() {
               </NPopconfirm>
             </NSpace>
           </template>
-        </NCard>
+        </AppCard>
       </div>
 
     </NSpin>
@@ -363,29 +364,7 @@ async function handleRefresh() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
-}
-.mcp-card {
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.mcp-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.mcp-card-disabled {
-  background: var(--color-card-bg-disabled);
-  --n-color: var(--color-card-bg-disabled);
-  cursor: not-allowed;
-}
-.mcp-card-disabled:hover {
-  border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transform: none;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
 .mcp-card-header {
   display: flex;

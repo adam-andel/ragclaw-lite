@@ -3,12 +3,13 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm,
+  NIcon, useMessage, NSpace, NPopconfirm,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
   NEmpty, NSelect,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search, Refresh } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -345,12 +346,11 @@ function isPaused(job: CronJob) {
     <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && jobs.length === 0" :description="t('cron.empty')" />
       <div class="cj-list" v-if="jobs.length > 0">
-        <NCard
+        <AppCard
           v-for="job in jobs"
           :key="job.id"
-          size="small"
-          :class="['cj-card', { 'cj-card-disabled': isPaused(job) }]"
-          hoverable
+          class="cj-card"
+          :disabled="isPaused(job)"
           role="button"
           tabindex="0"
           @click="openDetail(job)"
@@ -399,7 +399,7 @@ function isPaused(job: CronJob) {
               </NButton>
             </NSpace>
           </template>
-        </NCard>
+        </AppCard>
       </div>
 
     </NSpin>
@@ -558,35 +558,7 @@ function isPaused(job: CronJob) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
-}
-.cj-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.cj-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.cj-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-.cj-card-disabled {
-  background: var(--color-card-bg-disabled);
-  --n-color: var(--color-card-bg-disabled);
-  cursor: not-allowed;
-}
-.cj-card-disabled:hover {
-  border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transform: none;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
 .cj-card :deep(.n-card__footer) {
   padding-top: 6px;

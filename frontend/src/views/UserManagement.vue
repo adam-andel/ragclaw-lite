@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NTooltip } from 'naive-ui'
+import { NButton, NTag, NInput, NSelect, NPopconfirm, NSpace, NIcon, NEmpty, NDescriptions, NDescriptionsItem, NSpin, NTooltip } from 'naive-ui'
 import { Add, Trash, Eye, People, Ban, CheckmarkCircle, Search } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import { useI18n } from 'vue-i18n'
 import { formatDateTime } from '@/i18n/format'
 import client from '@/api/client'
@@ -190,12 +191,11 @@ function formatTime(value: string) {
     <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && total === 0" :description="t('users.empty')" />
       <div class="um-list" v-if="users.length > 0">
-        <NCard
+        <AppCard
           v-for="user in users"
           :key="user.id"
-          size="small"
-          :class="['um-card', { 'um-card-disabled': !user.is_active }]"
-          hoverable
+          class="um-card"
+          :disabled="!user.is_active"
           role="button"
           tabindex="0"
           @click="openDetail(user)"
@@ -243,7 +243,7 @@ function formatTime(value: string) {
           <div class="um-card-meta">
             <span class="um-meta-muted">{{ t('common.createdAt') }} {{ formatTime(user.created_at) }}</span>
           </div>
-        </NCard>
+        </AppCard>
       </div>
     </NSpin>
 
@@ -382,37 +382,8 @@ function formatTime(value: string) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
-.um-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.um-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.um-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-.um-card-disabled {
-  background: var(--color-card-bg-disabled);
-  --n-color: var(--color-card-bg-disabled);
-  cursor: not-allowed;
-}
-.um-card-disabled:hover {
-  border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transform: none;
-}
-
 .um-card-header {
   display: flex;
   align-items: center;

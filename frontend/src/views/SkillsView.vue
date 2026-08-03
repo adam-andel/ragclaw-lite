@@ -4,7 +4,7 @@ import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
-  NCard, NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
+  NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
   NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search, FolderOpen, Archive } from '@vicons/ionicons5'
@@ -16,6 +16,7 @@ import {
   uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
 } from '@/api/skills'
 import StatusToggle from '@/components/common/StatusToggle.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import { listServers } from '@/api/mcp'
 import type { Skill, SkillCreatePayload, MCPServer } from '@/types'
 
@@ -595,12 +596,11 @@ onMounted(() => {
     <NSpin :show="loading" class="pm-scroll">
       <NEmpty v-if="!loading && skills.length === 0" :description="t('skills.empty')" />
       <div class="sk-list" v-if="skills.length > 0">
-        <NCard
+        <AppCard
           v-for="skill in skills"
           :key="skill.id"
-          size="small"
-          :class="['sk-card', { 'sk-card-disabled': !skill.is_active }]"
-          hoverable
+          class="sk-card"
+          :disabled="!skill.is_active"
           role="button"
           tabindex="0"
           @click="openDetail(skill)"
@@ -642,7 +642,7 @@ onMounted(() => {
             <span class="sk-meta-sep">·</span>
             <span class="sk-meta-muted">{{ t('skills.updated') }} {{ formatTime(skill.updated_at) }}</span>
           </div>
-        </NCard>
+        </AppCard>
       </div>
     </NSpin>
 
@@ -879,37 +879,8 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
-.sk-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.sk-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.sk-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-.sk-card-disabled {
-  background: var(--color-card-bg-disabled);
-  --n-color: var(--color-card-bg-disabled);
-  cursor: not-allowed;
-}
-.sk-card-disabled:hover {
-  border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transform: none;
-}
-
 .sk-card-header {
   display: flex;
   align-items: flex-start;

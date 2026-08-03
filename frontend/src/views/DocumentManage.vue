@@ -12,6 +12,7 @@ import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Tr
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import {
   uploadDocument, listAllDocuments,
   getDocumentStatus, getDocumentChunks, deleteDocument,
@@ -1126,12 +1127,10 @@ async function loadSupportedTypes() {
     <NSpin :show="loading" class="dm-list-spin">
       <NEmpty v-if="!loading && docs.length === 0" :description="t('documents.noDocsUpload')" />
       <div class="dm-list" v-if="docs.length > 0">
-        <NCard
+        <AppCard
           v-for="doc in docs"
           :key="doc.id"
-          size="small"
           class="dm-card"
-          hoverable
           role="button"
           tabindex="0"
           @click="openDetail(doc)"
@@ -1186,7 +1185,7 @@ async function loadSupportedTypes() {
             />
             <span class="doc-progress-text">{{ doc.progress }}%</span>
           </div>
-        </NCard>
+        </AppCard>
       </div>
     </NSpin>
 
@@ -1588,27 +1587,8 @@ async function loadSupportedTypes() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
-.dm-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border-color: var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
-}
-.dm-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.dm-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-
 .doc-card-header {
   display: flex;
   align-items: flex-start;

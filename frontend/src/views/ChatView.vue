@@ -7,6 +7,7 @@ import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NSpin, NSwitch, NT
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
@@ -1389,8 +1390,8 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
           <div v-if="kbs.length > 0" class="center-panel-list">
-            <NCard size="small" class="kb-pick-card"
-              :class="{ active: !selectedKbId }"
+            <AppCard class="kb-pick-card"
+              :active="!selectedKbId"
               role="button" tabindex="0"
               @click="selectedKbId = ''"
               @keydown.enter.prevent="selectedKbId = ''"
@@ -1402,9 +1403,9 @@ function handleKeydown(e: KeyboardEvent) {
                   <strong class="kb-pick-name">{{ t('chat.noKb') }}</strong>
                 </div>
               </div>
-            </NCard>
-            <NCard v-for="kb in kbPreview" :key="kb.id" size="small" class="kb-pick-card"
-              :class="{ active: kb.id === selectedKbId }"
+            </AppCard>
+            <AppCard v-for="kb in kbPreview" :key="kb.id" class="kb-pick-card"
+              :active="kb.id === selectedKbId"
               role="button" tabindex="0"
               @click="selectedKbId = kb.id"
               @keydown.enter.prevent="selectedKbId = kb.id"
@@ -1421,7 +1422,7 @@ function handleKeydown(e: KeyboardEvent) {
                   </div>
                 </div>
               </div>
-            </NCard>
+            </AppCard>
           </div>
           <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
             {{ t('chat.moreKbs', { count: kbs.length }) }}
@@ -1611,8 +1612,8 @@ function handleKeydown(e: KeyboardEvent) {
     >
       <NInput v-model:value="skillSearchText" :placeholder="t('chat.searchSkillPlaceholder')" clearable style="margin-bottom:12px" />
       <div class="skill-pick-grid">
-        <NCard size="small" class="skill-pick-card"
-          :class="{ active: !selectedSkillId }"
+        <AppCard class="skill-pick-card"
+          :active="!selectedSkillId"
           role="button" tabindex="0"
           @click="selectedSkillId = null; showSkillModal = false"
           @keydown.enter.prevent="selectedSkillId = null; showSkillModal = false"
@@ -1628,9 +1629,9 @@ function handleKeydown(e: KeyboardEvent) {
             <span class="skill-pick-label">{{ t('chat.tools') }}</span>
             <span class="skill-pick-tool-muted">{{ t('chat.auto') }}</span>
           </div>
-        </NCard>
-        <NCard v-for="s in filteredSkills" :key="s.id" size="small" class="skill-pick-card"
-          :class="{ active: s.id === selectedSkillId }"
+        </AppCard>
+        <AppCard v-for="s in filteredSkills" :key="s.id" class="skill-pick-card"
+          :active="s.id === selectedSkillId"
           role="button" tabindex="0"
           @click="selectedSkillId = s.id; showSkillModal = false"
           @keydown.enter.prevent="selectedSkillId = s.id; showSkillModal = false"
@@ -1657,7 +1658,7 @@ function handleKeydown(e: KeyboardEvent) {
             </template>
             <span v-else class="skill-pick-tool-muted">{{ t('chat.none') }}</span>
           </div>
-        </NCard>
+        </AppCard>
       </div>
       <NEmpty v-if="filteredSkills.length === 0" :description="t('chat.noMatchingSkill')" style="padding:16px 0" />
     </AppModal>
@@ -2015,6 +2016,7 @@ function handleKeydown(e: KeyboardEvent) {
   gap: 10px;
   margin: 12px 0 8px;
   text-align: left;
+  padding-top: 2px; /* prevent hover border-top clipping */
 }
 /* KB preview panel is widened on its own to fit a 3-column grid (consistent with KbPickerModal) without affecting the chat panel */
 .center-panel-box-wide { max-width: 680px; }
@@ -2178,26 +2180,6 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-text-muted);
   white-space: nowrap;
 }
-.kb-pick-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
-}
-.kb-pick-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.kb-pick-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-.kb-pick-card.active { border-color: var(--color-primary); background: var(--color-primary-soft); }
 .kb-pick-inner { display: flex; align-items: flex-start; gap: 10px; }
 .kb-pick-avatar {
   flex-shrink: 0;
@@ -2226,30 +2208,6 @@ function handleKeydown(e: KeyboardEvent) {
 .fallback-hint { margin-top: 8px; font-size: var(--text-base); color: var(--color-text-muted); }
 /* ── Skill picker modal (same card style as SkillsView .sk-card, 3-column grid) ── */
 /* Card chrome unified with .sk-card (driven by light/dark tokens) */
-.skill-pick-card {
-  cursor: pointer;
-  background: var(--color-card-bg);
-  --n-color: var(--color-card-bg);
-  border: 1px solid var(--color-card-border);
-  --n-border-color: var(--color-card-border);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
-}
-.skill-pick-card:hover {
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow);
-  transform: translateY(-1px);
-}
-.skill-pick-card:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-/* Selected state: consistent with .sk-card's hover/focus — primary-color border + soft primary-color fill */
-.skill-pick-card.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
-}
 /* 3-column grid: equal widths, 3 per row */
 .skill-pick-grid {
   display: grid;
@@ -2257,6 +2215,7 @@ function handleKeydown(e: KeyboardEvent) {
   gap: 10px;
   max-height: 60vh;
   overflow-y: auto;
+  padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
   padding: 2px;
 }
 .skill-pick-header {
