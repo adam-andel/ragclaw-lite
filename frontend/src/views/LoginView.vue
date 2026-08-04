@@ -35,7 +35,6 @@ const loading = ref(false)
 const regUsername = ref('')
 const regPassword = ref('')
 const regConfirm = ref('')
-const regDisplayName = ref('')
 const regLoading = ref(false)
 const regPasswordInput = ref<InstanceType<typeof NInput> | null>(null)
 const passwordInput = ref<InstanceType<typeof NInput> | null>(null)
@@ -237,7 +236,6 @@ async function handleRegister() {
     await auth.register({
       username: regUsername.value.trim(),
       password: regPassword.value,
-      display_name: regDisplayName.value.trim() || undefined,
     })
     message.success(t('login.registerSuccess'))
     router.push('/chat')
@@ -312,16 +310,6 @@ async function handleRegister() {
                 :placeholder="t('login.usernamePlaceholder')"
                 size="large"
                 :input-props="{ id: 'reg-username', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: false }"
-              />
-            </div>
-
-            <div class="field">
-              <label for="reg-display" class="field-label">{{ t('login.displayName') }}</label>
-              <NInput
-                v-model:value="regDisplayName"
-                :placeholder="t('login.displayNamePlaceholder')"
-                size="large"
-                :input-props="{ id: 'reg-display', autocapitalize: 'off', autocorrect: 'off', spellcheck: false }"
               />
             </div>
 
