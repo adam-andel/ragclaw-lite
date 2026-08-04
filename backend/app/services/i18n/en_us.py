@@ -53,14 +53,6 @@ MESSAGES = {
         "- NEVER fabricate File, file paths, or UUIDs."
     ),
 
-    # Forced run_python retry instruction (interception when intent needs a tool
-    # but the model produced no tool call). No placeholders.
-    "tool_force_retry": (
-        "⚠️ This user request clearly requires a workspace file or code operation "
-        "(e.g. generating an HTML page / diagram / chart / document, reading or modifying a file, "
-        "or running code). You MUST now call run_python to fulfill it — never answer in plain text. "
-        "Output a valid run_python tool call (as JSON or a code block) immediately."
-    ),
 
     # Rule appended to the final-generation system prompt: when a tool produced
     # a downloadable file, the answer must not re-paste the source code. No placeholders.

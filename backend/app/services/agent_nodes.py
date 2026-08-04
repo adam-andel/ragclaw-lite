@@ -21,7 +21,6 @@ from app.services.skill_script_loader import discover_tools, execute_script_tool
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
-from app.services.cron_parser import try_parse_cron_payload
 from app.services.conversation_summary import (
     context_breakdown,
     fit_assembly_context,
@@ -368,72 +367,6 @@ def _infer_forced_tool(query: str, available_tools: list[dict],
         if any(kw.lower() in q for kw in _FORCE_PY_KEYWORDS):
             return "run_python"
     return None
-
-
-# Conservative interception guard — DISTINCT from the round-0 forcing in
-# _infer_forced_tool. Purpose: decide whether tool_decision should RETRY with
-# run_python when the model declined to call any tool. High precision on
-# purpose, covering only unambiguous file/code-production or CRUD intents, so
-# it never misfires on pure conversation. The primary fix for under-triggering
-# is the strengthened tool_system prompt (direction B), not this keyword set.
-_TOOL_INTENT_GUARD = (
-    "生成", "创建", "新建", "写入", "写文件", "保存", "导出", "输出文件",
-    "运行代码", "执行代码", "跑代码", "跑一下代码",
-    "html", "网页", "示意图", "状态机", "流程图", "架构图", "图表", "导图", "可视化",
-    "diagram", "chart", "flowchart", "html file", "web page", "visualization",
-    "读取文件", "查看文件", "读文件", "修改文件", "编辑文件", "删除文件",
-    "重命名", "移动文件",
-    "read file", "edit file", "delete file", "rename", "move file",
-    "generate file", "create file", "write file", "save file", "export file",
-)
-
-
-def _query_obviously_needs_tool(query: str, available_tools: list[dict]) -> bool:
-    """High-precision gate: does this query obviously require a workspace tool?
-
-    Returns True only for unambiguous file/code-production or CRUD intents. Used
-    to trigger a forced run_python retry in tool_decision when the model produced
-    no tool call. Deliberately narrow to avoid false positives on conversation.
-    """
-    if "run_python" not in _tool_names(available_tools):
-        return False
-    q = (query or "").lower()
-    return any(kw.lower() in q for kw in _TOOL_INTENT_GUARD)
-
-
-async def _force_run_python_retry(messages: list[dict], available_tools: list[dict],
-                                  lang: str) -> list[dict] | None:
-    """Last-resort interception: model produced no tool call but the query
-    obviously needs one. Force a single run_python call via tool_choice plus a
-    strong instruction, so the graph never silently falls into the final-answer
-    stage (which would surface final_stage_note / "can't call tools").
-
-    Returns a run_python tool_call list, or None if even the forced call failed.
-    """
-    if "run_python" not in _tool_names(available_tools):
-        return None
-    hint = _t("tool_force_retry", lang)
-    forced_messages = messages + [{"role": "user", "content": hint}]
-    try:
-        resp = await _chat_with_tools_resilient(
-            forced_messages, available_tools,
-            {"type": "function", "function": {"name": "run_python"}},
-            temperature=0.0, max_tokens=config_manager.agent_max_tokens,
-        )
-    except Exception as e:
-        logger.warning("Tool decision: forced run_python retry failed (%s)", str(e)[:200])
-        return None
-    tool_calls = resp.get("tool_calls")
-    if not tool_calls:
-        content = resp.get("content") or ""
-        if content:
-            tool_calls = (_try_parse_tool_call(content, available_tools)
-                          or _try_extract_code_as_tool(content, available_tools))
-    if tool_calls:
-        logger.warning("Tool decision: forced run_python retry SUCCEEDED")
-        return tool_calls
-    return None
-
 
 def _extract_intended_tool_name(content: str, available_tools: list[dict]) -> str | None:
     """Layer 2: from malformed output, guess which tool the LLM intended to call.
@@ -1546,28 +1479,6 @@ async def tool_decision_node(state: dict) -> dict:
             _emit(state, "round", f"Tool-call round {tool_round + 1}")
             return {"tool_calls": tool_calls, "tool_messages": [tool_msg]}
 
-        # ── Interception: the model declined to call any tool, but the query
-        # obviously needs one (file/code production or CRUD). On the first round
-        # (tool budget intact) force ONE run_python retry so the graph never
-        # silently reaches the final-answer stage and its final_stage_note
-        # ("sorry, can't call tools") for such requests. ──
-        # BUT: if the model already emitted a valid scheduled-task (cron) JSON,
-        # do NOT force a tool call — that JSON is consumed by chat.py to create
-        # the cron job, and forcing run_python would loop and re-emit the JSON.
-        if tool_round == 0 and content and try_parse_cron_payload(content):
-            logger.info("Tool decision: content is a cron payload — skip tool interception, let final stage create it")
-            return {"tool_calls": None}
-        if tool_round == 0 and _query_obviously_needs_tool(state.get("query", ""), available_tools):
-            logger.info(
-                "Tool decision: intent obviously needs a tool but none produced — intercepting with forced run_python retry"
-            )
-            intercepted = await _force_run_python_retry(messages, available_tools, config_manager.prompt_language)
-            if intercepted:
-                tool_msg = {"role": "assistant", "content": "", "tool_calls": intercepted}
-                _emit(state, "round", f"Tool-call round {tool_round + 1} (intercept)")
-                return {"tool_calls": intercepted, "tool_messages": [tool_msg]}
-
-        logger.info("Tool decision: no tool_calls produced, proceeding to final generation")
         return {"tool_calls": None}
     except Exception as e:
         logger.warning("Tool decision error: %s", e)

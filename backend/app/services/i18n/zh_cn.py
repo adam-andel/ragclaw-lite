@@ -42,14 +42,6 @@ MESSAGES = {
         "- **绝对不要**编造File、文件路径或 uuid"
     ),
 
-    # Forced run_python retry instruction (interception when intent needs a tool
-    # but the model produced no tool call). No placeholders.
-    "tool_force_retry": (
-        "⚠️ 这条用户请求明确需要对工作区文件或代码进行操作（例如生成 HTML 页面 / 示意图 / 图表 / 文档，"
-        "或读取 / 修改文件，或运行代码）。你现在**必须**调用 run_python 来完成，绝不能用自然语言直接回答。"
-        "请立即输出一个合法的 run_python 工具调用（JSON 或代码块形式）。"
-    ),
-
     # Rule appended to the final-generation system prompt: when a tool produced
     # a downloadable file, the answer must not re-paste the source code. No placeholders.
     "file_answer_rule": (
