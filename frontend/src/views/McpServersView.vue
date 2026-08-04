@@ -4,7 +4,7 @@ import { backendErrorMessage } from '@/utils/backendError'
 import {
   NButton, NForm, NFormItem, NInput,
   NIcon, useMessage, NSpace, NPopconfirm, NTag, NSelect, NInputNumber, NText,
-  NEmpty, NSpin,
+  NEmpty, NSpin, NSwitch,
 } from 'naive-ui'
 import { Add, Trash, Create, Flash, Refresh, Search } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'

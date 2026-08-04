@@ -5,7 +5,7 @@ import {
   NButton, NForm, NFormItem, NInput,
   NIcon, useMessage, NSpace, NPopconfirm,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
-  NEmpty, NSelect,
+  NEmpty, NSelect, NCard,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search, Refresh } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
