@@ -114,12 +114,24 @@ MESSAGES = {
         "- JSON 前后不要附加任何解释文字"
     ),
 
-    # Final-stage constraint note appended to the user turn when no tools ran
-    # but the skill prompt asked for tool use. Resolved per prompt_language.
-    "final_stage_note": (
-        "\n\n## ⚠️ 当前阶段：最终回答生成\n\n"
-        "这是最终生成阶段，已无法调用工具。请直接用自然语言回答用户的问题。"
-        "绝对不要输出 [TOOL_CALL]、JSON 格式的工具调用，或任何伪装成工具调用的代码块。"
-        "如果用户的问题需要工具但没有任何工具被执行，请如实告知用户。"
+    # Always-on final-answer suffix (merged from the old branch-only final_stage_note):
+    # forbids tool-call output in the final stage (D1 fix) and asks for a one-line
+    # divergent closing. Appended to the system prompt in agent_graph.build_generation_messages.
+    "final_answer_guidance": (
+        "## 最终回答阶段指引\n"
+        "你正处于**最终回答生成阶段**，已无任何工具调用能力。请直接用自然语言回答用户的问题。\n"
+        "**绝对不要**输出 [TOOL_CALL]、JSON 格式的工具调用，或任何伪装成工具调用的代码块"
+        "（除非上方的「定时任务规则」明确要求你输出某个 JSON 对象）。\n"
+        "如果用户的问题需要工具但本回合没有任何工具被执行，请如实告知用户。\n\n"
+        "## 结尾发散建议\n"
+        "在回答的最后，用**单独一行**补充一句「发散性」内容——二选一：\n"
+        "- 一个能**深化当前话题**的追问；或\n"
+        "- 一个**相关但不同角度**的下一步建议。\n"
+        "要求：\n"
+        "- 只写**一句**，不超过 25 个字，不要复述已说过的内容。\n"
+        "- 必须开启新方向，而不是总结。\n"
+        "- 若用户只是要你生成文件 / 做一次明确的一次性任务、且确实没有自然的延伸点，"
+        "则可省略这一句（此时请遵循「文件生成回答规则」保持回答精简，不要再追加）。\n"
+        "- 用与用户相同的语言书写。"
     ),
 }
