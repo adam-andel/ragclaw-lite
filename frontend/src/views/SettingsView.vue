@@ -72,7 +72,7 @@ const config = ref<LLMConfig>({
   llm_system_prompt_en: '',
   prompt_language: 'en',
   cache_ttl_seconds: 3600,
-  agent_round_quota: 10,
+  agent_round_quota: 0,
   is_configured: false,
 })
 
@@ -926,7 +926,7 @@ async function handleTest() {
           <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px">
             <div>
               <h3 class="section-title" style="margin: 0 0 4px">{{ t('settings.llmTitle') }}</h3>
-              <p class="muted" style="margin: 0;font-size: 13px" v-html="t('settings.llmDesc')" />
+              <p class="muted" style="margin: 0;font-size: 13px">{{ t('settings.llmDesc') }}</p>
             </div>
             <NSpace align="center">
               <NButton
@@ -991,7 +991,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.temperature')" />
+                  <span>{{ t('settings.tip.temperature') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1007,7 +1007,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.maxTokens')" />
+                  <span>{{ t('settings.tip.maxTokens') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1023,7 +1023,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.maxConcurrency')" />
+                  <span>{{ t('settings.tip.maxConcurrency') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1039,7 +1039,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.contextWindow')" />
+                  <span>{{ t('settings.tip.contextWindow') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1055,7 +1055,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.cacheTtl')" />
+                  <span>{{ t('settings.tip.cacheTtl') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1074,7 +1074,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.tip.agentRoundQuota')" />
+                  <span>{{ t('settings.tip.agentRoundQuota') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1093,7 +1093,7 @@ async function handleTest() {
         <!-- Embedding Model (on-demand install) -->
         <section id="embedding-model">
           <h3 class="section-title">{{ t('settings.embeddingModelMgmt.title') }}</h3>
-          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.embeddingModelMgmt.desc')" />
+          <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.embeddingModelMgmt.desc') }}</p>
           <NFormItem :label="t('settings.embeddingModelMgmt.currentLabel')">
             <span class="muted" style="font-size: 14px; font-weight: 500">
               {{ embeddingStatus.configured_model || config.embedding_model }}
@@ -1304,7 +1304,7 @@ async function handleTest() {
         <!-- System Prompt -->
         <section id="system-prompt">
           <h3 class="section-title">{{ t('settings.systemPromptTitle') }}</h3>
-          <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.systemPromptDesc')" />
+          <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.systemPromptDesc') }}</p>
           <NFormItem>
             <template #label>
               <span class="label-with-help">
@@ -1313,7 +1313,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.systemPromptTip')" />
+                  <span>{{ t('settings.systemPromptTip') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1335,7 +1335,7 @@ async function handleTest() {
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
                   </template>
-                  <span v-html="t('settings.agentPromptLangTip')" />
+                  <span>{{ t('settings.agentPromptLangTip') }}</span>
                 </NTooltip>
               </span>
             </template>
@@ -1357,7 +1357,7 @@ async function handleTest() {
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="https">
         <h3 class="section-title">{{ t('settings.httpsTitle') }}</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.httpsDesc')" />
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.httpsDesc') }}</p>
         <NForm label-placement="left" label-width="140">
           <NFormItem :label="t('settings.httpsEnableLabel')">
             <div style="display: flex; align-items: center; gap: 12px">
@@ -1417,7 +1417,7 @@ async function handleTest() {
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="sandbox-network">
         <h3 class="section-title">{{ t('settings.sandboxTitle') }}</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.sandboxDesc')" />
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.sandboxDesc') }}</p>
         <NForm label-placement="left" label-width="140">
           <NFormItem :label="t('settings.networkMode')">
             <NSelect v-model:value="sandboxConfig.sandbox_network_mode" :options="networkModeOptions" @update:value="scheduleSave(t('settings.networkMode'))" />
@@ -1438,7 +1438,7 @@ async function handleTest() {
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="repl-auth">
         <h3 class="section-title">{{ t('settings.replAuthTitle') }}</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.replAuthDesc')" />
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.replAuthDesc') }}</p>
         <NForm label-placement="left" label-width="140">
           <NFormItem :label="t('settings.replAuthSecretLabel')">
             <NSpace vertical :size="8" style="width: 100%">
@@ -1484,7 +1484,7 @@ async function handleTest() {
     <NCard :bordered="false" class="settings-card" style="margin-top: 16px">
       <section id="jwt-auth">
         <h3 class="section-title">{{ t('settings.jwtAuthTitle') }}</h3>
-        <p class="muted" style="margin: 0 0 16px;font-size: 13px" v-html="t('settings.jwtAuthDesc')" />
+        <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.jwtAuthDesc') }}</p>
         <NForm label-placement="left" label-width="140">
           <NFormItem :label="t('settings.jwtAuthSecretLabel')">
             <NSpace vertical :size="8" style="width: 100%">
