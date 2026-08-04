@@ -265,21 +265,14 @@ class RagclawAgentGraph:
         if kb_prompt:
             system_prompt = system_prompt + "\n\n## Knowledge Base Background & Preferences\n" + kb_prompt
 
-        # ── Final generation guidance: when no tools were executed, prevent
-        # the LLM from outputting [TOOL_CALL] or JSON tool invocations in free text.
-        # The tool-decision phase already determined no tools were needed (or usable),
-        # so the LLM should generate a natural language answer. ──
+        # ── Final-answer guidance: an ALWAYS-ON constant suffix (merged from the
+        # old branch-only final_stage_note). It forbids the model from emitting
+        # [TOOL_CALL] / JSON tool calls in the final answer (fixes D1 — previously
+        # only applied when no tool_results existed) AND asks for a one-line
+        # divergent closing. Lives in the stable system prefix alongside file_rule
+        # so provider-side prompt caches stay consistent. ──
+        # tool_results is still needed below by _assemble (RAG sentinel guard).
         tool_results = state.get("tool_results", [])
-        final_note = ""
-        if not tool_results:
-            # Check if the skill prompt tells the LLM to use tools
-            has_tool_instruction = (
-                "run_python" in system_prompt
-                or "工具" in system_prompt
-                or "调用" in system_prompt
-            )
-            if has_tool_instruction:
-                final_note = _t("final_stage_note", config_manager.prompt_language)
 
         cron_rule = (
             "\n\n## Scheduled Task Rule\n\n"
@@ -314,20 +307,21 @@ class RagclawAgentGraph:
             + sandbox_network_rule()
         ) if include_cron_rule else ""
 
-        # final_note is intentionally kept OUT of the system prompt — it lives in
-        # the user message (dynamic region) below. This keeps the cached system
-        # prefix constant regardless of tool execution, so provider-side prompt
-        # caches don't get split into two incompatible groups.
-        # file_answer_rule is a constant suffix (like cron_rule) appended to every
-        # turn so the model never re-pastes a generated file's source code.
-        file_rule = "\n\n## File-generation Answer Rule\n" + _t("file_answer_rule", config_manager.prompt_language)
+        # file_answer_rule: constant suffix appended every turn so the model never
+        # re-pastes a generated file's source code. The heading lives inside the
+        # i18n template, so we only add a blank-line separator here — the previous
+        # code prepended a redundant English "## ..." line (a stray heading on the
+        # zh path). final_answer_rule (D1 fix + closing suggestion) is appended the
+        # same way, so both stay in the stable system prefix for cache consistency.
+        file_rule = "\n\n" + _t("file_answer_rule", config_manager.prompt_language)
+        final_answer_rule = "\n\n" + _t("final_answer_guidance", config_manager.prompt_language)
         # ── Assembly-point budget guard ──
         # build_context_with_summary already compressed persistent history at turn
         # start; this guard handles the in-turn overflow it cannot see -- the
         # cumulative tool_results. Trim (summary -> history -> rag -> tool_results)
         # on TRANSIENT copies, never touch the query, write nothing back.
         def _assemble(s, h, rag, payload):
-            msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule}]
+            msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule + final_answer_rule}]
             if s:
                 msgs.append(
                     {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s}
@@ -346,10 +340,6 @@ class RagclawAgentGraph:
                 if not (rag.strip() == "No relevant documents found" and active_skill and tool_results):
                     user_parts.append(f"## Reference Documents\n{rag}")
             user_parts.append(f"## Question\n{state['query']}")
-            # Final-stage constraint stays in the dynamic user region (only varies with
-            # tool execution); keeping it out of the system prefix preserves cache hits.
-            if final_note:
-                user_parts.append(final_note)
             msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
             return msgs
 

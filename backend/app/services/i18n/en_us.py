@@ -146,13 +146,29 @@ MESSAGES = {
         "- Do NOT add any explanation before or after the JSON."
     ),
 
-    # Final-stage constraint note appended to the user turn when no tools ran
-    # but the skill prompt asked for tool use. Resolved per prompt_language.
-    "final_stage_note": (
-        "\n\n## ⚠️ Current stage: final answer generation\n\n"
-        "This is the final generation stage; no tool-calling capability is available. "
-        "Reply to the user's question directly in natural language. "
-        "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block disguised as a tool call. "
-        "If the user's task requires a tool but none was executed, tell the user honestly."
+    # Always-on final-answer suffix (merged from the old branch-only final_stage_note):
+    # forbids tool-call output in the final stage (D1 fix) and asks for a one-line
+    # divergent closing. Appended to the system prompt in agent_graph.build_generation_messages.
+    "final_answer_guidance": (
+        "## Final Answer Stage Guidance\n"
+        "You are now in the FINAL ANSWER generation stage and have NO tool-calling "
+        "capability. Reply to the user directly in natural language. "
+        "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block "
+        "disguised as a tool call — unless the Scheduled Task Rule above explicitly "
+        "asks you to output a JSON object. "
+        "If the user's task requires a tool but none was executed this turn, tell the "
+        "user honestly.\n\n"
+        "## Closing Suggestion\n"
+        "At the very end of your answer, add ONE separate line with a 'divergent' touch — "
+        "either:\n"
+        "- a follow-up question that DEEPENS the current topic; OR\n"
+        "- a next-step suggestion from a RELATED but DIFFERENT angle.\n"
+        "Rules:\n"
+        "- ONE sentence only, under 25 words. Do NOT repeat what you already said.\n"
+        "- It must OPEN a new direction, not summarize.\n"
+        "- If the user only asked you to generate a file / do one concrete one-off task "
+        "with no natural extension, you MAY omit this line (and in that case keep the "
+        "answer minimal per the File-generation Answer Rule — do not append anything).\n"
+        "- Write it in the same language as the user."
     ),
 }
