@@ -250,9 +250,14 @@ case "${1:-start}" in
     ;;
 
   reload)
-    prepare_stack
+    # Container-only reload: recreate containers from the EXISTING images and
+    # never rebuild. Assumes the stack has been started at least once (so the
+    # images already exist locally). No mirror probe, no secret regeneration,
+    # no `compose build` — this is purely `up -d --force-recreate`.
+    assert_docker
+    [ -f "$COMPOSE_FILE" ] || { c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"; exit 1; }
     echo
-    c_cyan "=== Recreating stack ==="
+    c_cyan "=== Recreating stack (containers only, no image rebuild) ==="
     bring_up_stack force "Reload complete"
     ;;
 

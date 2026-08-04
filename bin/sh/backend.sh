@@ -140,21 +140,11 @@ case "$ACTION" in
       c_red "ERROR: docker-compose.yml missing or lacks 'ragclaw' service"
       exit 1
     fi
-    test_docker_backend && stop_docker_backend
-    build_mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-    if [ -z "$build_mirror" ]; then
-      c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-      exit 1
+    c_cyan "=== Recreating backend container (no image rebuild) ==="
+    compose up -d --force-recreate ragclaw || { c_red "ERROR: docker compose up failed"; exit 1; }
+    if is_dev_mode; then
+      c_dim "  Dev overlay: ./backend bind-mounted, uvicorn --reload active"
     fi
-    local arg=()
-    if [ "$build_mirror" != "docker.io" ]; then
-      arg=(--build-arg REGISTRY="$build_mirror")
-    fi
-    c_cyan "=== Building (registry: $build_mirror) ==="
-    compose build "${arg[@]}" ragclaw || { c_red "ERROR: build failed"; exit 1; }
-    echo
-    c_cyan "=== Starting container ==="
-    compose up -d ragclaw || { c_red "ERROR: docker compose up failed"; exit 1; }
     wait_for_backend
     ;;
   logs)
@@ -172,7 +162,7 @@ case "$ACTION" in
     echo
     echo "  start   Start backend (build + up, container mode)"
     echo "  stop    Stop backend"
-    echo "  reload  Stop, rebuild image (uses cache), and start backend"
+    echo "  reload  Stop, recreate container (no image rebuild), start backend"
     echo "  status  Show running status (Docker)"
     echo "  build   Rebuild Docker image only (--no-cache)"
     echo "  logs    Tail Docker container logs"

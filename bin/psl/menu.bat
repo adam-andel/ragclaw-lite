@@ -10,10 +10,15 @@ echo     RAGClaw-Lite
 echo   ===================================
 echo.
 echo     [1] Start All
+echo "        -> compose build (ragclaw mcp-repl ragclaw-egress nginx) + compose up -d"
 echo     [2] Reload All
+echo "        -> compose up -d --force-recreate   (containers only, NO image rebuild)"
 echo     [3] Stop All
+echo "        -> compose stop   (pause all containers; images & volumes kept)"
 echo     [4] Status
+echo "        -> compose ps   (services / published ports / health)"
 echo     [5] Backend Only
+echo "        -> compose build ragclaw + compose up -d ragclaw   (backend service only)"
 echo     [0] Exit
 echo.
 set /p choice="Choose: "

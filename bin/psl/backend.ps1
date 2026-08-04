@@ -178,27 +178,8 @@ switch ($Action) {
             return
         }
 
-        if (Test-DockerBackend) {
-            Stop-DockerBackend
-        }
-
-        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
-        if (-not $buildMirror) {
-            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-            return
-        }
-        $arg = @()
-        if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
-        Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile build @arg ragclaw
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: build failed" -ForegroundColor Red
-            return
-        }
-
-        Write-Host ""
-        Write-Host "=== Starting container ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile up -d ragclaw
+        Write-Host "=== Recreating backend container (no image rebuild) ===" -ForegroundColor Cyan
+        docker compose -f $ComposeFile up -d --force-recreate ragclaw
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: docker compose up failed" -ForegroundColor Red
             return
@@ -230,7 +211,7 @@ switch ($Action) {
         Write-Host ""
         Write-Host "  start       Start backend (build + up, container mode)"
         Write-Host "  stop        Stop backend"
-        Write-Host "  reload     Stop, rebuild image (uses cache), and start backend"
+        Write-Host "  reload      Stop, recreate container (no image rebuild), and start backend"
         Write-Host "  status      Show running status (Docker)"
         Write-Host "  build       Rebuild Docker image only (--no-cache)"
         Write-Host "  logs        Tail Docker container logs"

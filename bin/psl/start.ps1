@@ -152,21 +152,16 @@ switch ($Action) {
     }
 
     "reload" {
-        Write-Host "=== Reloading all services ===" -ForegroundColor Cyan
+        # Container-only reload: recreate containers from the EXISTING images and
+        # never rebuild. Assumes the stack has been started at least once (so the
+        # images already exist locally). No mirror probe, no secret regeneration,
+        # no build — purely `up -d --force-recreate`. Mirrors bin/sh/start.sh reload.
+        Write-Host "=== Recreating stack (containers only, no image rebuild) ===" -ForegroundColor Cyan
         Assert-Docker
         if (-not (Test-Path $ComposeFile)) {
             Write-Host "ERROR: docker-compose.yml not found at $ComposeFile" -ForegroundColor Red
             return
         }
-        $mirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
-        if (-not $mirror) {
-            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-            return
-        }
-        Initialize-RagclawSecrets
-        if (-not (Build-Stack $mirror)) { return }
-        Write-Host ""
-        Write-Host "=== Recreating stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack -ForceRecreate)) { return }
         Resolve-Entry
         Wait-ForBackend
