@@ -16,6 +16,10 @@ MESSAGES = {
         "- If the user's question closely matches a skill, return that skill's NUMBER.\n"
         "- If the user's question does not match any skill, return 0.\n"
         "- Return ONLY a single integer (the skill number, or 0). No other output.\n\n"
+        "## Examples (output the number only)\n"
+        "- User: 'tell me a joke' (no matching skill in the list) -> Number: 0\n"
+        "- User: 'refactor this Python code' (if the list has a coding/refactor skill, "
+        "return its number; otherwise 0)\n\n"
         "User question: {query}\n\n"
         "Number:"
     ),
@@ -38,7 +42,7 @@ MESSAGES = {
         "- Any file read/write operation that is NOT yet done -> MUST call run_python\n"
         "- User asks to generate a diagram / HTML page / chart / visualization / web page / document / report -> MUST call run_python to write the file\n"
         "- Any request to PRODUCE or READ a workspace file / code -> MUST call run_python; NEVER answer such a request with plain text instead of a tool call\n\n"
-        "## Available tools\n{tool_desc}\n\n"
+        "{tool_desc}\n\n"
         "## Output format\n"
         'When a tool is still needed: {"tool": "tool_name", "arguments": {"arg_name": "arg_value"}}\n'
         'When the task is done (no tool needed): {}\n\n'
@@ -146,10 +150,13 @@ MESSAGES = {
         "You are now in the FINAL ANSWER generation stage and have NO tool-calling "
         "capability. Reply to the user directly in natural language. "
         "NEVER output [TOOL_CALL], a JSON-formatted tool call, or any code block "
-        "disguised as a tool call — unless the Scheduled Task Rule above explicitly "
-        "asks you to output a JSON object. "
+        "disguised as a tool call. "
         "If the user's task requires a tool but none was executed this turn, tell the "
         "user honestly.\n\n"
+        "## Answer length & format\n"
+        "Lead with a DIRECT conclusion in NO MORE THAN 3 sentences, then expand only as "
+        "needed. When citing sources, inline them (e.g. '[Source: Doc Name]') rather than "
+        "dumping a list at the end.\n\n"
         "## Closing Suggestion\n"
         "At the very end of your answer, add ONE separate line with a 'divergent' touch — "
         "either:\n"
@@ -163,4 +170,8 @@ MESSAGES = {
         "answer minimal per the File-generation Answer Rule — do not append anything).\n"
         "- Write it in the same language as the user."
     ),
+    # Cron confirmation messages shown to the user (follows prompt_language).
+    "cron_created_confirm": "Scheduled task '{name}' created. View it on the Scheduled Tasks page.",
+    "cron_created_confirm_detail": "Scheduled task '{name}' created. Next run: {next_run} ({tz}). View it on the Scheduled Tasks page.",
+    "cron_created_fallback": "Scheduled task created.",
 }

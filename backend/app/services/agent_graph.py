@@ -277,25 +277,17 @@ class RagclawAgentGraph:
         cron_rule = (
             "\n\n## Scheduled Task Rule\n\n"
             "If the user wants to create a recurring or one-time scheduled task "
-            "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer directly. "
-            "Instead output ONLY a single JSON object with this exact shape:\n"
-            '{\n'
-            '  "type": "cron",\n'
-            '  "name": "<short task name>",\n'
-            '  "cron_expr": "<Linux crontab 5-field expression>",\n'
-            '  "max_runs": <integer or null for infinite>,\n'
-            '  "task_content": "<the exact task to execute>",\n'
-            '  "description": "<optional description>"\n'
-            '}\n'
-            "Examples:\n"
+            "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer the task "
+            "content yourself. The system creates the scheduled task for you via the "
+            "create_cron tool — call that tool with the task's name, cron_expr, and "
+            "task_content. Useful cron_expr examples:\n"
             '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
             '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
             '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
-            "Output ONLY that JSON object and nothing else — no markdown code fences, "
-            "no surrounding prose, and do NOT call any tool (run_python etc.) for it. "
-            "The system automatically creates the scheduled task from the JSON, so once "
-            "you emit it your turn is finished. If you are unsure about fields, fill them "
-            "as best you can rather than emitting prose or repeated JSON blocks.\n\n"
+            "Once the scheduled task has been created (a create_cron tool result is "
+            "present in the conversation), your final answer must be a plain-language "
+            "confirmation ONLY — never output the task as JSON, never emit [TOOL_CALL], "
+            "and never wrap anything in code fences.\n\n"
             # A scheduled task runs unattended: a script that silently falls back to
             # placeholder data would report success forever while emitting garbage.
             # Both rules below are also appended at execution time (cron_graph), so

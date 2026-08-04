@@ -1267,7 +1267,27 @@ async def tool_decision_node(state: dict) -> dict:
     # Use tool_choice="auto" and steer via prompt. Even when the LLM ignores
     # the JSON instruction, its alternate output (Python code blocks) is caught
     # by _try_extract_code_as_tool — plain text hallucination would be the worst case.
-    tool_system = build_tool_system_prompt(tool_desc, lang=config_manager.prompt_language)
+    # D4 fix: native function calling passes the tools as function schemas to
+    # chat_with_tools, so we do NOT re-list them in the system prompt here — the
+    # double description nudges the model toward emitting JSON-in-text instead of a
+    # native tool call. The tool list is only injected when we fall back to plain
+    # text mode (see _with_tool_desc below), where there is no function schema.
+    tool_system = build_tool_system_prompt("", lang=config_manager.prompt_language)
+    tool_heading = "## Available tools" if config_manager.prompt_language == "en" else "## 可用工具"
+    tool_desc_block = f"{tool_heading}\n{tool_desc}" if tool_desc else ""
+
+    def _with_tool_desc(msgs: list) -> list:
+        if not tool_desc_block:
+            return msgs
+        out = []
+        injected = False
+        for m in msgs:
+            if m.get("role") == "system" and not injected:
+                out.append({**m, "content": m["content"] + "\n\n" + tool_desc_block})
+                injected = True
+            else:
+                out.append(m)
+        return out
     # ── Assembly-point budget guard ──
     # build_context_with_summary already compressed the persistent history into
     # conversation_summary at turn start; this guard handles the in-turn overflow it
@@ -1389,10 +1409,10 @@ async def tool_decision_node(state: dict) -> dict:
                     content = response.get("content") or ""
                 except Exception as retry_err:
                     logger.warning("Tool decision: auto retry failed (%s), text mode", str(retry_err)[:200])
-                    content = await llm_client.chat(messages=messages, max_tokens=_compute_agent_max_tokens(messages))
+                    content = await llm_client.chat(messages=_with_tool_desc(messages), max_tokens=_compute_agent_max_tokens(messages))
             else:
                 logger.info("Tool decision: falling back to text mode")
-                content = await llm_client.chat(messages=messages, temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
+                content = await llm_client.chat(messages=_with_tool_desc(messages), temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             logger.info("Tool decision: fallback content_preview=%.200s", content[:200])
 
         # Surface the model's raw reasoning ("thinking"/planning, e.g. "我来…")

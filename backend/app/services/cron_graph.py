@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from app.database import async_session
 from app.models.cron_job import CronJob, CronJobStatus
 from app.services.config_manager import config_manager
+from app.services.i18n import t
 from app.services.cron_parser import compute_next_run
 from app.services.llm_client import llm_client
 
@@ -118,7 +119,11 @@ class _CreateCronJobTool(BaseTool):
                 "next_run_at": job.next_run_at.isoformat() if job.next_run_at else None,
                 "next_run_at_display": next_run_display,
                 "timezone": tz_name,
-                "message": f"已创建定时任务「{job.name}」，可在定时任务管理页查看。",
+                "message": t(
+                    "cron_created_confirm",
+                    config_manager.prompt_language,
+                    name=job.name,
+                ),
             }
             return json.dumps(result, ensure_ascii=False)
 
@@ -222,7 +227,7 @@ async def _agent_node_prompt_based(state: CronGraphState, tools: list[BaseTool])
         # Summarize step: do not ask for another tool call.
         follow_up = (
             "\n\nThe tool has already been executed and its result is in the "
-            "conversation above. Respond to the user in Chinese with a friendly, "
+            "conversation above. Respond to the user in the SAME language as their question with a friendly, "
             "concise summary. Do not output any JSON tool call."
         )
         modified_messages: list[BaseMessage] = []
@@ -437,13 +442,15 @@ async def _create_cron_job_text_fallback(
         result_data = json.loads(tool_result)
         next_run = result_data.get("next_run_at_display") or result_data.get("next_run_at", "unknown")
         tz_name = result_data.get("timezone", "UTC")
-        return (
-            f"已创建定时任务「{result_data.get('name', '')}」，"
-            f"下次执行时间：{next_run}（{tz_name}），"
-            f"可在定时任务管理页查看。"
+        return t(
+            "cron_created_confirm_detail",
+            config_manager.prompt_language,
+            name=result_data.get("name", ""),
+            next_run=next_run,
+            tz=tz_name,
         )
     except json.JSONDecodeError:
-        return "定时任务已创建。"
+        return t("cron_created_fallback", config_manager.prompt_language)
 
 
 async def _record_cron_result_text_fallback(job: CronJob) -> str:
@@ -504,7 +511,7 @@ async def run_cron_creation_subgraph(
     system_prompt = (
         "You are a task scheduling assistant. The user wants to create a scheduled task. "
         "Use the create_cron_job tool to persist the job. "
-        "After the tool returns the cron_id, respond to the user in Chinese with a friendly confirmation, "
+        "After the tool returns the cron_id, respond to the user in the SAME language as their question with a friendly confirmation, "
         f"including the task name, cron expression, and next run time.{tz_note} "
         "The tool result includes a 'next_run_at_display' field already formatted in the user's local timezone; "
         "use that value directly when telling the user the next run time (do not show raw UTC)."
