@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
@@ -207,8 +208,16 @@ async def _push_mcp_policy() -> bool:
     The MCP server exposes PUT /policy on its internal Docker-network URL.
     Falls back to localhost for local (non-Docker) deployments.
     """
-    domains = [d.strip() for d in config_manager.sandbox_allow_domains.split(",") if d.strip()]
-    methods = [m.strip().upper() for m in config_manager.sandbox_allow_methods.split(",") if m.strip()]
+    domains = [
+        d.strip().lower()
+        for d in re.split(r"[\s,]+", config_manager.sandbox_allow_domains)
+        if d.strip()
+    ]
+    methods = [
+        m.strip().upper()
+        for m in re.split(r"[\s,]+", config_manager.sandbox_allow_methods)
+        if m.strip()
+    ]
     payload = {
         "mode": config_manager.sandbox_network_mode,
         "domains": domains,

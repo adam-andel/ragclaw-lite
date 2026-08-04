@@ -1,5 +1,7 @@
 """RAGClaw Agent Graph — LangGraph state machine for routing, retrieval, and tool calls.
 
+import re
+
 The graph handles everything up to LLM generation. chat.py reads the final
 state from the graph, then handles streaming LLM generation + SSE output + post-processing.
 
@@ -61,7 +63,7 @@ def sandbox_network_rule(execution: bool = False) -> str:
     elif mode == "allowlist":
         domains = [
             d.strip()
-            for d in (config_manager.sandbox_allow_domains or "").split(",")
+            for d in re.split(r"[\s,]+", config_manager.sandbox_allow_domains or "")
             if d.strip()
         ]
         if domains:
