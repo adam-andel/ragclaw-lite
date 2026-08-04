@@ -679,6 +679,46 @@ def _build_meta_skill_tools() -> list[dict]:
             },
             "_source": "meta",
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_cron",
+                "description": (
+                    "Create a scheduled cron job that runs a task on a recurring basis. "
+                    "Use when the user wants to schedule a task to run at specific times (e.g. daily, weekly, hourly). "
+                    "The job will be persisted in the database and executed by the scheduler at the specified times."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Short name of the scheduled task (e.g. 'Daily report generation')",
+                        },
+                        "cron_expr": {
+                            "type": "string",
+                            "description": "Linux crontab 5-field expression (e.g. '0 9 * * *' for daily at 9:00 AM). "
+                                           "The expression is interpreted in the user's local timezone.",
+                        },
+                        "task_content": {
+                            "type": "string",
+                            "description": "The exact task to execute when the cron job triggers. "
+                                           "Describe what the agent should do in natural language.",
+                        },
+                        "max_runs": {
+                            "type": "integer",
+                            "description": "Optional: maximum number of executions. Omit for unlimited.",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Optional longer description of what this job does.",
+                        },
+                    },
+                    "required": ["name", "cron_expr", "task_content"],
+                },
+            },
+            "_source": "meta",
+        },
     ]
 
 
@@ -1554,6 +1594,68 @@ def _extract_download_entries_from_state(state: dict) -> list[dict]:
     """
     return state.get("download_entries", []) or []
 
+
+async def _execute_create_cron(state: dict, args: dict) -> dict:
+    """Execute create_cron tool directly — write CronJob to DB without MCP round-trip.
+
+    Session-injected identity (user_id, tenant_id, kb_id, skill_id, timezone,
+    workspace_id) ensures the LLM cannot spoof ownership. The cron_expr is
+    validated via compute_next_run before persisting.
+    """
+    from app.services.cron_graph import _make_create_tool
+
+    # ── Validate required fields ──
+    name = (args.get("name") or "").strip()
+    cron_expr = (args.get("cron_expr") or "").strip()
+    task_content = (args.get("task_content") or "").strip()
+
+    if not name:
+        return {"result": "[create_cron] error: 'name' is required", "endpoint": None}
+    if not cron_expr:
+        return {"result": "[create_cron] error: 'cron_expr' is required", "endpoint": None}
+    if not task_content:
+        return {"result": "[create_cron] error: 'task_content' is required", "endpoint": None}
+
+    # ── Validate cron expression ──
+    from croniter import croniter
+    if not croniter.is_valid(cron_expr):
+        return {"result": f"[create_cron] error: invalid cron expression: {cron_expr}", "endpoint": None}
+
+    # ── Build tool with session-injected identity ──
+    user_id = state.get("user_id")
+    tenant_id = state.get("tenant_id")
+    kb_id = state.get("kb_id")
+    skill_id = (state.get("active_skill") or {}).get("id")
+    workspace_dir = state.get("workspace_id") or None
+
+    # ── Determine timezone: prefer session-level, fall back to UTC ──
+    timezone_str = state.get("timezone") or "UTC"
+
+    tool = _make_create_tool(
+        user_id=user_id,
+        tenant_id=tenant_id,
+        kb_id=kb_id,
+        skill_id=skill_id,
+        timezone=timezone_str,
+        workspace_dir=workspace_dir,
+    )
+
+    tool_args = {
+        "name": name,
+        "cron_expr": cron_expr,
+        "task_content": task_content,
+        "max_runs": args.get("max_runs"),
+        "description": (args.get("description") or "").strip(),
+    }
+
+    try:
+        result_json = await tool.ainvoke(tool_args)
+        return {"result": f"[create_cron] {result_json}", "endpoint": None}
+    except Exception as e:
+        logger.exception("create_cron tool execution failed")
+        return {"result": f"[create_cron] error: {e}", "endpoint": None}
+
+
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
     logger.warning(">>> tool_executor ENTER: tool_calls=%d round=%d <<<",
@@ -1587,7 +1689,7 @@ async def tool_executor_node(state: dict) -> dict:
         tool_source = tool_def.get("_source", "mcp")
 
         # ── Meta control tools should never reach the executor ──
-        if tool_source == "meta":
+        if tname in _meta_control_names():
             return {"result": f"[{tname}] meta-tools must not be called during the tool-execution stage", "endpoint": None}
 
         # ── Script tool path ──
@@ -1622,6 +1724,10 @@ async def tool_executor_node(state: dict) -> dict:
                     "endpoint": None,
                 }
             return {"result": f"[{tname}] Resource '{resource_path}' not found in skill folder", "endpoint": None}
+
+        # ── create_cron: intercepted tool, write to DB directly (no MCP call) ──
+        if tname == "create_cron":
+            return await _execute_create_cron(state, args)
 
         # ── MCP tool path ──
         # Get MCP server config from tool definition metadata

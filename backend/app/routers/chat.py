@@ -34,8 +34,7 @@ from app.services.conversation_summary import (
     ASSEMBLY_TRIM_WARNING_EN,
 )
 from app.services.llm_semaphore import llm_limiter
-from app.services.cron_parser import try_parse_cron_payload
-from app.services.cron_graph import run_cron_creation_subgraph
+
 from app.schemas.chat import (
     ChatRequest,
     CompactRequest,
@@ -571,6 +570,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "conversation_summary": summary_text,
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
+        "timezone": request.timezone or "UTC",
         "active_skill": pending["active_skill"],
         "available_tools": pending["available_tools"],
         "rag_context": pending["rag_context"],
@@ -847,6 +847,8 @@ async def chat_stream(
                         # Replaces the old per-conversation <ws> (conv_id) so all of a
                         # user's tool outputs land in their persistent workspace root.
                         "workspace_id": request.workspace_dir or "",
+                        # User's local IANA timezone for cron scheduling (e.g. Asia/Shanghai)
+                        "timezone": request.timezone or "UTC",
                         "active_skill": None,
                         "available_tools": [],
                         "rag_context": "",
@@ -1084,22 +1086,6 @@ async def chat_stream(
                     collected_citations = state.get("citations", [])
                     for c in collected_citations:
                         enqueue("citation", {"citation": c})
-
-                    # Detect and persist cron jobs created via natural language.
-                    cron_payload = try_parse_cron_payload(collected_content)
-                    if cron_payload:
-                        confirmation = await run_cron_creation_subgraph(
-                            payload=cron_payload,
-                            user_id=current_user.id,
-                            tenant_id=current_user.tenant_id,
-                            kb_id=request.kb_id or None,
-                            skill_id=request.skill_id or (state.get("active_skill") or {}).get("id", None),
-                            user_timezone=request.timezone,
-                            workspace_dir=request.workspace_dir or None,
-                        )
-                        collected_content = confirmation
-                        # Re-emit the confirmation as a single token event.
-                        enqueue("token", {"content": "\n\n" + collected_content})
 
                     # Background: cache + memory
                     asyncio.create_task(_store_memory_and_cache(
