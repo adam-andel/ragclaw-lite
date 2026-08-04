@@ -79,7 +79,7 @@ function Start-DockerRepl {
     $arg = @()
     if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
     Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile build @arg mcp-repl
+    docker compose -f $ComposeFile build --progress=plain @arg mcp-repl
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: build failed" -ForegroundColor Red
         return
@@ -213,7 +213,7 @@ switch ($Action) {
         $arg = @()
         if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
         Write-Host "Rebuilding mcp-repl image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
-        docker compose -f $ComposeFile build @arg --no-cache mcp-repl
+        docker compose -f $ComposeFile build --progress=plain @arg --no-cache mcp-repl
     }
 
     "reload" {
@@ -235,7 +235,7 @@ switch ($Action) {
         $arg = @()
         if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
         Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-        docker compose -f $ComposeFile build @arg mcp-repl
+        docker compose -f $ComposeFile build --progress=plain @arg mcp-repl
         if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: build failed" -ForegroundColor Red
             return

@@ -67,7 +67,7 @@ start_docker_repl() {
     arg=(--build-arg REGISTRY="$build_mirror")
   fi
   c_cyan "=== Building (registry: $build_mirror) ==="
-  compose build "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; return 1; }
+  compose build --progress=plain "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
   # ragclaw-egress owns a fixed internal IP (172.30.0.2) on $(proj_name)_ragclaw-internal.
@@ -177,7 +177,7 @@ case "$ACTION" in
       arg=(--build-arg REGISTRY="$build_mirror")
     fi
     c_dim "Rebuilding mcp-repl image (registry: $build_mirror, --no-cache) ..."
-    compose build "${arg[@]}" --no-cache mcp-repl
+    compose build --progress=plain "${arg[@]}" --no-cache mcp-repl
     ;;
   reload)
     assert_docker
@@ -196,7 +196,7 @@ case "$ACTION" in
       arg=(--build-arg REGISTRY="$build_mirror")
     fi
     c_cyan "=== Building (registry: $build_mirror) ==="
-    compose build "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
+    compose build --progress=plain "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
     echo
     c_cyan "=== Starting container ==="
     repair_egress_network

@@ -69,7 +69,7 @@ start_docker_backend() {
     arg=(--build-arg REGISTRY="$build_mirror")
   fi
   c_cyan "=== Building (registry: $build_mirror) ==="
-  compose build "${arg[@]}" ragclaw || { c_red "ERROR: build failed"; return 1; }
+  compose build --progress=plain "${arg[@]}" ragclaw || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
   compose up -d ragclaw || { c_red "ERROR: docker compose up failed"; return 1; }
@@ -132,7 +132,7 @@ case "$ACTION" in
       arg=(--build-arg REGISTRY="$build_mirror")
     fi
     c_dim "Rebuilding ragclaw image (registry: $build_mirror, --no-cache) ..."
-    compose build "${arg[@]}" --no-cache ragclaw
+    compose build --progress=plain "${arg[@]}" --no-cache ragclaw
     ;;
   reload)
     assert_docker
