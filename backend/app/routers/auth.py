@@ -1,16 +1,19 @@
 """Authentication routes: login, profile."""
 
+import hashlib
 import os
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.user import (
-    LoginRequest, TokenResponse, UserResponse, UserUpdateRequest,
+    LoginRequest, RegisterRequest, SetupStatusResponse,
+    TokenResponse, UserResponse, UserUpdateRequest,
 )
 from app.services.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
@@ -31,6 +34,52 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
 
+    token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
+    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
+
+
+@router.get("/setup", response_model=SetupStatusResponse)
+async def setup_status(db: AsyncSession = Depends(get_db)):
+    """Public: report whether the system still needs its first admin (no users)."""
+    total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    return SetupStatusResponse(needs_setup=total == 0)
+
+
+@router.post("/register", response_model=TokenResponse)
+async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    """Bootstrap the first user as the super admin.
+
+    Public, but only succeeds while the user table is empty. Once any account
+    exists, self-registration is closed (admins create further users via
+    ``/api/users``). The first registrant is always granted the ADMIN role and
+    the reserved bootstrap REPL UID, matching the design contract that the
+    bootstrap admin owns ``repl_uid_range_min``.
+    """
+    total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    if total > 0:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="SETUP_ALREADY_COMPLETE")
+
+    existing = await db.execute(select(User).where(User.username == data.username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="USER_NAME_EXISTS")
+
+    # Deterministic UUID + reserved bootstrap UID keep the first admin stable
+    # across restarts and consistent with the previously auto-seeded admin.
+    admin_user_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-admin-user").hexdigest()))
+    user = User(
+        id=admin_user_id,
+        username=data.username,
+        hashed_password=hash_password(data.password),
+        display_name=data.display_name or data.username,
+        email=data.email,
+        role=UserRole.ADMIN,
+        is_active=True,
+        tenant_id=data.tenant_id or str(uuid.uuid4()),
+        repl_uid=settings.repl_uid_range_min,  # reserved bootstrap admin UID
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
     token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
     return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 

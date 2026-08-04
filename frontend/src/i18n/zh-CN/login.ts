@@ -19,4 +19,20 @@ export default {
   noAccountHint: '还没有账号？请联系管理员创建。',
   loginSuccess: '登录成功，正在进入…',
   loginFailed: '登录失败，请稍后重试',
+
+  // First-launch self-registration (no users yet → first registrant becomes super admin)
+  setupTitle: '创建管理员账号',
+  setupSubtitle: '首次启动：设置您的超级管理员账号',
+  displayName: '显示名称（可选）',
+  displayNamePlaceholder: '请输入显示名称',
+  confirmPassword: '确认密码',
+  confirmPasswordPlaceholder: '请再次输入密码',
+  enterConfirmPassword: '请再次输入密码',
+  passwordMismatch: '两次输入的密码不一致',
+  passwordTooShort: '密码至少 4 位',
+  register: '创 建 账 号',
+  registering: '创建中…',
+  registerSuccess: '管理员账号创建成功，正在进入…',
+  registerFailed: '注册失败，请稍后重试',
+  setupHint: '这是系统的第一位用户，将自动成为超级管理员。',
 }

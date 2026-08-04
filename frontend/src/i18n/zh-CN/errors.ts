@@ -49,6 +49,7 @@ export default {
 
     USER_CREATE_ROLE: '普通管理员只能创建普通用户',
     USER_NAME_EXISTS: '用户名已存在',
+    SETUP_ALREADY_COMPLETE: '系统初始化已完成，注册已关闭。请使用已有账号登录。',
     USER_UID_POOL_EXHAUSTED: '无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。',
     USER_NOT_FOUND: '用户不存在',
     USER_NO_MANAGE_PERM: '无权管理该用户',

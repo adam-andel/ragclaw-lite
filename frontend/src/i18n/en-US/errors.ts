@@ -49,6 +49,7 @@ export default {
 
     USER_CREATE_ROLE: 'Moderators can only create regular users',
     USER_NAME_EXISTS: 'Username already exists',
+    SETUP_ALREADY_COMPLETE: 'System setup is already complete and registration is closed. Please log in with an existing account.',
     USER_UID_POOL_EXHAUSTED: 'Unable to allocate a sandbox UID for the new user: the UID pool may be exhausted. Please increase REPL_UID_RANGE_MAX.',
     USER_NOT_FOUND: 'User not found',
     USER_NO_MANAGE_PERM: 'You do not have permission to manage this user',
