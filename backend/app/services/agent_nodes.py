@@ -1780,6 +1780,11 @@ async def tool_executor_node(state: dict) -> dict:
             ws_id = state.get("workspace_id")
             if ws_id:
                 call_args["workspace_id"] = ws_id
+            # Propagate the user's local timezone to the REPL sandbox so that
+            # code using datetime.now()/time.strftime stamps files with the
+            # user's local time instead of the container's default (UTC).
+            # Falls back to UTC when the client did not send one.
+            call_args["timezone"] = state.get("timezone") or "UTC"
             res = await _mc.call_tool(cfg, tname, call_args, auth_user=state.get("user_id"))
             logger.warning(">>> tool_executor RESULT: tool=%s ok=%s result=%.200s <<<",
                           tname, res.ok, (res.result or res.error)[:200])

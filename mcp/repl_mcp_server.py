@@ -113,9 +113,60 @@ def _set_limits():
 # ═══════════════════════════════════════════════════════════
 # Shared execution helpers
 # ═══════════════════════════════════════════════════════════
-def _sanitize_env() -> dict:
-    """Copy environ, strip credential-like vars, set thread limits for Docker."""
+# Per-execution timezone (IANA) for the current tool call, validated and set by
+# execute() from the caller-supplied "timezone" argument, then read by each
+# language run_fn when building the child environment. None => container default.
+_exec_tz: str | None = None
+
+
+def _validate_tz(tz: str | None) -> str | None:
+    """Return ``tz`` if it is a real IANA timezone name, else None.
+
+    Validation guards against an attacker injecting a bogus/malicious TZ that
+    could fall back to POSIX TZ syntax with arbitrary command-like content.
+    We accept only names present under /usr/share/zoneinfo (e.g. Asia/Shanghai,
+    America/New_York, UTC). Returns None when validation fails or zoneinfo data
+    is unavailable, so the caller falls back to the container default.
+    """
+    if not tz or not isinstance(tz, str):
+        return None
+    # Reject anything that looks like POSIX TZ syntax or path traversal.
+    if "/" not in tz and tz not in ("UTC", "GMT"):
+        # Allow simple region-less names only if they literally exist; keep it
+        # strict by requiring a slash (Area/Location) for everything else.
+        if tz not in ("UTC", "GMT"):
+            return None
+    tz = tz.strip()
+    if not tz or ".." in tz or tz.startswith("/") or "\x00" in tz:
+        return None
+    zpath = os.path.join("/usr/share/zoneinfo", tz)
+    if os.path.isfile(zpath) or os.path.islink(zpath):
+        return tz
+    # Fallback to zoneinfo module if the filesystem path layout differs.
+    try:
+        from zoneinfo import ZoneInfo  # noqa: F401
+        ZoneInfo(tz)
+        return tz
+    except Exception:
+        return None
+
+
+def _sanitize_env(tz: str | None = None) -> dict:
+    """Copy environ, strip credential-like vars, set thread limits for Docker.
+
+    When ``tz`` is a valid IANA timezone it is injected as ``TZ`` so that child
+    processes (e.g. Python ``datetime.now()``) observe the *user's* local time
+    rather than the container default (UTC). This keeps file timestamps etc.
+    aligned with what the end user expects, without hardcoding any region.
+    """
     env = os.environ.copy()
+    # Inject the caller's timezone so local time inside the sandbox matches the
+    # user's locale. TZ takes precedence over /etc/localtime in glibc, and only
+    # a validated IANA name is accepted (falls back to container default).
+    if tz:
+        _tz = _validate_tz(tz)
+        if _tz:
+            env["TZ"] = _tz
     for k in list(env.keys()):
         if any(pat in k.upper() for pat in ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")):
             env.pop(k, None)
@@ -876,7 +927,7 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
         except OSError:
             pass
 
-        env = _sanitize_env()
+        env = _sanitize_env(_exec_tz)
         # The path-convergence shim reads REPL_ALLOW_DIR to map workspace-root
         # absolute paths onto the sandbox while preserving sub-path structure.
         # It must be injected explicitly: when the server is started with
@@ -1048,7 +1099,7 @@ def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
         # cd to workdir, then execute; use set -e for early failure
         shell_cmd = ["/bin/sh", "-c", f"cd '{workdir}' && {code}"]
 
-    env = _sanitize_env()
+    env = _sanitize_env(_exec_tz)
     # Shell cannot be shimmed the way Python/JS are (writes happen at syscall
     # level via >, cp, tee...). LD_PRELOAD would need to shorten paths and
     # bind-mount would need CAP_SYS_ADMIN + the mount syscall that seccomp
@@ -1341,7 +1392,7 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
         except OSError:
             pass
 
-        env = _sanitize_env()
+        env = _sanitize_env(_exec_tz)
         # Workspace ROOT (not workdir): the path-convergence shim maps
         # <wsroot>/a/b onto <sandbox>/a/b, preserving sub-path structure. Using
         # workdir here would make wsroot == sandbox and silently disable that.
@@ -1452,7 +1503,12 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     """
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
                 workspace_id: str | None = None, user: str | None = None,
-                uid: int | None = None) -> tuple[str, list[dict]]:
+                uid: int | None = None, tz: str | None = None) -> tuple[str, list[dict]]:
+        # Stash the caller's timezone so the language-specific run_fn can inject
+        # it into the child environment (TZ var). Kept on a module global because
+        # run_fn is a pre-built closure without a tz parameter.
+        global _exec_tz
+        _exec_tz = _validate_tz(tz)
         t0 = time.time()
 
         # Pre-screen
@@ -1535,6 +1591,13 @@ def _build_tools() -> list[dict]:
                                    "When omitted, the user's workspace root is used. "
                                    "Calls sharing the same workspace_id share the same working directory, so you can generate a file and then process it within one conversation.",
                 },
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional IANA timezone for this execution (e.g. 'Asia/Shanghai', 'America/New_York', 'UTC'). "
+                                   "When provided and valid, local time inside the sandbox (datetime.now(), time.strftime) uses this zone "
+                                   "so generated file timestamps match the caller's locale. Injected automatically by the backend from the "
+                                   "user's browser; normally you do not need to set it.",
+                },
                 "auth": {
                     "type": "object",
                     "description": "Identity envelope (injected and signed by the backend; auth is mandatory, a valid signature is required). "
@@ -1564,6 +1627,12 @@ def _build_tools() -> list[dict]:
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "Complete shell command"},
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional IANA timezone for this execution (e.g. 'Asia/Shanghai', 'America/New_York', 'UTC'). "
+                                   "When valid, local time inside the sandbox uses this zone. Injected automatically by the backend; "
+                                   "normally you do not need to set it.",
+                },
                 "auth": {
                     "type": "object",
                     "description": "Identity envelope (injected and signed by the backend). Structure see run_python.",
@@ -1591,6 +1660,12 @@ def _build_tools() -> list[dict]:
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "Complete JavaScript code"},
+                "timezone": {
+                    "type": "string",
+                    "description": "Optional IANA timezone for this execution (e.g. 'Asia/Shanghai', 'America/New_York', 'UTC'). "
+                                   "When valid, local time inside the sandbox uses this zone. Injected automatically by the backend; "
+                                   "normally you do not need to set it.",
+                },
                 "auth": {
                     "type": "object",
                     "description": "Identity envelope (injected and signed by the backend). Structure see run_python.",
@@ -1695,6 +1770,9 @@ class MCPHandler(BaseHTTPRequestHandler):
             arguments = params.get("arguments", {})
             code = arguments.get("code", "")
             workspace_id = arguments.get("workspace_id")
+            # Caller-supplied IANA timezone (e.g. Asia/Shanghai). Validated inside
+            # execute()/_validate_tz(); invalid values are ignored (UTC default).
+            caller_tz = arguments.get("timezone")
 
             # ── Identity: verify Backend-signed envelope (fail closed) ──
             auth = arguments.get("auth") or params.get("auth")
@@ -1727,7 +1805,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
                 uid = auth_info["uid"] if auth_info else None
-                text, generated = executor(code, workspace_id=workspace_id, user=user, uid=uid)
+                text, generated = executor(code, workspace_id=workspace_id, user=user, uid=uid, tz=caller_tz)
                 result = {"content": [{"type": "text", "text": text}]}
                 if generated:
                     result["structuredContent"] = {"files": generated}
