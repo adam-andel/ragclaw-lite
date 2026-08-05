@@ -14,16 +14,39 @@ links which now also route through ``/api/workspace/download``.
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
+logger = logging.getLogger("ragclaw.workspace")
+
 from app.config import settings
 from app.models.user import User
 from app.services.auth import get_current_user
+from app.services.mcp_client import _repush_repl_auth_secret
 from app.services.repl_auth import get_user_repl_uid
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+
+# The MCP server returns this exact body (HTTP 403) while its in-memory
+# REPL_AUTH_SECRET has not been pushed yet (e.g. right after mcp-repl
+# restarted but the Backend's self-heal loop had already stopped). It is the
+# HTTP /workspace equivalent of the JSON-RPC -32002 "secret not configured"
+# error on the REPL tool path, and is repaired the same way: re-push the
+# secret once and replay the request.
+_WS_AUTH_NOT_CONFIGURED = '{"error": "auth not configured"}'
+
+
+def _is_auth_not_configured(resp) -> bool:
+    """True when the MCP server rejected us because its secret is missing."""
+    if resp.status_code != 403:
+        return False
+    try:
+        body = resp.text.strip()
+    except Exception:
+        return False
+    return body == _WS_AUTH_NOT_CONFIGURED or '"auth not configured"' in body
 
 
 async def _repl_uid_or_403(user: User) -> int:
@@ -50,7 +73,14 @@ def _mcp_base() -> str:
 
 async def _json_proxy(method: str, url: str, *, headers: dict,
                       json_body=None, params=None) -> JSONResponse:
-    """Forward a request to the MCP server and echo its JSON + status code."""
+    """Forward a request to the MCP server and echo its JSON + status code.
+
+    Self-heals the same gap the REPL tool path covers: if the MCP server
+    returns 403 "auth not configured" (its in-memory secret was lost, e.g.
+    after a restart), re-push the secret once and replay the request before
+    giving up. Reuses the shared debounced re-push so concurrent calls collapse
+    into a single PUT /auth-secret, matching mcp_client.call_tool's behavior.
+    """
     import httpx
 
     try:
@@ -58,6 +88,15 @@ async def _json_proxy(method: str, url: str, *, headers: dict,
             resp = await client.request(
                 method, url, headers=headers, json=json_body, params=params
             )
+            if _is_auth_not_configured(resp):
+                logger.warning(
+                    "workspace_auth_not_configured method=%s url=%s — re-pushing secret and retrying",
+                    method, url,
+                )
+                if await _repush_repl_auth_secret():
+                    resp = await client.request(
+                        method, url, headers=headers, json=json_body, params=params
+                    )
     except httpx.ConnectError:
         raise HTTPException(503, detail="WORKSPACE_MCP_UNAVAILABLE")
     except Exception as e:  # noqa: BLE001 - surface proxy failures uniformly
@@ -125,6 +164,19 @@ async def download(
         resp = await client.send(
             httpx.Request("GET", url, headers=_ws_headers(uid)), stream=True
         )
+        # Self-heal: a freshly restarted mcp-repl may report 403 auth not
+        # configured because its in-memory secret is gone. Re-push once and
+        # replay, matching the JSON / workspace proxy behavior.
+        if _is_auth_not_configured(resp):
+            logger.warning(
+                "workspace_download_auth_not_configured path=%s — re-pushing secret and retrying",
+                path,
+            )
+            await resp.aclose()
+            if await _repush_repl_auth_secret():
+                resp = await client.send(
+                    httpx.Request("GET", url, headers=_ws_headers(uid)), stream=True
+                )
     except httpx.ConnectError:
         await client.aclose()
         raise HTTPException(503, detail="WORKSPACE_MCP_UNAVAILABLE")
@@ -193,11 +245,21 @@ async def download_zip(
         We build the query string inline (single percent-encode via `quote`,
         safe='' keeps slashes) rather than passing `params=`, because httpx
         would otherwise re-encode the already-encoded value and produce a
-        double-encoded path (e.g. `dir1%252Fsub`) that MCP can't resolve."""
+        double-encoded path (e.g. `dir1%252Fsub`) that MCP can't resolve.
+
+        Self-heals a freshly restarted mcp-repl that lost its in-memory secret
+        (403 auth not configured) by re-pushing the secret once and replaying.
+        """
         qpath = quote(path, safe="") if path else ""
-        resp = await client.get(
-            f"{base}/workspace/?path={qpath}", headers=headers
-        )
+        url = f"{base}/workspace/?path={qpath}"
+        resp = await client.get(url, headers=headers)
+        if _is_auth_not_configured(resp):
+            logger.warning(
+                "workspace_zip_list_auth_not_configured path=%s — re-pushing secret and retrying",
+                path,
+            )
+            if await _repush_repl_auth_secret():
+                resp = await client.get(url, headers=headers)
         resp.raise_for_status()
         data = resp.json()
         return data.get("entries", [])
@@ -259,6 +321,13 @@ async def download_zip(
                         resp = await client.get(
                             f"{base}/workspace/{quote(rel, safe='')}", headers=headers
                         )
+                        if _is_auth_not_configured(resp):
+                            # Rare: the secret window closed between listing and
+                            # fetching. Re-push once and replay before surfacing.
+                            if await _repush_repl_auth_secret():
+                                resp = await client.get(
+                                    f"{base}/workspace/{quote(rel, safe='')}", headers=headers
+                                )
                         resp.raise_for_status()
                         data = resp.content
                         zf.writestr(arcname, data)
