@@ -103,6 +103,8 @@ export interface ConversationSummaryState {
   summary_text: string
   summary_msg_count: number
   total_messages: number
+  summary2_text: string        // L1 secondary (re-compacted) summary, read-only in the UI
+  summary_archived_count: number // how many L0 folds have been archived to vector/BM25 memory
 }
 
 // The backend throws bare error codes (SUMMARY_LLM_FAILED / NOTHING_TO_COMPACT /

@@ -8,6 +8,7 @@ from app.models.parser_plugin import ParserPluginState
 from app.models.system_setting import SystemSetting
 from app.models.notification import Notification
 from app.models.cron_job import CronJob, CronJobRun
+from app.models.memory_chunk import MemoryChunk
 
 __all__ = [
     "Document", "Chunk", "KBDocument", "KnowledgeBase", "KBUserAccess",
@@ -17,4 +18,5 @@ __all__ = [
     "SystemSetting",
     "Notification",
     "CronJob", "CronJobRun",
+    "MemoryChunk",
 ]

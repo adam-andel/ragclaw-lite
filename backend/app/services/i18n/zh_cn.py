@@ -143,4 +143,27 @@ MESSAGES = {
     "cron_created_confirm": "已创建定时任务「{name}」，可在定时任务管理页查看。",
     "cron_created_confirm_detail": "已创建定时任务「{name}」，下次执行时间：{next_run}（{tz}），可在定时任务管理页查看。",
     "cron_created_fallback": "定时任务已创建。",
+
+    # ── Conversation-history compression prompts (Layer 1). No placeholders. ──
+    "summary_prompt": (
+        "你是一个对话压缩器。请将下面的对话记录压缩为一段连贯的中文摘要，"
+        "保留：关键事实、用户偏好、已做出的决策、未解决的问题、重要结论与待办。"
+        "不要逐字复述，不要遗漏关键上下文。输出纯文本摘要，不要使用 markdown 代码块。"
+    ),
+    "summary_recompact_prompt": (
+        "你是一个对话摘要压缩器。下面是一段已有的对话摘要，请将其进一步压缩为更短的摘要，"
+        "保留所有关键事实、用户偏好、决策、未解决问题与重要结论，删除冗余表述。"
+        "输出纯文本，不要 markdown 代码块。"
+    ),
+    "query_condensed_warning": (
+        "您的消息过长，已自动压缩以适配上下文窗口（首尾原文保留，中间部分被摘要）。"
+    ),
+    "query_truncated_warning": (
+        "本次提问过长，即使清空了历史上下文仍超出模型上下文窗口，已保留开头、截断结尾以保证请求成功发送。"
+    ),
+    "assembly_trim_warning": (
+        "部分较早的上下文（摘要 / 对话记录 / 参考文档 / 工具记录）因超出上下文窗口已被自动裁剪，"
+        "以确保本次回答能正常生成。"
+    ),
+    "tool_desc_heading": "## 可用工具",
 }

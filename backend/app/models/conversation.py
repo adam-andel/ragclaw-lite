@@ -26,6 +26,11 @@ class Conversation(Base):
     # the messages table are NEVER modified.
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary_msg_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Three-tier memory: L1 is the secondary (re-compacted) summary, read-only in
+    # the UI. summary_archived_count is display-only (how many L0 folds have been
+    # pushed to vector/BM25 memory).
+    summary2_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_archived_count: Mapped[int] = mapped_column(Integer, default=0)
 
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
@@ -42,6 +47,11 @@ class Message(Base):
     status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     citations_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Per-message content tokens (+4 per-message overhead), written at insert time.
+    # Distinct from `token_count` (whole-turn prompt tokens, surfaced in the UI
+    # capacity bar). Used by Layer-1 compression to locate the oldest 2/3 token
+    # boundary by whole conversation rounds without re-encoding full history.
+    content_token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
     ttft_ms: Mapped[int] = mapped_column(Integer, default=0)
     retrieval_ms: Mapped[int] = mapped_column(Integer, default=0)

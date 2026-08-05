@@ -52,6 +52,7 @@ class RagclawAgentState(TypedDict):
 
     # ── Retrieval output ──
     rag_context: str              # Formatted text of retrieved chunks
+    memory_context: str           # Formatted text of recalled conversation memory (archived L0/L1)
     citations: list[dict]         # Citation metadata for the frontend
 
     # ── Tool call cycle ──

@@ -34,6 +34,8 @@ export default {
     CONFIG_CONTEXT_WINDOW_RANGE: 'Context window must be between 1 and 10,000,000.',
     CONFIG_CONCURRENCY_RANGE: 'Concurrency must be between 1 and 50.',
     CONFIG_AGENT_ROUND_QUOTA_RANGE: 'Agent round quota must be between 0 and 200 (0 = unlimited).',
+    CONFIG_ARCHIVE_HIGH_RANGE: 'Archive trigger threshold (high) must be between 1 and 100 (percent of context window).',
+    CONFIG_ARCHIVE_LOW_RANGE: 'L1 re-compaction threshold (low) must be between 1 and 100 (percent of context window).',
     CONFIG_SANDBOX_NETWORK_MODE: "Sandbox network mode must be one of: deny / allow / allowlist.",
     SANDBOX_POLICY_UPDATED: 'Sandbox policy updated — changes take effect immediately.',
     REPL_AUTH_SECRET_REGENERATED: 'A new REPL_AUTH_SECRET was generated — changes take effect immediately.',
