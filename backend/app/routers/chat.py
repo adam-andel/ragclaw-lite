@@ -30,6 +30,7 @@ from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
     CompactionError,
+    _join_summary,
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
@@ -541,7 +542,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, emit_usage_fn=None) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, summary2_text: str = "", emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -568,7 +569,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "tenant_id": current_user.tenant_id,
         "user_memory": current_user.memory or "",
         "conversation_history": recent_history,
-        "conversation_summary": summary_text,
+        "conversation_summary": _join_summary(summary2_text, summary_text),
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
         "timezone": request.timezone or "UTC",
@@ -878,6 +879,7 @@ async def chat_stream(
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
+                        summary2_text=getattr(conv, "summary2_text", None) or "",
                         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
