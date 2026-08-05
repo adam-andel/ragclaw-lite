@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.config import settings
 from app.models.document import Document, Chunk, DocStatus, KBDocument
+from app.models.kb_access import KBUserAccess
 from app.models.user import User
 from app.schemas.document import (
     DocumentResponse, DocumentStatusResponse, ChunkResponse,
@@ -60,6 +61,42 @@ async def _get_doc_kb_ids(doc_id: str, db: AsyncSession) -> list[str]:
         select(KBDocument.kb_id).where(KBDocument.doc_id == doc_id)
     )
     return [row[0] for row in result.all()]
+
+
+async def _load_doc_for_read(
+    doc_id: str, current_user: User, db: AsyncSession
+) -> Document:
+    """Load a document and authorize the caller to READ it (gid / KB-group model).
+
+    Readable if: admin (superuser) OR owner OR the user is a member of ANY KB
+    that contains this document (KBUserAccess ∩ KBDocument != empty).
+    Otherwise 403. Raises 404 if not found. Returns the Document (no re-query).
+    """
+    doc = (await db.execute(
+        select(Document).where(Document.id == doc_id)
+    )).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "文档不存在")
+
+    if current_user.role.value == "admin":
+        return doc
+    if doc.owner_id is not None and doc.owner_id == current_user.id:
+        return doc
+
+    # gid intersection: user's KB groups JOIN doc's KB groups
+    shared = (await db.execute(
+        select(KBUserAccess.id)
+        .join(KBDocument, KBDocument.kb_id == KBUserAccess.kb_id)
+        .where(
+            KBDocument.doc_id == doc_id,
+            KBUserAccess.user_id == current_user.id,
+        )
+        .limit(1)
+    )).first()
+    if shared is not None:
+        return doc
+
+    raise HTTPException(403, "无权访问该文档")
 
 
 # ---- Upload (single file, no KB binding) ----
@@ -256,10 +293,7 @@ async def download_document(
     doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(404, "文档不存在")
+    doc = await _load_doc_for_read(doc_id, current_user, db)
     path = Path(doc.file_path)
     if not path.exists():
         raise HTTPException(404, "文件不存在或已被清理")
@@ -277,10 +311,7 @@ async def get_document(
     doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(404, "文档不存在")
+    doc = await _load_doc_for_read(doc_id, current_user, db)
     kb_ids = await _get_doc_kb_ids(doc_id, db)
     return _model_to_response(doc, kb_ids)
 
@@ -292,10 +323,7 @@ async def get_document_status(
     doc_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Document).where(Document.id == doc_id))
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(404, "文档不存在")
+    doc = await _load_doc_for_read(doc_id, current_user, db)
     return DocumentStatusResponse(
         id=doc.id, status=_status_str(doc),
         error_message=doc.error_message,
@@ -314,6 +342,7 @@ async def get_document_chunks(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _load_doc_for_read(doc_id, current_user, db)
     conditions = [Chunk.doc_id == doc_id]
     if search and search.strip():
         conditions.append(Chunk.content.ilike(f"%{search.strip()}%"))
@@ -336,6 +365,7 @@ async def get_document_chunk(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _load_doc_for_read(doc_id, current_user, db)
     result = await db.execute(
         select(Chunk).where(Chunk.doc_id == doc_id, Chunk.chunk_index == chunk_index)
     )
@@ -349,9 +379,10 @@ async def get_document_chunk(
 
 @router.get("/{doc_id}/kbs", response_model=list[str])
 async def get_document_kbs(
-    doc_id: str, current_user: User = Depends(get_current_user),
+    doc_id: str,     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _load_doc_for_read(doc_id, current_user, db)
     return await _get_doc_kb_ids(doc_id, db)
 
 # ---- Delete document (cleans up vectors across all linked KBs) ----
@@ -394,6 +425,16 @@ async def list_documents_by_kb(
     kb_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # gid: only admin / KB members may list a KB's documents
+    if current_user.role.value != "admin":
+        member = (await db.execute(
+            select(KBUserAccess.id).where(
+                KBUserAccess.kb_id == kb_id,
+                KBUserAccess.user_id == current_user.id,
+            ).limit(1)
+        )).first()
+        if member is None:
+            raise HTTPException(403, "无权访问该知识库")
     result = await db.execute(
         select(KBDocument).where(KBDocument.kb_id == kb_id).order_by(KBDocument.added_at.desc())
     )

@@ -29,12 +29,6 @@ def _gen_id() -> str:
     return str(uuid.uuid4())
 
 
-def _check_kb_access(user: User, kb: KnowledgeBase):
-    """Admin/moderator always has access; owner always has access."""
-    if user.role.value in ("admin", "moderator") or kb.owner_id == user.id:
-        return
-
-
 async def _user_has_kb_access(user_id: str, kb_id: str, db: AsyncSession) -> bool:
     result = await db.execute(
         select(KBUserAccess).where(
@@ -220,9 +214,8 @@ async def list_kb_documents(
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(404, "知识库不存在")
-    try:
-        _check_kb_access(current_user, kb)
-    except Exception:
+    # gid: admin / KB owner / KB members may list (mirrors get_kb idiom)
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
         if not await _user_has_kb_access(current_user.id, kb_id, db):
             raise HTTPException(403, "无权访问")
 
