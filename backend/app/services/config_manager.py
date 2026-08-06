@@ -390,7 +390,8 @@ SUMMARY_SAFETY_MARGIN = 256  # reserve for model output; matches _budget() in
 # conversation_summary.
 MIN_CONTENT_ROOM = 1024  # min tokens that must remain for real dialogue after
 # reserving output + fixed overhead. Below this, even fit_assembly_context's
-# trimming cannot save the request (no 400 is guaranteed), so warn the admin.
+# trimming cannot save the request (a residual overflow surfaces as an upstream
+# 400), so warn the admin.
 
 
 class ConfigManager:

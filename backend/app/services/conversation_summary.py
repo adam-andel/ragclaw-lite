@@ -97,16 +97,17 @@ QUERY_KEEP_TAIL_FRAC = 0.35
 QUERY_COMPRESS_MIN_TOKENS = 2048
 
 # Phase-3 (assembly point) query hard truncation: fraction of the remaining
-# query dropped from the TAIL on each pass. The head carries the user's actual
-# instruction, so it is kept. max(1, ...) elsewhere guarantees progress.
-QUERY_TRUNCATE_STEP_FRAC = 0.25
+# Oversized queries are rejected at the API entry point (query_exceeds_context_window)
+# before any heavy processing, and any residual overflow that survives
+# fit_assembly_context is surfaced to the caller as an upstream 400 -- the query is
+# never silently truncated here.
 
 # Maximum re-compaction iterations in step (2) (each is one LLM call).
 MAX_RECOMPACT_ITERS = 3
 
 # Prompts below were consolidated into the backend i18n dict (app/services/i18n):
 #   summary_prompt, summary_recompact_prompt, query_condensed_warning,
-#   query_truncated_warning, assembly_trim_warning -> resolved via _t(key, prompt_language).
+#   assembly_trim_warning -> resolved via _t(key, prompt_language).
 
 # Chunk delimiter used by agent_nodes._build_context when joining retrieved chunks
 # into `rag_context`. Trimming splits on it to drop the least-relevant (tail) chunks
@@ -122,6 +123,20 @@ def _budget() -> int:
     return config_manager.context_window - (
         config_manager.max_tokens + SUMMARY_SAFETY_MARGIN
     )
+
+
+def query_exceeds_context_window(query: str) -> bool:
+    """True when the raw query alone already exhausts the input token budget.
+
+    Used as an early-exit guard at the request entry point so an oversized query
+    is rejected before any history compression, RAG, or LLM call runs. A query
+    that alone overflows the budget cannot be salvaged by trimming history/summary,
+    so the caller should fail fast with a user-facing message instead of burning
+    tokens on a low-quality truncated answer.
+    """
+    if not query:
+        return False
+    return count_text_tokens(query) > _budget()
 
 
 def _overhead() -> int:
@@ -720,7 +735,7 @@ def fit_assembly_context(
     memory recall, tool records and the query all pass through ``build_messages``,
     so every decision is made against the real token cost.
 
-    Trimming runs in three phases.
+    Trimming runs in two phases.
 
     PHASE 1 -- "keep >= 1" (preferred). Every step leaves at least one item alive so
     a normal overflow degrades gracefully instead of blanking the context:
@@ -738,21 +753,12 @@ def fit_assembly_context(
         7. tool_payload -> drop the final unit/entry
     (summary is already empty after phase 1, so it is a no-op here.)
 
-    PHASE 3 -- query hard truncation (last resort). With an empty context the
-    fixed system prefix plus the query alone can still overflow. Keep the HEAD
-    (which carries the user's actual instruction) and drop the TAIL, one
-    ``QUERY_TRUNCATE_STEP_FRAC`` slice per pass. This is lossy and the caller
-    MUST warn the user -- compare the returned query against the input to detect
-    it. Only when the query is down to a single token do we give up and log.
-
     The result is purely transient: callers assemble THIS submission's messages
     from the returned components and must NOT write anything back to the database
-    or mutate state. In particular the truncated query is for this submission
-    only -- ``state["query"]`` stays intact.
-
-    ``build_messages`` is called as ``build_messages(summary, history, rag,
-    payload, query)``; it MUST use the query passed in rather than reading it
-    from an enclosing scope, otherwise phase 3 cannot take effect.
+    or mutate state. The query is returned unchanged -- oversized queries are
+    rejected at the API entry point (query_exceeds_context_window) and any
+    residual overflow is surfaced to the caller as an upstream 400, so this
+    function never truncates the user's question.
 
     Returns ``(summary, history, rag, payload, query, dropped)``.
     """
@@ -822,19 +828,10 @@ def fit_assembly_context(
             cur_p = []
             dropped = True
             continue
-        # ---- Phase 3: last resort -- hard-truncate the query ---- #
-        # Context is empty and the system prefix + query alone still overflow.
-        # Keep the HEAD (the user's instruction), drop the TAIL. Every pass must
-        # remove at least one token or the loop would spin forever on a short
-        # query (integer scaling degenerates to 0).
-        if cur_q:
-            enc = _get_encoder()
-            ids = enc.encode(cur_q)
-            if len(ids) > 1:
-                drop = max(1, int(len(ids) * QUERY_TRUNCATE_STEP_FRAC))
-                cur_q = enc.decode(ids[: max(1, len(ids) - drop)])
-                dropped = True
-                continue
+        # Context is empty and the system prefix + query alone still overflow:
+        # the query is returned untrimmed (oversized queries are rejected at the
+        # API entry point and residual overflow surfaces as an upstream 400), so
+        # nothing left to give -- surface it and let the call proceed.
 
         # Even a single-token query over an empty context overflows: the fixed
         # system prefix alone exceeds the window. Nothing left to give -- surface

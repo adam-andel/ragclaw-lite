@@ -353,10 +353,6 @@ class RagclawAgentGraph:
         )
         messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
         messages = _sanitize_llm_messages(messages)
-        # Flag the phase-3 query truncation so the caller can warn the user with the
-        # right message. Kept on `state` (not the return tuple) so the existing
-        # 2-tuple unpacking at the call site keeps working.
-        state["query_truncated"] = trimmed_q != (state.get("query") or "")
         # Stash the persistent/transient split of THIS submission so the caller can
         # report it without re-deriving the post-trim components. Kept on `state`
         # (not in the return tuple) so existing 2-tuple unpacking keeps working.

@@ -33,6 +33,7 @@ from app.services.conversation_summary import (
     compact_conversation,
     CompactionError,
     _join_summary,
+    query_exceeds_context_window,
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
@@ -926,6 +927,16 @@ async def chat_stream(
                             })
                             return
 
+                    # ── 1a-bis. Reject oversized queries before any heavy processing ──
+                    # (history compression, RAG, file reads, LLM calls). If the raw
+                    # query alone already exhausts the input budget there is nothing to
+                    # salvage, so fail fast with a user-facing message.
+                    if query_exceeds_context_window(request.query):
+                        enqueue("error", {
+                            "message": "QUERY_TOO_LONG",
+                        })
+                        return
+
                     # ── 1b. Pre-create the assistant message so the final content
                     # and the accumulated agent_steps can be persisted at the end
                     # of the turn (written once, not incrementally). The final
@@ -960,6 +971,15 @@ async def chat_stream(
                         if file_summary["failed"]:
                             msg += f"; {file_summary['failed']} failed to read"
                         emit_agent_step("file_context", msg)
+
+                    # ── 1a-ter. Re-check after file expansion: expanded_query can be
+                    # far larger than request.query once large files are spliced in.
+                    # Same fast-fail as above.
+                    if query_exceeds_context_window(expanded_query):
+                        enqueue("error", {
+                            "message": "QUERY_TOO_LONG",
+                        })
+                        return
 
                     # Compress history / summary / query if it would overflow the
                     # context window. Returns (recent_messages, summary_text,
@@ -1116,15 +1136,9 @@ async def chat_stream(
                     final_retr = state.get("retrieval_ms", 0)
                     messages, assembly_dropped = ragclaw_agent_graph.build_generation_messages(state)
                     if assembly_dropped:
-                        # Phase 3 (query hard truncation) is materially worse for the
-                        # user than dropping older context, so report it distinctly.
                         emit_agent_step(
                             "context_compress",
-                            _t(
-                                "query_truncated_warning" if state.get("query_truncated")
-                                else "assembly_trim_warning",
-                                config_manager.prompt_language,
-                            ),
+                            _t("assembly_trim_warning", config_manager.prompt_language),
                         )
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)

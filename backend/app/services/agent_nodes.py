@@ -1388,16 +1388,10 @@ async def tool_decision_node(state: dict) -> dict:
     messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
     _emit_context_usage(state, trimmed_s, trimmed_h, messages)
     if dropped:
-        # Phase 3 (query hard truncation) is materially worse for the user than
-        # dropping older context, so report it distinctly.
         _emit(
             state,
             "context_compress",
-            _t(
-                "query_truncated_warning" if trimmed_q != (state.get("query") or "")
-                else "assembly_trim_warning",
-                config_manager.prompt_language,
-            ),
+            _t("assembly_trim_warning", config_manager.prompt_language),
         )
     try:
         # ── Dual-mode strategy: try native function calling first, fall back to text mode ──
