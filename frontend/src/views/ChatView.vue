@@ -1441,6 +1441,22 @@ async function regenerateAnswer(assistantMsgId: string) {
   doStream(userMsg.content, proxyMsg, userMsg.id, true, null, workspaceDir.value)
 }
 
+// Fill the composer with an existing user query. If the input already has text,
+// append to the tail instead of overwriting it.
+function editQueryToInput(content: string) {
+  const cur = inputText.value
+  if (cur.trim().length > 0) {
+    const sep = cur.endsWith('\n') ? '' : '\n'
+    inputText.value = cur + sep + content
+  } else {
+    inputText.value = content
+  }
+  nextTick(() => {
+    const el = inputRef.value?.textareaElRef?.value || inputRef.value?.inputElRef?.value
+    el?.focus()
+  })
+}
+
 function stopStream() {
   abortCtl?.abort()
   isStreaming.value = false
@@ -1649,6 +1665,7 @@ function handleKeydown(e: KeyboardEvent) {
           :search-keyword="searchKw"
           :active-match="msg.id === activeMatchId"
           @regenerate="regenerateAnswer"
+          @edit-query="editQueryToInput"
         />
       </template>
 

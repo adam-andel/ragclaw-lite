@@ -108,6 +108,7 @@ export default {
   downloadX: 'Download {name}',
   pageX: 'Page {page}',
   regenerate: 'Regenerate',
+  editQuery: 'Edit',
   streamError: '❌ Error: {msg}',
   sendFailed: 'Failed to send: {msg}. Input restored',
   loadConversationFailed: 'Failed to load conversation: {msg}',

@@ -125,6 +125,13 @@ html, body, #app {
   color: var(--color-text);
 }
 
+/* Prevent the whole page/layout from rubber-banding (overscroll) so the
+   layout stays fixed and only the inner scroll containers move. */
+html, body {
+  overscroll-behavior: none;
+  overflow: hidden;
+}
+
 /* ========================================
    Scrollbar
    ======================================== */
