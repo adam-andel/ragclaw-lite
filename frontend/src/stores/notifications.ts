@@ -250,26 +250,25 @@ export const useNotificationStore = defineStore('notifications', () => {
   // pause happened, for a conversation the user is NOT currently viewing.
   // `markUnread` is the single entry point that produces every such red dot
   // (the sidebar Chat label, the history-button dot in ChatView, and the
-  // per-conversation "有未读消息" badge), so we watch the underlying id list and
-  // notify for EACH newly-unread conversation — not just the first one. This way
-  // a second red dot still notifies even if another is already showing.
+  // per-conversation "有未读消息" badge). We watch `lastUnreadEvent`, which
+  // increments its seq on EVERY markUnread call — including repeat marks on the
+  // SAME conversation — so each red-dot appearance fires a notification. This
+  // fixes the case where a 2nd round-limit suspension on the same conversation
+  // produced a red dot but no browser notification (the old diff-on-id logic saw
+  // the conversation id was already unread and skipped it).
   // Sending itself is gated inside fireBrowserNotification by Notification.permission
   // === 'granted', i.e. only when the user has enabled browser notifications.
   const chatUnread = useChatUnreadStore()
-  let prevUnreadIds = new Set<string>()
   watch(
-    () => chatUnread.unreadConvIds,
-    (ids) => {
-      const newIds = ids.filter(id => !prevUnreadIds.has(id))
-      prevUnreadIds = new Set(ids)
-      for (const id of newIds) {
-        fireBrowserNotification({
-          id: `chat-unread-${id}`,
-          title: 'ragclaw',
-          content: t('chat.hasUnread'),
-          link: `/chat/${id}`,
-        })
-      }
+    () => chatUnread.lastUnreadEvent,
+    (evt) => {
+      if (!evt || !evt.id) return
+      fireBrowserNotification({
+        id: `chat-unread-${evt.id}-${evt.seq}`,
+        title: 'ragclaw',
+        content: t('chat.hasUnread'),
+        link: `/chat/${evt.id}`,
+      })
     },
     { deep: true },
   )

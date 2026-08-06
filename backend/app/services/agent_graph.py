@@ -1,7 +1,5 @@
 """RAGClaw Agent Graph — LangGraph state machine for routing, retrieval, and tool calls.
 
-import re
-
 The graph handles everything up to LLM generation. chat.py reads the final
 state from the graph, then handles streaming LLM generation + SSE output + post-processing.
 
@@ -16,6 +14,8 @@ Graph topology:
 """
 
 from langgraph.graph import StateGraph, END, START
+
+import re
 
 from app.services.config_manager import config_manager
 from app.services.conversation_summary import context_breakdown, fit_assembly_context

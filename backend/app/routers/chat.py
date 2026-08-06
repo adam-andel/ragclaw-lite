@@ -5,10 +5,12 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -594,6 +596,45 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
     }
 
 
+@dataclass
+class RunHandle:
+    """Tracks an in-flight streaming run so a page refresh can re-attach to it.
+
+    When a client opens /chat/stream normally, a RunHandle is created and every
+    emitted SSE line is appended to ``replay`` (so late subscribers can catch up)
+    and fan-out to all current subscriber queues (the original client + any
+    re-attaching clients). The handle is removed from RUN_REGISTRY once the run
+    finishes, so a refresh that lands after completion simply reloads from the DB.
+    """
+
+    conv_id: str
+    replay: list[str] = field(default_factory=list)
+    subscribers: list[asyncio.Queue] = field(default_factory=list)
+    done: asyncio.Event = field(default_factory=asyncio.Event)
+    stream_msg_id: str | None = None
+    producer_task: asyncio.Task | None = None
+
+
+# conversation_id -> active run handle. Process-local (single worker). A refresh
+# re-attaches only while the original run is still alive in this process.
+RUN_REGISTRY: dict[str, RunHandle] = {}
+
+
+def _emit_run(handle: RunHandle, line: str) -> None:
+    """Persist + fan-out one SSE line to every subscriber of a run.
+
+    NOTE: this is intentionally synchronous. Both call sites (``enqueue`` and
+    ``on_queue_position``) call it fire-and-forget; making it async would mean
+    the coroutine is never awaited and every SSE event silently disappears.
+    """
+    handle.replay.append(line)
+    for q in list(handle.subscribers):
+        try:
+            q.put_nowait(line)
+        except asyncio.QueueFull:
+            pass
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -643,6 +684,56 @@ async def chat_stream(
         await db.commit()
         conv_id = conv.id
 
+    # ── Attach: re-join an in-flight run after a page refresh ───────────────
+    # The browser reloaded mid-stream; instead of starting a brand-new turn we
+    # re-attach to the still-running producer, replaying every SSE line emitted
+    # so far and then streaming the rest live. No DB writes happen here.
+    if request.attach:
+        handle = RUN_REGISTRY.get(conv_id)
+        if handle is None or handle.done.is_set():
+            # The run already finished (or never existed): tell the client to just
+            # reload the conversation from the DB — there is nothing to re-stream.
+            async def _already_done():
+                yield _sse("run_gone", {"conversation_id": conv_id})
+            return StreamingResponse(
+                _already_done(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        async def _attach_stream():
+            # 1) Replay everything emitted before we joined.
+            for line in list(handle.replay):
+                yield line
+            # 2) Subscribe for live events going forward.
+            sub: asyncio.Queue = asyncio.Queue()
+            handle.subscribers.append(sub)
+            try:
+                while True:
+                    line = await sub.get()
+                    if line is None:
+                        break
+                    yield line
+            finally:
+                try:
+                    handle.subscribers.remove(sub)
+                except ValueError:
+                    pass
+
+        return StreamingResponse(
+            _attach_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     # Resume (continue/stop) may carry an empty body.query because the real
     # query is persisted in the suspension snapshot. A genuine new question
     # must carry a non-empty query.
@@ -686,11 +777,42 @@ async def chat_stream(
     async def generate():
         sse_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+        # Guard against a concurrent second producer for the same conversation.
+        # This happens when a page-refresh fires a fresh /stream while a prior run
+        # is still generating, or a stale "continue" races a live run. Two
+        # producers would both write the same assistant row and clobber each
+        # other, so instead we re-attach to the existing handle: replay every
+        # SSE line emitted so far, then stream the rest live. No new producer
+        # is started and no DB writes happen here.
+        existing = RUN_REGISTRY.get(conv_id)
+        if existing is not None and not existing.done.is_set():
+            for line in list(existing.replay):
+                yield line
+            existing.subscribers.append(sse_queue)
+            try:
+                while True:
+                    line = await sse_queue.get()
+                    if line is None:
+                        break
+                    yield line
+            finally:
+                try:
+                    existing.subscribers.remove(sse_queue)
+                except ValueError:
+                    pass
+            return
+
+        # Register this run so a page-refresh client can re-attach mid-flight.
+        handle = RunHandle(conv_id=conv_id)
+        handle.subscribers.append(sse_queue)
+        RUN_REGISTRY[conv_id] = handle
+
         def enqueue(event_type: str, payload: dict) -> None:
-            sse_queue.put_nowait(_sse(event_type, payload))
+            _emit_run(handle, _sse(event_type, payload))
 
         async def on_queue_position(pos: int) -> None:
-            await sse_queue.put(_sse("queue", {"position": pos}))
+            # Must stay async: llm_semaphore.acquire() does `await on_position(...)`.
+            _emit_run(handle, _sse("queue", {"position": pos}))
 
         # In-memory scratchpad for this turn. agent_steps accumulate here
         # (independent of `state`) and are written to the DB ONCE at the end of the
@@ -735,17 +857,35 @@ async def chat_stream(
                 pending = await _load_pending_state(db, conv_id)
                 resume_mode = None
                 pending_msg_id = None
+                # Snapshot of a suspension we are about to clear, so that if the run
+                # subsequently crashes BEFORE a new suspension/final answer is persisted,
+                # we can re-store it in the except handler (see below). Without this, a
+                # crash during resume would permanently drop the suspension: the user's
+                # "continue" already cleared it, the run died, and a page refresh finds
+                # nothing to restore -> the inline resume bubble never comes back.
+                cleared_pending = None
+                cleared_pending_msg_id = None
                 if pending is not None:
                     pending_msg_id = pending.get("pending_msg_id")
+                    # NOTE: We intentionally do NOT clear the pending state here. Clearing
+                    # at resume-start means a mid-run page refresh (the SSE connection drops,
+                    # the backend run is still in flight) leaves the DB with no suspension
+                    # snapshot — so the reloaded frontend finds nothing to restore and the
+                    # inline "continue/stop" bubble never comes back. Instead we keep the
+                    # snapshot alive until the run definitively ends:
+                    #   - need_user_input branch: overwrites with a fresh snapshot (or, for
+                    #     stop-mode, clears it below)
+                    #   - done branch: clears it below (run finished, no suspension left)
+                    #   - crash (except): restores it (see except handler) so the user can retry
                     if request.resume_action == "continue":
                         resume_mode = "continue"
-                        await _clear_pending_state(db, conv_id)
+                        cleared_pending, cleared_pending_msg_id = pending, pending_msg_id
                     elif request.resume_action == "stop":
                         resume_mode = "stop"
-                        await _clear_pending_state(db, conv_id)
+                        cleared_pending, cleared_pending_msg_id = pending, pending_msg_id
                     else:
                        # User sends a new question (not continue/stop): treat as stop, discard the suspension, and answer the new question normally
-                        await _clear_pending_state(db, conv_id)
+                        cleared_pending, cleared_pending_msg_id = pending, pending_msg_id
                 elif is_resume:
                     # Resume requested but no suspension snapshot exists
                     # (e.g. it was already cleared). Cannot replay with an
@@ -794,6 +934,7 @@ async def chat_stream(
                             status="generating",
                         )
                         stream_msg_id["id"] = init_msg.id
+                        handle.stream_msg_id = init_msg.id
 
                     # ── 1a. Expand [[file:rel_path]] references (adaptive placement) ──
                     # The original tokenised query stays the cache/history key; only
@@ -1127,6 +1268,14 @@ async def chat_stream(
                         "summary_msg_count": cursor,
                         "total_messages": total_msgs,
                     })
+                    # Run finished successfully without requesting a new suspension:
+                    # drop any leftover pending-limit snapshot from a previous round so
+                    # a page refresh does not resurrect a stale "continue/stop" bubble.
+                    if cleared_pending is not None:
+                        try:
+                            await _clear_pending_state(db, conv_id)
+                        except Exception:
+                            pass
 
             except asyncio.CancelledError:
                 # Client disconnected or cancelled the queue request.
@@ -1162,8 +1311,28 @@ async def chat_stream(
                         await _persist_agent_steps(conv_id, mid, list(stream_agent_steps))
                 except Exception as persist_err:
                     logger.warning("Failed to persist errored turn: %s", persist_err)
+                # If this failed run was a resume/stop that already cleared the prior
+                # suspension snapshot, the crash means no new suspension/final answer was
+                # persisted — leaving the conversation in a state where a refresh finds
+                # nothing to restore (the inline "continue/stop" bubble is gone forever).
+                # Re-store the snapshot we cleared so the user can simply retry.
+                if cleared_pending is not None and cleared_pending_msg_id is not None:
+                    try:
+                        await _save_pending_state(db, conv_id, cleared_pending_msg_id, cleared_pending)
+                    except Exception as restore_err:
+                        logger.warning("Failed to restore cleared pending state after crash: %s", restore_err)
                 enqueue("error", {"message": str(e)})
             finally:
+                # Signal every subscriber (original client + any re-attaching clients)
+                # that the stream is over, then drop the run from the registry so a
+                # later refresh reloads from the DB instead of trying to re-attach.
+                for q in list(handle.subscribers):
+                    try:
+                        q.put_nowait(None)
+                    except asyncio.QueueFull:
+                        pass
+                handle.done.set()
+                RUN_REGISTRY.pop(conv_id, None)
                 await sse_queue.put(None)
 
         producer_task = asyncio.create_task(producer())
@@ -1383,6 +1552,54 @@ async def get_pending_limit(
         message=pl.get("message", ""),
         kind=pl.get("kind", ""),
     )
+
+
+class ConversationRunStatus(BaseModel):
+    """Refresh-time snapshot the frontend uses to decide what to render.
+
+    ``running`` means a generation is currently in flight in this process — the
+    frontend should re-attach to the SSE stream, NOT show the pause bubble.
+    ``pending`` is only populated when the run is NOT running (a durable pause),
+    so a refreshing client never shows both a live stream and a stale resume UI.
+    """
+
+    running: bool
+    pending: PendingLimitResponse | None = None
+
+
+@router.get("/conversations/{conv_id}/status", response_model=ConversationRunStatus)
+async def get_conversation_status(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tell a freshly-loaded (possibly refreshed) frontend what state the conversation is in."""
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    if conv is None:
+        raise HTTPException(404, "Conversation not found")
+
+    # A run is "in flight" ONLY if there is a live RunHandle in the registry for
+    # this conversation. Relying on the message status ("generating") is racy: a
+    # run that has just finished (e.g. hit the tool-round limit and suspended) may
+    # still leave the message flagged "generating" for a brief window, which would
+    # make a refreshing client wrongly try to re-attach and then receive `run_gone`.
+    # The registry entry is removed in the producer's finally block on completion,
+    # so its presence is the authoritative signal that a run is genuinely streaming.
+    handle = RUN_REGISTRY.get(conv_id)
+    running = bool(handle and not handle.done.is_set())
+
+    pending = None
+    if not running:
+        pending_row = await _load_pending_state(db, conv_id)
+        if pending_row:
+            pl = pending_row.get("pending_limit") or {}
+            pending = PendingLimitResponse(
+                conversation_id=conv_id,
+                message_id=pending_row.get("pending_msg_id") or "",
+                message=pl.get("message", ""),
+                kind=pl.get("kind", ""),
+            )
+    return ConversationRunStatus(running=running, pending=pending)
 
 
 async def _load_owned_conversation(conv_id: str, current_user: User, db: AsyncSession) -> Conversation:

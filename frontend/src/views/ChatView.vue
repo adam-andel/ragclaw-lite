@@ -11,7 +11,7 @@ import AppCard from '@/components/common/AppCard.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getPendingLimit, listConversations, updateConversationSummary, compactConversation } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, updateConversationSummary, compactConversation } from '@/api/chat'
 import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
@@ -322,6 +322,60 @@ const summaryMsgCount = ref(0)
 const totalMessages = ref(0)
 // Suspension hint (pushed by the backend as need_user_input when the limit is hit): { copy, backend-supplied conv_id, reason }
 const pendingLimit = ref<{ message: string; convId: string; kind: string; messageId: string } | null>(null)
+
+/** Ensure a pending suspension bubble exists in messages and set pendingLimit.
+ *  Called from multiple life-cycle points (live SSE, route restore, full reload)
+ *  so that resumeRun always finds the msg regardless of which branch handled the
+ *  need_user_input event. */
+function setPendingBubble(opts: {
+  message: string
+  convId: string
+  kind: string
+  messageId: string
+  agentSteps?: any[]
+  /** If true, remove any existing bubble with the same messageId before pushing (dedup). */
+  replace?: boolean
+}) {
+  pendingLimit.value = { message: opts.message, convId: opts.convId, kind: opts.kind, messageId: opts.messageId }
+  const existing = messages.value.find(m => m.id === opts.messageId)
+  if (existing) {
+    existing._pending = true
+    return
+  }
+  if (opts.replace) {
+    messages.value = messages.value.filter(m => m.id !== opts.messageId)
+  }
+  messages.value.push({
+    id: opts.messageId,
+    role: 'assistant',
+    content: opts.message,
+    citations: [],
+    created_at: new Date().toISOString(),
+    agentSteps: opts.agentSteps || [],
+    _pending: true,
+  })
+}
+
+// Last-resort recovery: if /status is unavailable, derive the durable pause state
+// from the messages we already loaded. A suspended run persists an assistant message
+// whose text is the tool-round hint and whose status is null — that is unambiguous.
+function restorePendingFromMessages(convId: string) {
+  const hint = /round limit reached|reply ['"]continue['"]/i
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m.role !== 'assistant') continue
+    if ((m as any)._pending === true) return // already shown
+    if ((m.status === null || m.status === undefined || m.status === 'pending') && m.content && hint.test(m.content)) {
+      setPendingBubble({
+        message: m.content,
+        convId,
+        kind: (m as any).kind || 'tool_round',
+        messageId: m.id,
+      })
+      return
+    }
+  }
+}
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -941,6 +995,39 @@ watch(() => route.fullPath, async () => {
       const el = messagesContainer.value
       if (el) el.scrollTop = target
     }))
+    // We returned to the SAME conversation without a reload (openConversation
+    // short-circuits when id === conversationId). Two things that loadConversation()
+    // normally does were therefore skipped and must be replicated here:
+    //  1) a suspension or finished-answer event may have flagged this conversation
+    //     unread (red dot on the sidebar / history button / conversation row) while
+    //     we were away — clear it now that we are looking at it again;
+    //  2) a Tool-call round-limit suspension (need_user_input) may have fired while
+    //     we were away. The live SSE handler sets pendingLimit in that case too, but
+    //     only when the event actually arrives while THIS component is mounted AND the
+    //     conversation id still matches — if the user had navigated to another chat and
+    //     back, or the resume flow rewrote conversationId, that set can be missed and the
+    //     inline continue/stop bubble silently disappears (until a full refresh, which
+    //     re-runs loadConversation and restores it from the DB). Replicate the refresh
+    //     path: pull the persisted suspension state and rebuild the bubble. A null result
+    //     (e.g. the user already hit "continue", which cleared it) leaves pendingLimit as-is.
+    if (id) {
+      chatUnread.clearConversation(id)
+      if (!pendingLimit.value) {
+        try {
+          const pending = await getPendingLimit(id)
+          if (pending && pending.message_id) {
+            setPendingBubble({
+              message: pending.message,
+              convId: pending.conversation_id || id,
+              kind: pending.kind,
+              messageId: pending.message_id,
+            })
+          }
+        } catch {
+          // best-effort; never let a transient fetch error wipe the view
+        }
+      }
+    }
   }
 })
 
@@ -1031,23 +1118,51 @@ async function loadConversation(id: string) {
     if (isStreaming.value) {
       followInProgress(id)
     }
-    // Restore suspension state after refresh: if a pending quota suspension awaiting
-    // confirmation exists, rebuild the inline bubble. Best-effort only — a failure
-    // here must not wipe the conversation we just loaded.
+    // Decide what to show after a fresh load / page refresh by asking the backend
+    // what state the conversation is actually in. A run that is still in flight
+    // (running) must be re-attached to the live SSE stream — never show the pause
+    // bubble in that case, even if a stale pending snapshot exists in the DB.
     try {
-      const pending = await getPendingLimit(id)
-      if (pending && pending.message_id) {
-        pendingLimit.value = {
-          message: pending.message,
-          convId: pending.conversation_id || id,
-          kind: pending.kind,
-          messageId: pending.message_id,
+      const status = await getConversationStatus(id)
+      if (status.running) {
+        // Find the assistant message the backend is currently generating into and
+        // re-attach our stream to it. The server replays every token emitted so far
+        // plus the live tail, so the UI continues seamlessly.
+        const live = messages.value.find(m => m.role === 'assistant' && (m as any)._pending !== true)
+        const proxyMsg = live || {
+          id: `attach-${id}`,
+          role: 'assistant',
+          content: '',
+          citations: [],
+          created_at: new Date().toISOString(),
+          agentSteps: [],
+          _pending: false,
         }
-        const pm = messages.value.find(m => m.id === pending.message_id)
-        if (pm) pm._pending = true
+        if (!live) messages.value.push(proxyMsg as any)
+        pendingLimit.value = null
+        isStreaming.value = true
+        assistantStage.value = t('chat.generating')
+        await doStream('', proxyMsg as ChatMsg, proxyMsg.id, false, null, undefined, undefined, true)
+      } else if (status.pending && status.pending.message_id) {
+        // Durable pause: rebuild the inline "continue/stop" bubble.
+        setPendingBubble({
+          message: status.pending.message,
+          convId: status.pending.conversation_id || id,
+          kind: status.pending.kind,
+          messageId: status.pending.message_id,
+        })
+      } else {
+        // /status returned no durable pause (or the call succeeded but reported
+        // nothing). Fall back to the messages we already loaded: a suspended run
+        // leaves an assistant message containing the "round limit reached" hint
+        // with status=null, which is unambiguous evidence of a durable pause.
+        restorePendingFromMessages(id)
       }
-    } catch {
-      /* ignore — suspension UI is optional */
+    } catch (statusErr) {
+      // /status can fail (e.g. transient 401/network). Don't leave the user with a
+      // dead view — recover the suspension bubble from the already-loaded messages.
+      console.warn('[ChatView] getConversationStatus failed, recovering from messages', statusErr)
+      restorePendingFromMessages(id)
     }
   } catch (e) {
     console.error('[ChatView] loadConversation failed for', id, e)
@@ -1062,7 +1177,8 @@ async function loadConversation(id: string) {
   }
 }
 
-async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string) {
+async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, skipCache = false, resumeAction: 'continue' | 'stop' | null = null, workspaceDir?: string, attach: boolean = false) {
+  console.log('[doStream] resumeAction=%s attach=%s query=%s proxyMsg.id=%s convId=%s', resumeAction, attach, (query||'').slice(0,20), proxyMsg.id, conversationId.value)
   stopFollowTimer()  // a live stream takes over; cancel any in-progress follow poll
   // Selections captured at stream start (so they stay correct even if the user
   // switches to another conversation while this one is still streaming).
@@ -1077,7 +1193,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   assistantStage.value = t('chat.retrieving')
   abortCtl = new AbortController()
   try {
-    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir, Intl.DateTimeFormat().resolvedOptions().timeZone)) {
+    for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir, Intl.DateTimeFormat().resolvedOptions().timeZone, attach)) {
       if (event.type === 'queue') {
         queuePosition.value = event.position
       } else if (event.type === 'token') {
@@ -1126,6 +1242,25 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
       } else if (event.type === 'error') {
         streamedText = t('chat.streamError', { msg: backendErrorMessage(event.message) })
         break
+      } else if (event.type === 'run_gone') {
+        // The backend had no live run to re-attach to (the run finished — or was
+        // never found — between our /status check and this connection). Do NOT
+        // leave a blank, dead view: fall back to the persisted suspension state
+        // so the inline continue/stop bubble reappears.
+        try {
+          const pending = await getPendingLimit(conversationId.value || id)
+          if (pending && pending.message_id) {
+            setPendingBubble({
+              message: pending.message,
+              convId: pending.conversation_id || id,
+              kind: pending.kind,
+              messageId: pending.message_id,
+            })
+          }
+        } catch {
+          /* best-effort */
+        }
+        break
       } else if (event.type === 'need_user_input') {
         // Suspension: the backend has saved an assistant message (the hint copy) and is
         // waiting for the user to choose "continue" or "stop" because the tool-call round
@@ -1141,29 +1276,38 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         const currentView = conversationId.value
         const onChat = route.path.startsWith('/chat')
         if (onChat && (currentView === event.conv_id || currentView === undefined)) {
-          // Set the bubble FIRST so a later error (e.g. a stale proxyMsg) can never
-          // suppress the continue/stop controls — the message text alone is not enough.
-          pendingLimit.value = { message: event.message, convId: event.conv_id, kind: event.kind, messageId: event.message_id }
-          const pendingMsg: ChatMsg = {
-            id: event.message_id,
-            role: 'assistant',
-            content: event.message,
-            citations: [],
-            created_at: new Date().toISOString(),
-            // Preserve the processing steps already produced during this run so they
-            // remain visible (collapsible) after suspension instead of disappearing.
+          setPendingBubble({
+            message: event.message,
+            convId: event.conv_id,
+            kind: event.kind,
+            messageId: event.message_id,
             agentSteps: (proxyMsg?.agentSteps as any) || [],
-            _pending: true,
-          }
-          // Remove the live streaming placeholder if it is still in the list. Guard against
-          // proxyMsg being undefined (stale closure / HMR) so we never throw before the bubble
-          // is shown.
-          if (proxyMsg && proxyMsg.id) {
-            messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
-          }
-          messages.value.push(pendingMsg)
+            replace: true,  // dedup — a 2nd suspension for the same conv must not leave stale bubbles
+          })
+          // The user is looking at this conversation — they see the inline bubble.
+          // No red dot needed, but still push a browser notification in case they
+          // tabbed away (e.g. to another desktop app).
+          chatUnread.notifyOnly(event.conv_id)
         } else {
           chatUnread.markUnread(event.conv_id)
+          // The ChatView instance stays MOUNTED (AppLayout toggles visibility:hidden,
+          // it never unmounts). So when the suspension fires while the user is on another
+          // page (route no longer /chat) but still on THIS conversation, the watcher that
+          // would reload it on return sees `route.params.id === conversationId.value` and
+          // short-circuits WITHOUT re-running loadConversation/getPendingLimit — so the
+          // pending controls would never reappear until a full refresh. Set pendingLimit
+          // here (the component is still alive) so the inline bubble shows immediately when
+          // the user switches back. Only do this for the conversation we are actually on,
+          // to avoid polluting a different conversation the user may have navigated to.
+          if (currentView === event.conv_id) {
+            setPendingBubble({
+              message: event.message,
+              convId: event.conv_id,
+              kind: event.kind,
+              messageId: event.message_id,
+              agentSteps: (proxyMsg?.agentSteps as any) || [],
+            })
+          }
         }
         break
       } else if (event.type === 'context_usage') {
@@ -1209,6 +1353,9 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
           // (or a brand-new one just created): keep the URL in sync.
           conversationId.value = event.conversation_id
           router.replace(`/chat/${event.conversation_id}`)
+          // User is looking at this conversation — no red dot, but push a browser
+          // notification in case they tabbed away.
+          chatUnread.notifyOnly(event.conversation_id)
         } else {
           // The answer finished for a DIFFERENT conversation (the user switched to
           // another chat while it was still streaming) or while the user is on
@@ -1296,14 +1443,28 @@ function stopStream() {
 // Resume from suspension: continue (replay the rejected call after adding quota) / stop (answer with the already accumulated results)
 async function resumeRun(action: 'continue' | 'stop') {
   const pl = pendingLimit.value
-  if (!pl || isStreaming.value) return
+  if (!pl) {
+    console.warn('[resumeRun] no pendingLimit, abort')
+    return
+  }
+  if (isStreaming.value) {
+    console.warn('[resumeRun] isStreaming=true, abort')
+    return
+  }
   const convId = pl.convId
   const msgId = pl.messageId
+  console.log('[resumeRun] action=%s msgId=%s convId=%s messagesCount=%d', action, msgId, convId, messages.value.length)
   pendingLimit.value = null
   conversationId.value = convId
   // Reuse the message the backend saved at suspension: clear its content and accept streamed tokens; the backend replaces it in place when done
   const msg = messages.value.find(m => m.id === msgId)
-  if (!msg) return
+  if (!msg) {
+    console.warn('[resumeRun] msg not found for msgId=%s in %d messages', msgId, messages.value.length)
+    // Restore pendingLimit so the button comes back instead of silently vanishing
+    pendingLimit.value = pl
+    nmessage.error(t('chat.sendFailed', { msg: 'RESUME_MESSAGE_NOT_FOUND' }))
+    return
+  }
   // Stop: keep the original suspension hint copy, and let the frontend overlay a termination notice in the current language when done;
   // Continue: clear the content and accept the newly streamed answer
   if (action === 'continue') {

@@ -26,6 +26,7 @@ export async function* streamChat(
   resumeAction?: 'continue' | 'stop' | null,
   workspaceDir?: string,
   timezone?: string,
+  attach?: boolean,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
@@ -42,6 +43,7 @@ export async function* streamChat(
       resume_action: resumeAction ?? undefined,
       workspace_dir: workspaceDir ?? '',
       timezone: timezone ?? undefined,
+      attach: attach ?? false,
     }),
     signal,
   })
@@ -137,3 +139,22 @@ export const getPendingLimit = (id: string) =>
     .then(handleResponse)
     .then((r) => r.json())
     .catch(() => null)
+
+export interface ConversationRunStatus {
+  running: boolean
+  pending: {
+    message: string
+    conversation_id: string
+    kind: string
+    message_id: string
+  } | null
+}
+
+// After a page refresh, ask the backend whether a generation is still in flight
+// (running) or the conversation is durably paused (pending). The frontend uses
+// this to re-attach to the live stream instead of showing a stale pause bubble.
+export const getConversationStatus = (id: string) =>
+  fetch(`/api/conversations/${id}/status`, { headers: authHeaders() })
+    .then(handleResponse)
+    .then((r) => r.json())
+    .catch(() => ({ running: false, pending: null }))

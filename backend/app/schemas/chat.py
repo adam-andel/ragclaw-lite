@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
                                         # Routed to REPL as workspace_id; confined to user_u<uid>/ by _ws_safe.
     timezone: str | None = None        # Optional: user's local IANA timezone (e.g. Asia/Shanghai).
                                         # Used to interpret natural-language times when creating cron jobs.
+    attach: bool = False                # Re-attach to an in-flight run after a page refresh (no new turn).
 
 
 class CitationSchema(BaseModel):
