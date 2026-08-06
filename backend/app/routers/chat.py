@@ -638,6 +638,72 @@ def _emit_run(handle: RunHandle, line: str) -> None:
             pass
 
 
+# Substrings that mark a context-window overflow. After every trimming guard has
+# run, any residual 400 from the provider is overwhelmingly a context overflow;
+# this lets us swap the raw provider error text for a clean localized code.
+#
+# These are deliberately phrases, never bare words. "exceed"/"超出" on their own
+# also appear in quota and rate-limit errors, and mislabelling those as "your
+# question is too long" sends the user chasing the wrong problem.
+_CONTEXT_OVERFLOW_HINTS = (
+    "maximum context length",
+    "max context length",
+    "context length",
+    "context window",
+    "context_length_exceeded",
+    "too many tokens",
+    "exceeds the model",
+    "exceeds the maximum",
+    "exceeds the context",
+    "prompt is too long",
+    "prompt too long",
+    "input is too long",
+    "sequence length",
+    "reduce the length of the messages",
+    "上下文长度",
+    "上下文窗口",
+    "超出上下文",
+    "超过上下文",
+)
+
+# Failure modes that also say "exceeded"/"超出" but are NOT context overflows.
+# Checked before the overflow hints so a billing or throttling problem always
+# reaches the user verbatim.
+_NON_CONTEXT_HINTS = (
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "ratelimit",
+    "code: 429",
+    "insufficient",
+    "billing",
+    "余额",
+    "配额",
+    "限流",
+    "请求过于频繁",
+)
+
+
+def _classify_llm_error(e: Exception) -> str:
+    """Map an LLM exception to a user-facing error code where possible.
+
+    After all context-budget guards have run (entry firewall, fit trimming, tool
+    reservation), a residual provider 400 is almost always a context-window
+    overflow. Surface that as the clean localized code ``LLM_CONTEXT_EXCEEDED``
+    instead of the raw provider error text. Anything we cannot confidently
+    classify still goes through verbatim so genuine bugs stay visible.
+
+    Quota/rate-limit failures are excluded first: they share the "exceeded"
+    wording but need the real provider text, not a "shorten your question" hint.
+    """
+    text = str(e).lower()
+    if any(hint in text for hint in _NON_CONTEXT_HINTS):
+        return str(e)
+    if any(hint in text for hint in _CONTEXT_OVERFLOW_HINTS):
+        return "LLM_CONTEXT_EXCEEDED"
+    return str(e)
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -1343,7 +1409,7 @@ async def chat_stream(
                         await _save_pending_state(db, conv_id, cleared_pending_msg_id, cleared_pending)
                     except Exception as restore_err:
                         logger.warning("Failed to restore cleared pending state after crash: %s", restore_err)
-                enqueue("error", {"message": str(e)})
+                enqueue("error", {"message": _classify_llm_error(e)})
             finally:
                 # Signal every subscriber (original client + any re-attaching clients)
                 # that the stream is over, then drop the run from the registry so a

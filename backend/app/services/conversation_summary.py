@@ -126,18 +126,46 @@ def _budget() -> int:
     )
 
 
+def _empty_context_request_tokens(query: str) -> int:
+    """Token cost of the request if EVERYTHING but the fixed prefix + query were
+    dropped -- i.e. the floor ``fit_assembly_context`` can reach.
+
+    Reproduces the unconditionally-emitted head of ``_assemble`` in agent_nodes.py
+    (the tool-mode system prompt + the "## Task Background" block built from the
+    configured system prompt) plus a minimal user question, so the entry-point
+    firewall can measure the same floor fit would hit at its empty-context
+    fallthrough. This is the floor of the real prefix -- an active skill / KB /
+    user-memory can add more -- which errs toward letting borderline queries
+    through to the precise fit guard rather than rejecting them outright.
+    """
+    tool_sys = _t("tool_system", config_manager.prompt_language, tool_desc="")
+    task_bg = "## Task Background (reference only)\n" + (config_manager.system_prompt or "")
+    msgs = [
+        {"role": "system", "content": tool_sys},
+        {"role": "system", "content": task_bg},
+        {"role": "user", "content": "## Question\n" + query},
+    ]
+    return count_messages_tokens(msgs)
+
+
 def query_exceeds_context_window(query: str) -> bool:
-    """True when the raw query alone already exhausts the input token budget.
+    """True when the query cannot fit even with an empty surrounding context.
 
     Used as an early-exit guard at the request entry point so an oversized query
-    is rejected before any history compression, RAG, or LLM call runs. A query
-    that alone overflows the budget cannot be salvaged by trimming history/summary,
-    so the caller should fail fast with a user-facing message instead of burning
-    tokens on a low-quality truncated answer.
+    is rejected before any history compression, RAG, or LLM call runs.
+
+    The check reserves the fixed system-prefix cost (see
+    ``_empty_context_request_tokens``): fit_assembly_context can drop
+    history / summary / RAG / tool records, but it can never shrink the system
+    prefix, so a query that overflows *even with an empty context* can only end
+    in an upstream 400. We catch that case here and return a clean user-facing
+    QUERY_TOO_LONG instead of burning tokens on a doomed request. (Tool schemas
+    are reserved separately inside fit via ``eff_budget``; they are not yet known
+    at the entry point, so this guard deliberately ignores them.)
     """
     if not query:
         return False
-    return count_text_tokens(query) > _budget()
+    return _empty_context_request_tokens(query) > _budget()
 
 
 def _overhead() -> int:

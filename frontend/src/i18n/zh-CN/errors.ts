@@ -12,6 +12,7 @@ export default {
     LLM_BUDGET_EXCEEDED: '本次问答的 LLM 调用超出时间预算，已中止以避免长时间无响应。上游模型可能响应过慢，请稍后重试或调整模型配置。',
     CONVERSATION_STATE_NOT_RECOVERABLE: '没有可恢复的对话状态，请重新发起提问。',
     QUERY_TOO_LONG: '您的提问过长，已超出模型上下文上限，请精简后重试。',
+    LLM_CONTEXT_EXCEEDED: '本次请求超出模型上下文上限，已自动终止。请精简提问、减少上传文件或开启新对话后重试。',
     CONVERSATION_BUSY: '该对话有正在等待确认的暂停回合，请先处理后再修改上下文。',
     NOTHING_TO_COMPACT: '没有可压缩的对话记录，全部消息都已折叠进摘要。',
     SUMMARY_LLM_FAILED: '摘要生成失败，未做任何改动，请稍后重试。',

@@ -12,6 +12,7 @@ export default {
     LLM_BUDGET_EXCEEDED: 'The LLM call budget for this conversation was exceeded and the request was aborted to avoid a long hang. The upstream model may be responding too slowly — retry later or adjust the model configuration.',
     CONVERSATION_STATE_NOT_RECOVERABLE: 'No recoverable conversation state found. Please start a new question.',
     QUERY_TOO_LONG: 'Your question is too long and exceeds the model context limit. Please shorten it and try again.',
+    LLM_CONTEXT_EXCEEDED: 'This request exceeded the model context limit and was stopped. Shorten your question, attach fewer files, or start a new conversation and try again.',
     CONVERSATION_BUSY: 'This conversation has a paused turn awaiting your confirmation. Resolve it before editing the context.',
     NOTHING_TO_COMPACT: 'Nothing left to compact — every message is already folded into the summary.',
     SUMMARY_LLM_FAILED: 'Summarization failed; nothing was changed. Please try again.',
