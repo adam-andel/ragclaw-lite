@@ -93,15 +93,15 @@ QUERY_KEEP_TAIL_FRAC = 0.35
 # Minimum query length (tokens) before Layer 1 will even attempt lossy query
 # condensation. Below this, condensing saves almost nothing -- and because the
 # middle-segment summary is capped at SUMMARY_MAX_TOKENS, short queries can even
-# grow. Such overflow is handled by fit_assembly_context's phase-3 hard
-# truncation instead. Tunable.
+# grow. Oversized queries are rejected at the API entry point
+# (query_exceeds_context_window) before any heavy processing, so nothing here
+# needs to truncate them. Tunable.
 QUERY_COMPRESS_MIN_TOKENS = 2048
 
-# Phase-3 (assembly point) query hard truncation: fraction of the remaining
-# Oversized queries are rejected at the API entry point (query_exceeds_context_window)
-# before any heavy processing, and any residual overflow that survives
-# fit_assembly_context is surfaced to the caller as an upstream 400 -- the query is
-# never silently truncated here.
+# The query is never hard-truncated at the assembly point: oversized queries are
+# rejected at the API entry point (query_exceeds_context_window), and any residual
+# overflow that survives fit_assembly_context is surfaced to the caller as an
+# upstream 400 rather than silently mangling the user's question.
 
 # Maximum re-compaction iterations in step (2) (each is one LLM call).
 MAX_RECOMPACT_ITERS = 3
@@ -744,6 +744,35 @@ def _trim_tool_messages_oldest(payload: list) -> list:
     return payload[end:]
 
 
+# Estimated decoration cost of one rendered tool-result list item (its "- " bullet
+# plus the newline joining it to the next one). Only used when PLANNING how many
+# units to drop -- the plan is always verified against a real measurement, so a
+# small error here costs at most a couple of extra fix-up steps.
+RESULT_ITEM_OVERHEAD = 3
+
+
+def _tool_unit_slices(payload: list, payload_kind: str) -> list[list]:
+    """Split ``payload`` into the indivisible units the trimmers drop, oldest first.
+
+    For ``payload_kind == "messages"`` a unit is one assistant(tool_calls) message
+    plus its result messages -- exactly what ``_trim_tool_messages_oldest`` removes
+    per step, so the planner and the fix-up loop always agree on the boundaries.
+    For plain result strings every entry is its own unit.
+    """
+    if payload_kind != "messages":
+        return [[r] for r in payload]
+    units: list[list] = []
+    rest = payload
+    while rest:
+        nxt = _trim_tool_messages_oldest(rest)
+        if len(nxt) >= len(rest):  # no progress -- treat the remainder as one unit
+            units.append(list(rest))
+            break
+        units.append(list(rest[: len(rest) - len(nxt)]))
+        rest = nxt
+    return units
+
+
 def fit_assembly_context(
     summary_text: str | None,
     history: list,
@@ -772,7 +801,23 @@ def fit_assembly_context(
     of blindly filling the window and overflowing once the provider adds the
     tool schemas.
 
-    Trimming runs in two phases.
+    Trimming is planned in a SINGLE SCAN rather than by re-measuring the whole
+    request after every dropped item. Re-measuring was O(n^2): each step rebuilt
+    and re-encoded the entire context just to shave off one unit, so a heavily
+    overflowing request could block for seconds -- and this function is synchronous,
+    running on the async request path, so that blocked the event loop. Instead:
+
+        1. measure the assembled request once           -> total, overflow
+        2. price every droppable unit once              -> per-unit token cost
+        3. walk the priority order accumulating costs until the overflow is covered
+        4. apply the whole plan in one shot and verify with a second measurement
+
+    Costing is per-unit and therefore approximate at the seams (BPE merges across a
+    join differ by ~1 token, and a component's heading disappears once it empties
+    out), so step 4 is mandatory: if the plan came up short, the original
+    step-by-step loop runs as a bounded fix-up on what little remains. The trimming
+    ORDER and the floors below are identical to the step-by-step behaviour -- only
+    the number of full re-measurements changed (from O(dropped units) to 3).
 
     PHASE 1 -- "keep >= 1" (preferred). Every step leaves at least one item alive so
     a normal overflow degrades gracefully instead of blanking the context:
@@ -822,6 +867,86 @@ def fit_assembly_context(
             )
         return len(payload)
 
+    def _unit_cost(unit: list) -> int:
+        """Token cost of one tool-payload unit."""
+        if payload_kind == "messages":
+            # count_messages_tokens adds a flat +3 reply-priming charge to the whole
+            # request; only the per-message overhead disappears when a unit is dropped.
+            return max(0, count_messages_tokens(unit) - 3)
+        return sum(count_text_tokens(str(r)) + RESULT_ITEM_OVERHEAD for r in unit)
+
+    # ---- Stage 1: measure once; the overwhelmingly common case fits as-is ---- #
+    total = count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q))
+    if total <= eff_budget:
+        return cur_s, cur_h, cur_r, cur_p, cur_q, dropped
+
+    # ---- Stage 2: price every droppable unit once, then plan in one scan ---- #
+    overflow = total - eff_budget
+    seg_s = cur_s.split("\n") if cur_s else []
+    seg_r = cur_r.split(RAG_CHUNK_DELIM) if cur_r else []
+    units_p = _tool_unit_slices(cur_p, payload_kind)
+    nl_tok = count_text_tokens("\n")
+    delim_tok = count_text_tokens(RAG_CHUNK_DELIM)
+
+    saved = 0
+    k_s = k_h = k_r = k_p = 0  # units to drop per component
+
+    # (1) summary -- oldest paragraph first; _trim_summary_oldest lets it drain fully
+    for i, seg in enumerate(seg_s):
+        if saved >= overflow:
+            break
+        saved += count_text_tokens(seg) + nl_tok
+        k_s = i + 1
+    # (2) history -- oldest first, keep the most recent message
+    for i in range(max(0, len(cur_h) - 1)):
+        if saved >= overflow:
+            break
+        saved += max(0, count_messages_tokens([cur_h[i]]) - 3)
+        k_h = i + 1
+    # (3) rag -- least-relevant tail chunk first, keep the most relevant head
+    for i in range(max(0, len(seg_r) - 1)):
+        if saved >= overflow:
+            break
+        saved += count_text_tokens(seg_r[-1 - i]) + delim_tok
+        k_r = i + 1
+    # (4) tool payload -- oldest unit first, keep the most recent
+    for i in range(min(max(0, len(units_p) - 1), max(0, _tool_units(cur_p) - 1))):
+        if saved >= overflow:
+            break
+        saved += _unit_cost(units_p[i])
+        k_p = i + 1
+
+    # ---- Phase 2 planning: only reached once every floor above is exhausted ---- #
+    # (each loop above runs to completion unless it covered the overflow first)
+    if saved < overflow and k_h < len(cur_h):
+        saved += max(0, count_messages_tokens([cur_h[-1]]) - 3)
+        k_h = len(cur_h)
+    if saved < overflow and k_r < len(seg_r):
+        saved += count_text_tokens(seg_r[0])
+        k_r = len(seg_r)
+    if saved < overflow and k_p < len(units_p):
+        saved += sum(_unit_cost(u) for u in units_p[k_p:])
+        k_p = len(units_p)
+
+    # ---- Stage 3: apply the whole plan at once ---- #
+    if k_s or k_h or k_r or k_p:
+        if k_s:
+            cur_s = "" if k_s >= len(seg_s) else "\n".join(seg_s[k_s:])
+        if k_h:
+            cur_h = cur_h[k_h:]
+        if k_r:
+            cur_r = "" if k_r >= len(seg_r) else RAG_CHUNK_DELIM.join(seg_r[: len(seg_r) - k_r])
+        if k_p:
+            cur_p = [] if k_p >= len(units_p) else [m for u in units_p[k_p:] for m in u]
+        dropped = True
+
+    # ---- Stage 4: verify; per-unit pricing is approximate at the seams ---- #
+    if count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)) <= eff_budget:
+        return cur_s, cur_h, cur_r, cur_p, cur_q, dropped
+
+    # The plan came up short (or the fixed prefix alone overflows). Fall through to
+    # the step-by-step trimmer as a bounded fix-up: it walks the same order over
+    # whatever survived, so it converges in a handful of steps instead of hundreds.
     while True:
         msgs = build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)
         if count_messages_tokens(msgs) <= eff_budget:
