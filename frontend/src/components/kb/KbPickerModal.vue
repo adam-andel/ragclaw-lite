@@ -4,8 +4,8 @@ import { useI18n } from 'vue-i18n'
 import { NInput, NSelect, NIcon, NEmpty, NButton } from 'naive-ui'
 import { Search, Create } from '@vicons/ionicons5'
 import AppModal from '@/components/common/AppModal.vue'
-import AppCard from '@/components/common/AppCard.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import KbPickCard from '@/components/kb/KbPickCard.vue'
 
 const { t } = useI18n()
 
@@ -118,70 +118,34 @@ function onAfterLeave() {
     </div>
 
     <div class="kb-picker-grid">
-      <AppCard
+      <KbPickCard
         v-if="showNone"
-        class="kb-picker-card"
+        variant="none"
         :active="noneActive"
-        role="button"
-        tabindex="0"
-        @click="onCardClick(null)"
-        @keydown.enter.prevent="onCardClick(null)"
-        @keydown.space.prevent="onCardClick(null)"
-      >
-        <div class="kb-picker-inner">
-          <div class="kb-picker-avatar kb-picker-avatar-all">🚫</div>
-          <div class="kb-picker-body">
-            <strong class="kb-picker-name">{{ noneLabel || t('kb.noneKb') }}</strong>
-          </div>
-        </div>
-      </AppCard>
+        :name="noneLabel || t('kb.noneKb')"
+        @select="onCardClick($event)"
+      />
 
-      <AppCard
+      <KbPickCard
         v-if="showAll && kbs.length > 0"
-        class="kb-picker-card"
+        variant="all"
         :active="allActive"
-        role="button"
-        tabindex="0"
-        @click="onCardClick(null)"
-        @keydown.enter.prevent="onCardClick(null)"
-        @keydown.space.prevent="onCardClick(null)"
-      >
-        <div class="kb-picker-inner">
-          <div class="kb-picker-avatar kb-picker-avatar-all">🗂️</div>
-          <div class="kb-picker-body">
-            <strong class="kb-picker-name">{{ allLabel }}</strong>
-            <div class="kb-picker-stats">
-              <span class="kb-picker-chip kb-picker-chip-soft">{{ t('kb.totalCount', { count: allCount }) }}</span>
-            </div>
-            <span v-if="allMeta" class="kb-picker-meta">{{ allMeta }}</span>
-          </div>
-        </div>
-      </AppCard>
+        :name="allLabel"
+        :soft-chip="t('kb.totalCount', { count: allCount })"
+        :meta="allMeta"
+        @select="onCardClick($event)"
+      />
 
-      <AppCard
+      <KbPickCard
         v-for="kb in paged"
         :key="kb.id"
-        class="kb-picker-card"
+        variant="normal"
+        :kb="kb"
         :active="kb.id === selectedId"
-        role="button"
-        tabindex="0"
-        @click="onCardClick(kb.id)"
-        @keydown.enter.prevent="onCardClick(kb.id)"
-        @keydown.space.prevent="onCardClick(kb.id)"
-      >
-        <div class="kb-picker-inner">
-          <div class="kb-picker-avatar">📚</div>
-          <div class="kb-picker-body">
-            <strong class="kb-picker-name">{{ kb.name }}</strong>
-            <span v-if="kb.description" class="kb-picker-desc">{{ kb.description }}</span>
-            <div class="kb-picker-stats">
-              <span class="kb-picker-chip">{{ kb.doc_count }} {{ t('kb.docUnit') }}</span>
-              <span class="kb-picker-chip">{{ kb.vector_count }} {{ t('kb.chunkUnit') }}</span>
-            </div>
-          </div>
-        </div>
-      </AppCard>
-    </div>
+        :select-id="kb.id"
+        :stats="[`${kb.doc_count} ${t('kb.docUnit')}`, `${kb.vector_count} ${t('kb.chunkUnit')}`]"
+        @select="onCardClick($event)"
+      />
 
     <NEmpty v-if="filtered.length === 0 && kbs.length > 0" :description="t('kb.noMatch')" style="padding:16px 0" />
     <AppPagination
@@ -191,6 +155,7 @@ function onAfterLeave() {
       :item-count="filtered.length"
       @update:page="(p: number) => page = p"
     />
+    </div>
 
     <div v-if="kbs.length === 0" class="kb-picker-empty">
       <NEmpty :description="t('kb.noKbsYet')" style="padding:16px 0" />
@@ -211,30 +176,6 @@ function onAfterLeave() {
   gap: 10px;
   padding-top: 2px; /* prevent hover border-top clipping from overflow:auto parent */
 }
-.kb-picker-inner { display: flex; align-items: flex-start; gap: 10px; }
-.kb-picker-avatar {
-  flex-shrink: 0;
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-  background: var(--color-primary-soft);
-}
-.kb-picker-avatar-all { background: var(--color-border); }
-.kb-picker-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
-.kb-picker-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-picker-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-picker-stats { display: flex; flex-wrap: wrap; gap: 6px; }
-.kb-picker-chip {
-  font-size: 0.7rem; line-height: 1.4;
-  color: var(--color-text-muted);
-  background: var(--color-surface-2, #f1f5f9);
-  border: 1px solid var(--color-border);
-  border-radius: 9999px;
-  padding: 1px 8px;
-}
-.kb-picker-chip-soft { color: var(--color-primary); background: var(--color-primary-soft); border-color: transparent; }
-.kb-picker-meta { font-size: 0.7rem; color: var(--color-text-muted); }
 
 @media (max-width: 640px) {
   .kb-picker-grid { grid-template-columns: repeat(2, 1fr); }
