@@ -58,6 +58,7 @@ from app.services.token_count import (
     _get_encoder,
     count_messages_tokens,
     count_text_tokens,
+    count_tools_tokens,
 )
 from app.services.memory_archive import (
     archive_memory_essential,
@@ -724,6 +725,7 @@ def fit_assembly_context(
     payload_kind: str,
     build_messages,
     budget: int | None = None,
+    tools: list | None = None,
 ) -> tuple:
     """Fit an assembly-point context to the token budget.
 
@@ -734,6 +736,13 @@ def fit_assembly_context(
     runs with the COMPLETE payload in hand: system prefix, RAG chunks, archived
     memory recall, tool records and the query all pass through ``build_messages``,
     so every decision is made against the real token cost.
+
+    ``tools`` are the function-tool definitions sent via the separate ``tools=``
+    parameter. They are NOT part of the messages array, yet they share the same
+    input budget. Their token cost (see ``count_tools_tokens``) is subtracted
+    from ``budget`` up front, so the trimming loop reserves room for them instead
+    of blindly filling the window and overflowing once the provider adds the
+    tool schemas.
 
     Trimming runs in two phases.
 
@@ -766,6 +775,10 @@ def fit_assembly_context(
         budget = _budget()
     if budget < 1:
         budget = 1  # guard degenerate tiny-window configs; never loop forever
+    # Tool definitions share the input budget but live outside the messages array,
+    # so reserve their cost up front. eff_budget is what the messages may use.
+    tools_tok = count_tools_tokens(tools)
+    eff_budget = max(1, budget - tools_tok)
 
     cur_s = summary_text
     cur_h = list(history)
@@ -783,7 +796,7 @@ def fit_assembly_context(
 
     while True:
         msgs = build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)
-        if count_messages_tokens(msgs) <= budget:
+        if count_messages_tokens(msgs) <= eff_budget:
             return cur_s, cur_h, cur_r, cur_p, cur_q, dropped
 
         # ---- Phase 1: trim while keeping at least one item per component ---- #
@@ -828,19 +841,21 @@ def fit_assembly_context(
             cur_p = []
             dropped = True
             continue
-        # Context is empty and the system prefix + query alone still overflow:
-        # the query is returned untrimmed (oversized queries are rejected at the
-        # API entry point and residual overflow surfaces as an upstream 400), so
-        # nothing left to give -- surface it and let the call proceed.
+        # Context is empty and the system prefix + query (plus the tool schema, if
+        # any) still overflow: the query is returned untrimmed (oversized queries
+        # are rejected at the API entry point and residual overflow surfaces as an
+        # upstream 400), so nothing left to give -- surface it and let the call proceed.
 
         # Even a single-token query over an empty context overflows: the fixed
-        # system prefix alone exceeds the window. Nothing left to give -- surface
-        # it and let the call proceed (a misconfigured context_window, not a
+        # system prefix (and tool definitions, if present) alone exceed the window.
+        # Nothing left to give -- surface it and let the call proceed (a
+        # misconfigured context_window, or too many/too-large tool schemas, not a
         # runtime condition we can trim our way out of).
         logger.warning(
             "fit_assembly_context exhausted: %d tokens still over budget %d with an "
-            "empty context and a minimal query (system prefix alone overflows).",
+            "empty context and a minimal query (system prefix + %d tool-schema tokens overflow).",
             count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)),
             budget,
+            tools_tok,
         )
         return cur_s, cur_h, cur_r, cur_p, cur_q, dropped

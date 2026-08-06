@@ -1384,6 +1384,7 @@ async def tool_decision_node(state: dict) -> dict:
         query=state.get("query") or "",
         payload_kind="messages",
         build_messages=_assemble,
+        tools=state.get("available_tools"),
     )
     messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
     _emit_context_usage(state, trimmed_s, trimmed_h, messages)

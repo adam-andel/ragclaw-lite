@@ -6,6 +6,8 @@ definitions + user query). cl100k_base is a close approximation for most
 chat models; for some non-OpenAI models the count is an estimate.
 """
 
+import json
+
 import tiktoken
 
 _ENCODER = None
@@ -50,4 +52,41 @@ def count_messages_tokens(messages: list[dict]) -> int:
             total += count_text_tokens(fn.get("name", ""))
             total += count_text_tokens(fn.get("arguments", ""))
     total += 3  # reply priming
+    return total
+
+
+# OpenAI adds a small fixed overhead per function-tool entry (role/name wrapping
+# tokens) on top of the serialized schema. We deliberately over-estimate slightly
+# so the budget guard errs toward safety rather than risking a 400.
+TOOL_PER_ITEM_OVERHEAD = 7
+
+
+def count_tools_tokens(tools: list) -> int:
+    """Approximate token cost of the ``tools=`` payload sent to the LLM.
+
+    Tool definitions are delivered as a separate ``tools`` parameter, NOT inside
+    the messages array, so ``count_messages_tokens`` never accounts for them --
+    yet they consume the same input budget. We serialize each tool back to the
+    wire form the provider actually receives and count it with the same encoder,
+    keeping the estimate consistent with the rest of the pipeline.
+    """
+    if not tools:
+        return 0
+    total = 0
+    for t in tools:
+        fn = t.get("function", {}) if isinstance(t, dict) else {}
+        wire = {
+            "type": "function",
+            "function": {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters", {}),
+            },
+        }
+        try:
+            serialized = json.dumps(wire, ensure_ascii=False)
+        except TypeError:
+            serialized = str(wire)
+        total += count_text_tokens(serialized)
+        total += TOOL_PER_ITEM_OVERHEAD
     return total
