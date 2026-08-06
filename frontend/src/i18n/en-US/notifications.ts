@@ -7,6 +7,7 @@ export default {
   read: 'Read',
   unread: 'Unread',
   detail: 'Notification Detail',
+  viewCronJob: 'View Task Detail',
   empty: 'No notifications',
   title: 'Title',
   content: 'Content',

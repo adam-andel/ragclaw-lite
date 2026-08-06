@@ -59,5 +59,5 @@ async def create_cron_job_notification(
         title=title,
         content=content,
         type=NotificationType.CRON_JOB,
-        link=f"/cron-jobs",
+        link=f"/cron-jobs?job={job.id}&logs=1",
     )
