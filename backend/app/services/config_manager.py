@@ -389,8 +389,8 @@ SUMMARY_FIXED_OVERHEAD_TOKENS = 16000  # conservative estimate of fixed context
 SUMMARY_SAFETY_MARGIN = 256  # reserve for model output; matches _budget() in
 # conversation_summary.
 MIN_CONTENT_ROOM = 1024  # min tokens that must remain for real dialogue after
-# reserving output + fixed overhead. Below this, runtime Layer 2 trimming cannot
-# save the request (no 400 is guaranteed), so the admin should be warned.
+# reserving output + fixed overhead. Below this, even fit_assembly_context's
+# trimming cannot save the request (no 400 is guaranteed), so warn the admin.
 
 
 class ConfigManager:
@@ -516,6 +516,9 @@ class ConfigManager:
             "prompt_language": "en",
             # Cache
             "cache_ttl_seconds": 3600,
+            # Three-tier memory archive (L0 rolling window -> L1 secondary summary -> vector memory)
+            "summary_archive_high_pct": 40,  # L0 share of context window that triggers archive + L1 secondary summary
+            "summary_archive_low_pct": 20,   # L1 share of context window that triggers L1 re-compaction
             # Sandbox network policy
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
@@ -544,6 +547,8 @@ class ConfigManager:
             "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
             "prompt_language": "en",
             "cache_ttl_seconds": 3600,
+            "summary_archive_high_pct": 40,
+            "summary_archive_low_pct": 20,
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
@@ -769,6 +774,24 @@ class ConfigManager:
                 return 128000
 
     @property
+    def summary_archive_high_pct(self) -> int:
+        """L0 share of the context window that triggers archiving + L1 secondary summary."""
+        with self._lock:
+            try:
+                return int(self._config.get("summary_archive_high_pct", 40))
+            except (TypeError, ValueError):
+                return 40
+
+    @property
+    def summary_archive_low_pct(self) -> int:
+        """L1 share of the context window that triggers L1 re-compaction (overwrite)."""
+        with self._lock:
+            try:
+                return int(self._config.get("summary_archive_low_pct", 20))
+            except (TypeError, ValueError):
+                return 20
+
+    @property
     def model(self) -> str:
         with self._lock:
             return self._config.get("llm_model", "")
@@ -964,6 +987,7 @@ class ConfigManager:
             "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "agent_round_quota",
+            "summary_archive_high_pct", "summary_archive_low_pct",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret", "jwt_secret",
             "https_enabled",

@@ -24,13 +24,14 @@ Design principles
     3. Condense the query ONLY when it is itself long enough
        (>= ``QUERY_COMPRESS_MIN_TOKENS``): keep head + tail verbatim, summarize
        the middle. This is lossy, so the caller is told to warn the user.
-       Short queries skip this and fall through to Layer 2.
-- Layer 2 (in-module hard ceiling + graceful degradation) runs when stages 1-3
-  still overflow. Order B (drop oldest summary) -> A (drop oldest recent) ->
-  C (hard-truncate the query, keep head / drop tail). It is purely transient:
-  nothing is written back to the Conversation row, so raw history and the
-  persisted summary survive for the next turn. Guarantees the LLM call never
-  exceeds the window (no 400, no silent frontend truncation).
+       Short queries skip this and fall through to the assembly-point guard.
+- Mechanical trimming is NOT done here. Anything still over budget after the
+  cascade is handled by :func:`fit_assembly_context`, which runs immediately
+  before every LLM submission. That is the only place with visibility into the
+  FULL payload (RAG chunks, archived-memory recall, tool records, system
+  prefix) -- trimming at turn start would be guessing with half the load
+  invisible, and would discard summary paragraphs that the retrieval node may
+  well recall verbatim from archived memory moments later.
 
 The summary is injected as an independent ``system`` message that sits AFTER the
 fixed cached system prefix and BEFORE the verbatim history, so it does not break
@@ -39,7 +40,9 @@ provider-side prompt caching of the stable system prefix.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import uuid
 from math import floor
 from typing import Optional, Tuple
 
@@ -56,6 +59,11 @@ from app.services.token_count import (
     count_messages_tokens,
     count_text_tokens,
 )
+from app.services.memory_archive import (
+    archive_memory_essential,
+    schedule_memory_embedding,
+)
+from app.services.i18n import t as _t
 
 logger = logging.getLogger("ragclaw.summary")
 
@@ -66,8 +74,15 @@ logger = logging.getLogger("ragclaw.summary")
 # Cap a single summarization output so the summary can never dominate the context.
 SUMMARY_MAX_TOKENS = 2000
 
-# Single-pass history compression unit (oldest fraction tried first).
-HISTORY_COMPRESS_UNIT = 2 / 3
+# Single-pass history compression: compute the exact overflow and fold the
+# minimum needed, hard-floored at HISTORY_COMPRESS_MIN_FRAC of the un-summarized
+# tail. Over-folding is intentional -- L0/L1 + archive recall catch key context,
+# so erring toward compression is safe (per project compression policy).
+HISTORY_COMPRESS_MIN_FRAC = 0.5
+# Reserve absorbed by the summary written back into L0 when a fold happens, so we
+# target a bit more than the raw overflow. fraction of overflow + absolute floor.
+HISTORY_COMPRESS_RESERVE_FRAC = 0.15
+HISTORY_COMPRESS_RESERVE_MIN = 256
 
 # Proportions for query condensation: keep this much of the head/tail verbatim,
 # summarize the middle.
@@ -77,64 +92,21 @@ QUERY_KEEP_TAIL_FRAC = 0.35
 # Minimum query length (tokens) before Layer 1 will even attempt lossy query
 # condensation. Below this, condensing saves almost nothing -- and because the
 # middle-segment summary is capped at SUMMARY_MAX_TOKENS, short queries can even
-# grow. Such overflow is handled by Layer 2 (hard truncation) instead. Tunable.
+# grow. Such overflow is handled by fit_assembly_context's phase-3 hard
+# truncation instead. Tunable.
 QUERY_COMPRESS_MIN_TOKENS = 2048
+
+# Phase-3 (assembly point) query hard truncation: fraction of the remaining
+# query dropped from the TAIL on each pass. The head carries the user's actual
+# instruction, so it is kept. max(1, ...) elsewhere guarantees progress.
+QUERY_TRUNCATE_STEP_FRAC = 0.25
 
 # Maximum re-compaction iterations in step (2) (each is one LLM call).
 MAX_RECOMPACT_ITERS = 3
 
-SUMMARY_PROMPT_ZH = (
-    "你是一个对话压缩器。请将下面的对话记录压缩为一段连贯的中文摘要，"
-    "保留：关键事实、用户偏好、已做出的决策、未解决的问题、重要结论与待办。"
-    "不要逐字复述，不要遗漏关键上下文。输出纯文本摘要，不要使用 markdown 代码块。"
-)
-SUMMARY_PROMPT_EN = (
-    "You are a conversation compressor. Compress the following dialogue into a "
-    "coherent English summary, preserving: key facts, user preferences, decisions "
-    "made, open questions, and important conclusions or follow-ups. Do not quote "
-    "verbatim; do not drop critical context. Output plain-text summary only, no "
-    "markdown code fences."
-)
-
-SUMMARY_RECOMPACT_PROMPT_ZH = (
-    "你是一个对话摘要压缩器。下面是一段已有的对话摘要，请将其进一步压缩为更短的摘要，"
-    "保留所有关键事实、用户偏好、决策、未解决问题与重要结论，删除冗余表述。"
-    "输出纯文本，不要 markdown 代码块。"
-)
-SUMMARY_RECOMPACT_PROMPT_EN = (
-    "You are a summary compressor. The text below is an existing conversation "
-    "summary. Compress it further into a shorter summary, preserving all key "
-    "facts, user preferences, decisions, open questions, and important conclusions; "
-    "drop redundant wording. Plain text, no markdown code fences."
-)
-
-QUERY_CONDENSED_WARNING_ZH = (
-    "您的消息过长，已自动压缩以适配上下文窗口（首尾原文保留，中间部分被摘要）。"
-)
-QUERY_CONDENSED_WARNING_EN = (
-    "Your message was too long and has been condensed to fit the context window "
-    "(head and tail kept verbatim, middle summarized)."
-)
-
-LAYER2_DROP_WARNING_ZH = (
-    "对话内容超出模型上下文窗口，已自动丢弃最早的摘要与对话片段以保证请求成功发送。"
-)
-LAYER2_DROP_WARNING_EN = (
-    "The conversation exceeded the model context window; the oldest summary and "
-    "dialogue segments were automatically dropped so the request could be sent."
-)
-
-# Warning surfaced when the per-submission assembly-point trimmer (fit_assembly_context)
-# had to drop older context so the request would fit the window.
-ASSEMBLY_TRIM_WARNING_ZH = (
-    "部分较早的上下文（摘要 / 对话记录 / 参考文档 / 工具记录）因超出上下文窗口已被自动裁剪，"
-    "以确保本次回答能正常生成。"
-)
-ASSEMBLY_TRIM_WARNING_EN = (
-    "Some earlier context (summary / conversation history / reference documents / "
-    "tool records) was automatically trimmed to fit the context window so this "
-    "response could be generated."
-)
+# Prompts below were consolidated into the backend i18n dict (app/services/i18n):
+#   summary_prompt, summary_recompact_prompt, query_condensed_warning,
+#   query_truncated_warning, assembly_trim_warning -> resolved via _t(key, prompt_language).
 
 # Chunk delimiter used by agent_nodes._build_context when joining retrieved chunks
 # into `rag_context`. Trimming splits on it to drop the least-relevant (tail) chunks
@@ -153,22 +125,28 @@ def _budget() -> int:
 
 
 def _overhead() -> int:
-    """Fixed context overhead estimate, clamped so Layer 2 can always converge.
+    """Fixed context overhead estimate, clamped so the cascade can always converge.
 
     ``SUMMARY_FIXED_OVERHEAD_TOKENS`` conservatively estimates system prompt +
-    RAG context + memory + tool definitions. On small context windows that
-    estimate can exceed the entire budget, which would make Layer 2's trimming
-    loop unable to ever fit. Clamp it to leave at least a sliver of room for
-    real content.
+    RAG context + memory + tool definitions -- components this module cannot
+    measure directly (only the assembly point sees them). On small context
+    windows that estimate can exceed the entire budget, which would make every
+    stage look hopeless and skip compression entirely. Clamp it to leave at
+    least a sliver of room for real content.
     """
     return min(SUMMARY_FIXED_OVERHEAD_TOKENS, max(0, _budget() - 512))
 
 
-def _estimate(history: list[dict], summary_text: str, query_tok: int) -> int:
-    """Approximate total input tokens for the request about to be sent."""
+def _estimate(history: list[dict], summary_text: str, query_tok: int, summary2_text: str = "") -> int:
+    """Approximate total input tokens for the request about to be sent.
+
+    ``summary2_text`` is the L1 secondary summary, which is injected alongside
+    ``summary_text`` (L0) as ambient context, so its cost must be counted too.
+    """
     return (
         count_messages_tokens(history)
         + (count_text_tokens(summary_text) if summary_text else 0)
+        + (count_text_tokens(summary2_text) if summary2_text else 0)
         + query_tok
         + _overhead()
     )
@@ -178,6 +156,197 @@ def _transcript(messages: list[dict]) -> str:
     return "\n".join(
         f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
     )
+
+
+def _message_tokens(m: dict) -> int:
+    """Token mass of a single history message for fold-budget math.
+
+    Uses the stored ``content_token_count`` (content tokens + 4 per-message
+    overhead, written at insert time) when present, falling back to a live
+    ``count_text_tokens`` for legacy rows that predate the column (project not
+    yet launched; historical rows may be NULL).
+    """
+    ct = m.get("content_token_count")
+    if ct:
+        return int(ct)
+    return count_text_tokens(m.get("content") or "") + 4
+
+
+def _token_round_split(history: list[dict], k: int, frac: float) -> int:
+    """Message index (exclusive upper bound) at which to fold so the folded token
+    mass is >= ``frac`` of the total history tokens, snapped UP to whole
+    conversation rounds.
+
+    A round is one ``user`` message through the message just before the next
+    ``user`` message (i.e. a full Q/A exchange). Snapping up guarantees the
+    folded portion always covers complete exchanges. The most recent round is
+    never folded, so the in-progress exchange always stays verbatim in the tail.
+    Falls back to a message-count split when token data is unavailable.
+    """
+    n = len(history)
+    if n - k <= 1:
+        return n
+    items = [(k + i, _message_tokens(m)) for i, m in enumerate(history[k:])]
+    total = sum(t for _, t in items) + 3  # +3 reply-priming constant (see token_count.py)
+    if total <= 0:
+        return max(k + 1, floor(n * frac))
+
+    # Round boundaries: each round starts at a 'user' message.
+    rounds: list[tuple[int, int]] = []  # (start_idx, end_idx_exclusive)
+    round_start = None
+    for idx, _ in items:
+        if history[idx].get("role") == "user":
+            if round_start is not None:
+                rounds.append((round_start, idx))
+            round_start = idx
+    if round_start is not None:
+        rounds.append((round_start, n))  # last round extends to history end
+    if not rounds:
+        return max(k + 1, floor(n * frac))
+
+    target = frac * total
+    cum = 0
+    boundary_end = rounds[0][1]
+    for (s, e) in rounds:
+        cum += sum(t for (idx, t) in items if s <= idx < e)
+        boundary_end = e
+        if cum >= target:
+            break
+
+    split = boundary_end
+    # Guard: keep at least the latest round unfolded (don't fold the live exchange).
+    if split >= n:
+        split = max(k + 1, rounds[-1][0])
+    if split <= k:
+        split = k + 1
+    if split > n:
+        split = n
+    return split
+
+
+def _join_summary(l1: str | None, l0: str | None) -> str:
+    """Combine the L1 secondary summary and the L0 rolling window for injection.
+
+    L1 (older, more compressed) is placed before L0 (recent window) so the most
+    recent context stays at the tail of the injected summary.
+    """
+    parts = []
+    if l1 and l1.strip():
+        parts.append(l1.strip())
+    if l0 and l0.strip():
+        parts.append(l0.strip())
+    return "\n".join(parts)
+
+
+async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str):
+    """Three-tier memory maintenance, run after Stage (1) has folded history.
+
+    - L1 (secondary summary, read-only): when its share of the context window
+      exceeds ``summary_archive_low_pct``, re-compact it in place (overwrite).
+    - L0 (rolling window, editable): when its share exceeds
+      ``summary_archive_high_pct``, move every fold paragraph EXCEPT the most
+      recent one into long-term memory: append a fresh secondary summary to L1
+      and archive the raw folds as MemoryChunks. L0 is left holding only the
+      most recent fold paragraph.
+
+    The secondary summary (LLM) and the archive's retrieval-critical half (DB
+    write + BM25 build) are independent, so they run CONCURRENTLY via
+    ``asyncio.gather``. The archive half is awaited -- this whole function runs
+    inside ``build_context_with_summary``, which the chat router awaits BEFORE
+    starting the agent graph, so the just-archived folds are already indexed
+    when the retrieval node runs later in the same turn. Only embedding stays
+    fire-and-forget (it is the slow part); hybrid retrieval degrades to
+    BM25-only for this turn and becomes full hybrid from the next one.
+
+    Degenerate case: a single L0 fold paragraph that still exceeds HIGH% cannot be
+    split into "older" parts, so it is re-compacted in place (the old Stage-2
+    semantics) to preserve the "L0 = recent window" invariant.
+
+    Never raises: all LLM/DB failures are swallowed so this never blocks the turn.
+    """
+    window = config_manager.context_window or 128000
+    high = config_manager.summary_archive_high_pct / 100.0
+    low = config_manager.summary_archive_low_pct / 100.0
+
+    # ── L1 re-compaction (lowest priority, keep L1 bounded) ──
+    l1 = getattr(conv, "summary2_text", None) or ""
+    if l1 and (count_text_tokens(l1) / window) >= low:
+        compacted = await _summarize_text(l1, prompt_language, recompact=True)
+        if compacted and len(compacted) < len(l1):
+            conv.summary2_text = compacted
+            await db.commit()
+            l1 = compacted
+
+    # ── L0 archive (rolling window) ──
+    l0 = conv.summary_text or ""
+    if not l0:
+        return
+    if (count_text_tokens(l0) / window) < high:
+        return
+
+    segs = l0.split("\n")
+    if len(segs) <= 1:
+        # Degenerate: only one fold paragraph and still over HIGH% -> re-compact it
+        # in place (preserves the "L0 = recent window" invariant).
+        compacted = await _summarize_text(l0, prompt_language, recompact=True)
+        if compacted and len(compacted) < len(l0):
+            conv.summary_text = compacted
+            await db.commit()
+        return
+
+    recent = segs[-1]            # rolling window: keep the most recent fold
+    older_segs = segs[:-1]       # everything older -> archive + secondary summary
+    conv_id = getattr(conv, "id", "") or ""
+
+    older_text = "\n".join(older_segs)
+    chunk_dicts = [
+        {
+            "id": str(uuid.uuid4()),
+            "content": s,
+            "chunk_index": i,
+            "doc_id": f"mem_{conv_id}",
+            "heading": "",
+            "page": 0,
+            "token_count": count_text_tokens(s),
+        }
+        for i, s in enumerate(older_segs)
+    ]
+
+    # Close this session's transaction before the archive writes. The archive
+    # runs on its OWN session/connection; holding an open (read) transaction here
+    # would make SQLite block its COMMIT on our shared lock until the busy
+    # timeout expires. Nothing of ours is dirty at this point, so this is cheap.
+    await db.commit()
+
+    # ① secondary summary (LLM call) and ② the retrieval-critical half of the
+    # archive (persist rows + mark_has_memory + build BM25) are independent, so
+    # run them concurrently. Neither can raise -- _summarize_text returns "" and
+    # archive_memory_essential returns False on failure -- so gather is safe.
+    new_abstract, archived = await asyncio.gather(
+        _summarize_text(older_text, prompt_language, recompact=True),
+        archive_memory_essential(conv_id, chunk_dicts),
+    )
+
+    if not archived:
+        # Archival failed (DB / index error). Keep the raw folds inline in L0 and
+        # do NOT append the abstract to L1: that is lossless, avoids duplicating
+        # the same content across both tiers, and the next turn simply retries.
+        # fit_assembly_context still guarantees the window is respected meanwhile.
+        logger.warning(
+            "Memory archive failed for conv=%s; keeping L0 folds inline", conv_id
+        )
+        return
+
+    if new_abstract:
+        conv.summary2_text = f"{l1}\n{new_abstract}".strip() if l1 else new_abstract
+    conv.summary_text = recent
+    conv.summary_archived_count = (getattr(conv, "summary_archived_count", 0) or 0) + len(older_segs)
+    await db.commit()
+
+    # ③ Expensive half: embedding stays in the background so it is never charged
+    # to time-to-first-token. This turn recalls the new chunks via BM25; vectors
+    # join in from the next turn on.
+    schedule_memory_embedding(conv_id, chunk_dicts)
 
 
 # --------------------------------------------------------------------------- #
@@ -193,16 +362,7 @@ async def _summarize_text(
     """
     if not text.strip():
         return ""
-    if recompact:
-        prompt = (
-            SUMMARY_RECOMPACT_PROMPT_EN
-            if prompt_language == "en"
-            else SUMMARY_RECOMPACT_PROMPT_ZH
-        )
-    else:
-        prompt = (
-            SUMMARY_PROMPT_EN if prompt_language == "en" else SUMMARY_PROMPT_ZH
-        )
+    prompt = _t("summary_recompact_prompt" if recompact else "summary_prompt", prompt_language)
     try:
         return (
             await llm_client.chat(
@@ -284,156 +444,122 @@ async def build_context_with_summary(
 
     - ``recent_messages``: verbatim tail of history not yet folded into the summary.
     - ``summary_text``: accumulated (and possibly just-compacted) summary.
-    - ``final_query``: the query to actually send. Usually the original; may be the
-      Layer-1 condensed form, or (in Layer 2) hard-truncated to fit the window.
-      The caller should use this instead of the raw query.
-    - ``warning``: non-empty when the query was lossily condensed (Layer 1) or older
-      content was auto-dropped to satisfy the window (Layer 2); the caller should
-      surface it to the user.
+    - ``final_query``: the query to actually send -- the original, or the lossily
+      condensed form when stage (3) fired. The caller should use this instead of
+      the raw query.
+    - ``warning``: non-empty when the query was lossily condensed; the caller
+      should surface it to the user.
 
     Raw ``Message`` rows are never modified. The summary is persisted on the
-    ``Conversation`` row via the cursor ``summary_msg_count``. Layer 2 trims are
-    transient only -- they are NOT written back.
+    ``Conversation`` row via the cursor ``summary_msg_count``.
+
+    NOTE: this function performs SEMANTIC (LLM-backed) compression only. It may
+    still return a payload that is over budget -- deliberately. Mechanical
+    trimming belongs to :func:`fit_assembly_context`, which runs per submission
+    and can see the full payload (RAG, archived-memory recall, tool records).
     """
     warning = ""
     n = len(history)
     if n == 0:
-        return [], conv.summary_text or "", None, warning
+        return [], _join_summary(getattr(conv, "summary2_text", None), conv.summary_text or ""), None, warning
 
     # Cursor: how many of the earliest messages are already summarized.
     k = getattr(conv, "summary_msg_count", 0) or 0
     if k > n:
         k = n  # safety: never exceed history length
 
-    base = conv.summary_text or ""
+    # L0 = rolling window (recent folds, editable); L1 = secondary summary
+    # (older, read-only, re-compacted). Both are injected as ambient context,
+    # so L1 cost is counted in every estimate.
+    l0 = conv.summary_text or ""
+    l1 = getattr(conv, "summary2_text", None) or ""
     q_tok = count_text_tokens(query)
 
     # (0) Fits -> zero compression. Maximize window utilization.
-    if _estimate(history[k:], base, q_tok) <= _budget():
-        return history[k:], base, None, warning
+    if _estimate(history[k:], l0, q_tok, l1) <= _budget():
+        return history[k:], _join_summary(l1, l0), None, warning
 
     # `recent` = verbatim tail not yet folded into the summary. Stage 1 shrinks
     # it as it folds older turns into `base`; if it never fits, `recent` carries
-    # the un-folded history into Layer 2 for trimming (so the overflow is always
-    # representable, even when summarization fails).
+    # the un-folded history out to the assembly point, where fit_assembly_context
+    # trims it against the real payload (so the overflow is always representable,
+    # even when summarization fails).
     recent = history[k:]
+    base = l0  # Stage (1) folds into L0 only; L1 is kept separate.
 
-    # (1) Adaptive history compression: oldest 2/3, expand to all if insufficient.
-    frac = HISTORY_COMPRESS_UNIT
-    while True:
-        split = max(k + 1, floor(n * frac))
-        if split > n:
-            split = n
-        if split <= k:
-            break  # nothing left to compress in history
-        new_para = await _summarize_text(
-            _transcript(history[k:split]), prompt_language
+    # (1) Single-pass adaptive history compression.
+    # Every message carries its token mass (content_token_count, written at insert
+    # time), so we compute the EXACT overflow and fold the minimum needed to land
+    # under budget -- no trial-and-error loop. Over-folding is deliberate: L0/L1
+    # plus archive recall catch the key context, so erring toward compression is
+    # safe. The fold is hard-floored at HISTORY_COMPRESS_MIN_FRAC of the
+    # un-summarized tail, and always snaps to whole conversation rounds.
+    recent = history[k:]
+    overflow = _estimate(history[k:], l0, q_tok, l1) - _budget()
+    if overflow > 0:
+        # Reserve absorbs the summary written back into L0 (the fold removes N
+        # tokens from history but adds a smaller summary to L0), so we target a
+        # little more than the raw overflow to guarantee we cross the line.
+        reserve = max(
+            int(overflow * HISTORY_COMPRESS_RESERVE_FRAC),
+            HISTORY_COMPRESS_RESERVE_MIN,
         )
-        if not new_para:
-            break  # summarize failed; bail out (falls through to re-compaction)
-        candidate = f"{base}\n{new_para}".strip() if base else new_para
-        if _estimate(history[split:], candidate, q_tok) <= _budget():
-            conv.summary_text = candidate
-            conv.summary_msg_count = split
-            await db.commit()
-            return history[split:], candidate, None, warning
-        # Did not fit yet: record the un-folded tail for Layer 2, and (on the
-        # final frac=1.0 pass) persist the single full fold of history[k:n] so the
-        # next turn does not re-summarize. Each pass summarizes history[k:split]
-        # against the ORIGINAL base (no accumulation), avoiding duplicated folds.
-        recent = history[split:]
-        if frac >= 1.0:
-            conv.summary_text = candidate
-            conv.summary_msg_count = split
-            await db.commit()
-            break
-        frac = min(1.0, frac + 1 / 3)
+        tail_tok = count_messages_tokens(history[k:])
+        target_frac = (overflow + reserve) / tail_tok if tail_tok > 0 else 1.0
+        frac = min(1.0, max(target_frac, HISTORY_COMPRESS_MIN_FRAC))
+        split = _token_round_split(history, k, frac)
+        if split > k:
+            split = min(split, n)
+            new_para = await _summarize_text(
+                _transcript(history[k:split]), prompt_language
+            )
+            if new_para:
+                candidate = f"{base}\n{new_para}".strip() if base else new_para
+                conv.summary_text = candidate
+                conv.summary_msg_count = split
+                await db.commit()
+                recent = history[split:]
+            # summarize failed -> leave recent = history[k:], fall through to L0/L1
 
-    # (2) History fully compressed but still over -> re-compact the summary itself.
-    base = conv.summary_text or ""
-    iters = 0
-    while (
-        _estimate([], base, q_tok) > _budget()
-        and len(base) > 500
-        and iters < MAX_RECOMPACT_ITERS
-    ):
-        compacted = await _summarize_text(base, prompt_language, recompact=True)
-        if compacted and len(compacted) < len(base):
-            base = compacted
-            conv.summary_text = base
-            await db.commit()
-            iters += 1
-        else:
-            break  # did not shrink -> stop to avoid pointless LLM calls
+    # (2) Three-tier memory: L1 re-compaction + L0 archive. Runs EVERY turn now
+    # (it self-guards on its own HIGH/LOW thresholds, so it is a no-op when L0/L1
+    # are small). This replaces the old early-return-on-fit path: even a turn
+    # whose fold already fits still gets its L0/L1 tiers maintained.
+    await maybe_archive_and_compact(conv, db, prompt_language)
+    l0 = conv.summary_text or ""
+    l1 = getattr(conv, "summary2_text", None) or ""
+    base = _join_summary(l1, l0)
 
     # (3) Still over AND the query itself is long enough that condensing it yields
     # meaningful savings. Below QUERY_COMPRESS_MIN_TOKENS the query is too small to
-    # be worth lossy condensation, so we skip it and let Layer 2 trim the older
-    # history/summary instead.
+    # be worth lossy condensation, so we skip it and let fit_assembly_context trim
+    # the older history/summary instead.
     if _estimate([], base, q_tok) > _budget() and q_tok >= QUERY_COMPRESS_MIN_TOKENS:
         condensed = await _condense_query(query, base, prompt_language)
         if condensed and count_text_tokens(condensed) < q_tok:
-            warning = (
-                QUERY_CONDENSED_WARNING_EN
-                if prompt_language == "en"
-                else QUERY_CONDENSED_WARNING_ZH
-            )
+            warning = _t("query_condensed_warning", prompt_language)
             return [], base, condensed, warning
 
-    # ── Layer 2: hard ceiling + graceful degradation ──
-    # Order B (oldest summary) -> A (oldest recent) -> C (hard-truncate query,
-    # keep head / drop tail). Purely transient: nothing is written back to conv,
-    # so raw Message rows and the persisted summary survive for the next turn.
-    if _estimate(recent, base, q_tok) > _budget():
-        budget = _budget()
-        dropped = False
-        # Phase B: drop oldest summary content from the front (oldest first).
-        # Paragraph granularity when possible; token-level fallback for a single
-        # oversized paragraph guarantees the loop always converges.
-        segs = base.split("\n") if base else []
-        enc = _get_encoder()
-        while _estimate(recent, "\n".join(segs), q_tok) > budget:
-            if len(segs) > 1:
-                segs = segs[1:]
-            elif segs:
-                ids = enc.encode(segs[0])
-                # Drop tokens from the FRONT (oldest) of this paragraph. Guarantee
-                # at least one token is removed each pass so the loop always
-                # converges (a fixed slice like ids[0:] would loop forever on a
-                # ~9-token paragraph).
-                drop = max(1, len(ids) // 10)
-                if len(ids) <= drop:
-                    break
-                segs = [enc.decode(ids[drop:])]
-            else:
-                break
-        if "\n".join(segs) != base:
-            dropped = True
-        base = "\n".join(segs)
-        # Phase A: trim oldest recent message from the front.
-        # (recent is usually empty here -- stage 1 folds the whole history into
-        #  the summary before we arrive -- so this is typically a no-op.)
-        while _estimate(recent, base, q_tok) > budget and recent:
-            recent = recent[1:]
-            dropped = True
-        # Phase C: last resort -- hard-truncate the query, keep the HEAD (the
-        # user's instruction) and drop the TAIL. Lossy; warn the user.
-        while _estimate(recent, base, q_tok) > budget and q_tok > 0:
-            ids = enc.encode(query)
-            if len(ids) <= 1:
-                break
-            keep = max(1, len(ids) - max(1, len(ids) // 4))
-            query = enc.decode(ids[:keep])
-            q_tok = count_text_tokens(query)
-            dropped = True
-        if dropped:
-            warning = (
-                LAYER2_DROP_WARNING_EN
-                if prompt_language == "en"
-                else LAYER2_DROP_WARNING_ZH
-            )
-
-    return recent, base, query, warning
+    # Still over budget? Deliberately do NOTHING here.
+    #
+    # A mechanical trim at this point would be made blind: rag_context,
+    # memory_context, user_memory, kb_prompt and the tool descriptions are all
+    # produced LATER (retrieval node / assembly points) and are invisible to
+    # `_estimate`, which only sees history + summary + query. Cutting against a
+    # partial view either over-trims or still overflows.
+    #
+    # Worse, dropping the oldest summary paragraphs here is often pure waste:
+    # those exact folds now live in archived memory and may be recalled verbatim
+    # by `parallel_retrieval_node` a moment later.
+    #
+    # `fit_assembly_context` owns the hard ceiling instead -- it runs right
+    # before every LLM submission with the complete payload in hand, and its
+    # phase 3 hard-truncates the query when nothing else is left to give.
+    #
+    # `None` (not `query`) keeps the contract honest: a non-None final_query
+    # means "the query was rewritten, use this instead". Nothing rewrote it on
+    # this path -- only stage (3) does, and it returns early.
+    return recent, base, None, warning
 
 
 # --------------------------------------------------------------------------- #
@@ -497,7 +623,7 @@ async def compact_conversation(
     returns ""), the cursor is NOT advanced and nothing is committed, so a
     failed compaction can never make part of the history invisible to the model.
 
-    The ``max(1, ...)`` guard mirrors the Layer-2 Phase-B fix: integer scaling
+    The ``max(1, ...)`` guard is required for progress: integer scaling
     degenerates to 0 for a small remainder, which would leave the cursor
     unchanged and make the button silently do nothing.
     """
@@ -521,6 +647,12 @@ async def compact_conversation(
     conv.summary_text = f"{base}\n{new_para}".strip() if base else new_para
     conv.summary_msg_count = split
     await db.commit()
+
+    # Feed the folded result through the same three-tier memory maintenance as the
+    # automatic path, so manual compaction also archives older folds and re-compacts
+    # L1 when thresholds are crossed.
+    await maybe_archive_and_compact(conv, db, prompt_language)
+
     logger.info(
         "Manual compaction: conv=%s cursor %d -> %d of %d messages",
         getattr(conv, "id", "?"), k, split, n,
@@ -578,15 +710,17 @@ def fit_assembly_context(
     build_messages,
     budget: int | None = None,
 ) -> tuple:
-    """Fit an assembly-point context to the token budget WITHOUT touching the query.
+    """Fit an assembly-point context to the token budget.
 
-    This is the per-submission hard ceiling. It runs right before each LLM call
-    (tool_decision_node and the final generation) -- after build_context_with_summary
-    has already compressed the persistent history into ``summary_text``. It handles the
-    overflow that build_context_with_summary cannot see: the in-turn accumulation of
-    tool_messages / tool_results.
+    This is the ONLY hard ceiling in the pipeline. It runs right before each LLM
+    call (tool_decision_node and the final generation) -- after
+    build_context_with_summary has already applied semantic (LLM-backed)
+    compression to the persistent history. Unlike turn-start compression, this
+    runs with the COMPLETE payload in hand: system prefix, RAG chunks, archived
+    memory recall, tool records and the query all pass through ``build_messages``,
+    so every decision is made against the real token cost.
 
-    Trimming runs in two phases.
+    Trimming runs in three phases.
 
     PHASE 1 -- "keep >= 1" (preferred). Every step leaves at least one item alive so
     a normal overflow degrades gracefully instead of blanking the context:
@@ -604,17 +738,23 @@ def fit_assembly_context(
         7. tool_payload -> drop the final unit/entry
     (summary is already empty after phase 1, so it is a no-op here.)
 
-    If even an empty context overflows, the fixed system prefix plus the query alone
-    exceed the window. Nothing further can be done here -- the query is off-limits by
-    contract -- so we log a warning and return; ``build_context_with_summary``'s
-    Layer 2 owns that case at turn start.
+    PHASE 3 -- query hard truncation (last resort). With an empty context the
+    fixed system prefix plus the query alone can still overflow. Keep the HEAD
+    (which carries the user's actual instruction) and drop the TAIL, one
+    ``QUERY_TRUNCATE_STEP_FRAC`` slice per pass. This is lossy and the caller
+    MUST warn the user -- compare the returned query against the input to detect
+    it. Only when the query is down to a single token do we give up and log.
 
-    The query is never modified (it was already handled by build_context_with_summary,
-    and re-trimming it could break task execution). The result is purely transient:
-    callers assemble THIS submission's messages from the trimmed components and must
-    NOT write anything back to the database or mutate state.
+    The result is purely transient: callers assemble THIS submission's messages
+    from the returned components and must NOT write anything back to the database
+    or mutate state. In particular the truncated query is for this submission
+    only -- ``state["query"]`` stays intact.
 
-    Returns ``(summary, history, rag, payload, dropped)``.
+    ``build_messages`` is called as ``build_messages(summary, history, rag,
+    payload, query)``; it MUST use the query passed in rather than reading it
+    from an enclosing scope, otherwise phase 3 cannot take effect.
+
+    Returns ``(summary, history, rag, payload, query, dropped)``.
     """
     if budget is None:
         budget = _budget()
@@ -625,6 +765,7 @@ def fit_assembly_context(
     cur_h = list(history)
     cur_r = rag_context
     cur_p = list(tool_payload)
+    cur_q = query or ""
     dropped = False
 
     def _tool_units(payload: list) -> int:
@@ -635,9 +776,9 @@ def fit_assembly_context(
         return len(payload)
 
     while True:
-        msgs = build_messages(cur_s, cur_h, cur_r, cur_p)
+        msgs = build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)
         if count_messages_tokens(msgs) <= budget:
-            return cur_s, cur_h, cur_r, cur_p, dropped
+            return cur_s, cur_h, cur_r, cur_p, cur_q, dropped
 
         # ---- Phase 1: trim while keeping at least one item per component ---- #
         # 1. summary
@@ -681,14 +822,28 @@ def fit_assembly_context(
             cur_p = []
             dropped = True
             continue
+        # ---- Phase 3: last resort -- hard-truncate the query ---- #
+        # Context is empty and the system prefix + query alone still overflow.
+        # Keep the HEAD (the user's instruction), drop the TAIL. Every pass must
+        # remove at least one token or the loop would spin forever on a short
+        # query (integer scaling degenerates to 0).
+        if cur_q:
+            enc = _get_encoder()
+            ids = enc.encode(cur_q)
+            if len(ids) > 1:
+                drop = max(1, int(len(ids) * QUERY_TRUNCATE_STEP_FRAC))
+                cur_q = enc.decode(ids[: max(1, len(ids) - drop)])
+                dropped = True
+                continue
 
-        # Everything trimmable is gone and we are still over budget: the fixed
-        # system prefix + query alone exceed the window. The query is off-limits
-        # here by contract, so surface it and let the call proceed.
+        # Even a single-token query over an empty context overflows: the fixed
+        # system prefix alone exceeds the window. Nothing left to give -- surface
+        # it and let the call proceed (a misconfigured context_window, not a
+        # runtime condition we can trim our way out of).
         logger.warning(
-            "fit_assembly_context exhausted: %d tokens still over budget %d "
-            "with an empty context (system prefix + query alone overflow).",
-            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p)),
+            "fit_assembly_context exhausted: %d tokens still over budget %d with an "
+            "empty context and a minimal query (system prefix alone overflows).",
+            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q)),
             budget,
         )
-        return cur_s, cur_h, cur_r, cur_p, dropped
+        return cur_s, cur_h, cur_r, cur_p, cur_q, dropped

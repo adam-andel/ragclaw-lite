@@ -26,16 +26,17 @@ from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
 from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise, _normalize_download_url
 from app.services.kb_service import get_kb_prompt
-from app.services.token_count import count_messages_tokens
+from app.services.token_count import count_messages_tokens, count_text_tokens
 from app.services.config_manager import config_manager
 from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
     CompactionError,
-    ASSEMBLY_TRIM_WARNING_ZH,
-    ASSEMBLY_TRIM_WARNING_EN,
+    _join_summary,
 )
 from app.services.llm_semaphore import llm_limiter
+from app.services import memory_archive
+from app.services.i18n import t as _t
 
 from app.schemas.chat import (
     ChatRequest,
@@ -143,6 +144,7 @@ async def _save_assistant_message(
             llm_ms=0,
             status=status,
             token_count=prompt_tokens,
+            content_token_count=count_text_tokens(content) + 4,
             created_at=datetime.utcnow(),
         )
 
@@ -542,7 +544,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, emit_usage_fn=None) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, summary2_text: str = "", emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -569,7 +571,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "tenant_id": current_user.tenant_id,
         "user_memory": current_user.memory or "",
         "conversation_history": recent_history,
-        "conversation_summary": summary_text,
+        "conversation_summary": _join_summary(summary2_text, summary_text),
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
         "timezone": request.timezone or "UTC",
@@ -751,7 +753,7 @@ async def chat_stream(
         .order_by(Message.created_at.asc())
     )
     history_msgs = result.scalars().all()
-    history = [{"role": m.role, "content": m.content} for m in history_msgs]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in history_msgs]
 
     # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
     kb_prompt = await get_kb_prompt(request.kb_id)
@@ -765,6 +767,7 @@ async def chat_stream(
             conversation_id=conv_id,
             role="user",
             content=request.query,
+            content_token_count=count_text_tokens(request.query) + 4,
             created_at=datetime.utcnow(),
         )
         db.add(user_msg)
@@ -1017,6 +1020,7 @@ async def chat_stream(
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
+                        summary2_text=getattr(conv, "summary2_text", None) or "",
                         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
@@ -1112,11 +1116,15 @@ async def chat_stream(
                     final_retr = state.get("retrieval_ms", 0)
                     messages, assembly_dropped = ragclaw_agent_graph.build_generation_messages(state)
                     if assembly_dropped:
+                        # Phase 3 (query hard truncation) is materially worse for the
+                        # user than dropping older context, so report it distinctly.
                         emit_agent_step(
                             "context_compress",
-                            ASSEMBLY_TRIM_WARNING_EN
-                            if config_manager.prompt_language == "en"
-                            else ASSEMBLY_TRIM_WARNING_ZH,
+                            _t(
+                                "query_truncated_warning" if state.get("query_truncated")
+                                else "assembly_trim_warning",
+                                config_manager.prompt_language,
+                            ),
                         )
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
@@ -1454,6 +1462,8 @@ async def get_conversation(
         summary_text=conv.summary_text or "",
         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
         total_messages=total_messages,
+        summary2_text=getattr(conv, "summary2_text", None) or "",
+        summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
 
@@ -1629,6 +1639,8 @@ async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSu
         summary_text=conv.summary_text or "",
         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
         total_messages=total_result.scalar() or 0,
+        summary2_text=getattr(conv, "summary2_text", None) or "",
+        summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
 
@@ -1679,7 +1691,7 @@ async def compact_conversation_endpoint(
         .where(Message.conversation_id == conv_id)
         .order_by(Message.created_at.asc())
     )
-    history = [{"role": m.role, "content": m.content} for m in result.scalars().all()]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in result.scalars().all()]
 
     try:
         await compact_conversation(
@@ -1712,6 +1724,9 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
         raise HTTPException(403, "管理员只能删除自己的对话")
     # Drop any persisted pending-limit snapshot for this conversation.
     await _clear_pending_state(db, conv_id)
+    # Drop archived conversation memory (vectors, BM25 index, DB rows) so deleting a
+    # conversation leaves no orphaned memory chunks / Chroma collections.
+    await memory_archive.purge_memory(conv_id, db)
     await db.delete(conv)
     await db.commit()
     return {"status": "deleted"}

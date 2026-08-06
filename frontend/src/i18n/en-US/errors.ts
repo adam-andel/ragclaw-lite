@@ -34,6 +34,8 @@ export default {
     CONFIG_CONTEXT_WINDOW_RANGE: 'Context window must be between 1 and 10,000,000.',
     CONFIG_CONCURRENCY_RANGE: 'Concurrency must be between 1 and 50.',
     CONFIG_AGENT_ROUND_QUOTA_RANGE: 'Agent round quota must be between 0 and 200 (0 = unlimited).',
+    CONFIG_ARCHIVE_HIGH_RANGE: 'Archive trigger threshold (high) must be between 1 and 100 (percent of context window).',
+    CONFIG_ARCHIVE_LOW_RANGE: 'L1 re-compaction threshold (low) must be between 1 and 100 (percent of context window).',
     CONFIG_SANDBOX_NETWORK_MODE: "Sandbox network mode must be one of: deny / allow / allowlist.",
     SANDBOX_POLICY_UPDATED: 'Sandbox policy updated — changes take effect immediately.',
     REPL_AUTH_SECRET_REGENERATED: 'A new REPL_AUTH_SECRET was generated — changes take effect immediately.',
@@ -49,6 +51,7 @@ export default {
 
     USER_CREATE_ROLE: 'Moderators can only create regular users',
     USER_NAME_EXISTS: 'Username already exists',
+    SETUP_ALREADY_COMPLETE: 'System setup is already complete and registration is closed. Please log in with an existing account.',
     USER_UID_POOL_EXHAUSTED: 'Unable to allocate a sandbox UID for the new user: the UID pool may be exhausted. Please increase REPL_UID_RANGE_MAX.',
     USER_NOT_FOUND: 'User not found',
     USER_NO_MANAGE_PERM: 'You do not have permission to manage this user',

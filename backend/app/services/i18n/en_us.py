@@ -174,4 +174,34 @@ MESSAGES = {
     "cron_created_confirm": "Scheduled task '{name}' created. View it on the Scheduled Tasks page.",
     "cron_created_confirm_detail": "Scheduled task '{name}' created. Next run: {next_run} ({tz}). View it on the Scheduled Tasks page.",
     "cron_created_fallback": "Scheduled task created.",
+
+    # ── Conversation-history compression prompts (Layer 1). No placeholders. ──
+    "summary_prompt": (
+        "You are a conversation compressor. Compress the following dialogue into a "
+        "coherent English summary, preserving: key facts, user preferences, decisions "
+        "made, open questions, and important conclusions or follow-ups. Do not quote "
+        "verbatim; do not drop critical context. Output plain-text summary only, no "
+        "markdown code fences."
+    ),
+    "summary_recompact_prompt": (
+        "You are a summary compressor. The text below is an existing conversation "
+        "summary. Compress it further into a shorter summary, preserving all key "
+        "facts, user preferences, decisions, open questions, and important conclusions; "
+        "drop redundant wording. Plain text, no markdown code fences."
+    ),
+    "query_condensed_warning": (
+        "Your message was too long and has been condensed to fit the context window "
+        "(head and tail kept verbatim, middle summarized)."
+    ),
+    "query_truncated_warning": (
+        "This question is too long: even with the surrounding context cleared it still "
+        "exceeds the model context window, so its head was kept and its tail truncated "
+        "to let the request through."
+    ),
+    "assembly_trim_warning": (
+        "Some earlier context (summary / conversation history / reference documents / "
+        "tool records) was automatically trimmed to fit the context window so this "
+        "response could be generated."
+    ),
+    "tool_desc_heading": "## Available tools",
 }

@@ -105,8 +105,8 @@ async def create_user(
             taken_set = {u for u in taken if u is not None}
             cand = allocate_repl_uid(taken_set)
             # Regression guard: REPL_UID_RANGE_MIN is permanently reserved for the
-            # bootstrap admin (see app/database.py _seed_admin_user, which uses this
-            # fixed UID). A normal user must NEVER receive it, or it would collide
+            # bootstrap admin (the first user self-registered via POST /api/auth/register
+            # takes this fixed UID). A normal user must NEVER receive it, or it would collide
             # with the admin's sandbox. allocate_repl_uid's contract only returns
             # [MIN+1, MAX); if someone changes the range to include MIN, this
             # assertion fails immediately.

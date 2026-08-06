@@ -9,6 +9,7 @@ from app.models.skill import Skill, MCPServer
 from app.services.hybrid_search import hybrid_search
 from app.services.vector_store import vector_store
 from app.services.bm25_index import bm25_index
+from app.services import memory_archive
 from app.services.llm_client import llm_client
 from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
@@ -24,8 +25,6 @@ from app.services.token_count import count_messages_tokens
 from app.services.conversation_summary import (
     context_breakdown,
     fit_assembly_context,
-    ASSEMBLY_TRIM_WARNING_ZH,
-    ASSEMBLY_TRIM_WARNING_EN,
 )
 
 logger = logging.getLogger("ragclaw.agent")
@@ -1141,8 +1140,38 @@ async def parallel_retrieval_node(state: dict) -> dict:
     rag_context, citations = _build_context(retrieved)
     chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
     _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
-    return {"rag_context": rag_context, "citations": citations,
+
+    # ── Conversation memory recall (independent B namespace: mem_{conv_id}) ──
+    # Mirrors the document hybrid path: run vector + BM25 concurrently, fuse, and
+    # degrade to BM25-only if the vector path errors (e.g. no embedding model).
+    # Kept separate from rag_context so archived memory is never surfaced as a
+    # user-document citation.
+    memory_context = ""
+    conv_id = state.get("conversation_id")
+    mem_kb = f"mem_{conv_id}" if conv_id else ""
+    if mem_kb and memory_archive.has_memory(conv_id):
+        mv_task = loop.run_in_executor(None, vector_store.search, mem_kb, query, settings.retrieval_vector_top_k)
+        mb_task = loop.run_in_executor(None, bm25_index.search, mem_kb, query, settings.retrieval_bm25_top_k)
+        mv, mb = await asyncio.gather(mv_task, mb_task, return_exceptions=True)
+        if isinstance(mv, Exception):
+            logger.warning("Memory vector search error: %s", mv)
+            mv = []
+        if isinstance(mb, Exception):
+            logger.warning("Memory BM25 search error: %s", mb)
+            mb = []
+        mem_retrieved = hybrid_search.fuse(mv, mb)
+        if mem_retrieved:
+            memory_context = _format_memory(mem_retrieved)
+
+    return {"rag_context": rag_context, "citations": citations, "memory_context": memory_context,
             "retrieval_ms": round((time.time() - t_start) * 1000)}
+
+
+def _format_memory(retrieved: list[dict]) -> str:
+    """Render recalled memory chunks as a plain text block (no citations)."""
+    if not retrieved:
+        return ""
+    return "\n\n".join(f"[Conversation Memory] {r['content']}" for r in retrieved)
 
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
@@ -1273,7 +1302,7 @@ async def tool_decision_node(state: dict) -> dict:
     # native tool call. The tool list is only injected when we fall back to plain
     # text mode (see _with_tool_desc below), where there is no function schema.
     tool_system = build_tool_system_prompt("", lang=config_manager.prompt_language)
-    tool_heading = "## Available tools" if config_manager.prompt_language == "en" else "## 可用工具"
+    tool_heading = _t("tool_desc_heading", config_manager.prompt_language)
     tool_desc_block = f"{tool_heading}\n{tool_desc}" if tool_desc else ""
 
     def _with_tool_desc(msgs: list) -> list:
@@ -1288,13 +1317,14 @@ async def tool_decision_node(state: dict) -> dict:
             else:
                 out.append(m)
         return out
-    # ── Assembly-point budget guard ──
-    # build_context_with_summary already compressed the persistent history into
-    # conversation_summary at turn start; this guard handles the in-turn overflow it
-    # cannot see -- the cumulative tool_messages. We trim (summary -> history -> rag
-    # -> tool_messages -> memory) on TRANSIENT copies and never touch the query, so
-    # the request always fits without writing anything back.
-    def _assemble(s, h, rag, payload):
+    # ── Assembly-point budget guard (the only hard ceiling) ──
+    # build_context_with_summary applied SEMANTIC compression at turn start but
+    # deliberately performs no mechanical trimming -- it cannot see the RAG /
+    # memory / tool payload. This guard runs with the complete payload and trims
+    # (summary -> history -> rag -> tool_messages -> query) on TRANSIENT copies,
+    # so the request always fits without writing anything back. `q` is threaded
+    # in as a parameter (never read from `state`) so phase 3 can take effect.
+    def _assemble(s, h, rag, payload, q):
         # User-authored memory & preferences (from the profile page), appended to
         # the task background so the LLM can personalize. Kept separate from the
         # auto-extracted MEM0 memory graph. Empty string when nothing is set.
@@ -1313,7 +1343,7 @@ async def tool_decision_node(state: dict) -> dict:
         user_parts = []
         if rag:
             user_parts.append(f"## Reference Documents\n{rag}")
-        user_parts.append(f"## Question\n{state['query']}")
+        user_parts.append(f"## Question\n{q}")
         msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
         if payload:
             # ── Sanitize tool_messages before sending to LLM ──
@@ -1346,22 +1376,28 @@ async def tool_decision_node(state: dict) -> dict:
             msgs.extend(sanitized_msgs)
         return msgs
 
-    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, dropped = fit_assembly_context(
+    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, dropped = fit_assembly_context(
         summary_text=state.get("conversation_summary"),
         history=state.get("conversation_history", []),
         rag_context=state.get("rag_context"),
         tool_payload=state.get("tool_messages", []),
-        query=state.get("query"),
+        query=state.get("query") or "",
         payload_kind="messages",
         build_messages=_assemble,
     )
-    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p)
+    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
     _emit_context_usage(state, trimmed_s, trimmed_h, messages)
     if dropped:
+        # Phase 3 (query hard truncation) is materially worse for the user than
+        # dropping older context, so report it distinctly.
         _emit(
             state,
             "context_compress",
-            ASSEMBLY_TRIM_WARNING_EN if config_manager.prompt_language == "en" else ASSEMBLY_TRIM_WARNING_ZH,
+            _t(
+                "query_truncated_warning" if trimmed_q != (state.get("query") or "")
+                else "assembly_trim_warning",
+                config_manager.prompt_language,
+            ),
         )
     try:
         # ── Dual-mode strategy: try native function calling first, fall back to text mode ──

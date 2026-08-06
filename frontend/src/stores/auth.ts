@@ -52,6 +52,13 @@ export const useAuthStore = defineStore('auth', () => {
     return res.data
   }
 
+  // Public: whether the system still has zero users (first admin not yet
+  // registered). Drives the login page's register-vs-login mode on first launch.
+  async function needsSetup() {
+    const res = await client.get('/auth/setup')
+    return !!res.data.needs_setup
+  }
+
   // Refresh LLM reachability status from /api/health with backoff.
   //
   // llmConfigured now means the LLM API is *actually reachable* (verified by a
@@ -111,5 +118,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth }
+  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, needsSetup, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth }
 })

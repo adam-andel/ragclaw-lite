@@ -19,4 +19,20 @@ export default {
   noAccountHint: 'No account yet? Contact an admin to create one.',
   loginSuccess: 'Login successful, redirecting…',
   loginFailed: 'Login failed, please try again',
+
+  // First-launch self-registration (no users yet → first registrant becomes super admin)
+  setupTitle: 'Create admin account',
+  setupSubtitle: 'First launch: set up your super admin account',
+  displayName: 'Display name (optional)',
+  displayNamePlaceholder: 'Enter a display name',
+  confirmPassword: 'Confirm password',
+  confirmPasswordPlaceholder: 'Re-enter your password',
+  enterConfirmPassword: 'Please re-enter your password',
+  passwordMismatch: 'Passwords do not match',
+  passwordTooShort: 'Password must be at least 4 characters',
+  register: 'Create account',
+  registering: 'Creating…',
+  registerSuccess: 'Admin account created. Redirecting…',
+  registerFailed: 'Registration failed, please try again',
+  setupHint: "This is the system's first user and will automatically become the super admin.",
 }

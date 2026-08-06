@@ -17,6 +17,12 @@ class RegisterRequest(BaseModel):
     tenant_id: str | None = None  # optional, auto-generated if not provided
 
 
+class SetupStatusResponse(BaseModel):
+    """Public report of whether the system still needs its first admin."""
+
+    needs_setup: bool
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

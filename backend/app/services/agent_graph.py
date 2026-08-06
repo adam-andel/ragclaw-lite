@@ -309,12 +309,14 @@ class RagclawAgentGraph:
         # same way, so both stay in the stable system prefix for cache consistency.
         file_rule = "\n\n" + _t("file_answer_rule", config_manager.prompt_language)
         final_answer_rule = "\n\n" + _t("final_answer_guidance", config_manager.prompt_language)
-        # ── Assembly-point budget guard ──
-        # build_context_with_summary already compressed persistent history at turn
-        # start; this guard handles the in-turn overflow it cannot see -- the
-        # cumulative tool_results. Trim (summary -> history -> rag -> tool_results)
-        # on TRANSIENT copies, never touch the query, write nothing back.
-        def _assemble(s, h, rag, payload):
+        # ── Assembly-point budget guard (the only hard ceiling) ──
+        # build_context_with_summary applied SEMANTIC compression at turn start but
+        # deliberately performs no mechanical trimming -- it cannot see the RAG /
+        # memory / tool payload assembled here. This guard runs with the complete
+        # payload and trims (summary -> history -> rag -> tool_results -> query) on
+        # TRANSIENT copies, writing nothing back. `q` is threaded in as a parameter
+        # (never read from `state`) so the phase-3 query truncation can take effect.
+        def _assemble(s, h, rag, payload, q):
             msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule + final_answer_rule}]
             if s:
                 msgs.append(
@@ -333,21 +335,28 @@ class RagclawAgentGraph:
                 # nothing). Genuine retrieved context is still injected.
                 if not (rag.strip() == "No relevant documents found" and active_skill and tool_results):
                     user_parts.append(f"## Reference Documents\n{rag}")
-            user_parts.append(f"## Question\n{state['query']}")
+            mem = state.get("memory_context") or ""
+            if mem:
+                user_parts.append(f"## Conversation Memory (archived summary)\n{mem}")
+            user_parts.append(f"## Question\n{q}")
             msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
             return msgs
 
-        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, dropped = fit_assembly_context(
+        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, dropped = fit_assembly_context(
             summary_text=state.get("conversation_summary"),
             history=state.get("conversation_history", []),
             rag_context=state.get("rag_context"),
             tool_payload=state.get("tool_results", []),
-            query=state.get("query"),
+            query=state.get("query") or "",
             payload_kind="results",
             build_messages=_assemble,
         )
-        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p)
+        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
         messages = _sanitize_llm_messages(messages)
+        # Flag the phase-3 query truncation so the caller can warn the user with the
+        # right message. Kept on `state` (not the return tuple) so the existing
+        # 2-tuple unpacking at the call site keeps working.
+        state["query_truncated"] = trimmed_q != (state.get("query") or "")
         # Stash the persistent/transient split of THIS submission so the caller can
         # report it without re-deriving the post-trim components. Kept on `state`
         # (not in the return tuple) so existing 2-tuple unpacking keeps working.

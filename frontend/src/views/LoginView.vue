@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { NInput, NButton, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { backendErrorMessage } from '@/utils/backendError'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -20,16 +21,22 @@ const featureKeys = [
   'featureRag',
 ]
 
-// Pre-fill default credentials only on first open; once the user has logged in
-// successfully we stop auto-filling (so returning visitors start clean).
-const LOGIN_SEEDED_KEY = 'ragclaw_login_seeded'
+// Mode is decided on mount: when the user table is empty the visitor must
+// self-register the first super-admin; otherwise we show the normal login.
+type LoginMode = 'login' | 'register'
+const mode = ref<LoginMode>('login')
+const checking = ref(true)
+
 const username = ref('')
 const password = ref('')
-if (!localStorage.getItem(LOGIN_SEEDED_KEY)) {
-  username.value = 'admin'
-  password.value = 'admin123'
-}
 const loading = ref(false)
+
+// Registration form state (first-launch bootstrap of the super admin)
+const regUsername = ref('')
+const regPassword = ref('')
+const regConfirm = ref('')
+const regLoading = ref(false)
+const regPasswordInput = ref<InstanceType<typeof NInput> | null>(null)
 const passwordInput = ref<InstanceType<typeof NInput> | null>(null)
 const cursorGlow = ref<HTMLElement | null>(null)
 const particleCanvas = ref<HTMLCanvasElement | null>(null)
@@ -152,6 +159,7 @@ function animateParticles() {
 }
 
 onMounted(() => {
+  determineMode()
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
   initParticles()
   animateParticles()
@@ -178,7 +186,6 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.login(username.value.trim(), password.value)
-    localStorage.setItem(LOGIN_SEEDED_KEY, '1')
     message.success(t('login.loginSuccess'))
     router.push('/chat')
   } catch (e: any) {
@@ -186,6 +193,62 @@ async function handleLogin() {
     message.error(e?.message || t('login.loginFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+// Decide login vs register based on whether the system has any users yet.
+// Fail-safe to login mode if the check itself fails (e.g. backend unreachable
+// during a transient blip) so the page is never stuck.
+async function determineMode() {
+  try {
+    const needs = await auth.needsSetup()
+    mode.value = needs ? 'register' : 'login'
+  } catch {
+    mode.value = 'login'
+  } finally {
+    checking.value = false
+  }
+}
+
+async function handleRegister() {
+  if (regLoading.value) return
+  // Validate locally before hitting the network (cheaper + clearer UX)
+  if (!regUsername.value.trim()) {
+    message.warning(t('login.enterUsername'))
+    return
+  }
+  if (!regPassword.value) {
+    message.warning(t('login.enterPassword'))
+    await nextTick()
+    regPasswordInput.value?.focus()
+    return
+  }
+  if (regPassword.value.length < 4) {
+    message.warning(t('login.passwordTooShort'))
+    return
+  }
+  if (regPassword.value !== regConfirm.value) {
+    message.warning(t('login.passwordMismatch'))
+    return
+  }
+  regLoading.value = true
+  try {
+    await auth.register({
+      username: regUsername.value.trim(),
+      password: regPassword.value,
+    })
+    message.success(t('login.registerSuccess'))
+    router.push('/chat')
+  } catch (e: any) {
+    // Map backend error CODEs (SETUP_ALREADY_COMPLETE / USER_NAME_EXISTS) to
+    // localized messages; fall back to a generic failure text.
+    message.error(backendErrorMessage(e?.message) || t('login.registerFailed'))
+    // If setup was completed concurrently, drop into login mode.
+    if (e?.message?.startsWith('SETUP_ALREADY_COMPLETE')) {
+      mode.value = 'login'
+    }
+  } finally {
+    regLoading.value = false
   }
 }
 </script>
@@ -223,57 +286,118 @@ async function handleLogin() {
           <span class="form-brand-mark">R</span>
           <span class="form-brand-name">RAGClaw</span>
         </div>
-        <div class="login-header">
-          <h1 class="login-title">{{ t('login.welcomeBack') }}</h1>
-          <p class="login-subtitle">{{ t('login.welcomeSubtitle') }}</p>
+        <!-- While deciding login vs register, show a subtle placeholder -->
+        <div v-if="checking" class="mode-loading" aria-live="polite">
+          <span class="mode-spinner" />
         </div>
 
-        <form class="login-form" @submit.prevent="handleLogin" novalidate>
-          <div class="field">
-            <label for="login-username" class="field-label">{{ t('login.username') }}</label>
-            <NInput
-              v-model:value="username"
-              :placeholder="t('login.usernamePlaceholder')"
-              size="large"
-              :input-props="{
-                id: 'login-username',
-                autocomplete: 'username',
-                autocapitalize: 'off',
-                autocorrect: 'off',
-                spellcheck: false,
-              }"
-            />
+        <template v-else>
+          <div class="login-header">
+            <h1 class="login-title">
+              {{ mode === 'register' ? t('login.setupTitle') : t('login.welcomeBack') }}
+            </h1>
+            <p class="login-subtitle">
+              {{ mode === 'register' ? t('login.setupSubtitle') : t('login.welcomeSubtitle') }}
+            </p>
           </div>
 
-          <div class="field">
-            <label for="login-password" class="field-label">{{ t('login.password') }}</label>
-            <NInput
-              ref="passwordInput"
-              v-model:value="password"
-              type="password"
-              show-password-on="click"
-              :placeholder="t('login.passwordPlaceholder')"
+          <!-- First launch: self-register the super admin -->
+          <form v-if="mode === 'register'" class="login-form" @submit.prevent="handleRegister" novalidate>
+            <div class="field">
+              <label for="reg-username" class="field-label">{{ t('login.username') }}</label>
+              <NInput
+                v-model:value="regUsername"
+                :placeholder="t('login.usernamePlaceholder')"
+                size="large"
+                :input-props="{ id: 'reg-username', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: false }"
+              />
+            </div>
+
+            <div class="field">
+              <label for="reg-password" class="field-label">{{ t('login.password') }}</label>
+              <NInput
+                ref="regPasswordInput"
+                v-model:value="regPassword"
+                type="password"
+                show-password-on="click"
+                :placeholder="t('login.passwordPlaceholder')"
+                size="large"
+                :input-props="{ id: 'reg-password', autocomplete: 'new-password' }"
+              />
+            </div>
+
+            <div class="field">
+              <label for="reg-confirm" class="field-label">{{ t('login.confirmPassword') }}</label>
+              <NInput
+                v-model:value="regConfirm"
+                type="password"
+                show-password-on="click"
+                :placeholder="t('login.confirmPasswordPlaceholder')"
+                size="large"
+                :input-props="{ id: 'reg-confirm', autocomplete: 'new-password' }"
+              />
+            </div>
+
+            <NButton
+              type="primary"
               size="large"
-              :input-props="{ id: 'login-password', autocomplete: 'current-password' }"
-            />
-          </div>
+              block
+              attr-type="submit"
+              :loading="regLoading"
+              :disabled="regLoading"
+            >
+              {{ regLoading ? t('login.registering') : t('login.register') }}
+            </NButton>
+          </form>
 
-          <NButton
-            type="primary"
-            size="large"
-            block
-            attr-type="submit"
-            :loading="loading"
-            :disabled="loading"
-          >
-            {{ loading ? t('login.loggingIn') : t('login.login') }}
-          </NButton>
-        </form>
+          <!-- Normal login (users already exist) -->
+          <form v-else class="login-form" @submit.prevent="handleLogin" novalidate>
+            <div class="field">
+              <label for="login-username" class="field-label">{{ t('login.username') }}</label>
+              <NInput
+                v-model:value="username"
+                :placeholder="t('login.usernamePlaceholder')"
+                size="large"
+                :input-props="{
+                  id: 'login-username',
+                  autocomplete: 'username',
+                  autocapitalize: 'off',
+                  autocorrect: 'off',
+                  spellcheck: false,
+                }"
+              />
+            </div>
 
-        <p class="login-hint">
-          <span class="hint-icon" aria-hidden="true">🔒</span>
-          {{ t('login.noAccountHint') }}
-        </p>
+            <div class="field">
+              <label for="login-password" class="field-label">{{ t('login.password') }}</label>
+              <NInput
+                ref="passwordInput"
+                v-model:value="password"
+                type="password"
+                show-password-on="click"
+                :placeholder="t('login.passwordPlaceholder')"
+                size="large"
+                :input-props="{ id: 'login-password', autocomplete: 'current-password' }"
+              />
+            </div>
+
+            <NButton
+              type="primary"
+              size="large"
+              block
+              attr-type="submit"
+              :loading="loading"
+              :disabled="loading"
+            >
+              {{ loading ? t('login.loggingIn') : t('login.login') }}
+            </NButton>
+          </form>
+
+          <p class="login-hint">
+            <span class="hint-icon" aria-hidden="true">🔒</span>
+            {{ mode === 'register' ? t('login.setupHint') : t('login.noAccountHint') }}
+          </p>
+        </template>
 
         <p class="login-copy">© RAGClaw</p>
       </section>
@@ -612,6 +736,28 @@ html:not(.dark) .login-form :deep(.n-input .n-input__textarea-el) {
   font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.6);
 }
+/* Mode-determination placeholder (checking login vs register) */
+.mode-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+.mode-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #818cf8;
+  animation: mode-spin 0.8s linear infinite;
+}
+html:not(.dark) .mode-spinner {
+  border-color: rgba(49, 46, 129, 0.18);
+  border-top-color: #6366f1;
+}
+@keyframes mode-spin {
+  to { transform: rotate(360deg); }
+}
 html:not(.dark) .login-hint {
   color: #64748b;
 }
@@ -658,5 +804,6 @@ html:not(.dark) .login-copy {
     animation: none !important;
   }
   .bg-cursor { transition: opacity 0.3s ease; }
+  .mode-spinner { animation: none !important; }
 }
 </style>

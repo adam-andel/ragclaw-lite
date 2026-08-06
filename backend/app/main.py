@@ -237,6 +237,13 @@ async def lifespan(app: FastAPI):
         print("Document processor started for pending documents")
     except Exception as e:
         print(f"Doc processor startup warning: {e}")
+    # Rebuild memory BM25 indexes + best-effort embed pending memory chunks
+    try:
+        from app.services import memory_archive
+        _asyncio.create_task(memory_archive.process_pending_memory())
+        print("Memory archive startup task scheduled")
+    except Exception as e:
+        print(f"Memory archive startup warning: {e}")
     # Initialize MCP tool registry
     try:
         from app.services.tool_registry import tool_registry

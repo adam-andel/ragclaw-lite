@@ -73,6 +73,8 @@ const config = ref<LLMConfig>({
   prompt_language: 'en',
   cache_ttl_seconds: 3600,
   agent_round_quota: 0,
+  summary_archive_high_pct: 40,
+  summary_archive_low_pct: 20,
   is_configured: false,
 })
 
@@ -739,6 +741,8 @@ async function doSave() {
     prompt_language: config.value.prompt_language,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
     agent_round_quota: config.value.agent_round_quota,
+    summary_archive_high_pct: config.value.summary_archive_high_pct,
+    summary_archive_low_pct: config.value.summary_archive_low_pct,
   }
   if (apiKeyInput.value.trim()) {
     payload.llm_api_key = apiKeyInput.value.trim()
@@ -1082,6 +1086,37 @@ async function handleTest() {
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.agent_round_quota === 0 ? t('settings.agentRoundQuotaUnlimited') : t('settings.agentRoundQuotaHint', { n: config.agent_round_quota }) }}
             </span>
+          </NFormItem>
+
+          <!-- Memory archive thresholds: L0 share triggers archive + L1; L1 share triggers L1 re-compaction -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.archiveHigh') }}
+                <NTooltip trigger="hover" :width="340">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span>{{ t('settings.tip.archiveHigh') }}</span>
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.summary_archive_high_pct" :min="1" :max="100" :step="1" @update:value="clearTest(); scheduleSave(t('settings.archiveHigh'))" />
+          </NFormItem>
+
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.archiveLow') }}
+                <NTooltip trigger="hover" :width="340">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span>{{ t('settings.tip.archiveLow') }}</span>
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.summary_archive_low_pct" :min="1" :max="100" :step="1" @update:value="clearTest(); scheduleSave(t('settings.archiveLow'))" />
           </NFormItem>
 
         </section>

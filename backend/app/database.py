@@ -79,7 +79,8 @@ def allocate_repl_uid(existing: Iterable[int]) -> int:
 
     Pure function — does not touch the database. The caller is responsible for
     passing in the currently occupied UIDs. MIN is reserved for the bootstrap
-    admin (see ``_seed_admin_user``), so regular-user allocation starts at MIN+1
+    admin (the first user self-registered via ``POST /api/auth/register`` in
+    routers/auth.py takes this UID), so regular-user allocation starts at MIN+1
     and can never collide with the admin's fixed UID. Actual uniqueness is
     ultimately guaranteed by the UNIQUE constraint on users.repl_uid plus a
     commit-time retry (the pre-check may be stale under concurrency — see
@@ -125,43 +126,21 @@ def _run_alembic_upgrade():
 
 
 def _seed_db():
-    """Seed idempotent default data (admin user, default MCP server)."""
+    """Seed idempotent default data (default MCP server).
+
+    The admin user is intentionally NOT auto-seeded: the first user registers
+    themselves as the super admin via ``POST /api/auth/register`` on first
+    launch (see ``app/routers/auth.py``). That keeps the bootstrap credentials
+    user-chosen instead of a hardcoded ``admin/admin123``.
+    """
     import sqlite3
 
     raw = sqlite3.connect(str(settings.sqlite_path))
     try:
-        _seed_admin_user(raw)
         _seed_defaults(raw)
         raw.commit()
     finally:
         raw.close()
-
-
-def _seed_admin_user(raw):
-    """Seed the default admin user (idempotent, atomic).
-
-    The admin gets a FIXED, reserved REPL sandbox UID (= ``repl_uid_range_min``)
-    so its workspace / code sandbox are initialised out of the box and the UID
-    is stable across restarts. Insertion is an idempotent upsert
-    (``ON CONFLICT(username) DO NOTHING``) — safe under concurrent bootstrap and
-    never raises if the admin row already exists.
-    """
-    import hashlib
-    from app.services.auth import hash_password
-    from app.models.user import UserRole
-
-    admin_repl_uid = settings.repl_uid_range_min
-    admin_user_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-admin-user").hexdigest()))
-    now = datetime.now(timezone.utc).isoformat()
-
-    raw.execute(
-        "INSERT INTO users(id, username, hashed_password, display_name, role, is_active, repl_uid, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?) "
-        "ON CONFLICT(username) DO NOTHING",
-        (admin_user_id, "admin", hash_password("admin123"), "Administrator",
-         UserRole.ADMIN.value, 1, admin_repl_uid, now),
-    )
-    print("[seed] admin user ensured (admin / admin123)")
 
 
 def _seed_defaults(raw):

@@ -34,6 +34,8 @@ export default {
     CONFIG_CONTEXT_WINDOW_RANGE: '上下文窗口必须在 1-10,000,000 之间。',
     CONFIG_CONCURRENCY_RANGE: '并发数必须在 1-50 之间。',
     CONFIG_AGENT_ROUND_QUOTA_RANGE: '工具调用轮次配额必须在 0-200 之间（0 表示不限轮数）。',
+    CONFIG_ARCHIVE_HIGH_RANGE: '归档触发阈值（高）必须在 1-100 之间（占上下文窗口的百分比）。',
+    CONFIG_ARCHIVE_LOW_RANGE: 'L1 重压缩阈值（低）必须在 1-100 之间（占上下文窗口的百分比）。',
     CONFIG_SANDBOX_NETWORK_MODE: 'network mode 必须是 deny / allow / allowlist 之一。',
     SANDBOX_POLICY_UPDATED: '沙盒策略已更新，立即生效。',
     REPL_AUTH_SECRET_REGENERATED: '已生成新的 REPL_AUTH_SECRET，立即生效。',
@@ -49,6 +51,7 @@ export default {
 
     USER_CREATE_ROLE: '普通管理员只能创建普通用户',
     USER_NAME_EXISTS: '用户名已存在',
+    SETUP_ALREADY_COMPLETE: '系统初始化已完成，注册已关闭。请使用已有账号登录。',
     USER_UID_POOL_EXHAUSTED: '无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。',
     USER_NOT_FOUND: '用户不存在',
     USER_NO_MANAGE_PERM: '无权管理该用户',
