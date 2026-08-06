@@ -74,8 +74,15 @@ logger = logging.getLogger("ragclaw.summary")
 # Cap a single summarization output so the summary can never dominate the context.
 SUMMARY_MAX_TOKENS = 2000
 
-# Single-pass history compression unit (oldest fraction tried first).
-HISTORY_COMPRESS_UNIT = 2 / 3
+# Single-pass history compression: compute the exact overflow and fold the
+# minimum needed, hard-floored at HISTORY_COMPRESS_MIN_FRAC of the un-summarized
+# tail. Over-folding is intentional -- L0/L1 + archive recall catch key context,
+# so erring toward compression is safe (per project compression policy).
+HISTORY_COMPRESS_MIN_FRAC = 0.5
+# Reserve absorbed by the summary written back into L0 when a fold happens, so we
+# target a bit more than the raw overflow. fraction of overflow + absolute floor.
+HISTORY_COMPRESS_RESERVE_FRAC = 0.15
+HISTORY_COMPRESS_RESERVE_MIN = 256
 
 # Proportions for query condensation: keep this much of the head/tail verbatim,
 # summarize the middle.
@@ -480,42 +487,44 @@ async def build_context_with_summary(
     recent = history[k:]
     base = l0  # Stage (1) folds into L0 only; L1 is kept separate.
 
-    # (1) Adaptive history compression: oldest 2/3 by token mass (snapped to
-    # whole conversation rounds), expand to all remaining history if insufficient.
-    # `split` stays a message index, so the cursor and three-tier memory are
-    # unchanged. Distinct from the message-count heuristic used before: now the
-    # 2/3 boundary tracks real token weight instead of message count.
-    for frac in (HISTORY_COMPRESS_UNIT, 1.0):
-        split = _token_round_split(history, k, frac)
-        if split <= k:
-            continue  # nothing left to compress in history
-        split = min(split, n)
-        new_para = await _summarize_text(
-            _transcript(history[k:split]), prompt_language
+    # (1) Single-pass adaptive history compression.
+    # Every message carries its token mass (content_token_count, written at insert
+    # time), so we compute the EXACT overflow and fold the minimum needed to land
+    # under budget -- no trial-and-error loop. Over-folding is deliberate: L0/L1
+    # plus archive recall catch the key context, so erring toward compression is
+    # safe. The fold is hard-floored at HISTORY_COMPRESS_MIN_FRAC of the
+    # un-summarized tail, and always snaps to whole conversation rounds.
+    recent = history[k:]
+    overflow = _estimate(history[k:], l0, q_tok, l1) - _budget()
+    if overflow > 0:
+        # Reserve absorbs the summary written back into L0 (the fold removes N
+        # tokens from history but adds a smaller summary to L0), so we target a
+        # little more than the raw overflow to guarantee we cross the line.
+        reserve = max(
+            int(overflow * HISTORY_COMPRESS_RESERVE_FRAC),
+            HISTORY_COMPRESS_RESERVE_MIN,
         )
-        if not new_para:
-            break  # summarize failed; bail out (falls through to re-compaction)
-        candidate = f"{base}\n{new_para}".strip() if base else new_para
-        if _estimate(history[split:], candidate, q_tok, l1) <= _budget():
-            conv.summary_text = candidate
-            conv.summary_msg_count = split
-            await db.commit()
-            return history[split:], _join_summary(l1, candidate), None, warning
-        # Did not fit yet: record the un-folded tail for the assembly point, and
-        # (on the final frac=1.0 pass) persist the single full fold so the next
-        # turn does not re-summarize. Each pass summarizes history[k:split] against the
-        # ORIGINAL base (no accumulation), avoiding duplicated folds.
-        recent = history[split:]
-        if frac >= 1.0:
-            conv.summary_text = candidate
-            conv.summary_msg_count = split
-            await db.commit()
-            break
+        tail_tok = count_messages_tokens(history[k:])
+        target_frac = (overflow + reserve) / tail_tok if tail_tok > 0 else 1.0
+        frac = min(1.0, max(target_frac, HISTORY_COMPRESS_MIN_FRAC))
+        split = _token_round_split(history, k, frac)
+        if split > k:
+            split = min(split, n)
+            new_para = await _summarize_text(
+                _transcript(history[k:split]), prompt_language
+            )
+            if new_para:
+                candidate = f"{base}\n{new_para}".strip() if base else new_para
+                conv.summary_text = candidate
+                conv.summary_msg_count = split
+                await db.commit()
+                recent = history[split:]
+            # summarize failed -> leave recent = history[k:], fall through to L0/L1
 
-    # (2) Three-tier memory: L1 re-compaction + L0 archive (replaces the old
-    # "re-compact the summary itself" step). Keeps a rolling L0 window inline and
-    # pushes older folds into vector/BM25 memory, so early context is recalled
-    # rather than silently dropped. See maybe_archive_and_compact for thresholds.
+    # (2) Three-tier memory: L1 re-compaction + L0 archive. Runs EVERY turn now
+    # (it self-guards on its own HIGH/LOW thresholds, so it is a no-op when L0/L1
+    # are small). This replaces the old early-return-on-fit path: even a turn
+    # whose fold already fits still gets its L0/L1 tiers maintained.
     await maybe_archive_and_compact(conv, db, prompt_language)
     l0 = conv.summary_text or ""
     l1 = getattr(conv, "summary2_text", None) or ""
