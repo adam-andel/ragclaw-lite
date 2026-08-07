@@ -18,6 +18,10 @@ export interface UserInfo {
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token') || '')
+  // Refresh token kept in sessionStorage: cleared when the tab closes, limiting
+  // the window an XSS-harvested token stays usable. It's still in storage (not
+  // memory) so a transparent refresh survives a route change / HMR.
+  const refreshToken = ref(sessionStorage.getItem('refreshToken') || '')
   const user = ref<UserInfo | null>(null)
   const llmConfigured = ref(false)
   const contextWindow = ref(128000)  // LLM max context window (tokens), from /api/health
@@ -26,30 +30,50 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isStaff = computed(() => user.value?.role === 'admin' || user.value?.role === 'moderator')
 
-  function setAuth(t: string, u: UserInfo) {
+  function setAuth(t: string, u: UserInfo, rt?: string) {
     token.value = t
     user.value = u
     localStorage.setItem('token', t)
     client.defaults.headers.common['Authorization'] = `Bearer ${t}`
+    if (rt) {
+      refreshToken.value = rt
+      sessionStorage.setItem('refreshToken', rt)
+    }
   }
 
   function clearAuth() {
     token.value = ''
+    refreshToken.value = ''
     user.value = null
     localStorage.removeItem('token')
+    sessionStorage.removeItem('refreshToken')
     delete client.defaults.headers.common['Authorization']
   }
 
   async function login(username: string, password: string) {
     const res = await client.post('/auth/login', { username, password })
-    setAuth(res.data.access_token, res.data.user)
+    setAuth(res.data.access_token, res.data.user, res.data.refresh_token)
     return res.data
   }
 
   async function register(data: { username: string; password: string; display_name?: string }) {
     const res = await client.post('/auth/register', data)
-    setAuth(res.data.access_token, res.data.user)
+    setAuth(res.data.access_token, res.data.user, res.data.refresh_token)
     return res.data
+  }
+
+  // Exchange the stored refresh token for a fresh access + refresh pair.
+  // Returns true on success, false if the refresh token is invalid/expired
+  // (caller should redirect to login). Throws on unexpected errors.
+  async function refresh(): Promise<boolean> {
+    if (!refreshToken.value) return false
+    try {
+      const res = await client.post('/auth/refresh', { refresh_token: refreshToken.value })
+      setAuth(res.data.access_token, user.value as UserInfo, res.data.refresh_token)
+      return true
+    } catch {
+      return false
+    }
   }
 
   // Public: whether the system still has zero users (first admin not yet
@@ -108,7 +132,15 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout() {
+  async function logout() {
+    // Best-effort server-side revocation of the current refresh token.
+    if (refreshToken.value) {
+      try {
+        await client.post('/auth/logout', { refresh_token: refreshToken.value })
+      } catch {
+        // ignore network errors — local clear is what matters
+      }
+    }
     clearAuth()
     router.push('/login')
   }
@@ -118,5 +150,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, needsSetup, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth }
+  return { token, refreshToken, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, needsSetup, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth, refresh }
 })

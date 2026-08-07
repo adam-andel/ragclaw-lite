@@ -12,7 +12,7 @@ from app.config import settings
 from app.database import get_db, allocate_repl_uid
 from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UserListResponse, UserCreateRequest, UserUpdateRequest
-from app.services.auth import hash_password, get_current_staff, can_manage_user
+from app.services.auth import hash_password, get_current_staff, can_manage_user, revoke_all_user_refresh_tokens
 from app.services.config_manager import config_manager
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,8 @@ async def update_user(
         user.is_active = data.is_active
     if data.password is not None:
         user.hashed_password = hash_password(data.password)
+        # Force all existing sessions to re-authenticate after a password change.
+        await revoke_all_user_refresh_tokens(db, user.id)
 
     await db.commit()
     await db.refresh(user)

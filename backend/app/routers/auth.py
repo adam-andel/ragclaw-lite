@@ -14,9 +14,13 @@ from app.models.user import User, UserRole
 from app.schemas.user import (
     LoginRequest, RegisterRequest, SetupStatusResponse,
     TokenResponse, UserResponse, UserUpdateRequest,
+    RefreshRequest, RefreshResponse,
 )
 from app.services.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
+    issue_raw_refresh_token, create_refresh_token,
+    verify_refresh_token, rotate_refresh_token, revoke_refresh_token,
+    revoke_all_user_refresh_tokens,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -24,7 +28,7 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 @router.post("/login", response_model=TokenResponse)
 async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Login and get access token."""
+    """Login and get access + refresh tokens."""
     result = await db.execute(select(User).where(User.username == data.username))
     user = result.scalar_one_or_none()
 
@@ -35,7 +39,14 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
 
     token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
+    raw_refresh = issue_raw_refresh_token()
+    await create_refresh_token(db, user.id, raw_refresh)
+    await db.commit()
+    return TokenResponse(
+        access_token=token,
+        refresh_token=raw_refresh,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.get("/setup", response_model=SetupStatusResponse)
@@ -43,6 +54,63 @@ async def setup_status(db: AsyncSession = Depends(get_db)):
     """Public: report whether the system still needs its first admin (no users)."""
     total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
     return SetupStatusResponse(needs_setup=total == 0)
+
+
+@router.post("/refresh", response_model=RefreshResponse)
+async def refresh(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Exchange a valid refresh token for a new access + refresh token pair.
+
+    The presented refresh token is rotated (revoked and replaced) on every use,
+    so a leaked token has a very short useful window and replays are detected.
+    """
+    rt = await verify_refresh_token(db, data.refresh_token)
+    if rt is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="REFRESH_TOKEN_INVALID",
+        )
+
+    # Load the user to (re)issue an access token with current claims.
+    user = await db.get(User, rt.user_id)
+    if user is None or not user.is_active:
+        rt.is_revoked = True
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="REFRESH_TOKEN_USER_GONE",
+        )
+
+    new_rt, new_raw = await rotate_refresh_token(db, rt, device=data.device)
+    new_access = create_access_token(
+        user.id, user.username, user.role.value, user.tenant_id
+    )
+    await db.commit()
+    return RefreshResponse(
+        access_token=new_access,
+        refresh_token=new_raw,
+    )
+
+
+@router.post("/logout")
+async def logout(data: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Revoke a single refresh token (current session)."""
+    revoked = await revoke_refresh_token(db, data.refresh_token)
+    await db.commit()
+    if not revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="REFRESH_TOKEN_INVALID",
+        )
+    return {"detail": "LOGGED_OUT"}
+
+
+@router.post("/logout-all")
+async def logout_all(current_user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    """Revoke every refresh token for the current user (all sessions)."""
+    count = await revoke_all_user_refresh_tokens(db, current_user.id)
+    await db.commit()
+    return {"detail": "LOGGED_OUT_ALL", "revoked": count}
 
 
 @router.post("/register", response_model=TokenResponse)
@@ -81,7 +149,14 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
     token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
-    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
+    raw_refresh = issue_raw_refresh_token()
+    await create_refresh_token(db, user.id, raw_refresh)
+    await db.commit()
+    return TokenResponse(
+        access_token=token,
+        refresh_token=raw_refresh,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.get("/me", response_model=UserResponse)

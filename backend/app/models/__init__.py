@@ -9,6 +9,7 @@ from app.models.system_setting import SystemSetting
 from app.models.notification import Notification
 from app.models.cron_job import CronJob, CronJobRun
 from app.models.memory_chunk import MemoryChunk
+from app.models.refresh_token import RefreshToken
 
 __all__ = [
     "Document", "Chunk", "KBDocument", "KnowledgeBase", "KBUserAccess",
@@ -19,4 +20,5 @@ __all__ = [
     "Notification",
     "CronJob", "CronJobRun",
     "MemoryChunk",
+    "RefreshToken",
 ]
