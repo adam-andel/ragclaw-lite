@@ -1057,7 +1057,8 @@ async def chat_stream(
                         condensed_query,
                         summary_warning,
                     ) = await build_context_with_summary(
-                        conv, history, db, config_manager.prompt_language, expanded_query
+                        conv, history, db, config_manager.prompt_language, expanded_query,
+                        emit=emit_agent_step,
                     )
                     if summary_warning:
                         emit_agent_step("context_compress", summary_warning)

@@ -1,8 +1,8 @@
 # 上下文管理重构 · 分步落地方案
 
-状态：落地中 —— Step 0 / 1 / 2 已完成，Step 3 起待办
+状态：落地中 —— Step 0–4 已提交（`404fe0d`），Step 5 已实现**未提交**（游标语义已变、无干净回滚点），Step 6 / 7 待办
 基线 head：`9c1d2e3f4a5b_add_content_token_count`
-当前 head：`b2c3d4e5f6a7_drop_summary2_text`
+当前 head：`404fe0d`（Step 0–4；Step 5 改动落盘但未 commit）
 
 ---
 
@@ -339,26 +339,45 @@ class Segment:
 
 ```python
 _INFLIGHT: set[str] = set()          # conversation_id
+_BACKGROUND_TASKS: set = set()
 
-async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None) -> bool:
-    """Plan -> summarize -> CAS-advance cursor. Loops until below async_hi."""
+def schedule_summary_pass(conv_id):   # fire-and-forget, 同步加 guard
+async def _run_async_pass(conv_id):  # 后台任务体，吞异常
+async def run_summary_pass(conv_id, *, blocking, emit):  # 同步档入口，自带 guard
+async def _run_summary_pass_inner(conv_id, *, blocking, emit):  # 实际规划/摘要/CAS 循环
 ```
 
 - 后台自开 `db_mod.async_session()`
-- L0 追加 + 游标推进同一事务 + CAS
-- 同步档三条护栏：`_emit` 发「正在压缩历史」进度步骤 / LLM 失败超时 fall through 到 `fit_assembly_context` / 循环设迭代上限，超限即降级机械裁
+- L0 追加 + 游标推进同一事务 + CAS（`WHERE id=? AND summary_msg_seq=cursor`，0 行即丢弃）
+- 同步档三条护栏：`emit` 发「正在压缩历史」进度步骤（`history_compressing` i18n，zh/en）/ LLM 失败 fall through 到 `fit_assembly_context` / 循环设迭代上限 `MAX_SUMMARY_PASSES=8`，超限即降级机械裁
 
 水位判定接进 `build_context_with_summary`：
 
 ```
-persistent >= sync_hi   -> await run_summary_pass(blocking=True)
-persistent >= async_hi  -> create_task(run_summary_pass(blocking=False))
+persistent >= sync_hi   -> await run_summary_pass(blocking=True); 重读游标 k / L0
+persistent >= async_hi  -> schedule_summary_pass(conv_id); 本轮回填不折叠，fit 兜底
 else                    -> no-op
 ```
 
 **这一步之后就没有干净的回滚点了**（游标语义已变），Step 0–4 建议先合并稳定几天。
 
-**验证**：造一个长会话跑到 70%，看日志里异步任务起落与游标推进；再撑到 80%，确认前端能看到压缩进度步骤且不报错。
+#### ✅ 已完成（落地记录）
+
+- **单执行器双水位**：`run_summary_pass` 同步档 + `schedule_summary_pass` 异步档共用 `_run_summary_pass_inner`。异步档 `asyncio.create_task(_run_async_pass(conv_id))`，吞所有异常；同步档 `await` 在关键路径上，LLM 失败返回 `False` 后由调用方 fall through。
+- **游标桥接（关键）**：`history` dict 进 `build_context_with_summary` 时不带 `seq`（chat.py:822/1770 只发 `{role, content, content_token_count}`），故位置下标 `summary_msg_count` 仍是 `recent` 计算的驱动。**CAS 同时推进 `summary_msg_seq` 与 `summary_msg_count` 到同一 `plan.end`**（密集 seq 在落地等价位置下标），直到 Step 7 退役 `summary_msg_count`。
+- **每轮重读游标 + 多趟循环**：`_run_summary_pass_inner` 循环 `MAX_SUMMARY_PASSES` 次，每趟 `db.refresh` 重读 `summary_msg_seq`，重算 persistent；`plan_segment(rounds[:-1], cursor, ...)` 排除最新 live 轮；折叠后 `maybe_archive_and_compact` 维护 L0 滚动窗口。`plan is None` / 仅剩 ≤1 轮 → `return False`；`persistent < async_hi` → `return True`（已恢复）。
+- **并发双归档危险已排**：异步档发车时本轮回填跳过 stage (2) L0 archive（`scheduled_bg` 标志），因为后台任务才拥有 L0 维护权，本回合再跑会与后台任务重复归档同一批 folds（产出重复 MemoryChunks）。同步档不发车则照常跑 stage (2)。
+- **in-flight guard 修正（真实 bug）**：原 `schedule_summary_pass` 在 `asyncio.create_task(run_summary_pass(...))` 后才由任务体内部 `_INFLIGHT.add`，而任务体在事件循环稍后才跑——导致**两个同步 `schedule_summary_pass("x")` 调用都越过 `conv_id in _INFLIGHT` 检查、各建一个任务**（去重失效，违反不变量 #4）。落地改为 **`schedule_summary_pass` 同步 `_INFLIGHT.add`**，任务体改由 `_run_async_pass` 承担（只跑 `_run_summary_pass_inner`，不碰 guard），`done_callback` 清除 guard；`run_summary_pass`（同步档）仍自带 guard。并发双任务问题消失。
+- **emit 接通**：`chat.py:1059` 调 `build_context_with_summary(..., emit=emit_agent_step)`；新增 i18n 键 `history_compressing`（zh: "对话历史较长，正在压缩较早的内容以腾出上下文空间，请稍候……"；en: "Conversation history is long; compressing earlier content to free up context space, please wait..."）。
+- **`compact_conversation` 同步**：手动压缩路径写 `summary_msg_seq = split`（与 `summary_msg_count` 同值），保持游标一致。
+
+**验证**：容器探针 `_step5_probe.py`（已删）三项全绿——
+`[1]` `_round_from_messages` + `plan_segment` 集成 OK（planner 把两轮合折 → `end=5`）；
+`[2]` 12 条消息 / `async_hi=54651 sync_hi=62458 P=78073`，`run_summary_pass(blocking)->True`，`summary_msg_seq=7 == summary_msg_count=7`，`summary_text_len=19`，第二趟游标稳定不越进；DB CAS + 多趟循环 + 游标 lockstep OK；
+`[3]` in-flight guard + 发车去重 OK（同步加 guard 后两连发车只起一个任务、内层只跑一次）。
+容器 `docker restart ragclaw-lite` → `Application startup complete`，无导入错误。
+
+**⚠️ 未提交**：按方案「Step 5 之后无干净回滚点」，本步改动**故意保持未提交**，等 Step 0–5 一起稳定后再决定提交/推送（遵循项目铁律：不自动 commit/push，等用户说「提交」）。
 
 ---
 

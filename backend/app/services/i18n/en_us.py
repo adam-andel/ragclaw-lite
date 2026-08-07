@@ -193,6 +193,10 @@ MESSAGES = {
         "Your message was too long and has been condensed to fit the context window "
         "(head and tail kept verbatim, middle summarized)."
     ),
+    "history_compressing": (
+        "Conversation history is long; compressing earlier content to free up context "
+        "space, please wait..."
+    ),
     "assembly_trim_warning": (
         "Some earlier context (summary / conversation history / reference documents / "
         "tool records) was automatically trimmed to fit the context window so this "

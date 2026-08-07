@@ -40,12 +40,14 @@ provider-side prompt caching of the stable system prefix.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import llm_client
@@ -531,6 +533,210 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
 
 
 # --------------------------------------------------------------------------- #
+# Step 5: asynchronous summarization executor + dual watermark (70% / 80% of P)
+# --------------------------------------------------------------------------- #
+_INFLIGHT: set = set()            # per-conversation guard (plan §4 invariant #4)
+_BACKGROUND_TASKS: set = set()   # keep fire-and-forget tasks referenced
+MAX_SUMMARY_PASSES = 8           # iteration cap for the blocking (sync) path
+
+
+def schedule_summary_pass(conv_id: str) -> None:
+    """Fire-and-forget a background summarization pass (async watermark, >=70% of P).
+
+    No-op when a pass is already in flight for this conversation. The in-flight
+    guard is set SYNCHRONOUSLY here (not inside the task body) so two synchronous
+    calls for the same conversation cannot both spawn a task -- the previous design
+    set the guard only inside the coroutine, which runs later on the event loop,
+    making the entry-level check a no-op and letting double-tasks race on the
+    cursor (plan §4 invariant #4). The task is kept referenced in
+    ``_BACKGROUND_TASKS`` so it is never garbage-collected mid-flight, and discards
+    both the task reference and the guard on completion.
+    """
+    if not conv_id or conv_id in _INFLIGHT:
+        return
+    _INFLIGHT.add(conv_id)  # synchronous: dedup NOW, before any task runs
+    task = asyncio.create_task(_run_async_pass(conv_id))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(lambda _t: _INFLIGHT.discard(conv_id))
+
+
+async def _run_async_pass(conv_id: str) -> bool:
+    """Body of a background (fire-and-forget) pass. Owns no in-flight state --
+    :func:`schedule_summary_pass` sets/clears the guard around it. All failures are
+    swallowed so a background fold can never crash the turn or the event loop."""
+    try:
+        return await _run_summary_pass_inner(conv_id, blocking=False)
+    except Exception as e:
+        logger.warning("run_summary_pass error conv=%s: %s", conv_id, e)
+        return False
+
+
+async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None) -> bool:
+    """Plan -> summarize -> CAS-advance the cursor, looping until the persistent
+    block falls below ``async_hi`` (70% of P).
+
+    Single executor for BOTH watermarks (plan §3). The sync (``blocking=True``)
+    form is awaited directly on the request path and, on an LLM failure, simply
+    stops so the caller falls through to :func:`fit_assembly_context` (which trims
+    mechanically). The async (``blocking=False``) form is dispatched by
+    :func:`schedule_summary_pass` (which wraps it with the in-flight guard) -- that
+    swallows failures and is retried next turn.
+
+    Invariants (plan §4): own DB session (never the request's), L0 append and
+    cursor advance in ONE CAS-guarded UPDATE keyed on ``summary_msg_seq``, and a
+    per-conversation in-flight guard.
+    """
+    if not conv_id or conv_id in _INFLIGHT:
+        return False
+    _INFLIGHT.add(conv_id)
+    try:
+        return await _run_summary_pass_inner(conv_id, blocking=blocking, emit=emit)
+    except Exception as e:  # a background fold must never crash the turn/loop
+        logger.warning("run_summary_pass error conv=%s: %s", conv_id, e)
+        return False
+    finally:
+        _INFLIGHT.discard(conv_id)
+
+
+def _round_from_messages(msgs: list) -> list:
+    """Group ORM Message rows into plan.Round objects keyed by ``Message.seq``
+    (``start`` = first msg seq, ``end`` = last msg seq + 1, exclusive)."""
+    rounds: list = []
+    cur: list = []
+
+    def flush() -> None:
+        nonlocal cur
+        if not cur:
+            return
+        text = "\n".join(f"{m.role}: {m.content}" for m in cur)
+        toks = sum(
+            (int(m.content_token_count) if m.content_token_count else count_text_tokens(m.content or "") + 4)
+            for m in cur
+        ) + 3
+        rounds.append(Round(cur[0].seq, cur[-1].seq + 1, toks, text))
+        cur = []
+
+    for m in msgs:
+        if m.role == "user":
+            flush()
+            cur = [m]
+        elif cur:
+            cur.append(m)
+    flush()
+    return rounds
+
+
+async def _persistent_tokens_in(db, conv_id: str, cursor: int, l0: str | None) -> int:
+    """Persistent-block size: un-summarized tail (seq > cursor) + L0 summary."""
+    from app.models.conversation import Message
+
+    tail = (
+        await db.execute(
+            select(func.coalesce(func.sum(Message.content_token_count), 0)).where(
+                Message.conversation_id == conv_id, Message.seq > cursor
+            )
+        )
+    ).scalar() or 0
+    return int(tail) + (count_text_tokens(l0) if l0 else 0)
+
+
+async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None) -> bool:
+    b = default_budget()
+    async_hi, sync_hi = b.async_hi, b.sync_hi
+    if async_hi <= 0 or sync_hi <= 0:
+        return False
+    min_tok, max_tok = segment_thresholds(config_manager.context_window)
+    lang = config_manager.prompt_language
+
+    if emit:
+        try:
+            emit("context_compress", _t("history_compressing", lang))
+        except Exception:
+            pass
+
+    from app.database import async_session
+    from app.models.conversation import Conversation, Message
+
+    async with async_session() as db:
+        for _ in range(MAX_SUMMARY_PASSES):
+            conv = await db.get(Conversation, conv_id)
+            if conv is None:
+                return False
+            await db.refresh(conv)  # reload cursor/summary a prior pass may have written
+            cursor = conv.summary_msg_seq or 0
+
+            # Recompute the persistent block straight from the DB: another pass (or
+            # the request turn) may have advanced the cursor since we last looked.
+            persistent = await _persistent_tokens_in(db, conv_id, cursor, conv.summary_text)
+            if persistent < async_hi:
+                return True  # already below the recovery watermark
+
+            msgs = (
+                await db.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conv_id, Message.seq > cursor)
+                    .order_by(Message.seq)
+                )
+            ).scalars().all()
+            rounds = _round_from_messages(msgs)
+            # Invariant #1: never fold the live (newest) round.
+            if len(rounds) <= 1:
+                return False
+            plan = plan_segment(rounds[:-1], cursor=cursor, min_tok=min_tok, max_tok=max_tok)
+            if plan is None:
+                return False
+            if isinstance(plan, ArchiveL0):
+                # Tail below MIN but L0 itself is the bloat: route to the L0
+                # archive chain (no LLM). Loop to re-check the watermark.
+                await maybe_archive_and_compact(conv, db, lang)
+                await db.commit()
+                continue
+
+            # Segment: summarize each planned unit, append to L0, CAS-advance cursor.
+            paras: list[str] = []
+            for unit in plan.units:
+                u = await _summarize_text(unit.text, lang)
+                if not u:
+                    # LLM failed: do NOT advance the cursor on a half-folded
+                    # segment. Blocking path falls through to fit; either way stop.
+                    return False
+                paras.append(u)
+
+            base = conv.summary_text or ""
+            new_para = "\n".join(paras)
+            candidate = f"{base}\n{new_para}".strip() if base else new_para
+
+            # L0 append + cursor advance in ONE CAS-guarded UPDATE. Keyed on
+            # summary_msg_seq == cursor; 0 rows => another pass advanced it first.
+            result = await db.execute(
+                update(Conversation)
+                .where(Conversation.id == conv_id, Conversation.summary_msg_seq == cursor)
+                .values(
+                    summary_text=candidate,
+                    summary_msg_seq=plan.end,
+                    # Bridge: keep the positional cursor in lockstep until Step 7
+                    # retires summary_msg_count entirely.
+                    summary_msg_count=plan.end,
+                )
+            )
+            if result.rowcount == 0:
+                return False
+            await db.commit()
+
+            # Maintain the L0 rolling window (self-guards on its own HIGH threshold).
+            await db.refresh(conv)
+            await maybe_archive_and_compact(conv, db, lang)
+            await db.commit()
+
+        logger.warning(
+            "run_summary_pass: iteration cap (%d) hit for conv=%s; residual left to fit_assembly_context",
+            MAX_SUMMARY_PASSES, conv_id,
+        )
+        return True
+
+
+# --------------------------------------------------------------------------- #
 # LLM-backed summarization
 # --------------------------------------------------------------------------- #
 async def _summarize_text(
@@ -620,6 +826,7 @@ async def build_context_with_summary(
     db: AsyncSession,
     prompt_language: str,
     query: str = "",
+    emit=None,
 ) -> Tuple[list[dict], str, Optional[str], str]:
     """Return ``(recent_messages, summary_text, final_query, warning)``.
 
@@ -644,7 +851,9 @@ async def build_context_with_summary(
     if n == 0:
         return [], conv.summary_text or "", None, warning
 
-    # Cursor: how many of the earliest messages are already summarized.
+    # Cursor: how many of the earliest messages are already summarized. Positional
+    # index; summary_msg_seq is the durable seq-based cursor used by run_summary_pass
+    # and is kept in lockstep until Step 7 retires this field.
     k = getattr(conv, "summary_msg_count", 0) or 0
     if k > n:
         k = n  # safety: never exceed history length
@@ -658,53 +867,40 @@ async def build_context_with_summary(
     if _estimate(history[k:], l0, q_tok) <= _budget():
         return history[k:], l0, None, warning
 
-    # `recent` = verbatim tail not yet folded into the summary. Stage 1 shrinks
-    # it as it folds older turns into `base`; if it never fits, `recent` carries
-    # the un-folded history out to the assembly point, where fit_assembly_context
-    # trims it against the real payload (so the overflow is always representable,
-    # even when summarization fails).
+    # (Step 5) Watermark-gated folding via the shared async executor.
+    # `persistent` = un-summarized tail + L0; the watermarks are fractions of P
+    # (the persistent block), never of the raw window (see context_budget.py).
+    #   persistent >= sync_hi (80% of P)  -> block this turn on a fold
+    #   persistent >= async_hi (70% of P) -> kick off a background fold; this turn
+    #                                       proceeds un-folded, fit_assembly_context trims
+    #   else                                -> no-op (below the watermark)
+    conv_id = getattr(conv, "id", "") or ""
+    scheduled_bg = False
+    b = default_budget()
+    if conv_id and b.async_hi > 0 and b.sync_hi > 0:
+        persistent = count_messages_tokens(history[k:]) + (count_text_tokens(l0) if l0 else 0)
+        if persistent >= b.sync_hi:
+            # Blocking: fold now, then re-read the (possibly advanced) cursor.
+            await run_summary_pass(conv_id, blocking=True, emit=emit)
+            await db.refresh(conv)
+            k = getattr(conv, "summary_msg_count", 0) or 0
+            if k > n:
+                k = n
+            l0 = conv.summary_text or ""
+        elif persistent >= b.async_hi:
+            schedule_summary_pass(conv_id)  # fire-and-forget; no-op this turn
+            scheduled_bg = True
+
     recent = history[k:]
     base = l0
 
-    # (1) Segment-planned history compression (CONTEXT_REFACTOR_PLAN §3).
-    # plan_segment replaces the old overflow-fraction split: it folds whole rounds
-    # from the cursor until the buffered mass crosses the MIN/MAX thresholds,
-    # always snapping to round boundaries and never folding the live round. An
-    # over-long round is split into atomic units and summarized serially (one LLM
-    # call per unit), so a single huge message cannot blow up one summarization
-    # call. fit_assembly_context remains the mechanical backstop.
-    recent = history[k:]
-    overflow = _estimate(history[k:], l0, q_tok) - _budget()
-    if overflow > 0:
-        min_tok, max_tok = segment_thresholds(config_manager.context_window)
-        tail_split = plan_segment_sync(history[k:], min_tok, max_tok)
-        if tail_split:
-            split = min(k + tail_split, n)
-            seg_msgs = history[k:split]
-            # Over-long planned segment -> split into atomic units, summarize serially.
-            if count_messages_tokens(seg_msgs) > max_tok:
-                paras = []
-                for unit_text in split_long_unit(_transcript(seg_msgs), max_tok):
-                    u = await _summarize_text(unit_text, prompt_language)
-                    if u:
-                        paras.append(u)
-                new_para = "\n".join(paras)
-            else:
-                new_para = await _summarize_text(_transcript(seg_msgs), prompt_language)
-            if new_para:
-                candidate = f"{base}\n{new_para}".strip() if base else new_para
-                conv.summary_text = candidate
-                conv.summary_msg_count = split
-                await db.commit()
-                recent = history[split:]
-            # summarize failed -> leave recent = history[k:], fall through to L0
-
-    # (2) L0 archive maintenance. Runs EVERY turn (it self-guards on its own
-    # HIGH threshold, so it is a no-op when L0 is small). This replaces the old
-    # early-return-on-fit path: even a turn whose fold already fits still gets
-    # its rolling window maintained.
-    await maybe_archive_and_compact(conv, db, prompt_language)
-    base = conv.summary_text or ""
+    # (2) L0 archive maintenance. Runs every turn and self-guards on its HIGH
+    # threshold, so it is a no-op when L0 is small. Skipped when a background fold
+    # was scheduled: that task owns L0 maintenance too, and running it here
+    # concurrently would double-archive the same folds (duplicate MemoryChunks).
+    if not scheduled_bg:
+        await maybe_archive_and_compact(conv, db, prompt_language)
+        base = conv.summary_text or ""
 
     # (3) Still over AND the query itself is long enough that condensing it yields
     # meaningful savings. Below QUERY_COMPRESS_MIN_TOKENS the query is too small to
@@ -822,6 +1018,7 @@ async def compact_conversation(
     base = conv.summary_text or ""
     conv.summary_text = f"{base}\n{new_para}".strip() if base else new_para
     conv.summary_msg_count = split
+    conv.summary_msg_seq = split  # keep seq cursor consistent (dense seq == positional)
     await db.commit()
 
     # Feed the folded result through the same memory maintenance as the automatic
