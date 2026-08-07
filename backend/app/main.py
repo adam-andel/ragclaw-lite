@@ -137,7 +137,8 @@ async def lifespan(app: FastAPI):
     await config_manager.init()
     # Config-time sanity check: warn (non-blocking) if the context window is too
     # small to hold the fixed overhead plus a usable content room. Runtime
-    # trimming still guarantees no 400; this only makes the risk visible.
+    # Oversized queries are rejected at the API entry point and residual overflow
+    # surfaces as an upstream 400, so this only makes the risk visible.
     _cfg_logger = _logging.getLogger("ragclaw")
     for _w in config_manager.validate_compression_budget():
         _p = _w.get("params", {})

@@ -90,12 +90,10 @@ class ConversationDetail(BaseModel):
     # well so the context modal can be opened with a single cheap
     # ``?include_messages=false`` fetch instead of a dedicated endpoint.
     summary_text: str = ""
-    summary_msg_count: int = 0
+    summary_msg_seq: int = 0
     total_messages: int = 0
-    # Three-tier memory: L1 secondary (re-compacted) summary and how many L0 folds
-    # have been archived to vector/BM25 memory. Exposed so the context modal can
-    # render the full memory pyramid from a single cheap fetch.
-    summary2_text: str = ""
+    # How many L0 folds have been pushed to vector/BM25 memory. Display-only,
+    # exposed so the context modal renders from a single cheap fetch.
     summary_archived_count: int = 0
 
     model_config = {"from_attributes": True}
@@ -104,15 +102,14 @@ class ConversationDetail(BaseModel):
 class ConversationSummaryState(BaseModel):
     """Persistent-context state: the compressed summary plus its folding cursor.
 
-    ``summary_msg_count`` is the number of oldest messages already folded into
-    ``summary_text``; messages after it are still sent verbatim to the model.
+    ``summary_msg_seq`` is the seq cursor of the oldest message NOT yet folded
+    into ``summary_text``; later messages are still sent verbatim to the model.
     """
 
     conversation_id: str
     summary_text: str = ""
-    summary_msg_count: int = 0
+    summary_msg_seq: int = 0
     total_messages: int = 0
-    summary2_text: str = ""
     summary_archived_count: int = 0
 
 

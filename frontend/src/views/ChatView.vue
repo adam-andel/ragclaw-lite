@@ -725,12 +725,8 @@ const ctxDraft = ref('')
 const ctxEditing = ref(false)
 const ctxLoading = ref(false)
 const ctxBusy = ref(false)
-// Three-tier memory: L1 secondary summary (read-only) + archive count
-const ctxL1Text = ref('')
+// How many L0 folds have been pushed to long-term memory (display-only).
 const ctxArchivedCount = ref(0)
-const ctxL1Paragraphs = computed(() =>
-  ctxL1Text.value.split('\n').map(s => s.trim()).filter(Boolean),
-)
 
 // Shares of the WINDOW (not of each other), so the two numbers add up to the
 // same percentage the meter shows.
@@ -752,12 +748,11 @@ const ctxSummaryParagraphs = computed(() =>
 )
 const ctxDirty = computed(() => ctxDraft.value.trim() !== ctxSummaryText.value.trim())
 
-function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_count?: number; total_messages?: number; summary2_text?: string; summary_archived_count?: number }) {
+function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number }) {
   ctxSummaryText.value = s.summary_text || ''
   ctxDraft.value = ctxSummaryText.value
-  summaryMsgCount.value = s.summary_msg_count || 0
+  summaryMsgCount.value = s.summary_msg_seq || 0
   totalMessages.value = s.total_messages || 0
-  ctxL1Text.value = (s as any).summary2_text || ''
   ctxArchivedCount.value = (s as any).summary_archived_count || 0
 }
 
@@ -826,7 +821,7 @@ async function runCompact() {
     applySummaryState(state)
     ctxEditing.value = false
     nmessage.success(t('chat.contextModal.compacted', {
-      done: state.summary_msg_count,
+      done: state.summary_msg_seq,
       total: state.total_messages,
     }))
   } catch (e: any) {
@@ -1346,7 +1341,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         if (typeof event.transient_tokens === 'number') transientTokens.value = event.transient_tokens
         // Summary-folding cursor: the automatic compressor may have advanced it
         // during this turn, so keep the modal's counters honest without a refetch.
-        if (typeof event.summary_msg_count === 'number') summaryMsgCount.value = event.summary_msg_count
+        if (typeof event.summary_msg_seq === 'number') summaryMsgCount.value = event.summary_msg_seq
         if (typeof event.total_messages === 'number') totalMessages.value = event.total_messages
         proxyMsg._pending = false
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0
@@ -1971,16 +1966,6 @@ function handleKeydown(e: KeyboardEvent) {
               <li v-for="(p, i) in ctxSummaryParagraphs" :key="i" class="ctx-para">{{ p }}</li>
             </ol>
           </template>
-
-          <!-- L1 secondary summary (system-managed, read-only) -->
-          <div class="ctx-section-title ctx-l1-title">{{ t('chat.contextModal.l1Title') }}</div>
-          <p class="ctx-l1-hint">{{ t('chat.contextModal.l1ReadOnlyHint') }}</p>
-          <div v-if="ctxL1Paragraphs.length === 0" class="ctx-empty">
-            {{ t('chat.contextModal.l1Empty') }}
-          </div>
-          <ol v-else class="ctx-para-list ctx-l1-list">
-            <li v-for="(p, i) in ctxL1Paragraphs" :key="i" class="ctx-para">{{ p }}</li>
-          </ol>
 
           <!-- Archive count -->
           <div class="ctx-archived">
@@ -2818,24 +2803,6 @@ function handleKeydown(e: KeyboardEvent) {
   padding: 16px 12px;
   border: 1px dashed var(--color-border);
   border-radius: 8px;
-}
-/* Three-tier memory: L1 (read-only) + archive count */
-.ctx-l1-title {
-  margin-top: 20px;
-  color: var(--color-text-muted);
-}
-.ctx-l1-hint {
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--color-text-muted);
-  margin: 0 0 10px;
-}
-.ctx-l1-list {
-  /* visually distinguish the read-only L1 from the editable L0 */
-  background: var(--color-fill-1, rgba(127, 127, 127, 0.06));
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px 12px 12px 32px;
 }
 .ctx-archived {
   margin-top: 14px;

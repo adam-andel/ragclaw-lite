@@ -34,6 +34,39 @@ class BM25Index:
             "tokenized": tokenized,
         }
 
+    def add(self, kb_id: str, chunks: list[dict]):
+        """Incrementally extend an existing index with NEW chunks (no full re-tokenize).
+
+        Only the new chunks are jieba-tokenized; the existing in-memory corpus is
+        reused. This is the workhorse for memory archiving: the old code rebuilt the
+        whole index from every persisted row on each archive, which re-ran jieba on
+        all N chunks every time -> O(n^2) tokenization as memory grows. Incremental
+        `add` makes the total jieba work O(n). De-dupes by chunk id so a retried
+        archive cannot double-insert.
+
+        Falls back to :meth:`build` when the KB has no index yet (cold start / first
+        archive this process) so pre-existing persisted rows are never dropped from
+        recall.
+        """
+        if not chunks:
+            return
+        if kb_id not in self._indexes:
+            self.build(kb_id, chunks)
+            return
+        idx = self._indexes[kb_id]
+        existing_ids = {c.get("id") for c in idx["chunks"]}
+        new = [c for c in chunks if c.get("id") not in existing_ids]
+        if not new:
+            return
+        new_tokenized = [list(jieba.cut(c["content"])) for c in new]
+        all_tokenized = idx["tokenized"] + new_tokenized
+        bm25 = BM25Okapi(all_tokenized)
+        self._indexes[kb_id] = {
+            "bm25": bm25,
+            "chunks": idx["chunks"] + new,
+            "tokenized": all_tokenized,
+        }
+
     def search(self, kb_id: str, query: str, top_k: int = 20) -> list[dict]:
         """Search for relevant chunks using BM25.
 

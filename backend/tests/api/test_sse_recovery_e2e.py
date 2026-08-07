@@ -202,7 +202,7 @@ async def test_sse_recovery_e2e(client, user_token, test_kb, monkeypatch):
     from app.models.conversation import Message
     async with _db_mod.async_session() as db:
         msgs = (await db.execute(
-            select(Message).where(Message.conversation_id == cid).order_by(Message.created_at.asc())
+            select(Message).where(Message.conversation_id == cid).order_by(Message.seq.asc())
         )).scalars().all()
     stopped = [m for m in msgs if m.role == "assistant" and m.status == "stopped"]
     assert stopped, "expected an assistant message with status='stopped'"

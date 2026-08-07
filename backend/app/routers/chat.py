@@ -32,7 +32,7 @@ from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
     CompactionError,
-    _join_summary,
+    query_exceeds_context_window,
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
@@ -225,7 +225,7 @@ async def _resolve_suspension_messages(conv_id: str, keep_id: str | None = None)
 
 
 async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
-    """Return ``(summary_msg_count, total_messages)`` for a conversation.
+    """Return ``(summary_msg_seq, total_messages)`` for a conversation.
 
     Read in its own session (mirrors ``_save_assistant_message``) because it is
     called from inside the SSE producer, after the request-scoped session has
@@ -241,7 +241,7 @@ async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
                 .where(Message.conversation_id == conv_id)
             )
             return (
-                (getattr(conv, "summary_msg_count", 0) or 0) if conv else 0,
+                (getattr(conv, "summary_msg_seq", 0) or 0) if conv else 0,
                 total.scalar() or 0,
             )
     except Exception as e:
@@ -578,7 +578,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, summary2_text: str = "", emit_usage_fn=None) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_seq: int = 0, emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -596,7 +596,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         tool_calls = None
         resume_action = "stop"
     # Skip the earliest messages already captured in the summary.
-    recent_history = history[summary_msg_count:] if summary_msg_count else history
+    recent_history = history[summary_msg_seq:] if summary_msg_seq else history
     return {
         "query": pending.get("query") or request.query,
         "kb_id": request.kb_id,
@@ -605,7 +605,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "tenant_id": current_user.tenant_id,
         "user_memory": current_user.memory or "",
         "conversation_history": recent_history,
-        "conversation_summary": _join_summary(summary2_text, summary_text),
+        "conversation_summary": summary_text,
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
         "timezone": request.timezone or "UTC",
@@ -671,6 +671,72 @@ def _emit_run(handle: RunHandle, line: str) -> None:
             pass
 
 
+# Substrings that mark a context-window overflow. After every trimming guard has
+# run, any residual 400 from the provider is overwhelmingly a context overflow;
+# this lets us swap the raw provider error text for a clean localized code.
+#
+# These are deliberately phrases, never bare words. "exceed"/"超出" on their own
+# also appear in quota and rate-limit errors, and mislabelling those as "your
+# question is too long" sends the user chasing the wrong problem.
+_CONTEXT_OVERFLOW_HINTS = (
+    "maximum context length",
+    "max context length",
+    "context length",
+    "context window",
+    "context_length_exceeded",
+    "too many tokens",
+    "exceeds the model",
+    "exceeds the maximum",
+    "exceeds the context",
+    "prompt is too long",
+    "prompt too long",
+    "input is too long",
+    "sequence length",
+    "reduce the length of the messages",
+    "上下文长度",
+    "上下文窗口",
+    "超出上下文",
+    "超过上下文",
+)
+
+# Failure modes that also say "exceeded"/"超出" but are NOT context overflows.
+# Checked before the overflow hints so a billing or throttling problem always
+# reaches the user verbatim.
+_NON_CONTEXT_HINTS = (
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "ratelimit",
+    "code: 429",
+    "insufficient",
+    "billing",
+    "余额",
+    "配额",
+    "限流",
+    "请求过于频繁",
+)
+
+
+def _classify_llm_error(e: Exception) -> str:
+    """Map an LLM exception to a user-facing error code where possible.
+
+    After all context-budget guards have run (entry firewall, fit trimming, tool
+    reservation), a residual provider 400 is almost always a context-window
+    overflow. Surface that as the clean localized code ``LLM_CONTEXT_EXCEEDED``
+    instead of the raw provider error text. Anything we cannot confidently
+    classify still goes through verbatim so genuine bugs stay visible.
+
+    Quota/rate-limit failures are excluded first: they share the "exceeded"
+    wording but need the real provider text, not a "shorten your question" hint.
+    """
+    text = str(e).lower()
+    if any(hint in text for hint in _NON_CONTEXT_HINTS):
+        return str(e)
+    if any(hint in text for hint in _CONTEXT_OVERFLOW_HINTS):
+        return "LLM_CONTEXT_EXCEEDED"
+    return str(e)
+
+
 @router.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -688,7 +754,7 @@ async def chat_stream(
                "persistent_tokens": N, "transient_tokens": N}
         data: {"type": "done", "conversation_id": "...", "message_id": "...",
                "cache_hit": ..., "prompt_tokens": N,
-               "summary_msg_count": N, "total_messages": N}
+               "summary_msg_seq": N, "total_messages": N}
 
     ``context_usage`` fires once per LLM submission (every tool round, then the
     final generation), so the frontend context meter always reflects the most
@@ -784,10 +850,10 @@ async def chat_stream(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.seq.asc())
     )
     history_msgs = result.scalars().all()
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in history_msgs]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in history_msgs]
 
     # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
     kb_prompt = await get_kb_prompt(request.kb_id)
@@ -955,10 +1021,20 @@ async def chat_stream(
                                 "ttft_ms": 0,
                                 "retrieval_ms": 0,
                                 "llm_ms": 0,
-                                "summary_msg_count": cursor,
+                                "summary_msg_seq": cursor,
                                 "total_messages": total_msgs,
                             })
                             return
+
+                    # ── 1a-bis. Reject oversized queries before any heavy processing ──
+                    # (history compression, RAG, file reads, LLM calls). If the raw
+                    # query alone already exhausts the input budget there is nothing to
+                    # salvage, so fail fast with a user-facing message.
+                    if query_exceeds_context_window(request.query):
+                        enqueue("error", {
+                            "message": "QUERY_TOO_LONG",
+                        })
+                        return
 
                     # ── 1b. Pre-create the assistant message so the final content
                     # and the accumulated agent_steps can be persisted at the end
@@ -995,6 +1071,15 @@ async def chat_stream(
                             msg += f"; {file_summary['failed']} failed to read"
                         emit_agent_step("file_context", msg)
 
+                    # ── 1a-ter. Re-check after file expansion: expanded_query can be
+                    # far larger than request.query once large files are spliced in.
+                    # Same fast-fail as above.
+                    if query_exceeds_context_window(expanded_query):
+                        enqueue("error", {
+                            "message": "QUERY_TOO_LONG",
+                        })
+                        return
+
                     # Compress history / summary / query if it would overflow the
                     # context window. Returns (recent_messages, summary_text,
                     # condensed_query, warning); the summary is persisted on the
@@ -1006,7 +1091,8 @@ async def chat_stream(
                         condensed_query,
                         summary_warning,
                     ) = await build_context_with_summary(
-                        conv, history, db, config_manager.prompt_language, expanded_query
+                        conv, history, db, config_manager.prompt_language, expanded_query,
+                        emit=emit_agent_step,
                     )
                     if summary_warning:
                         emit_agent_step("context_compress", summary_warning)
@@ -1054,8 +1140,7 @@ async def chat_stream(
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
-                        summary2_text=getattr(conv, "summary2_text", None) or "",
-                        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+                        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
 
@@ -1081,7 +1166,7 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "llm_ms": 0,
                         "stopped": True,
-                        "summary_msg_count": cursor,
+                        "summary_msg_seq": cursor,
                         "total_messages": total_msgs,
                     })
                     return
@@ -1141,7 +1226,7 @@ async def chat_stream(
                             "ttft_ms": 0,
                             "retrieval_ms": 0,
                             "llm_ms": 0,
-                            "summary_msg_count": cursor,
+                            "summary_msg_seq": cursor,
                             "total_messages": total_msgs,
                         })
                         return
@@ -1150,15 +1235,9 @@ async def chat_stream(
                     final_retr = state.get("retrieval_ms", 0)
                     messages, assembly_dropped = ragclaw_agent_graph.build_generation_messages(state)
                     if assembly_dropped:
-                        # Phase 3 (query hard truncation) is materially worse for the
-                        # user than dropping older context, so report it distinctly.
                         emit_agent_step(
                             "context_compress",
-                            _t(
-                                "query_truncated_warning" if state.get("query_truncated")
-                                else "assembly_trim_warning",
-                                config_manager.prompt_language,
-                            ),
+                            _t("assembly_trim_warning", config_manager.prompt_language),
                         )
                     # Approximate total tokens of the request payload sent to the LLM.
                     prompt_tokens = count_messages_tokens(messages)
@@ -1307,7 +1386,7 @@ async def chat_stream(
                         "prompt_tokens": prompt_tokens,
                         "persistent_tokens": breakdown.get("persistent_tokens", 0),
                         "transient_tokens": breakdown.get("transient_tokens", prompt_tokens),
-                        "summary_msg_count": cursor,
+                        "summary_msg_seq": cursor,
                         "total_messages": total_msgs,
                     })
                     # Run finished successfully without requesting a new suspension:
@@ -1370,7 +1449,7 @@ async def chat_stream(
                         await _save_pending_state(db, conv_id, cleared_pending_msg_id, cleared_pending)
                     except Exception as restore_err:
                         logger.warning("Failed to restore cleared pending state after crash: %s", restore_err)
-                enqueue("error", {"message": str(e)})
+                enqueue("error", {"message": _classify_llm_error(e)})
             finally:
                 # Signal every subscriber (original client + any re-attaching clients)
                 # that the stream is over, then drop the run from the registry so a
@@ -1480,7 +1559,7 @@ async def get_conversation(
         msg_result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conv_id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.seq.asc())
         )
         messages_list = msg_result.scalars().all()
         total_messages = len(messages_list)
@@ -1501,9 +1580,8 @@ async def get_conversation(
         updated_at=conv.updated_at,
         messages=messages_list,
         summary_text=conv.summary_text or "",
-        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_messages,
-        summary2_text=getattr(conv, "summary2_text", None) or "",
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
@@ -1556,7 +1634,7 @@ async def get_conversation_messages(
         msg_result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conv_id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.seq.asc())
             .options(selectinload(Message.agent_steps))
             .offset(start)
             .limit(end - start)
@@ -1678,9 +1756,8 @@ async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSu
     return ConversationSummaryState(
         conversation_id=conv.id,
         summary_text=conv.summary_text or "",
-        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_result.scalar() or 0,
-        summary2_text=getattr(conv, "summary2_text", None) or "",
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
@@ -1694,7 +1771,7 @@ async def update_conversation_summary(
 ):
     """Replace the compressed summary text of a conversation.
 
-    The folding cursor (``summary_msg_count``) is deliberately left untouched:
+    The folding cursor (``summary_msg_seq``) is deliberately left untouched:
     it records which raw messages are already represented by the summary, and
     rewinding it would either duplicate content or permanently hide messages
     from the model. Clearing the text therefore makes ``history[:cursor]``
@@ -1730,9 +1807,9 @@ async def compact_conversation_endpoint(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.seq.asc())
     )
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in result.scalars().all()]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in result.scalars().all()]
 
     try:
         await compact_conversation(

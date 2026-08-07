@@ -179,7 +179,7 @@ export type SSEEvent =
       prompt_tokens?: number
       persistent_tokens?: number
       transient_tokens?: number
-      summary_msg_count?: number
+      summary_msg_seq?: number
       total_messages?: number
       stopped?: boolean
     }
