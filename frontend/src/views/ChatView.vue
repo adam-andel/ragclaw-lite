@@ -359,22 +359,29 @@ function setPendingBubble(opts: {
 
 // Last-resort recovery: if /status is unavailable, derive the durable pause state
 // from the messages we already loaded. A suspended run persists an assistant message
-// whose text is the tool-round hint and whose status is null — that is unambiguous.
+// whose text is the tool-round hint and whose status is null — AND that message is the
+// LAST assistant message in the thread (the run stopped there, nothing follows it).
+// Scanning all history would wrongly re-flag already-resolved suspensions that linger
+// in the message list as stale "round limit reached" entries.
 function restorePendingFromMessages(convId: string) {
   const hint = /round limit reached|reply ['"]continue['"]/i
+  let last: ChatMsg | undefined
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
-    if (m.role !== 'assistant') continue
-    if ((m as any)._pending === true) return // already shown
-    if ((m.status === null || m.status === undefined || m.status === 'pending') && m.content && hint.test(m.content)) {
-      setPendingBubble({
-        message: m.content,
-        convId,
-        kind: (m as any).kind || 'tool_round',
-        messageId: m.id,
-      })
-      return
+    if (m.role === 'assistant') {
+      last = m as ChatMsg
+      break
     }
+  }
+  if (!last || (last as any)._pending === true) return
+  if ((last.status === null || last.status === undefined || last.status === 'pending') &&
+      last.content && hint.test(last.content)) {
+    setPendingBubble({
+      message: last.content,
+      convId,
+      kind: (last as any).kind || 'tool_round',
+      messageId: last.id,
+    })
   }
 }
 let abortCtl: AbortController | null = null

@@ -190,6 +190,40 @@ async def _cleanup_orphan_messages(conv_id: str, keep_id: str | None = None) -> 
         return 0
 
 
+async def _resolve_suspension_messages(conv_id: str, keep_id: str | None = None) -> int:
+    """Mark lingering suspension placeholders as resolved once a run finishes.
+
+    When a turn is suspended (quota reached / need_user_input) the backend
+    stores an assistant message with ``status=None`` as the inline "continue/stop"
+    hint. If that run is later resumed and completes successfully, the resumed
+    answer normally overwrites the same row via ``msg_id``. But any *extra*
+    suspension rows left over from earlier rounds (or a crash between
+    suspension and resume) would otherwise stay ``status=None`` forever, so a
+    page refresh could resurrect a stale "continue/stop" bubble.
+
+    This flips those leftover rows to ``status='resolved'`` so they are inert but
+    still retained for history. The message we are finalizing (``keep_id``) is
+    never touched.
+    """
+    try:
+        async with db_mod.async_session() as session:
+            stmt = select(Message).where(
+                Message.conversation_id == conv_id,
+                Message.role == "assistant",
+                Message.status.is_(None),
+            )
+            if keep_id:
+                stmt = stmt.where(Message.id != keep_id)
+            rows = (await session.execute(stmt)).scalars().all()
+            for m in rows:
+                m.status = "resolved"
+            await session.commit()
+            return len(rows)
+    except Exception as e:
+        logger.warning("Failed to resolve suspension messages for %s: %s", conv_id, e)
+        return 0
+
+
 async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
     """Return ``(summary_msg_count, total_messages)`` for a conversation.
 
@@ -1284,6 +1318,13 @@ async def chat_stream(
                             await _clear_pending_state(db, conv_id)
                         except Exception:
                             pass
+                    # Any suspension placeholder rows left dangling from earlier rounds
+                    # (status=None) are now inert -- mark them resolved so they stop
+                    # being mistaken for an active "continue/stop" bubble on reload.
+                    try:
+                        await _resolve_suspension_messages(conv_id, keep_id=assistant_msg.id)
+                    except Exception:
+                        pass
 
             except asyncio.CancelledError:
                 # Client disconnected or cancelled the queue request.
