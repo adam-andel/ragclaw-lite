@@ -214,21 +214,6 @@ def _transcript(messages: list[dict]) -> str:
         f"{m.get('role', '')}: {m.get('content', '')}" for m in messages
     )
 
-
-def _message_tokens(m: dict) -> int:
-    """Token mass of a single history message for fold-budget math.
-
-    Uses the stored ``content_token_count`` (content tokens + 4 per-message
-    overhead, written at insert time) when present, falling back to a live
-    ``count_text_tokens`` for legacy rows that predate the column (project not
-    yet launched; historical rows may be NULL).
-    """
-    ct = m.get("content_token_count")
-    if ct:
-        return int(ct)
-    return count_text_tokens(m.get("content") or "") + 4
-
-
 # --------------------------------------------------------------------------- #
 # Segment planning (pure: no DB, no persistent state) -- CONTEXT_REFACTOR_PLAN §3.
 # Replaces the synchronous _token_round_split fold point. The async executor
@@ -410,50 +395,6 @@ def plan_segment(rounds: list[Round], cursor: int, min_tok: int, max_tok: int):
     if exhausted:
         return ArchiveL0()
     return None
-
-
-def _history_to_rounds(messages: list[dict]) -> list[Round]:
-    """Group a message list into rounds (user msg .. before next user msg)."""
-    rounds: list[Round] = []
-    cur_start: int | None = None
-    cur_msgs: list[dict] = []
-
-    def flush() -> None:
-        nonlocal cur_start, cur_msgs
-        if cur_start is None or not cur_msgs:
-            cur_start, cur_msgs = None, []
-            return
-        text = _transcript(cur_msgs)
-        toks = sum(_message_tokens(m) for m in cur_msgs) + 3  # +3 reply-priming
-        rounds.append(Round(cur_start, cur_start + len(cur_msgs), toks, text))
-        cur_start, cur_msgs = None, []
-
-    for i, m in enumerate(messages):
-        if m.get("role") == "user":
-            flush()
-            cur_start = i
-            cur_msgs = [m]
-        elif cur_start is not None:
-            cur_msgs.append(m)
-    flush()
-    return rounds
-
-
-def plan_segment_sync(history_tail: list[dict], min_tok: int, max_tok: int) -> int | None:
-    """Plan a fold boundary for the synchronous path. ``history_tail`` is the
-    un-summarized tail (``history[k:]``). Returns the EXCLUSIVE message index
-    within ``history_tail`` at which to fold, or None to skip folding this turn
-    (fit_assembly_context is the backstop). The newest (live) round is excluded
-    per invariant #1.
-    """
-    rounds = _history_to_rounds(history_tail)
-    if len(rounds) <= 1:
-        return None
-    plan = plan_segment(rounds[:-1], cursor=0, min_tok=min_tok, max_tok=max_tok)
-    if isinstance(plan, Segment):
-        return plan.end  # exclusive index within history_tail
-    return None
-
 
 # --------------------------------------------------------------------------- #
 # Step 6: L0 archive chunker (sentence/paragraph boundary, never hard token cut)
