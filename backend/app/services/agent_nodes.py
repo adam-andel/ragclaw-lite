@@ -23,6 +23,7 @@ from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
 from app.services.conversation_summary import (
+    MEM_CHUNK_DELIM,
     context_breakdown,
     fit_assembly_context,
 )
@@ -1168,10 +1169,15 @@ async def parallel_retrieval_node(state: dict) -> dict:
 
 
 def _format_memory(retrieved: list[dict]) -> str:
-    """Render recalled memory chunks as a plain text block (no citations)."""
+    """Render recalled memory chunks as a plain text block (no citations).
+
+    Joined with MEM_CHUNK_DELIM so the assembly-point fit guard can drop the
+    least-relevant (tail) chunk without mis-splitting a recalled passage that
+    itself contains blank lines (a bare "\\n\\n" join would have cut inside a chunk).
+    """
     if not retrieved:
         return ""
-    return "\n\n".join(f"[Conversation Memory] {r['content']}" for r in retrieved)
+    return MEM_CHUNK_DELIM.join(f"[Conversation Memory] {r['content']}" for r in retrieved)
 
 
 def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
@@ -1321,10 +1327,12 @@ async def tool_decision_node(state: dict) -> dict:
     # build_context_with_summary applied SEMANTIC compression at turn start but
     # deliberately performs no mechanical trimming -- it cannot see the RAG /
     # memory / tool payload. This guard runs with the complete payload and trims
-    # (summary -> history -> rag -> tool_messages -> query) on TRANSIENT copies,
-    # so the request always fits without writing anything back. `q` is threaded
-    # in as a parameter (never read from `state`) so phase 3 can take effect.
-    def _assemble(s, h, rag, payload, q):
+    # (rag -> memory -> summary -> history -> tool_messages -> query) on TRANSIENT
+    # copies, so the request always fits without writing anything back. `q` is
+    # threaded in as a parameter (never read from `state`) so phase 3 can take
+    # effect. Note: the tool-decision prompt does NOT render memory recall
+    # (memory_context is passed as None), so only the final-generation path trims it.
+    def _assemble(s, h, rag, payload, q, mem):
         # User-authored memory & preferences (from the profile page), appended to
         # the task background so the LLM can personalize. Kept separate from the
         # auto-extracted MEM0 memory graph. Empty string when nothing is set.
@@ -1376,17 +1384,18 @@ async def tool_decision_node(state: dict) -> dict:
             msgs.extend(sanitized_msgs)
         return msgs
 
-    trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, dropped = fit_assembly_context(
+    trimmed_s, trimmed_h, trimmed_rag, trimmed_mem, trimmed_p, trimmed_q, dropped = fit_assembly_context(
         summary_text=state.get("conversation_summary"),
         history=state.get("conversation_history", []),
         rag_context=state.get("rag_context"),
+        memory_context=None,  # tool decision does not render memory recall
         tool_payload=state.get("tool_messages", []),
         query=state.get("query") or "",
         payload_kind="messages",
         build_messages=_assemble,
         tools=state.get("available_tools"),
     )
-    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
+    messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, trimmed_mem)
     _emit_context_usage(state, trimmed_s, trimmed_h, messages)
     if dropped:
         _emit(

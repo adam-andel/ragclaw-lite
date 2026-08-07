@@ -32,7 +32,6 @@ from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
     CompactionError,
-    _join_summary,
     query_exceeds_context_window,
 )
 from app.services.llm_semaphore import llm_limiter
@@ -545,7 +544,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, summary2_text: str = "", emit_usage_fn=None) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -572,7 +571,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "tenant_id": current_user.tenant_id,
         "user_memory": current_user.memory or "",
         "conversation_history": recent_history,
-        "conversation_summary": _join_summary(summary2_text, summary_text),
+        "conversation_summary": summary_text,
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
         "timezone": request.timezone or "UTC",
@@ -817,7 +816,7 @@ async def chat_stream(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.seq.asc())
     )
     history_msgs = result.scalars().all()
     history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in history_msgs]
@@ -1106,7 +1105,6 @@ async def chat_stream(
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
-                        summary2_text=getattr(conv, "summary2_text", None) or "",
                         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
@@ -1519,7 +1517,7 @@ async def get_conversation(
         msg_result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conv_id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.seq.asc())
         )
         messages_list = msg_result.scalars().all()
         total_messages = len(messages_list)
@@ -1542,7 +1540,6 @@ async def get_conversation(
         summary_text=conv.summary_text or "",
         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
         total_messages=total_messages,
-        summary2_text=getattr(conv, "summary2_text", None) or "",
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
@@ -1595,7 +1592,7 @@ async def get_conversation_messages(
         msg_result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conv_id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.seq.asc())
             .options(selectinload(Message.agent_steps))
             .offset(start)
             .limit(end - start)
@@ -1719,7 +1716,6 @@ async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSu
         summary_text=conv.summary_text or "",
         summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
         total_messages=total_result.scalar() or 0,
-        summary2_text=getattr(conv, "summary2_text", None) or "",
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
 
@@ -1769,7 +1765,7 @@ async def compact_conversation_endpoint(
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at.asc())
+        .order_by(Message.seq.asc())
     )
     history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in result.scalars().all()]
 

@@ -2,11 +2,62 @@
 
 import json
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, Boolean
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, Boolean, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.document import gen_uuid
+
+
+def _next_message_seq(context) -> int:
+    """Assign the next per-conversation ``Message.seq`` at INSERT time.
+
+    A context-sensitive column default: SQLAlchemy invokes it once per inserted
+    row with that row's pending parameters available, so EVERY insert path gets
+    a correct seq without the caller having to remember. Keeping the assignment
+    here (rather than at each call site) is what makes the
+    "seq is dense and monotonic per conversation" invariant unconditional.
+
+    Under asyncio the ORM flush runs inside a greenlet, so the synchronous
+    ``context.connection`` API used below is valid.
+
+    Rows flushed together are batched into ONE executemany, and every row's
+    Python-side default is evaluated BEFORE that statement runs -- so a bare
+    ``SELECT max(seq)`` would hand the whole batch the same number and trip the
+    (conversation_id, seq) unique index. The batch shares this ExecutionContext,
+    so the high-water mark is memoized on it and only the first row of a batch
+    pays for the query. Rows from an EARLIER flush in the same transaction are
+    already on the connection, hence visible to that query.
+    """
+    params = context.get_current_parameters()
+    conv_id = params.get("conversation_id")
+    if not conv_id:
+        return 1
+
+    cache = getattr(context, "_ragclaw_seq_hwm", None)
+    if cache is None:
+        cache = {}
+        try:
+            context._ragclaw_seq_hwm = cache
+        except AttributeError:  # pragma: no cover - defensive, context is a plain object
+            cache = None
+
+    last = cache.get(conv_id) if cache is not None else None
+    if last is None:
+        table = Message.__table__
+        last = int(
+            context.connection.scalar(
+                select(func.coalesce(func.max(table.c.seq), 0)).where(
+                    table.c.conversation_id == conv_id
+                )
+            )
+            or 0
+        )
+
+    nxt = last + 1
+    if cache is not None:
+        cache[conv_id] = nxt
+    return nxt
 
 
 class Conversation(Base):
@@ -20,20 +71,24 @@ class Conversation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Conversation compression: the oldest history is summarized to stay within
-    # the context window. summary_text holds the accumulated compressed transcript;
-    # summary_msg_count is the cursor for how many of the earliest messages are
-    # already summarized (and therefore must NOT be sent verbatim). Raw messages in
-    # the messages table are NEVER modified.
+    # the context window. summary_text holds the accumulated compressed transcript.
+    # Raw messages in the messages table are NEVER modified.
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Legacy POSITIONAL cursor (index into the ordered history list). Superseded
+    # by summary_msg_seq; kept during the migration window because the API
+    # contract and the frontend still surface it.
     summary_msg_count: Mapped[int] = mapped_column(Integer, default=0)
-    # Three-tier memory: L1 is the secondary (re-compacted) summary, read-only in
-    # the UI. summary_archived_count is display-only (how many L0 folds have been
-    # pushed to vector/BM25 memory).
-    summary2_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Cursor: messages with seq <= this value are already folded into the summary
+    # and must NOT be replayed verbatim. Being a seq (not a list offset) it stays
+    # correct when rows are deleted, which _cleanup_orphan_messages really does.
+    summary_msg_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Display-only: how many L0 fold paragraphs have been pushed to vector/BM25
+    # memory. There is no secondary summary tier -- archived folds are recalled
+    # on demand instead of being re-summarized into an always-injected block.
     summary_archived_count: Mapped[int] = mapped_column(Integer, default=0)
 
     messages: Mapped[list["Message"]] = relationship(
-        "Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
+        "Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.seq"
     )
 
 
@@ -42,6 +97,11 @@ class Message(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=gen_uuid)
     conversation_id: Mapped[str] = mapped_column(String(36), ForeignKey("conversations.id"), index=True)
+    # Per-conversation monotonic ordering key, assigned by _next_message_seq at
+    # insert time. `id` is a UUID (no ordering semantics) and `created_at` has no
+    # tiebreaker, so seq is the ONLY reliable total order for history -- and the
+    # carrier for the compression cursor. Unique per (conversation_id, seq).
+    seq: Mapped[int | None] = mapped_column(Integer, nullable=True, default=_next_message_seq)
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
     status: Mapped[str | None] = mapped_column(String(20), nullable=True)

@@ -313,10 +313,11 @@ class RagclawAgentGraph:
         # build_context_with_summary applied SEMANTIC compression at turn start but
         # deliberately performs no mechanical trimming -- it cannot see the RAG /
         # memory / tool payload assembled here. This guard runs with the complete
-        # payload and trims (summary -> history -> rag -> tool_results -> query) on
-        # TRANSIENT copies, writing nothing back. `q` is threaded in as a parameter
-        # (never read from `state`) so the phase-3 query truncation can take effect.
-        def _assemble(s, h, rag, payload, q):
+        # payload and trims (rag -> memory -> summary -> history -> tool_payload) on
+        # TRANSIENT copies, writing nothing back. `q` and `mem` are threaded in as
+        # parameters (never read from `state`) so the phase-3 query truncation and
+        # memory trimming can take effect.
+        def _assemble(s, h, rag, payload, q, mem):
             msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule + final_answer_rule}]
             if s:
                 msgs.append(
@@ -335,23 +336,23 @@ class RagclawAgentGraph:
                 # nothing). Genuine retrieved context is still injected.
                 if not (rag.strip() == "No relevant documents found" and active_skill and tool_results):
                     user_parts.append(f"## Reference Documents\n{rag}")
-            mem = state.get("memory_context") or ""
             if mem:
                 user_parts.append(f"## Conversation Memory (archived summary)\n{mem}")
             user_parts.append(f"## Question\n{q}")
             msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
             return msgs
 
-        trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, dropped = fit_assembly_context(
+        trimmed_s, trimmed_h, trimmed_rag, trimmed_mem, trimmed_p, trimmed_q, dropped = fit_assembly_context(
             summary_text=state.get("conversation_summary"),
             history=state.get("conversation_history", []),
             rag_context=state.get("rag_context"),
+            memory_context=state.get("memory_context"),
             tool_payload=state.get("tool_results", []),
             query=state.get("query") or "",
             payload_kind="results",
             build_messages=_assemble,
         )
-        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q)
+        messages = _assemble(trimmed_s, trimmed_h, trimmed_rag, trimmed_p, trimmed_q, trimmed_mem)
         messages = _sanitize_llm_messages(messages)
         # Stash the persistent/transient split of THIS submission so the caller can
         # report it without re-deriving the post-trim components. Kept on `state`

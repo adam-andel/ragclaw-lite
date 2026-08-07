@@ -35,8 +35,7 @@ class LLMConfigUpdate(BaseModel):
     prompt_language: str | None = None
     cache_ttl_seconds: int | None = None
     agent_round_quota: int | None = None  # max agent tool-decision rounds per run (chats + cron)
-    summary_archive_high_pct: int | None = None  # L0 share of context window (%) triggering archive + L1 secondary summary
-    summary_archive_low_pct: int | None = None   # L1 share of context window (%) triggering L1 re-compaction
+    summary_archive_high_pct: int | None = None  # L0 share of the persistent budget (%) that triggers archiving
 
     @field_validator("llm_temperature")
     @classmethod
@@ -78,13 +77,6 @@ class LLMConfigUpdate(BaseModel):
     def archive_high_range(cls, v):
         if v is not None and not (1 <= v <= 100):
             raise ValueError("CONFIG_ARCHIVE_HIGH_RANGE")
-        return v
-
-    @field_validator("summary_archive_low_pct")
-    @classmethod
-    def archive_low_range(cls, v):
-        if v is not None and not (1 <= v <= 100):
-            raise ValueError("CONFIG_ARCHIVE_LOW_RANGE")
         return v
 
 

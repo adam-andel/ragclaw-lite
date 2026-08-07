@@ -16,8 +16,7 @@ export interface LLMConfig {
   prompt_language: string         // Agent-graph prompt language: 'zh' | 'en'
   cache_ttl_seconds: number   // cache TTL in seconds (default 3600 = 60 min)
   agent_round_quota: number   // max agent tool-decision rounds per run, all chats + cron (default 10)
-  summary_archive_high_pct: number // L0 share of context window (%) that triggers archive + L1 secondary summary
-  summary_archive_low_pct: number  // L1 share of context window (%) that triggers L1 re-compaction
+  summary_archive_high_pct: number // L0 share of the persistent budget (%) that triggers archiving to long-term memory
   is_configured: boolean       // whether LLM API key has been set
   api_key_source?: 'env' | 'stored'  // where the effective API key comes from
 }
@@ -39,7 +38,6 @@ export interface LLMConfigUpdate {
   cache_ttl_seconds?: number
   agent_round_quota?: number
   summary_archive_high_pct?: number
-  summary_archive_low_pct?: number
 }
 
 export async function getLLMConfig(): Promise<LLMConfig> {

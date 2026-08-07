@@ -381,17 +381,15 @@ def _render_nginx_conf(https_enabled: bool) -> str:
 
 
 # ── Context-window sanity-check constants ──
-# These live here (not in conversation_summary) so validate_compression_budget()
-# has no circular import: conversation_summary already imports config_manager.
-# They are the single source of truth, also consumed by conversation_summary.
-SUMMARY_FIXED_OVERHEAD_TOKENS = 16000  # conservative estimate of fixed context
-# overhead NOT part of history: system prompt + RAG + memory + tool defs + query.
-SUMMARY_SAFETY_MARGIN = 256  # reserve for model output; matches _budget() in
-# conversation_summary.
-MIN_CONTENT_ROOM = 1024  # min tokens that must remain for real dialogue after
-# reserving output + fixed overhead. Below this, even fit_assembly_context's
-# trimming cannot save the request (a residual overflow surfaces as an upstream
-# 400), so warn the admin.
+# These live here (not in conversation_summary / context_budget) so
+# validate_compression_budget() has no circular import: both of those modules
+# already import config_manager. They are the single source of truth.
+SUMMARY_SAFETY_MARGIN = 256  # reserve for model output; matches total_budget()
+# in context_budget.
+MIN_CONTENT_ROOM = 1024  # min tokens that must remain for the persistent block
+# (un-summarized history + L0) after every other slot is reserved. Below this,
+# even fit_assembly_context's trimming cannot save the request (a residual
+# overflow surfaces as an upstream 400), so warn the admin.
 
 
 class ConfigManager:
@@ -517,9 +515,8 @@ class ConfigManager:
             "prompt_language": "en",
             # Cache
             "cache_ttl_seconds": 3600,
-            # Three-tier memory archive (L0 rolling window -> L1 secondary summary -> vector memory)
-            "summary_archive_high_pct": 40,  # L0 share of context window that triggers archive + L1 secondary summary
-            "summary_archive_low_pct": 20,   # L1 share of context window that triggers L1 re-compaction
+            # Memory archive (L0 rolling summary window -> vector/BM25 memory)
+            "summary_archive_high_pct": 40,  # L0 share of the persistent budget that triggers archiving
             # Sandbox network policy
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
@@ -549,7 +546,6 @@ class ConfigManager:
             "prompt_language": "en",
             "cache_ttl_seconds": 3600,
             "summary_archive_high_pct": 40,
-            "summary_archive_low_pct": 20,
             "sandbox_network_mode": "deny",
             "sandbox_allow_domains": "",
             "sandbox_allow_methods": "",
@@ -776,21 +772,12 @@ class ConfigManager:
 
     @property
     def summary_archive_high_pct(self) -> int:
-        """L0 share of the context window that triggers archiving + L1 secondary summary."""
+        """L0 share of the persistent budget that triggers archiving to long-term memory."""
         with self._lock:
             try:
                 return int(self._config.get("summary_archive_high_pct", 40))
             except (TypeError, ValueError):
                 return 40
-
-    @property
-    def summary_archive_low_pct(self) -> int:
-        """L1 share of the context window that triggers L1 re-compaction (overwrite)."""
-        with self._lock:
-            try:
-                return int(self._config.get("summary_archive_low_pct", 20))
-            except (TypeError, ValueError):
-                return 20
 
     @property
     def model(self) -> str:
@@ -945,8 +932,8 @@ class ConfigManager:
             return c
 
     def validate_compression_budget(self) -> list[dict]:
-        """Config-time sanity check: ensure the fixed context-overhead estimate
-        still fits the (possibly shrunk) context window.
+        """Config-time sanity check: ensure the persistent block still has room
+        in the (possibly shrunk) context window.
 
         Returns a list of structured warnings (empty = OK), each shaped as
         ``{"code": <BARE_CODE>, "params": {...}}``. Per project convention the
@@ -958,21 +945,29 @@ class ConfigManager:
         the risk *visible* so an admin shrinking the window (e.g. 128k -> 8k)
         knows long conversations may be auto-truncated.
 
+        The reported overhead is now MEASURED, not guessed: context_budget
+        reproduces the real system prefix for the configured model / language /
+        system prompt and derives the RAG + memory slots from it. Only the tool
+        schemas fall back to a constant, since the enabled tool set is not known
+        until the agent graph is assembled.
+
         Trigger points: called at startup (main.py lifespan, after init) and
         inside update() on every Settings save.
         """
-        cw = self.context_window
-        mt = self.max_tokens
-        room = cw - (mt + SUMMARY_SAFETY_MARGIN) - SUMMARY_FIXED_OVERHEAD_TOKENS
-        if room < MIN_CONTENT_ROOM:
+        # Deferred import: context_budget imports config_manager at module
+        # level, so a top-level import here would close the cycle.
+        from app.services.context_budget import default_budget
+
+        b = default_budget()
+        if b.persistent < MIN_CONTENT_ROOM:
             return [
                 {
                     "code": "CONTEXT_WINDOW_LOW_HEADROOM",
                     "params": {
-                        "cw": cw,
-                        "mt": mt,
-                        "ov": SUMMARY_FIXED_OVERHEAD_TOKENS,
-                        "left": max(room, 0),
+                        "cw": b.window,
+                        "mt": self.max_tokens,
+                        "ov": b.reserved,
+                        "left": max(b.persistent, 0),
                     },
                 }
             ]
@@ -988,7 +983,7 @@ class ConfigManager:
             "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "agent_round_quota",
-            "summary_archive_high_pct", "summary_archive_low_pct",
+            "summary_archive_high_pct",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret", "jwt_secret",
             "https_enabled",

@@ -92,10 +92,8 @@ class ConversationDetail(BaseModel):
     summary_text: str = ""
     summary_msg_count: int = 0
     total_messages: int = 0
-    # Three-tier memory: L1 secondary (re-compacted) summary and how many L0 folds
-    # have been archived to vector/BM25 memory. Exposed so the context modal can
-    # render the full memory pyramid from a single cheap fetch.
-    summary2_text: str = ""
+    # How many L0 folds have been pushed to vector/BM25 memory. Display-only,
+    # exposed so the context modal renders from a single cheap fetch.
     summary_archived_count: int = 0
 
     model_config = {"from_attributes": True}
@@ -112,7 +110,6 @@ class ConversationSummaryState(BaseModel):
     summary_text: str = ""
     summary_msg_count: int = 0
     total_messages: int = 0
-    summary2_text: str = ""
     summary_archived_count: int = 0
 
 
