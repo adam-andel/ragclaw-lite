@@ -121,6 +121,14 @@ RAG_CHUNK_DELIM = "\n\n---\n\n"
 # inside a chunk). Kept identical to RAG_CHUNK_DELIM for one less thing to remember.
 MEM_CHUNK_DELIM = "\n\n---\n\n"
 
+# L0 (rolling summary window) folds are joined with this delimiter so the archive and
+# trim paths can split on it to drop WHOLE folds without mis-splitting a multi-line LLM
+# summary INSIDE a fold. The earlier bare "\n" join made a fold's internal line breaks
+# look like fold boundaries, so archiving/trimming dropped only its first line -- the R1
+# bug family recurring on the L0 path once Step 4/5 introduced the multi-fold L0. Kept
+# identical to RAG/MEM delimiters for one less thing to remember.
+SUMMARY_SEGMENT_DELIM = "\n\n---\n\n"
+
 
 # --------------------------------------------------------------------------- #
 # Token budget helpers
@@ -542,7 +550,7 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
     if cap <= 0 or count_text_tokens(l0) < cap:
         return
 
-    segs = l0.split("\n")
+    segs = l0.split(SUMMARY_SEGMENT_DELIM)
     conv_id = getattr(conv, "id", "") or ""
 
     if len(segs) <= 1:
@@ -567,7 +575,7 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
     for _ in range(L0_MAX_ARCHIVE_SEGMENTS_PER_CALL):
         if len(remaining) <= 1:
             break
-        if count_text_tokens("\n".join(remaining)) < cap:
+        if count_text_tokens(SUMMARY_SEGMENT_DELIM.join(remaining)) < cap:
             break
         oldest = remaining[0]
         rest = remaining[1:]
@@ -587,7 +595,7 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
         if not chunk_dicts:
             # Empty segment (whitespace only): drop it from L0 and continue.
             remaining = rest
-            conv.summary_text = "\n".join(remaining)
+            conv.summary_text = SUMMARY_SEGMENT_DELIM.join(remaining)
             await db.commit()
             continue
 
@@ -608,7 +616,7 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
             break
 
         remaining = rest
-        conv.summary_text = "\n".join(remaining)
+        conv.summary_text = SUMMARY_SEGMENT_DELIM.join(remaining)
         conv.summary_archived_count = (
             getattr(conv, "summary_archived_count", 0) or 0
         ) + 1
@@ -796,7 +804,7 @@ async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None) ->
 
             base = conv.summary_text or ""
             new_para = "\n".join(paras)
-            candidate = f"{base}\n{new_para}".strip() if base else new_para
+            candidate = f"{base}{SUMMARY_SEGMENT_DELIM}{new_para}".strip() if base else new_para
 
             # L0 append + cursor advance in ONE CAS-guarded UPDATE. Keyed on
             # summary_msg_seq == cursor; 0 rows => another pass advanced it first.
@@ -1105,7 +1113,7 @@ async def compact_conversation(
         raise CompactionError("SUMMARY_LLM_FAILED")
 
     base = conv.summary_text or ""
-    conv.summary_text = f"{base}\n{new_para}".strip() if base else new_para
+    conv.summary_text = f"{base}{SUMMARY_SEGMENT_DELIM}{new_para}".strip() if base else new_para
     conv.summary_msg_seq = split
     await db.commit()
 
@@ -1125,10 +1133,10 @@ async def compact_conversation(
 # --------------------------------------------------------------------------- #
 def _trim_summary_oldest(summary: str) -> str:
     """Drop the oldest (front) paragraph of the compressed summary."""
-    segs = summary.split("\n")
+    segs = summary.split(SUMMARY_SEGMENT_DELIM)
     if len(segs) <= 1:
         return ""
-    return "\n".join(segs[1:])
+    return SUMMARY_SEGMENT_DELIM.join(segs[1:])
 
 
 def _trim_rag_oldest(rag: str) -> str:
@@ -1326,9 +1334,9 @@ def fit_assembly_context(
     overflow = total - eff_budget
     seg_r = cur_r.split(RAG_CHUNK_DELIM) if cur_r else []
     seg_m = cur_mem.split(MEM_CHUNK_DELIM) if cur_mem else []
-    seg_s = cur_s.split("\n") if cur_s else []
+    seg_s = cur_s.split(SUMMARY_SEGMENT_DELIM) if cur_s else []
     units_p = _tool_unit_slices(cur_p, payload_kind)
-    nl_tok = count_text_tokens("\n")
+    delim_s_tok = count_text_tokens(SUMMARY_SEGMENT_DELIM)
     delim_rag_tok = count_text_tokens(RAG_CHUNK_DELIM)
     delim_mem_tok = count_text_tokens(MEM_CHUNK_DELIM)
 
@@ -1351,7 +1359,7 @@ def fit_assembly_context(
     for i, seg in enumerate(seg_s):
         if saved >= overflow:
             break
-        saved += count_text_tokens(seg) + nl_tok
+        saved += count_text_tokens(seg) + delim_s_tok
         k_s = i + 1
     # (4) history -- oldest first, keep the most recent message
     for i in range(max(0, len(cur_h) - 1)):
@@ -1391,7 +1399,7 @@ def fit_assembly_context(
         if k_m:
             cur_mem = "" if k_m >= len(seg_m) else MEM_CHUNK_DELIM.join(seg_m[: len(seg_m) - k_m])
         if k_s:
-            cur_s = "" if k_s >= len(seg_s) else "\n".join(seg_s[k_s:])
+            cur_s = "" if k_s >= len(seg_s) else SUMMARY_SEGMENT_DELIM.join(seg_s[k_s:])
         if k_h:
             cur_h = cur_h[k_h:]
         if k_p:
