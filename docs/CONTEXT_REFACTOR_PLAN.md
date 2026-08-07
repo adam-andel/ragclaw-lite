@@ -1,8 +1,8 @@
 # 上下文管理重构 · 分步落地方案
 
-状态：落地中 —— Step 0–4 已提交（`404fe0d`），Step 5 已实现**未提交**（游标语义已变、无干净回滚点），Step 6 / 7 待办
+状态：落地中 —— Step 0–4 已提交（`404fe0d`），Step 5 已提交（`7152a69`），Step 6 已实现**未提交**，Step 7 待办
 基线 head：`9c1d2e3f4a5b_add_content_token_count`
-当前 head：`404fe0d`（Step 0–4；Step 5 改动落盘但未 commit）
+当前 head：`7152a69`（Step 0–5；Step 6 改动落盘但未 commit）
 
 ---
 
@@ -389,6 +389,22 @@ else                    -> no-op
 - `archive_memory_essential` 里 BM25 是**全量 rebuild**（取全表喂 `bm25_index.build`），归档频率一高就是 O(n²)。改增量或加节流
 - 编辑/重发历史消息后，已归档块按 seq 范围失效，否则库里留旧版本会召回幽灵内容
 
+#### ✅ 已完成（落地记录）
+
+- **L0 分块器** `_chunk_l0_segment`（新增于 `conversation_summary.py`）：把每段折叠段切成 ≤`L0_CHUNK_MAX_TOKENS=800` token 的子块，边界优先级 **句子 → 段落 → 硬切**(最后兜底)。自带 `_L0_SENT_RE = [^。！？!?]*[。！？!?]|[^。！？!?]+` 做句切，**不依赖标点后空白**——原 `_SENT_RE`/Step 4 的 `split_long_unit` 要求标点后有空白，中文句间无空格会静默退化成硬切(既有局限，未动 Step 4 已验证的 helper，保持范围克制)。每段 → 多个 `MemoryChunk` 行。
+- **heading 填充** `_segment_heading`：取该段首句(免 LLM)截断到 200 字，作为该 segment 所有子块的 `MemoryChunk.heading`(填了原本恒为空的字段)。
+- **BM25 增量更新** `bm25_index.add`（新增）：只对新块跑 jieba 分词、复用既有语料重建 `BM25Okapi`，全程 jieba 工作量 = O(总块数)（旧 `build` 每次重分词全表 → O(n²)）。`archive_memory_essential` 改为：索引已存在 → `add`；冷索引(本进程首次归档/重启未重建)→ 仍 `build` 全表以不丢既有行。`process_pending_memory` 启动用 `build` 不变。按 `id` 去重。
+- **归档链循环** `maybe_archive_and_compact` 重写：每轮取**最旧一段**切块归档、缩小 L0、`db.commit()` 原子提交，循环至 L0 < cap 或仅剩最近一段；`L0_MAX_ARCHIVE_SEGMENTS_PER_CALL=32` 上限防异常 L0 拖死请求/后台任务，剩余段下回合继续。归档失败则本回合停止、L0 内联保留(无损、下回合重试)。`summary_archived_count` 按**段数**(非子块数)计。
+- 探针 `_step6_probe.py`（已删）四项全绿：`[1]` 长中文段 → 4 子块且均句界对齐、≤cap；`[2]` heading=首句；`[3]` BM25 增量保留旧文档(建+b增+c仍可达)+ 去重；`[4]` 归档循环 → L0 留 1 段、子块 heading/token_count 齐、索引 chunks 正确无重复。容器重启 `Application startup complete`。
+
+#### ⚠️ 遗留（未做，建议 Step 6b）
+
+- **编辑/重发后按 seq 范围失效**：需折叠路径记录每段 seq 范围 + 在 `chat.py` 编辑路径挂钩子。当前 `summary_text` 仅段落拼接、不携带每段 seq 元数据，且编辑路径未读，贸然改会引入半成品死代码。方案第 4 条暂缓，待单独设计。
+
+#### ⚠️ 既有边角（标记，未改）
+
+- `bm25_index.search` 用 `score <= 0` 过滤；`BM25Okapi` 对**单文档**索引 idf 为负(`log(0.5/1.5)<0`)，导致单文档 KB 搜不到任何结果。真实归档时一个 segment 切块成多子块(多文档)很少触发；属 Step 6 范围外且改动有行为风险，未擅自修改，届时单独评估。
+
 ---
 
 ### Step 7 · 契约与 UI 收口
@@ -417,6 +433,6 @@ else                    -> no-op
 
 ## 7. 待拍板
 
-1. **超长单条消息的游标语义** —— 方案 A（原子单元，推荐）还是方案 B（加 offset 字段）
-2. **L0 占 P 的份额** —— 沿用 40% 改口径，还是重新定
-3. **记忆召回预算** —— 10% 还是 15%
+1. ~~**超长单条消息的游标语义**~~ —— **已拍板方案 A**（原子单元），落地见 Step 4/5。
+2. ~~**L0 占 P 的份额**~~ —— **沿用 40% 但改口径为占 P**（Step 2 `ContextBudget.l0_cap()`），128k 下阈值 51200→31545。
+3. ~~**记忆召回预算**~~ —— **定为 10%**（`MEMORY_BUDGET_PCT`，Step 3 落地，`agent_nodes._format_memory` 用 `MEM_CHUNK_DELIM`）。RAG 25% / Memory 10% 暂为模块常量，未进 Settings UI，留到 Step 7 定契约。

@@ -77,6 +77,17 @@ logger = logging.getLogger("ragclaw.summary")
 # Cap a single summarization output so the summary can never dominate the context.
 SUMMARY_MAX_TOKENS = 2000
 
+# Step 6: L0 archive chunker. A folded L0 paragraph is capped at SUMMARY_MAX_TOKENS
+# (2000); we split each archived paragraph into retrieval-friendly sub-chunks at
+# most L0_CHUNK_MAX_TOKENS (800) so a stored chunk is a coherent unit rather than a
+# mid-sentence fragment (which is noise in the vector/BM25 space). ~3 chunks/segment.
+L0_CHUNK_MAX_TOKENS = 800
+
+# Bound a single maybe_archive_and_compact call so a pathological L0 (many folds over
+# the HIGH% cap) can never spin the request or background task. The loop re-runs
+# every turn and self-guards on the cap, so leftovers are archived on subsequent turns.
+L0_MAX_ARCHIVE_SEGMENTS_PER_CALL = 32
+
 # Proportions for query condensation: keep this much of the head/tail verbatim,
 # summarize the middle.
 QUERY_KEEP_HEAD_FRAC = 0.25
@@ -436,6 +447,61 @@ def plan_segment_sync(history_tail: list[dict], min_tok: int, max_tok: int) -> i
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Step 6: L0 archive chunker (sentence/paragraph boundary, never hard token cut)
+# --------------------------------------------------------------------------- #
+# Sentence boundary that works for BOTH English and Chinese. The older _SENT_RE used
+# by split_long_unit requires whitespace after the terminal punctuation, which
+# Chinese text lacks, so it silently degrades to a hard char cut there. The L0
+# chunker must respect "split on sentence/paragraph boundary" per the plan, so it
+# uses its own regex that breaks right after a terminal char regardless of spacing.
+_L0_SENT_RE = re.compile(r"[^。！？!?]*[。！？!?]|[^。！？!?]+")
+
+
+def _chunk_l0_segment(text: str, max_tok: int = L0_CHUNK_MAX_TOKENS) -> list[str]:
+    """Split one L0 fold paragraph into retrieval-friendly sub-chunks.
+
+    Boundaries are SENTENCE-first (works for Chinese too, see _L0_SENT_RE), then
+    paragraph, then a hard char cut as a last resort -- a chunk is never a
+    mid-sentence fragment, because half a sentence in the vector/BM25 space is
+    essentially noise. Pure: no DB, no LLM.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    sentences = [s for s in _L0_SENT_RE.findall(text) if s.strip()]
+    if len(sentences) <= 1:
+        # No clean sentence boundary -> fall back to paragraph, then hard cut.
+        return split_long_unit(text, max_tok) or [text]
+    chunks, cur, cur_tok = [], "", 0
+    for s in sentences:
+        st = count_text_tokens(s)
+        if st > max_tok:
+            if cur:
+                chunks.append(cur)
+                cur, cur_tok = "", 0
+            chunks.extend(split_long_unit(s, max_tok))
+            continue
+        if cur_tok and cur_tok + st > max_tok:
+            chunks.append(cur)
+            cur, cur_tok = s, st
+        else:
+            cur = (cur + s) if cur else s
+            cur_tok += st
+    if cur:
+        chunks.append(cur)
+    return chunks or [text]
+
+
+def _segment_heading(segment: str) -> str:
+    """Cheap, LLM-free title for an archived fold paragraph: its first sentence,
+    truncated to the MemoryChunk.heading column width (String(200))."""
+    first = _SENT_RE.split(segment.strip())[0].strip()
+    if not first:
+        first = segment.strip()[:80]
+    return first[:200]
+
+
 async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str):
     """Two-tier memory maintenance, run after Stage (1) has folded history.
 
@@ -477,6 +543,8 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
         return
 
     segs = l0.split("\n")
+    conv_id = getattr(conv, "id", "") or ""
+
     if len(segs) <= 1:
         # Degenerate: only one fold paragraph and still over HIGH% -> re-compact it
         # in place (preserves the "L0 = recent window" invariant).
@@ -486,50 +554,73 @@ async def maybe_archive_and_compact(conv, db: AsyncSession, prompt_language: str
             await db.commit()
         return
 
-    recent = segs[-1]            # rolling window: keep the most recent fold
-    older_segs = segs[:-1]       # everything older -> long-term memory archive
-    conv_id = getattr(conv, "id", "") or ""
+    # Archive loop: move the OLDEST fold paragraph into long-term memory, shrink
+    # L0, re-check the watermark -- repeat until L0 drops below HIGH% or only the
+    # most-recent fold remains. Each segment is chunked (sentence/paragraph
+    # boundaries), archived, and committed atomically, so a partial archive is
+    # always consistent. Bounded by L0_MAX_ARCHIVE_SEGMENTS_PER_CALL so a
+    # pathological L0 can never spin the request/background task; leftovers are
+    # archived on subsequent turns (this function self-guards on the cap).
+    remaining = segs
+    archived_segments = 0
+    archived_chunk_dicts: list[dict] = []
+    for _ in range(L0_MAX_ARCHIVE_SEGMENTS_PER_CALL):
+        if len(remaining) <= 1:
+            break
+        if count_text_tokens("\n".join(remaining)) < cap:
+            break
+        oldest = remaining[0]
+        rest = remaining[1:]
+        heading = _segment_heading(oldest)
+        chunk_dicts = [
+            {
+                "id": str(uuid.uuid4()),
+                "content": piece,
+                "chunk_index": i,
+                "doc_id": f"mem_{conv_id}",
+                "heading": heading,
+                "page": 0,
+                "token_count": count_text_tokens(piece),
+            }
+            for i, piece in enumerate(_chunk_l0_segment(oldest))
+        ]
+        if not chunk_dicts:
+            # Empty segment (whitespace only): drop it from L0 and continue.
+            remaining = rest
+            conv.summary_text = "\n".join(remaining)
+            await db.commit()
+            continue
 
-    chunk_dicts = [
-        {
-            "id": str(uuid.uuid4()),
-            "content": s,
-            "chunk_index": i,
-            "doc_id": f"mem_{conv_id}",
-            "heading": "",
-            "page": 0,
-            "token_count": count_text_tokens(s),
-        }
-        for i, s in enumerate(older_segs)
-    ]
+        # Release this session's transaction before the archive writes on its OWN
+        # session/connection; holding an open read txn here makes SQLite block the
+        # archive COMMIT on our shared lock until the busy timeout expires.
+        await db.commit()
 
-    # Close this session's transaction before the archive writes. The archive
-    # runs on its OWN session/connection; holding an open (read) transaction here
-    # would make SQLite block its COMMIT on our shared lock until the busy
-    # timeout expires. Nothing of ours is dirty at this point, so this is cheap.
-    await db.commit()
+        # Retrieval-critical half: persist rows + mark_has_memory + incremental
+        # BM25. Cannot raise -- returns False on failure.
+        archived = await archive_memory_essential(conv_id, chunk_dicts)
+        if not archived:
+            # Archival failed (DB / index error). Keep the raw folds inline in L0 --
+            # that is lossless and the next turn simply retries.
+            logger.warning(
+                "Memory archive failed for conv=%s; keeping L0 folds inline", conv_id
+            )
+            break
 
-    # Retrieval-critical half of the archive: persist rows + mark_has_memory +
-    # build BM25. Cannot raise -- returns False on failure.
-    archived = await archive_memory_essential(conv_id, chunk_dicts)
+        remaining = rest
+        conv.summary_text = "\n".join(remaining)
+        conv.summary_archived_count = (
+            getattr(conv, "summary_archived_count", 0) or 0
+        ) + 1
+        await db.commit()
+        archived_segments += 1
+        archived_chunk_dicts.extend(chunk_dicts)
 
-    if not archived:
-        # Archival failed (DB / index error). Keep the raw folds inline in L0 --
-        # that is lossless and the next turn simply retries. fit_assembly_context
-        # still guarantees the window is respected meanwhile.
-        logger.warning(
-            "Memory archive failed for conv=%s; keeping L0 folds inline", conv_id
-        )
-        return
-
-    conv.summary_text = recent
-    conv.summary_archived_count = (getattr(conv, "summary_archived_count", 0) or 0) + len(older_segs)
-    await db.commit()
-
-    # ③ Expensive half: embedding stays in the background so it is never charged
-    # to time-to-first-token. This turn recalls the new chunks via BM25; vectors
-    # join in from the next turn on.
-    schedule_memory_embedding(conv_id, chunk_dicts)
+    if archived_segments:
+        # Expensive half: embedding stays in the background so it is never charged
+        # to time-to-first-token. This turn recalls the new chunks via BM25; vectors
+        # join in from the next turn on.
+        schedule_memory_embedding(conv_id, archived_chunk_dicts)
 
 
 # --------------------------------------------------------------------------- #

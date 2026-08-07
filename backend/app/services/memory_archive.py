@@ -127,19 +127,26 @@ async def archive_memory_essential(conv_id: str, chunk_dicts: list[dict]) -> boo
         # 2) Unblock the retrieval node's has_memory() guard.
         mark_has_memory(conv_id)
 
-        # 3) (Re)build BM25 from all persisted rows for this conversation, so the
-        #    index is correct whether or not embedding later succeeds. Moved ahead
-        #    of embedding (it used to be the last step) precisely so keyword recall
-        #    is ready before this turn's retrieval runs.
-        async with db_mod.async_session() as db:
-            rows = (
-                await db.execute(
-                    select(MemoryChunk)
-                    .where(MemoryChunk.conversation_id == conv_id)
-                    .order_by(MemoryChunk.chunk_index)
-                )
-            ).scalars().all()
-        bm25_index.build(mem_kb, [_chunk_to_dict(c) for c in rows])
+        # 3) Update BM25 so keyword recall is ready before this turn's retrieval
+        #    runs. Use the INCREMENTAL path when the KB already has an index (the
+        #    common case after the first archive): only the NEW chunks are
+        #    jieba-tokenized, so archiving stays O(n) in tokenization instead of the
+        #    O(n^2) it was when every archive rebuilt the whole index from the full
+        #    table (CONTEXT_REFACTOR_PLAN step 6). On a cold index (first archive
+        #    this process, or after a restart that has not rebuilt yet) materialize
+        #    the full set from DB so nothing already persisted is dropped from recall.
+        if bm25_index.has_index(mem_kb):
+            bm25_index.add(mem_kb, chunk_dicts)
+        else:
+            async with db_mod.async_session() as db:
+                rows = (
+                    await db.execute(
+                        select(MemoryChunk)
+                        .where(MemoryChunk.conversation_id == conv_id)
+                        .order_by(MemoryChunk.chunk_index)
+                    )
+                ).scalars().all()
+            bm25_index.build(mem_kb, [_chunk_to_dict(c) for c in rows])
         return True
     except Exception as e:
         logger.warning("Memory archive (essential) failed for conv=%s: %s", conv_id, e)
