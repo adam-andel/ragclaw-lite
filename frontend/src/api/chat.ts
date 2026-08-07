@@ -103,7 +103,7 @@ export const deleteConversation = (id: string) =>
 export interface ConversationSummaryState {
   conversation_id: string
   summary_text: string
-  summary_msg_count: number
+  summary_msg_seq: number
   total_messages: number
   summary_archived_count: number // how many L0 folds have been archived to vector/BM25 memory
 }

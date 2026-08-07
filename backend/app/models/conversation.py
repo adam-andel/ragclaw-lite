@@ -74,13 +74,10 @@ class Conversation(Base):
     # the context window. summary_text holds the accumulated compressed transcript.
     # Raw messages in the messages table are NEVER modified.
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Legacy POSITIONAL cursor (index into the ordered history list). Superseded
-    # by summary_msg_seq; kept during the migration window because the API
-    # contract and the frontend still surface it.
-    summary_msg_count: Mapped[int] = mapped_column(Integer, default=0)
     # Cursor: messages with seq <= this value are already folded into the summary
-    # and must NOT be replayed verbatim. Being a seq (not a list offset) it stays
-    # correct when rows are deleted, which _cleanup_orphan_messages really does.
+    # and must NOT be replayed verbatim. Message seq values are contiguous from 0
+    # (no edits/deletes), so this also serves as a positional index into the
+    # seq-ordered history.
     summary_msg_seq: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Display-only: how many L0 fold paragraphs have been pushed to vector/BM25
     # memory. There is no secondary summary tier -- archived folds are recalled

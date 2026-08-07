@@ -191,7 +191,7 @@ async def _cleanup_orphan_messages(conv_id: str, keep_id: str | None = None) -> 
 
 
 async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
-    """Return ``(summary_msg_count, total_messages)`` for a conversation.
+    """Return ``(summary_msg_seq, total_messages)`` for a conversation.
 
     Read in its own session (mirrors ``_save_assistant_message``) because it is
     called from inside the SSE producer, after the request-scoped session has
@@ -207,7 +207,7 @@ async def _read_context_cursor(conv_id: str) -> tuple[int, int]:
                 .where(Message.conversation_id == conv_id)
             )
             return (
-                (getattr(conv, "summary_msg_count", 0) or 0) if conv else 0,
+                (getattr(conv, "summary_msg_seq", 0) or 0) if conv else 0,
                 total.scalar() or 0,
             )
     except Exception as e:
@@ -544,7 +544,7 @@ def _snapshot_state(state: dict) -> dict:
     }
 
 
-def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_count: int = 0, emit_usage_fn=None) -> dict:
+def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt, request, emit_fn, conv_id, summary_text: str = "", summary_msg_seq: int = 0, emit_usage_fn=None) -> dict:
     """Rebuild initial_state from the snapshot: history is left untouched; only recharge the quota (continue) or clear tool_calls (stop).
 
     The accumulated conversation summary (if any) is re-injected, and the already
@@ -562,7 +562,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         tool_calls = None
         resume_action = "stop"
     # Skip the earliest messages already captured in the summary.
-    recent_history = history[summary_msg_count:] if summary_msg_count else history
+    recent_history = history[summary_msg_seq:] if summary_msg_seq else history
     return {
         "query": pending.get("query") or request.query,
         "kb_id": request.kb_id,
@@ -720,7 +720,7 @@ async def chat_stream(
                "persistent_tokens": N, "transient_tokens": N}
         data: {"type": "done", "conversation_id": "...", "message_id": "...",
                "cache_hit": ..., "prompt_tokens": N,
-               "summary_msg_count": N, "total_messages": N}
+               "summary_msg_seq": N, "total_messages": N}
 
     ``context_usage`` fires once per LLM submission (every tool round, then the
     final generation), so the frontend context meter always reflects the most
@@ -819,7 +819,7 @@ async def chat_stream(
         .order_by(Message.seq.asc())
     )
     history_msgs = result.scalars().all()
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in history_msgs]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in history_msgs]
 
     # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
     kb_prompt = await get_kb_prompt(request.kb_id)
@@ -987,7 +987,7 @@ async def chat_stream(
                                 "ttft_ms": 0,
                                 "retrieval_ms": 0,
                                 "llm_ms": 0,
-                                "summary_msg_count": cursor,
+                                "summary_msg_seq": cursor,
                                 "total_messages": total_msgs,
                             })
                             return
@@ -1106,7 +1106,7 @@ async def chat_stream(
                     initial_state = _build_resume_initial_state(
                         pending, resume_mode, current_user, history, kb_prompt, request, emit_agent_step, conv_id,
                         summary_text=conv.summary_text or "",
-                        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+                        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
 
@@ -1132,7 +1132,7 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "llm_ms": 0,
                         "stopped": True,
-                        "summary_msg_count": cursor,
+                        "summary_msg_seq": cursor,
                         "total_messages": total_msgs,
                     })
                     return
@@ -1192,7 +1192,7 @@ async def chat_stream(
                             "ttft_ms": 0,
                             "retrieval_ms": 0,
                             "llm_ms": 0,
-                            "summary_msg_count": cursor,
+                            "summary_msg_seq": cursor,
                             "total_messages": total_msgs,
                         })
                         return
@@ -1352,7 +1352,7 @@ async def chat_stream(
                         "prompt_tokens": prompt_tokens,
                         "persistent_tokens": breakdown.get("persistent_tokens", 0),
                         "transient_tokens": breakdown.get("transient_tokens", prompt_tokens),
-                        "summary_msg_count": cursor,
+                        "summary_msg_seq": cursor,
                         "total_messages": total_msgs,
                     })
                     # Run finished successfully without requesting a new suspension:
@@ -1539,7 +1539,7 @@ async def get_conversation(
         updated_at=conv.updated_at,
         messages=messages_list,
         summary_text=conv.summary_text or "",
-        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_messages,
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
@@ -1715,7 +1715,7 @@ async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSu
     return ConversationSummaryState(
         conversation_id=conv.id,
         summary_text=conv.summary_text or "",
-        summary_msg_count=getattr(conv, "summary_msg_count", 0) or 0,
+        summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_result.scalar() or 0,
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
     )
@@ -1730,7 +1730,7 @@ async def update_conversation_summary(
 ):
     """Replace the compressed summary text of a conversation.
 
-    The folding cursor (``summary_msg_count``) is deliberately left untouched:
+    The folding cursor (``summary_msg_seq``) is deliberately left untouched:
     it records which raw messages are already represented by the summary, and
     rewinding it would either duplicate content or permanently hide messages
     from the model. Clearing the text therefore makes ``history[:cursor]``
@@ -1768,7 +1768,7 @@ async def compact_conversation_endpoint(
         .where(Message.conversation_id == conv_id)
         .order_by(Message.seq.asc())
     )
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count} for m in result.scalars().all()]
+    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in result.scalars().all()]
 
     try:
         await compact_conversation(

@@ -740,10 +740,10 @@ const ctxSummaryParagraphs = computed(() =>
 )
 const ctxDirty = computed(() => ctxDraft.value.trim() !== ctxSummaryText.value.trim())
 
-function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_count?: number; total_messages?: number; summary_archived_count?: number }) {
+function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number }) {
   ctxSummaryText.value = s.summary_text || ''
   ctxDraft.value = ctxSummaryText.value
-  summaryMsgCount.value = s.summary_msg_count || 0
+  summaryMsgCount.value = s.summary_msg_seq || 0
   totalMessages.value = s.total_messages || 0
   ctxArchivedCount.value = (s as any).summary_archived_count || 0
 }
@@ -813,7 +813,7 @@ async function runCompact() {
     applySummaryState(state)
     ctxEditing.value = false
     nmessage.success(t('chat.contextModal.compacted', {
-      done: state.summary_msg_count,
+      done: state.summary_msg_seq,
       total: state.total_messages,
     }))
   } catch (e: any) {
@@ -1333,7 +1333,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         if (typeof event.transient_tokens === 'number') transientTokens.value = event.transient_tokens
         // Summary-folding cursor: the automatic compressor may have advanced it
         // during this turn, so keep the modal's counters honest without a refetch.
-        if (typeof event.summary_msg_count === 'number') summaryMsgCount.value = event.summary_msg_count
+        if (typeof event.summary_msg_seq === 'number') summaryMsgCount.value = event.summary_msg_seq
         if (typeof event.total_messages === 'number') totalMessages.value = event.total_messages
         proxyMsg._pending = false
         ;(proxyMsg as any)._ttft = event.ttft_ms || 0

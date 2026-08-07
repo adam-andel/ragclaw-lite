@@ -18,7 +18,7 @@ Design principles
     0. Fits -> return verbatim (zero compression).
     1. Compress oldest 2/3 of history; if still over, expand the range to the
        whole remaining history (single full pass, no duplicated folds). Cursor
-       ``summary_msg_count`` records how much was folded.
+       ``summary_msg_seq`` records how much was folded.
     2. Re-compact the accumulated summary itself (with a "only adopt if it
        actually shrinks" progress guard, bounded iterations).
     3. Condense the query ONLY when it is itself long enough
@@ -806,9 +806,6 @@ async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None) ->
                 .values(
                     summary_text=candidate,
                     summary_msg_seq=plan.end,
-                    # Bridge: keep the positional cursor in lockstep until Step 7
-                    # retires summary_msg_count entirely.
-                    summary_msg_count=plan.end,
                 )
             )
             if result.rowcount == 0:
@@ -930,7 +927,7 @@ async def build_context_with_summary(
       should surface it to the user.
 
     Raw ``Message`` rows are never modified. The summary is persisted on the
-    ``Conversation`` row via the cursor ``summary_msg_count``.
+    ``Conversation`` row via the seq cursor ``summary_msg_seq``.
 
     NOTE: this function performs SEMANTIC (LLM-backed) compression only. It may
     still return a payload that is over budget -- deliberately. Mechanical
@@ -942,12 +939,13 @@ async def build_context_with_summary(
     if n == 0:
         return [], conv.summary_text or "", None, warning
 
-    # Cursor: how many of the earliest messages are already summarized. Positional
-    # index; summary_msg_seq is the durable seq-based cursor used by run_summary_pass
-    # and is kept in lockstep until Step 7 retires this field.
-    k = getattr(conv, "summary_msg_count", 0) or 0
-    if k > n:
-        k = n  # safety: never exceed history length
+    # Cursor: how many of the earliest messages are already folded into the
+    # summary. Message seq values are contiguous from 0 (no edits/deletes in this
+    # product), so the seq cursor doubles as a positional index into the
+    # seq-ordered history -- history[cursor] has seq == cursor.
+    cursor = getattr(conv, "summary_msg_seq", 0) or 0
+    if cursor > n:
+        cursor = n  # safety: never exceed history length
 
     # L0 = the rolling summary window (recent folds, editable). Anything older
     # lives in the memory archive and is recalled on demand, not injected here.
@@ -955,8 +953,8 @@ async def build_context_with_summary(
     q_tok = count_text_tokens(query)
 
     # (0) Fits -> zero compression. Maximize window utilization.
-    if _estimate(history[k:], l0, q_tok) <= _budget():
-        return history[k:], l0, None, warning
+    if _estimate(history[cursor:], l0, q_tok) <= _budget():
+        return history[cursor:], l0, None, warning
 
     # (Step 5) Watermark-gated folding via the shared async executor.
     # `persistent` = un-summarized tail + L0; the watermarks are fractions of P
@@ -969,20 +967,20 @@ async def build_context_with_summary(
     scheduled_bg = False
     b = default_budget()
     if conv_id and b.async_hi > 0 and b.sync_hi > 0:
-        persistent = count_messages_tokens(history[k:]) + (count_text_tokens(l0) if l0 else 0)
+        persistent = count_messages_tokens(history[cursor:]) + (count_text_tokens(l0) if l0 else 0)
         if persistent >= b.sync_hi:
             # Blocking: fold now, then re-read the (possibly advanced) cursor.
             await run_summary_pass(conv_id, blocking=True, emit=emit)
             await db.refresh(conv)
-            k = getattr(conv, "summary_msg_count", 0) or 0
-            if k > n:
-                k = n
+            cursor = getattr(conv, "summary_msg_seq", 0) or 0
+            if cursor > n:
+                cursor = n
             l0 = conv.summary_text or ""
         elif persistent >= b.async_hi:
             schedule_summary_pass(conv_id)  # fire-and-forget; no-op this turn
             scheduled_bg = True
 
-    recent = history[k:]
+    recent = history[cursor:]
     base = l0
 
     # (2) L0 archive maintenance. Runs every turn and self-guards on its HIGH
@@ -1091,25 +1089,24 @@ async def compact_conversation(
     unchanged and make the button silently do nothing.
     """
     n = len(history)
-    k = getattr(conv, "summary_msg_count", 0) or 0
-    if k > n:
-        k = n
-    if k >= n:
+    cursor = getattr(conv, "summary_msg_seq", 0) or 0
+    if cursor > n:
+        cursor = n
+    if cursor >= n:
         raise CompactionError("NOTHING_TO_COMPACT")
 
     frac = min(max(fraction, 0.0), 1.0)
-    split = min(n, k + max(1, int((n - k) * frac)))
+    split = min(n, cursor + max(1, int((n - cursor) * frac)))
 
     new_para = await _summarize_text(
-        _transcript(history[k:split]), prompt_language
+        _transcript(history[cursor:split]), prompt_language
     )
     if not new_para:
         raise CompactionError("SUMMARY_LLM_FAILED")
 
     base = conv.summary_text or ""
     conv.summary_text = f"{base}\n{new_para}".strip() if base else new_para
-    conv.summary_msg_count = split
-    conv.summary_msg_seq = split  # keep seq cursor consistent (dense seq == positional)
+    conv.summary_msg_seq = split
     await db.commit()
 
     # Feed the folded result through the same memory maintenance as the automatic
@@ -1118,7 +1115,7 @@ async def compact_conversation(
 
     logger.info(
         "Manual compaction: conv=%s cursor %d -> %d of %d messages",
-        getattr(conv, "id", "?"), k, split, n,
+        getattr(conv, "id", "?"), cursor, split, n,
     )
     return split, n
 

@@ -1086,7 +1086,7 @@ async function handleTest() {
             </span>
           </NFormItem>
 
-          <!-- Memory archive thresholds: L0 share triggers archive + L1; L1 share triggers L1 re-compaction -->
+          <!-- Memory archive thresholds: crossing the L0 share triggers folding older segments into the archive -->
           <NFormItem>
             <template #label>
               <span class="label-with-help">
