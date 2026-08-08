@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -42,6 +43,9 @@ from app.services.conversation_summary import (
     CompactionError,
     ContextWindowExceeded,
     classify_entry_overflow,
+    SUMMARY_SEGMENT_DELIM,
+    segment_thresholds,
+    _tail_from,
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
@@ -56,9 +60,90 @@ from app.schemas.chat import (
     ConversationSummaryState,
     PendingLimitResponse,
     SummaryUpdateRequest,
+    SummarySegmentDeleteRequest,
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
+
+# --------------------------------------------------------------------------- #
+# Per-conversation message cache.
+#
+# A conversation's raw messages NEVER change in place -- they only GROW by
+# append (new user/assistant rows). So once we have loaded a conversation's
+# history we can keep it in memory and serve every subsequent chat turn from the
+# cache, refreshing ONLY the appended tail (seq > cached max_seq). This removes
+# the per-turn full `select(Message).all()` that used to run on every request.
+#
+# The cache is keyed by conversation_id with a generous TTL: it lives until the
+# conversation is opened elsewhere, the TTL lapses, or the conversation is
+# deleted. Stored entries are seq-ordered dicts (the same shape build_context_*
+# expects), so `_tail_from` can slice by seq value regardless of where the tail
+# starts.
+# --------------------------------------------------------------------------- #
+_HISTORY_CACHE_TTL = 600.0  # seconds -- long enough to cover a whole session
+_HISTORY_CACHE: dict[str, dict] = {}        # conv_id -> {"msgs": [...], "max_seq": int|None, "ts": float}
+_HISTORY_CACHE_LOCKS: dict[str, asyncio.Lock] = {}  # conv_id -> per-conversation refresh lock
+
+
+def _msg_to_dict(m) -> dict:
+    return {
+        "role": m.role,
+        "content": m.content,
+        "content_token_count": m.content_token_count,
+        "seq": m.seq,
+    }
+
+
+async def _load_history(conv_id: str, db: AsyncSession, cursor: int) -> list[dict]:
+    """Return the un-summarized tail (seq >= cursor) of a conversation's messages,
+    served from the per-conversation cache when warm.
+
+    On a warm hit we only query ``seq > cached_max_seq`` (the appended tail since
+    the last load); on a cold miss we query ``seq >= cursor`` once. Either way the
+    returned list is the same seq-ordered dict shape the rest of the request uses.
+    """
+    now = time.monotonic()
+    lock = _HISTORY_CACHE_LOCKS.get(conv_id)
+    if lock is None:
+        lock = _HISTORY_CACHE_LOCKS.setdefault(conv_id, asyncio.Lock())
+
+    async with lock:
+        entry = _HISTORY_CACHE.get(conv_id)
+        if entry is not None and (now - entry["ts"]) < _HISTORY_CACHE_TTL:
+            # Warm: refresh only the appended messages.
+            if entry["max_seq"] is not None:
+                new_rows = (
+                    await db.execute(
+                        select(Message)
+                        .where(Message.conversation_id == conv_id, Message.seq > entry["max_seq"])
+                        .order_by(Message.seq.asc())
+                    )
+                ).scalars().all()
+                if new_rows:
+                    entry["msgs"].extend(_msg_to_dict(m) for m in new_rows)
+                    entry["max_seq"] = entry["msgs"][-1]["seq"]
+            entry["ts"] = now
+            return entry["msgs"]
+
+        # Cold: load only the un-summarized tail.
+        rows = (
+            await db.execute(
+                select(Message)
+                .where(Message.conversation_id == conv_id, Message.seq >= cursor)
+                .order_by(Message.seq.asc())
+            )
+        ).scalars().all()
+        msgs = [_msg_to_dict(m) for m in rows]
+        max_seq = msgs[-1]["seq"] if msgs else None
+        _HISTORY_CACHE[conv_id] = {"msgs": msgs, "max_seq": max_seq, "ts": now}
+        return msgs
+
+
+def _evict_history_cache(conv_id: str) -> None:
+    """Drop any cached history for a conversation (e.g. on delete)."""
+    _HISTORY_CACHE.pop(conv_id, None)
+    _HISTORY_CACHE_LOCKS.pop(conv_id, None)
+
 
 logger = logging.getLogger("ragclaw.chat")
 
@@ -604,8 +689,12 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         quota_tr = pending["tool_round_quota"]
         tool_calls = None
         resume_action = "stop"
-    # Skip the earliest messages already captured in the summary.
-    recent_history = history[summary_msg_seq:] if summary_msg_seq else history
+    # Skip the earliest messages already captured in the summary. Inclusive
+    # boundary: the message at seq == summary_msg_seq is part of the un-summarized
+    # tail (kept in lockstep with the compaction tail). Slice by seq VALUE (never
+    # list position) so it stays correct whether history is a full list or the
+    # cached tail-only list.
+    recent_history = _tail_from(history, summary_msg_seq) if summary_msg_seq else history
     return {
         "query": pending.get("query") or request.query,
         "kb_id": request.kb_id,
@@ -891,17 +980,15 @@ async def chat_stream(
     if not is_resume and not request.query:
         raise HTTPException(status_code=422, detail="query 不能为空")
 
-    # Build conversation history (ALL messages — no per-turn cap). The full
-    # history is loaded from the DB; compression (conversation_summary.py) decides
-    # at request time whether the oldest part must be summarized to fit the context
-    # window. Raw messages are never truncated here.
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conv_id)
-        .order_by(Message.seq.asc())
+    # Build conversation history. A conversation's messages only ever GROW by
+    # append, never mutate, so we serve them from the per-conversation cache: the
+    # first load queries the un-summarized tail (seq >= cursor); every later turn
+    # in the same conversation reuses the cache and refreshes only appended rows.
+    # Compression (conversation_summary.py) still decides what to fold at request
+    # time; raw messages are never truncated here.
+    history = await _load_history(
+        conv_id, db, getattr(conv, "summary_msg_seq", 0) or 0
     )
-    history_msgs = result.scalars().all()
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in history_msgs]
 
     # Fetch the KB's instruction prompt once; reuse for cache key + system prompt.
     kb_prompt = await get_kb_prompt(request.kb_id)
@@ -1639,6 +1726,7 @@ async def get_conversation(
         summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_messages,
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
+        min_compact_tok=segment_thresholds(config_manager.context_window)[0],
     )
 
 
@@ -1815,6 +1903,7 @@ async def _summary_state(conv: Conversation, db: AsyncSession) -> ConversationSu
         summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
         total_messages=total_result.scalar() or 0,
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
+        min_compact_tok=segment_thresholds(config_manager.context_window)[0],
     )
 
 
@@ -1843,6 +1932,44 @@ async def update_conversation_summary(
     return await _summary_state(conv, db)
 
 
+@router.delete("/conversations/{conv_id}/summary/segments", response_model=ConversationSummaryState)
+async def delete_summary_segment(
+    conv_id: str,
+    payload: SummarySegmentDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove one fold segment from the compressed summary by content match.
+
+    Segments are joined with SUMMARY_SEGMENT_DELIM; we drop the first segment
+    whose (stripped) text equals ``payload.segment_text``. The folding cursor
+    (``summary_msg_seq``) is deliberately left untouched: rewinding it would
+    either duplicate content or permanently hide messages from the model.
+
+    A delete only shrinks the persistent summary, so it can never overflow.
+    While the conversation is busy (streaming / compacting) the mutation is
+    rejected with 409 CONVERSATION_BUSY.
+    """
+    if not payload.segment_text.strip():
+        raise HTTPException(400, "EMPTY_SEGMENT")
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    if await _load_pending_state(db, conv_id) is not None:
+        raise HTTPException(409, "CONVERSATION_BUSY")
+
+    segs = (conv.summary_text or "").split(SUMMARY_SEGMENT_DELIM)
+    stripped = payload.segment_text.strip()
+    target_idx = next((i for i, s in enumerate(segs) if s.strip() == stripped), None)
+    if target_idx is None:
+        raise HTTPException(404, "SEGMENT_NOT_FOUND")
+
+    segs.pop(target_idx)
+    conv.summary_text = SUMMARY_SEGMENT_DELIM.join(segs)
+    conv.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(conv)
+    return await _summary_state(conv, db)
+
+
 @router.post("/conversations/{conv_id}/compact", response_model=ConversationSummaryState)
 async def compact_conversation_endpoint(
     conv_id: str,
@@ -1860,20 +1987,19 @@ async def compact_conversation_endpoint(
     if await _load_pending_state(db, conv_id) is not None:
         raise HTTPException(409, "CONVERSATION_BUSY")
 
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conv_id)
-        .order_by(Message.seq.asc())
-    )
-    history = [{"role": m.role, "content": m.content, "content_token_count": m.content_token_count, "seq": m.seq} for m in result.scalars().all()]
+    # Load ONLY the un-summarized tail (seq >= cursor) from the per-conversation
+    # cache (warm hits refresh only appended rows; cold misses query seq>=cursor
+    # once). Trim to the exact un-summarized tail in case the cache also holds
+    # already-folded messages from an earlier cursor.
+    cursor = getattr(conv, "summary_msg_seq", 0) or 0
+    tail = _tail_from(await _load_history(conv_id, db, cursor), cursor)
 
     try:
         await compact_conversation(
             conv,
-            history,
+            tail,
             db,
             config_manager.prompt_language,
-            fraction=(payload.fraction if payload else 0.5),
         )
     except CompactionError as e:
         await db.rollback()
@@ -1898,6 +2024,8 @@ async def delete_conversation(conv_id: str, current_user: User = Depends(get_cur
         raise HTTPException(403, "管理员只能删除自己的对话")
     # Drop any persisted pending-limit snapshot for this conversation.
     await _clear_pending_state(db, conv_id)
+    # Drop cached history so a reused/recreated conversation never serves stale rows.
+    _evict_history_cache(conv_id)
     # Drop archived conversation memory (vectors, BM25 index, DB rows) so deleting a
     # conversation leaves no orphaned memory chunks / Chroma collections.
     await memory_archive.purge_memory(conv_id, db)

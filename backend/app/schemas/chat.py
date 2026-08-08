@@ -95,6 +95,9 @@ class ConversationDetail(BaseModel):
     # How many L0 folds have been pushed to vector/BM25 memory. Display-only,
     # exposed so the context modal renders from a single cheap fetch.
     summary_archived_count: int = 0
+    # Minimum un-summarized history mass (tokens) required before manual
+    # compaction may start -- mirrors segment_thresholds(context_window)[0].
+    min_compact_tok: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -111,6 +114,9 @@ class ConversationSummaryState(BaseModel):
     summary_msg_seq: int = 0
     total_messages: int = 0
     summary_archived_count: int = 0
+    # Minimum un-summarized history mass (tokens) required before manual
+    # compaction may start -- mirrors segment_thresholds(context_window)[0].
+    min_compact_tok: int = 0
 
 
 class SummaryUpdateRequest(BaseModel):
@@ -119,8 +125,24 @@ class SummaryUpdateRequest(BaseModel):
     summary_text: str = Field(default="")
 
 
+class SummarySegmentDeleteRequest(BaseModel):
+    """Delete one fold segment from the compressed summary by content match.
+
+    The caller sends the exact segment text (as shown in the view modal, split by
+    SUMMARY_SEGMENT_DELIM). The first matching segment is removed; the folding
+    cursor is intentionally left untouched.
+    """
+
+    segment_text: str = Field(default="")
+
+
 class CompactRequest(BaseModel):
-    """Manual compaction: fold this fraction of the un-summarized tail."""
+    """Manual compaction request.
+
+    ``fraction`` is retained for API compatibility but currently ignored: manual
+    compaction reuses the automatic planner (segment_thresholds min_tok/max_tok),
+    so the fold range is decided server-side, not by a client-supplied fraction.
+    """
 
     fraction: float = Field(default=0.5, gt=0.0, le=1.0)
 

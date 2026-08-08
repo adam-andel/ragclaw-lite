@@ -106,6 +106,7 @@ export interface ConversationSummaryState {
   summary_msg_seq: number
   total_messages: number
   summary_archived_count: number // how many L0 folds have been archived to vector/BM25 memory
+  min_compact_tok: number // min un-summarized history mass (tokens) before manual compaction may start
 }
 
 // The backend throws bare error codes (SUMMARY_LLM_FAILED / NOTHING_TO_COMPACT /
@@ -132,6 +133,16 @@ export const compactConversation = (id: string, fraction = 0.5) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ fraction }),
+  }).then(summaryStateResponse)
+
+// Delete one fold segment from the summary by content match. The backend removes
+// the first segment whose (stripped) text equals `segmentText` and leaves the
+// folding cursor untouched.
+export const deleteSummarySegment = (id: string, segmentText: string) =>
+  fetch(`/api/conversations/${id}/summary/segments`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ segment_text: segmentText }),
   }).then(summaryStateResponse)
 
 // Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)

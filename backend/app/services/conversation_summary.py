@@ -674,7 +674,7 @@ async def _run_async_pass(conv_id: str) -> bool:
         return False
 
 
-async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None) -> bool:
+async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None, history: list | None = None) -> bool:
     """Plan -> summarize -> CAS-advance the cursor, looping until the persistent
     block falls below ``async_hi`` (70% of P).
 
@@ -693,7 +693,7 @@ async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None) -> bool:
         return False
     _INFLIGHT.add(conv_id)
     try:
-        return await _run_summary_pass_inner(conv_id, blocking=blocking, emit=emit)
+        return await _run_summary_pass_inner(conv_id, blocking=blocking, emit=emit, history=history)
     except Exception as e:  # a background fold must never crash the turn/loop
         logger.warning("run_summary_pass error conv=%s: %s", conv_id, e)
         return False
@@ -701,9 +701,40 @@ async def run_summary_pass(conv_id: str, *, blocking: bool, emit=None) -> bool:
         _INFLIGHT.discard(conv_id)
 
 
-def _round_from_messages(msgs: list) -> list:
-    """Group ORM Message rows into plan.Round objects keyed by ``Message.seq``
-    (``start`` = first msg seq, ``end`` = last msg seq + 1, exclusive)."""
+def _msg_role(m):
+    return m["role"] if isinstance(m, dict) else m.role
+
+
+def _msg_content(m):
+    return m["content"] if isinstance(m, dict) else m.content
+
+
+def _msg_seq(m):
+    return m["seq"] if isinstance(m, dict) else m.seq
+
+
+def _msg_tokens(m):
+    if isinstance(m, dict):
+        ctc = m.get("content_token_count")
+        content = m.get("content") or ""
+    else:
+        ctc = m.content_token_count
+        content = m.content or ""
+    return int(ctc) if ctc else count_text_tokens(content) + 4
+
+
+def _uni_rounds(messages: list) -> list:
+    """Group messages into plan.Round objects keyed by ``Message.seq``
+    (``start`` = first msg seq, ``end`` = last msg seq + 1, exclusive).
+
+    Single source of truth for BOTH compaction paths. Accepts either ORM
+    ``Message`` rows or dict history entries (the shape the chat router builds);
+    both are normalized via the ``_msg_*`` accessors so grouping and token
+    accounting are identical. Rounds are always keyed by seq, keeping the
+    resulting ``Segment.end`` in ``summary_msg_seq``'s seq coordinate -- the same
+    coordinate the automatic pass uses, so the manual path can never silently
+    no-op on a non-zero cursor again.
+    """
     rounds: list = []
     cur: list = []
 
@@ -711,16 +742,13 @@ def _round_from_messages(msgs: list) -> list:
         nonlocal cur
         if not cur:
             return
-        text = "\n".join(f"{m.role}: {m.content}" for m in cur)
-        toks = sum(
-            (int(m.content_token_count) if m.content_token_count else count_text_tokens(m.content or "") + 4)
-            for m in cur
-        ) + 3
-        rounds.append(Round(cur[0].seq, cur[-1].seq + 1, toks, text))
+        text = "\n".join(f"{_msg_role(m)}: {_msg_content(m)}" for m in cur)
+        toks = sum(_msg_tokens(m) for m in cur) + 3
+        rounds.append(Round(_msg_seq(cur[0]), _msg_seq(cur[-1]) + 1, toks, text))
         cur = []
 
-    for m in msgs:
-        if m.role == "user":
+    for m in messages:
+        if _msg_role(m) == "user":
             flush()
             cur = [m]
         elif cur:
@@ -729,21 +757,35 @@ def _round_from_messages(msgs: list) -> list:
     return rounds
 
 
+def _tail_from(history: list, cursor: int) -> list:
+    """Un-summarized tail under the INCLUSIVE boundary: messages with seq >= cursor.
+
+    Filters by seq VALUE, never by list position, so it is correct whether
+    ``history`` is the full seq-ordered list (pre-cache chat path) or a cached
+    tail-only list that starts at some seq > 1. Guarded so cursor <= 0 yields the
+    whole history. Used by both compaction paths and prompt assembly so the model
+    sees exactly the tail that compaction may fold -- no off-by-one drift.
+    """
+    if cursor <= 0:
+        return history
+    return [m for m in history if _msg_seq(m) >= cursor]
+
+
 async def _persistent_tokens_in(db, conv_id: str, cursor: int, l0: str | None) -> int:
-    """Persistent-block size: un-summarized tail (seq > cursor) + L0 summary."""
+    """Persistent-block size: un-summarized tail (seq >= cursor) + L0 summary."""
     from app.models.conversation import Message
 
     tail = (
         await db.execute(
             select(func.coalesce(func.sum(Message.content_token_count), 0)).where(
-                Message.conversation_id == conv_id, Message.seq > cursor
+                Message.conversation_id == conv_id, Message.seq >= cursor
             )
         )
     ).scalar() or 0
     return int(tail) + (count_text_tokens(l0) if l0 else 0)
 
 
-async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None) -> bool:
+async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None, history: list | None = None) -> bool:
     b = default_budget()
     async_hi, sync_hi = b.async_hi, b.sync_hi
     if async_hi <= 0 or sync_hi <= 0:
@@ -768,20 +810,27 @@ async def _run_summary_pass_inner(conv_id: str, *, blocking: bool, emit=None) ->
             await db.refresh(conv)  # reload cursor/summary a prior pass may have written
             cursor = conv.summary_msg_seq or 0
 
-            # Recompute the persistent block straight from the DB: another pass (or
-            # the request turn) may have advanced the cursor since we last looked.
-            persistent = await _persistent_tokens_in(db, conv_id, cursor, conv.summary_text)
+            # Recompute the persistent block. When the caller already has the full
+            # ordered history in memory (the chat turn that triggered this fold),
+            # slice the un-summarized tail from it instead of hitting the DB again
+            # -- the tail is exactly what prompt assembly loaded. Otherwise fall
+            # back to a direct DB query (background scheduler path).
+            if history is not None:
+                tail = _tail_from(history, cursor)
+                persistent = count_messages_tokens(tail) + (count_text_tokens(conv.summary_text) if conv.summary_text else 0)
+            else:
+                persistent = await _persistent_tokens_in(db, conv_id, cursor, conv.summary_text)
             if persistent < async_hi:
                 return True  # already below the recovery watermark
 
-            msgs = (
+            msgs = _tail_from(history, cursor) if history is not None else (
                 await db.execute(
                     select(Message)
-                    .where(Message.conversation_id == conv_id, Message.seq > cursor)
+                    .where(Message.conversation_id == conv_id, Message.seq >= cursor)
                     .order_by(Message.seq)
                 )
             ).scalars().all()
-            rounds = _round_from_messages(msgs)
+            rounds = _uni_rounds(msgs)
             # Invariant #1: never fold the live (newest) round.
             if len(rounds) <= 1:
                 return False
@@ -946,17 +995,19 @@ async def build_context_with_summary(
     and can see the full payload (RAG, archived-memory recall, tool records).
     """
     warning = ""
-    n = len(history)
-    if n == 0:
+    if not history:
         return [], conv.summary_text or "", None, warning
 
     # Cursor: how many of the earliest messages are already folded into the
-    # summary. Message seq values are contiguous from 0 (no edits/deletes in this
-    # product), so the seq cursor doubles as a positional index into the
-    # seq-ordered history -- history[cursor] has seq == cursor.
+    # summary. Seq values are contiguous from 1 (no edits/deletes in this
+    # product), so the seq cursor maps onto history by seq VALUE, never by list
+    # position -- history may be a full list or a cached tail-only list. Clamp the
+    # cursor to the highest present seq (instead of len(history)) so both shapes
+    # stay correct.
     cursor = getattr(conv, "summary_msg_seq", 0) or 0
-    if cursor > n:
-        cursor = n  # safety: never exceed history length
+    max_seq = max((_msg_seq(m) for m in history), default=0)
+    if cursor > max_seq:
+        cursor = max_seq  # safety: never exceed the highest present seq
 
     # L0 = the rolling summary window (recent folds, editable). Anything older
     # lives in the memory archive and is recalled on demand, not injected here.
@@ -964,8 +1015,8 @@ async def build_context_with_summary(
     q_tok = count_text_tokens(query)
 
     # (0) Fits -> zero compression. Maximize window utilization.
-    if _estimate(history[cursor:], l0, q_tok) <= _budget():
-        return history[cursor:], l0, None, warning
+    if _estimate(_tail_from(history, cursor), l0, q_tok) <= _budget():
+        return _tail_from(history, cursor), l0, None, warning
 
     # (Step 5) Watermark-gated folding via the shared async executor.
     # `persistent` = un-summarized tail + L0; the watermarks are fractions of P
@@ -978,20 +1029,20 @@ async def build_context_with_summary(
     scheduled_bg = False
     b = default_budget()
     if conv_id and b.async_hi > 0 and b.sync_hi > 0:
-        persistent = count_messages_tokens(history[cursor:]) + (count_text_tokens(l0) if l0 else 0)
+        persistent = count_messages_tokens(_tail_from(history, cursor)) + (count_text_tokens(l0) if l0 else 0)
         if persistent >= b.sync_hi:
             # Blocking: fold now, then re-read the (possibly advanced) cursor.
-            await run_summary_pass(conv_id, blocking=True, emit=emit)
+            await run_summary_pass(conv_id, blocking=True, emit=emit, history=history)
             await db.refresh(conv)
             cursor = getattr(conv, "summary_msg_seq", 0) or 0
-            if cursor > n:
-                cursor = n
+            if cursor > max_seq:
+                cursor = max_seq
             l0 = conv.summary_text or ""
         elif persistent >= b.async_hi:
             schedule_summary_pass(conv_id)  # fire-and-forget; no-op this turn
             scheduled_bg = True
 
-    recent = history[cursor:]
+    recent = _tail_from(history, cursor)
     base = l0
 
     # (2) L0 archive maintenance. Runs every turn and self-guards on its HIGH
@@ -1078,57 +1129,88 @@ class CompactionError(RuntimeError):
 
 async def compact_conversation(
     conv,
-    history: list[dict],
+    tail: list,
     db: AsyncSession,
     prompt_language: str,
-    fraction: float = 0.5,
-) -> Tuple[int, int]:
-    """Fold the oldest ``fraction`` of the un-summarized history into the summary.
+    fraction: float | None = None,
+) -> int:
+    """Fold the oldest un-summarized history into the summary, using the EXACT
+    same single-pass rule as the automatic compactor, plus one manual-only UX
+    guard.
 
-    Returns ``(new_cursor, total_messages)``.
+    The caller passes the already-loaded un-summarized ``tail`` (messages with
+    ``seq >= summary_msg_seq``) -- identical to the slice the automatic path
+    consumes, so both paths share the same coordinate system and the same
+    ``_uni_rounds`` builder. No full-history load happens here.
 
-    Unlike :func:`build_context_with_summary` this is UNCONDITIONAL: it ignores
-    the token budget entirely because it is driven by the user pressing
-    "compact" in the UI, not by an overflow.
+    The folding RULE is identical to the automatic path (``_run_summary_pass_inner``):
+      * the newest round is always excluded (invariant #1), identical to auto;
+      * below ``min_tok`` the planner returns ``ArchiveL0`` and older folds are
+        archived (no LLM) -- identical to auto;
+      * a single pass covers at most ~``max_tok`` of history (``plan_segment``).
 
-    Atomicity: when the summarization LLM call fails (``_summarize_text``
-    returns ""), the cursor is NOT advanced and nothing is committed, so a
-    failed compaction can never make part of the history invisible to the model.
+    Manual-only addition (NOT a rule change): a button click must give feedback
+    instead of silently doing nothing, so a tail still below ``min_tok`` is
+    rejected up front with ``HISTORY_TOO_SHORT``. The automatic path is a silent
+    background job and needs no such gate.
 
-    The ``max(1, ...)`` guard is required for progress: integer scaling
-    degenerates to 0 for a small remainder, which would leave the cursor
-    unchanged and make the button silently do nothing.
+    Returns the new cursor (``summary_msg_seq``). Atomicity is unchanged: a failed
+    summarization LLM call raises ``SUMMARY_LLM_FAILED`` and the cursor is left
+    untouched by the caller.
     """
-    n = len(history)
     cursor = getattr(conv, "summary_msg_seq", 0) or 0
-    if cursor > n:
-        cursor = n
-    if cursor >= n:
+    if not tail:
         raise CompactionError("NOTHING_TO_COMPACT")
 
-    frac = min(max(fraction, 0.0), 1.0)
-    split = min(n, cursor + max(1, int((n - cursor) * frac)))
+    min_tok, max_tok = segment_thresholds(config_manager.context_window)
 
-    new_para = await _summarize_text(
-        _transcript(history[cursor:split]), prompt_language
-    )
-    if not new_para:
-        raise CompactionError("SUMMARY_LLM_FAILED")
+    tail_rounds = _uni_rounds(tail)
+    # Manual-only UX guard (the automatic path is a silent background job and has
+    # no such gate): a button click must surface a reason instead of silently
+    # doing nothing, so reject early when the un-summarized tail has not reached
+    # min_tok. This is a feedback layer in front of the rule engine, NOT a change
+    # to the folding rule itself (which stays identical to the automatic path).
+    if sum(r.tokens for r in tail_rounds) < min_tok:
+        raise CompactionError("HISTORY_TOO_SHORT")
+
+    # Identical to the automatic path: bail when there is at most one round (the
+    # live round), always exclude the newest round (invariant #1).
+    if len(tail_rounds) <= 1:
+        return cursor
+
+    plan = plan_segment(tail_rounds[:-1], cursor=cursor, min_tok=min_tok, max_tok=max_tok)
+    if plan is None:
+        return cursor
+    if isinstance(plan, ArchiveL0):
+        # Tail below MIN but the rolling L0 window itself is the bloat: archive
+        # older folds (no LLM) and stop. Same as the automatic path.
+        await maybe_archive_and_compact(conv, db, prompt_language)
+        await db.commit()
+        return cursor
+
+    paras: list[str] = []
+    for unit in plan.units:
+        u = await _summarize_text(unit.text, prompt_language)
+        if not u:
+            raise CompactionError("SUMMARY_LLM_FAILED")
+        paras.append(u)
 
     base = conv.summary_text or ""
-    conv.summary_text = f"{base}{SUMMARY_SEGMENT_DELIM}{new_para}".strip() if base else new_para
-    conv.summary_msg_seq = split
+    new_para = "\n".join(paras)
+    candidate = f"{base}{SUMMARY_SEGMENT_DELIM}{new_para}".strip() if base else new_para
+
+    conv.summary_text = candidate
+    conv.summary_msg_seq = plan.end
     await db.commit()
 
-    # Feed the folded result through the same memory maintenance as the automatic
-    # path, so manual compaction also archives older folds once L0 crosses HIGH%.
+    # Same L0 maintenance as the automatic path.
     await maybe_archive_and_compact(conv, db, prompt_language)
 
     logger.info(
-        "Manual compaction: conv=%s cursor %d -> %d of %d messages",
-        getattr(conv, "id", "?"), cursor, split, n,
+        "Manual compaction: conv=%s cursor %d -> %d of %d tail messages (min_tok=%d max_tok=%d)",
+        getattr(conv, "id", "?"), cursor, plan.end, len(tail), min_tok, max_tok,
     )
-    return split, n
+    return plan.end
 
 
 # --------------------------------------------------------------------------- #

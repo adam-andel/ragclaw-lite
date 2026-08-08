@@ -10,9 +10,9 @@ import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import KbPickCard from '@/components/kb/KbPickCard.vue'
 import AppCard from '@/components/common/AppCard.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline, Eye } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, updateConversationSummary, compactConversation } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, compactConversation, deleteSummarySegment } from '@/api/chat'
 import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
@@ -717,16 +717,18 @@ const contextRatioClass = computed(() => {
 })
 
 // ── Context inspector modal (click the meter) ──
-// Shows the persistent/transient split of the last submission, the summary
-// paragraphs, and the two manual actions (edit summary / compact).
+// Shows the persistent/transient split of the last submission and the manual
+// "compact" action. Per-segment viewing/deletion lives in the summary-view modal.
+const SUMMARY_SEGMENT_DELIM = "\n\n---\n\n"
+const SUMMARY_VIEW_PAGE_SIZE = 5
+
 const showContextModal = ref(false)
 const ctxSummaryText = ref('')
-const ctxDraft = ref('')
-const ctxEditing = ref(false)
 const ctxLoading = ref(false)
 const ctxBusy = ref(false)
-// How many L0 folds have been pushed to long-term memory (display-only).
-const ctxArchivedCount = ref(0)
+// Minimum un-summarized history mass (tokens) required before manual compaction
+// may start -- mirrors the backend segment_thresholds(context_window)[0].
+const minCompactTok = ref(0)
 
 // Shares of the WINDOW (not of each other), so the two numbers add up to the
 // same percentage the meter shows.
@@ -740,26 +742,23 @@ const contextTransientPct = computed(() => {
 })
 const hasBreakdown = computed(() => persistentTokens.value + transientTokens.value > 0)
 
-// The summary is a single TEXT column whose paragraphs are joined with "\n"
-// (one paragraph per fold). Split it back for display; there is deliberately no
-// per-paragraph "which messages did this cover" mapping.
-const ctxSummaryParagraphs = computed(() =>
-  ctxSummaryText.value.split('\n').map(s => s.trim()).filter(Boolean),
+// Segments are joined with SUMMARY_SEGMENT_DELIM in the backend (one fold per
+// segment). Split on the real delimiter so the view matches the archive units.
+const ctxSummarySegments = computed(() =>
+  ctxSummaryText.value.split(SUMMARY_SEGMENT_DELIM).map(s => s.trim()).filter(Boolean),
 )
-const ctxDirty = computed(() => ctxDraft.value.trim() !== ctxSummaryText.value.trim())
+const hasSummary = computed(() => ctxSummarySegments.value.length > 0)
 
-function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number }) {
+function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number; min_compact_tok?: number }) {
   ctxSummaryText.value = s.summary_text || ''
-  ctxDraft.value = ctxSummaryText.value
   summaryMsgCount.value = s.summary_msg_seq || 0
   totalMessages.value = s.total_messages || 0
-  ctxArchivedCount.value = (s as any).summary_archived_count || 0
+  minCompactTok.value = (s as any).min_compact_tok || 0
 }
 
 async function openContextModal() {
   if (!conversationId.value) return
   showContextModal.value = true
-  ctxEditing.value = false
   ctxLoading.value = true
   try {
     // include_messages=false keeps this cheap: we only need the summary state,
@@ -781,45 +780,12 @@ function guardContextAction(): boolean {
   return !!conversationId.value && !isReadonly.value
 }
 
-async function persistSummary(text: string) {
-  ctxBusy.value = true
-  try {
-    applySummaryState(await updateConversationSummary(conversationId.value!, text))
-    ctxEditing.value = false
-    nmessage.success(t('chat.contextModal.saved'))
-  } catch (e: any) {
-    nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
-  } finally {
-    ctxBusy.value = false
-  }
-}
-
-function saveSummaryEdit() {
-  if (!guardContextAction()) return
-  const text = ctxDraft.value.trim()
-  // Clearing the text while the cursor is advanced permanently hides
-  // history[:cursor] from the model (the cursor is intentionally immutable),
-  // so this destructive case needs an explicit second confirmation.
-  if (!text && summaryMsgCount.value > 0) {
-    dialog.warning({
-      title: t('chat.contextModal.clearConfirmTitle'),
-      content: t('chat.contextModal.clearConfirmBody', { count: summaryMsgCount.value }),
-      positiveText: t('chat.contextModal.clearConfirmOk'),
-      negativeText: t('chat.contextModal.cancel'),
-      onPositiveClick: () => { persistSummary('') },
-    })
-    return
-  }
-  persistSummary(text)
-}
-
 async function runCompact() {
   if (!guardContextAction()) return
   ctxBusy.value = true
   try {
     const state = await compactConversation(conversationId.value!, 0.5)
     applySummaryState(state)
-    ctxEditing.value = false
     nmessage.success(t('chat.contextModal.compacted', {
       done: state.summary_msg_seq,
       total: state.total_messages,
@@ -829,6 +795,51 @@ async function runCompact() {
   } finally {
     ctxBusy.value = false
   }
+}
+
+// ── Summary view modal (segmented, paginated, hover-delete) ──
+const showSummaryViewModal = ref(false)
+const summaryViewPage = ref(1)
+const summaryViewBusy = ref(false)
+
+const summaryViewPaged = computed(() => {
+  const start = (summaryViewPage.value - 1) * SUMMARY_VIEW_PAGE_SIZE
+  return ctxSummarySegments.value.slice(start, start + SUMMARY_VIEW_PAGE_SIZE)
+})
+const summaryViewTotalPages = computed(() =>
+  Math.max(1, Math.ceil(ctxSummarySegments.value.length / SUMMARY_VIEW_PAGE_SIZE)),
+)
+
+function openSummaryView() {
+  if (!conversationId.value) return
+  summaryViewPage.value = 1
+  showSummaryViewModal.value = true
+}
+
+function deleteSegment(seg: string) {
+  if (!conversationId.value) return
+  dialog.warning({
+    title: t('chat.contextModal.deleteSegmentConfirmTitle'),
+    content: t('chat.contextModal.deleteSegmentConfirmBody'),
+    positiveText: t('chat.contextModal.deleteSegmentConfirmOk'),
+    negativeText: t('chat.contextModal.cancel'),
+    onPositiveClick: async () => {
+      summaryViewBusy.value = true
+      try {
+        const state = await deleteSummarySegment(conversationId.value!, seg)
+        applySummaryState(state)
+        // Keep the current page in range after a segment is removed.
+        if (summaryViewPage.value > summaryViewTotalPages.value) {
+          summaryViewPage.value = summaryViewTotalPages.value
+        }
+        nmessage.success(t('chat.contextModal.segmentDeleted'))
+      } catch (e: any) {
+        nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
+      } finally {
+        summaryViewBusy.value = false
+      }
+    },
+  })
 }
 
 
@@ -1949,57 +1960,72 @@ function handleKeydown(e: KeyboardEvent) {
             </div>
           </div>
 
-          <div class="ctx-section-title">{{ t('chat.contextModal.summaryTitle') }}</div>
-
-          <NInput
-            v-if="ctxEditing"
-            v-model:value="ctxDraft"
-            type="textarea"
-            :autosize="{ minRows: 8, maxRows: 18 }"
-            :disabled="ctxBusy"
-          />
-          <template v-else>
-            <div v-if="ctxSummaryParagraphs.length === 0" class="ctx-empty">
-              {{ t('chat.contextModal.empty') }}
-            </div>
-            <ol v-else class="ctx-para-list">
-              <li v-for="(p, i) in ctxSummaryParagraphs" :key="i" class="ctx-para">{{ p }}</li>
-            </ol>
-          </template>
-
-          <!-- Archive count -->
-          <div class="ctx-archived">
-            {{ t('chat.contextModal.archivedCount', { n: ctxArchivedCount }) }}
-          </div>
         </NSpin>
+
+        <p class="ctx-compact-hint">
+          {{ t('chat.contextModal.compactHint', { min: minCompactTok, max: minCompactTok * 4 }) }}
+        </p>
 
         <template #footer>
           <div class="ctx-footer">
-            <template v-if="ctxEditing">
-              <NButton :disabled="ctxBusy" @click="ctxEditing = false; ctxDraft = ctxSummaryText">
-                {{ t('chat.contextModal.cancel') }}
-              </NButton>
-              <NButton type="primary" :loading="ctxBusy" :disabled="!ctxDirty" @click="saveSummaryEdit">
-                {{ t('chat.contextModal.save') }}
-              </NButton>
-            </template>
-            <template v-else>
+            <NButton
+              :disabled="ctxBusy || isStreaming || isReadonly || !hasSummary"
+              @click="openSummaryView"
+            >
+              <template #icon><NIcon size="14"><Eye /></NIcon></template>
+              {{ t('chat.contextModal.viewSummary') }}
+            </NButton>
+            <NButton
+              type="primary"
+              :loading="ctxBusy"
+              :disabled="ctxBusy || isStreaming || isReadonly || summaryMsgCount >= totalMessages || (minCompactTok > 0 && persistentTokens < minCompactTok)"
+              :title="minCompactTok > 0 && persistentTokens < minCompactTok ? t('chat.contextModal.compactDisabledHint', { min: minCompactTok }) : ''"
+              @click="runCompact"
+            >
+              {{ t('chat.contextModal.compact') }}
+            </NButton>
+          </div>
+        </template>
+      </AppModal>
+
+      <AppModal
+        v-model:show="showSummaryViewModal"
+        :title="t('chat.contextModal.summaryViewTitle')"
+        size="wide"
+      >
+        <div v-if="!hasSummary" class="ctx-empty">
+          {{ t('chat.contextModal.summaryViewEmpty') }}
+        </div>
+        <template v-else>
+          <p class="ctx-intro">{{ t('chat.contextModal.summaryViewHint') }}</p>
+          <div class="ctx-seg-list">
+            <div v-for="(seg, i) in summaryViewPaged" :key="i" class="ctx-seg">
+              <div class="ctx-seg-body">{{ seg }}</div>
               <NButton
-                :disabled="ctxBusy || isStreaming || isReadonly || ctxSummaryParagraphs.length === 0"
-                @click="ctxEditing = true"
+                size="tiny"
+                type="error"
+                class="ctx-seg-del"
+                :loading="summaryViewBusy"
+                :disabled="summaryViewBusy || isStreaming"
+                @click="deleteSegment(seg)"
               >
-                <template #icon><NIcon size="14"><Create /></NIcon></template>
-                {{ t('chat.contextModal.edit') }}
+                {{ t('chat.contextModal.deleteSegment') }}
               </NButton>
-              <NButton
-                type="primary"
-                :loading="ctxBusy"
-                :disabled="ctxBusy || isStreaming || isReadonly || summaryMsgCount >= totalMessages"
-                @click="runCompact"
-              >
-                {{ t('chat.contextModal.compact') }}
-              </NButton>
-            </template>
+            </div>
+          </div>
+
+          <div v-if="summaryViewTotalPages > 1" class="ctx-seg-pager">
+            <NButton
+              size="small"
+              :disabled="summaryViewPage <= 1"
+              @click="summaryViewPage = Math.max(1, summaryViewPage - 1)"
+            >{{ t('chat.contextModal.prevPage') }}</NButton>
+            <span class="ctx-seg-page">{{ t('chat.contextModal.pageInfo', { page: summaryViewPage, total: summaryViewTotalPages }) }}</span>
+            <NButton
+              size="small"
+              :disabled="summaryViewPage >= summaryViewTotalPages"
+              @click="summaryViewPage = Math.min(summaryViewTotalPages, summaryViewPage + 1)"
+            >{{ t('chat.contextModal.nextPage') }}</NButton>
           </div>
         </template>
       </AppModal>
@@ -2768,6 +2794,12 @@ function handleKeydown(e: KeyboardEvent) {
   line-height: 1.65;
   color: var(--color-text-muted);
 }
+.ctx-compact-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
 .ctx-breakdown,
 .ctx-cursor {
   font-size: 12px;
@@ -2804,13 +2836,46 @@ function handleKeydown(e: KeyboardEvent) {
   border: 1px dashed var(--color-border);
   border-radius: 8px;
 }
-.ctx-archived {
-  margin-top: 14px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  padding: 8px 12px;
-  background: var(--color-fill-2, rgba(127, 127, 127, 0.1));
+.ctx-seg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+.ctx-seg {
+  position: relative;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, rgba(127, 127, 127, 0.2));
   border-radius: 8px;
+  background: var(--color-fill-1, rgba(127, 127, 127, 0.06));
+}
+.ctx-seg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.6;
+  padding-right: 64px;
+}
+.ctx-seg-del {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.ctx-seg:hover .ctx-seg-del {
+  opacity: 1;
+}
+.ctx-seg-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.ctx-seg-page {
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 .ctx-footer {
   display: flex;
