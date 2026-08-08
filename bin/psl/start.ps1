@@ -93,7 +93,7 @@ function Build-Stack([string]$Mirror) {
     if ($Mirror -ne "docker.io") {
         $arg += "--build-arg", "REGISTRY=$Mirror"
     }
-    docker compose -f $ComposeFile build --progress=plain @arg ragclaw mcp-repl ragclaw-egress nginx
+    docker compose --progress=plain -f $ComposeFile build @arg ragclaw mcp-repl ragclaw-egress nginx
     return ($LASTEXITCODE -eq 0)
 }
 

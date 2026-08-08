@@ -2,21 +2,25 @@
 .git
 .gitignore
 
-# Node
-node_modules
-frontend/dist
-frontend/node_modules
+# Node — directory patterns end with "/"; matches at any depth.
+node_modules/
+frontend/dist/
+frontend/node_modules/
 *.tsbuildinfo
 
 # Python
-__pycache__
+__pycache__/
 *.pyc
-*.egg-info
-.venv
-venv
+*.egg-info/
+.venv/
+venv/
+# mcp/venv is a local dev virtualenv that got synced into the tree; the images
+# install from requirements.lock instead, so keep it out of the root build
+# context (ragclaw's context is ".", which would otherwise send 176 MB of it).
+mcp/venv/
 
 # Data (docker volume)
-data
+data/
 
 # IDE
 .idea
