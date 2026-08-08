@@ -4,8 +4,8 @@ Opaque, DB-backed, revocable, rotatable refresh tokens for transparent JWT
 renewal (OAuth2-style access + refresh pair). Links to users.id with CASCADE.
 
 Revision ID: a1f2b3c4d5e6
-Revises: 9c1d2e3f4a5b
-Create Date: 2026-08-07 12:00:00.000000
+Revises: c3d4e5f60718
+Create Date: 2026-08-08 00:00:00.000000
 
 """
 from typing import Sequence, Union
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1f2b3c4d5e6'
-down_revision: Union[str, None] = '9c1d2e3f4a5b'
+down_revision: Union[str, None] = 'c3d4e5f60718'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
