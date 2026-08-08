@@ -7,7 +7,6 @@ of truth. On startup ``init_db`` creates any missing tables, then seeds idempote
 default data.
 """
 
-import asyncio
 import secrets
 import uuid
 from collections.abc import Iterable
@@ -22,9 +21,15 @@ settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 settings.skills_dir.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = f"sqlite+aiosqlite:///{settings.sqlite_path}"
+# Database URL is supplied via settings (DATABASE_URL), defaulting to the local
+# SQLite file so the project still runs with a one-command `docker compose up`
+# and no external Postgres. Swap to e.g.
+#   postgresql+asyncpg://user:pass@host:5432/ragclaw
+# for production-grade concurrent access. No SQLite-specific connect_args are
+# attached here — both aiosqlite and asyncpg are happy without them.
+DATABASE_URL = settings.database_url or f"sqlite+aiosqlite:///{settings.sqlite_path}"
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
+engine = create_async_engine(DATABASE_URL, echo=False)
 
 
 class _AsyncSessionProxy:
@@ -42,12 +47,10 @@ class _AsyncSessionProxy:
     _engines: dict[str, object] = {}
 
     def _get_engine(self):
-        url = f"sqlite+aiosqlite:///{settings.sqlite_path}"
+        url = settings.database_url or f"sqlite+aiosqlite:///{settings.sqlite_path}"
         eng = self._engines.get(url)
         if eng is None:
-            eng = create_async_engine(
-                url, echo=False, connect_args={"check_same_thread": False}
-            )
+            eng = create_async_engine(url, echo=False)
             self._engines[url] = eng
         return eng
 
@@ -98,7 +101,7 @@ def allocate_repl_uid(existing: Iterable[int]) -> int:
 async def init_db():
     """Create tables from ORM models (declarative) and seed idempotent default data."""
     await _create_tables()
-    await asyncio.to_thread(_seed_db)
+    await _seed_db()
 
 
 async def _create_tables():
@@ -113,59 +116,63 @@ async def _create_tables():
         await conn.run_sync(Base.metadata.create_all, checkfirst=True)
 
 
-def _seed_db():
+async def _seed_db():
     """Seed idempotent default data (default MCP server).
 
     The admin user is intentionally NOT auto-seeded: the first user registers
     themselves as the super admin via ``POST /api/auth/register`` on first
     launch (see ``app/routers/auth.py``). That keeps the bootstrap credentials
     user-chosen instead of a hardcoded ``admin/admin123``.
+
+    Runs through the async session so it works against both SQLite and
+    Postgres without any raw driver or dialect-specific SQL.
     """
-    import sqlite3
-
-    raw = sqlite3.connect(str(settings.sqlite_path))
-    try:
-        _seed_defaults(raw)
-        raw.commit()
-    finally:
-        raw.close()
-
-
-def _seed_defaults(raw):
-    """Seed default MCP Server (idempotent).
-
-    Creates:
-    1. Default MCP Server 'Python Executor' (if not exists) — provides the
-       native file/code execution tools (e.g. run_python) that claw exposes as
-       always-available meta tools (see agent_nodes._build_all_meta_tools).
-    """
-    print("[seed] Checking default MCP Server...")
     import hashlib
 
-    # Deterministic UUIDs
+    from sqlalchemy import select
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.skill import MCPServer
+
+    # Deterministic UUID
     mcp_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-python-repl").hexdigest()))
-    now = datetime.now(timezone.utc).isoformat()
 
-    # Default MCP Server: Python Executor (platform-mandated, built-in).
-    existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
-    if not existing:
-        raw.execute(
-            "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, is_builtin, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (mcp_id, "Python Executor", "http", "http://mcp-repl:9200/mcp", 30, 1, 1, now),
+    async with async_session() as session:
+        existing = await session.scalar(
+            select(MCPServer.id).where(MCPServer.id == mcp_id).limit(1)
         )
-        print("[seed] MCP Server 'Python Executor' created (built-in)")
-    else:
-        print("[seed] MCP Server 'Python Executor' already exists")
-
-    # Idempotently (re)assert the built-in flag on the existing row so the
-    # Python Executor is always treated as a platform-managed server, even if
-    # the column was just added by a migration on an older database.
-    raw.execute(
-        "UPDATE mcp_servers SET is_builtin = 1 WHERE id = ? AND COALESCE(is_builtin, 0) = 0",
-        (mcp_id,),
-    )
-
+        if existing is None:
+            session.add(MCPServer(
+                id=mcp_id,
+                name="Python Executor",
+                transport_type="http",
+                endpoint="http://mcp-repl:9200/mcp",
+                timeout_seconds=30,
+                is_active=True,
+                is_builtin=True,
+            ))
+            print("[seed] MCP Server 'Python Executor' created (built-in)")
+        else:
+            # (Re)assert the built-in flag on the existing row so the Python
+            # Executor is always treated as a platform-managed server, even if
+            # the column was just added by a migration on an older database.
+            # Use the per-dialect ON CONFLICT upsert so the same code path works
+            # on both SQLite and Postgres.
+            insert_stmt = (
+                pg_insert(MCPServer) if DATABASE_URL.startswith("postgresql")
+                else sqlite_insert(MCPServer)
+            ).values(
+                id=mcp_id, name="Python Executor", transport_type="http",
+                endpoint="http://mcp-repl:9200/mcp", timeout_seconds=30,
+                is_active=True, is_builtin=True,
+            ).on_conflict_do_update(
+                index_elements=[MCPServer.id],
+                set_={MCPServer.is_builtin.key: True},
+            )
+            await session.execute(insert_stmt)
+            print("[seed] MCP Server 'Python Executor' already exists")
+        await session.commit()
     print("[seed] defaults done")
 
 

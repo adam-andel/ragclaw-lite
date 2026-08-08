@@ -7,6 +7,10 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
+# Optional async Postgres driver — only needed when DATABASE_URL points at a
+# postgresql+asyncpg:// backend. Left unpinned like the rest of this file so a
+# clean clone (default SQLite) still builds with `docker compose up`.
+asyncpg>=0.29.0
 chromadb>=0.5.0
 sentence-transformers>=3.0.0
 pymupdf>=1.24.0

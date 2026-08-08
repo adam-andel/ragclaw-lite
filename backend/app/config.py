@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     chroma_path: Path = data_dir / "chroma"
     skills_dir: Path = data_dir / "skills"
 
+    # --- Database ---
+    # SQLAlchemy async database URL. Defaults to the local SQLite file so the
+    # project still runs with a one-command `docker compose up` and no external
+    # Postgres. Set via env (e.g. in .env) to use Postgres, e.g.:
+    #   DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/ragclaw
+    database_url: str = ""
+
     # --- Embedding ---
     embedding_model: str = ""  # empty = no embedding model (vector search disabled)
     embedding_device: str = "cpu"  # "cuda" if GPU available
