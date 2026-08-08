@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import get_db, serialize_writes
 from app.config import settings
 from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.kb_access import KBUserAccess
@@ -106,6 +106,7 @@ async def upload_document(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
     current_user: User = Depends(get_current_staff),
+    _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
     filename = file.filename or "unknown"
@@ -147,6 +148,7 @@ async def upload_documents_batch(
     files: list[UploadFile] = File(...),
     kb_id: str | None = Query(None),
     current_user: User = Depends(get_current_staff),
+    _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
     if not files:
@@ -262,6 +264,7 @@ async def list_all_documents(
 @router.post("/reindex")
 async def reindex_all_documents(
     current_user: User = Depends(get_current_staff),
+    _: None = Depends(serialize_writes),
 ):
     """Re-embed every completed document with the active model and rebuild KB indexes.
 
@@ -390,6 +393,7 @@ async def get_document_kbs(
 @router.delete("/{doc_id}")
 async def delete_document(
     doc_id: str, current_user: User = Depends(get_current_user),
+    _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.vector_store import vector_store
@@ -451,6 +455,7 @@ async def list_documents_by_kb(
 @router.post("/{doc_id}/process")
 async def trigger_process_document(
     doc_id: str, current_user: User = Depends(get_current_staff),
+    _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger async processing for a single pending document."""
@@ -469,6 +474,7 @@ async def trigger_process_document(
 @router.post("/process-all")
 async def trigger_process_all(
     current_user: User = Depends(get_current_staff),
+    _: None = Depends(serialize_writes),
 ):
     """Process all pending documents."""
     from app.services.doc_processor import process_pending_documents

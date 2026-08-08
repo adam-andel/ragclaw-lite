@@ -7,6 +7,7 @@ of truth. On startup ``init_db`` creates any missing tables, then seeds idempote
 default data.
 """
 
+import asyncio
 import secrets
 import uuid
 from collections.abc import Iterable
@@ -30,6 +31,19 @@ settings.skills_dir.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = settings.database_url or f"sqlite+aiosqlite:///{settings.sqlite_path}"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
+
+# ─── Write concurrency limiter ───
+# SQLite serializes all writes behind a single file lock, so a burst of
+# concurrent write requests (upload / process / delete / reindex triggered
+# from the API) can hit "database is locked". This semaphore caps how many
+# write requests may enter the DB at once from the API process. Background
+# writers (doc_processor task, reindex daemon thread) are NOT covered here —
+# they run serially on their own and simply queue behind the SQLite lock.
+# Raising this above 1 on SQLite gives little benefit (the lock is still
+# single-writer); it mainly smooths request handling and prevents lock
+# contention spikes. On Postgres this becomes a soft concurrency cap.
+WRITE_CONCURRENCY = 4
+write_semaphore = asyncio.Semaphore(WRITE_CONCURRENCY)
 
 
 class _AsyncSessionProxy:
@@ -113,6 +127,13 @@ async def _create_tables():
     """
     import app.models  # noqa: F401
     async with engine.begin() as conn:
+        # WAL lets readers proceed while a writer is active and avoids the
+        # "database is locked" busy errors under concurrent read/write on
+        # SQLite. Harmless no-op on Postgres (skipped via the URL check).
+        if DATABASE_URL.startswith("sqlite"):
+            from sqlalchemy import text
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=5000"))
         await conn.run_sync(Base.metadata.create_all, checkfirst=True)
 
 
@@ -180,3 +201,17 @@ async def get_db() -> AsyncSession:
     """FastAPI dependency: yield an async DB session."""
     async with async_session() as session:
         yield session
+
+
+async def serialize_writes():
+    """FastAPI dependency: cap concurrent write requests to the database.
+
+    SQLite allows only one writer at a time, so a burst of concurrent write
+    endpoints (upload / process / delete / reindex) would otherwise contend on
+    the file lock and raise "database is locked". Acquiring this semaphore
+    before the handler body limits how many writes run simultaneously from the
+    API process. Background writers (doc_processor, reindex daemon) are not
+    routed through this dependency and serialize themselves.
+    """
+    async with write_semaphore:
+        yield
