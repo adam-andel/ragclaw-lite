@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, h, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   NCard, NDataTable, NTag, NButton, NSpin, NEmpty,
   NIcon, NPagination, NInput, NSelect, NPopconfirm,
 } from 'naive-ui'
-import { CheckmarkDone, Notifications, Search, Trash } from '@vicons/ionicons5'
+import { CheckmarkDone, Notifications, Search, Trash, Open } from '@vicons/ionicons5'
 import { useNotificationStore } from '@/stores/notifications'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
@@ -15,6 +16,7 @@ import type { DataTableColumns } from 'naive-ui'
 
 const { t } = useI18n()
 const notificationStore = useNotificationStore()
+const router = useRouter()
 const { permission, requestPermission, supported } = useBrowserNotification()
 const page = ref(1)
 const size = ref(20)
@@ -110,6 +112,27 @@ function rowClassName(row: NotificationItem): string {
 function openDetail(row: NotificationItem) {
   selected.value = row
   showDetail.value = true
+}
+
+// Extract the cron job id from a notification link like
+// "/cron-jobs?job=<id>&logs=1" (older notifications may just be "/cron-jobs").
+function cronJobIdFromLink(link?: string | null): string | null {
+  if (!link) return null
+  try {
+    const url = new URL(link, window.location.origin)
+    return url.searchParams.get('job')
+  } catch {
+    return null
+  }
+}
+
+// Open the linked cron job's detail modal with logs, equivalent to clicking the
+// "Logs" button inside the CronJobsView detail modal.
+function viewCronJobDetail() {
+  const jobId = cronJobIdFromLink(selected.value?.link)
+  if (!jobId) return
+  showDetail.value = false
+  router.push({ path: '/cron-jobs', query: { job: jobId, logs: '1' } }).catch(() => {})
 }
 
 // Mark the viewed notification as read after the modal has closed, so the list
@@ -248,6 +271,16 @@ onMounted(load)
             {{ selected.type === 'cron_job' ? t('notifications.type.cron') : t('notifications.type.system') }}
           </NTag>
           <span class="nt-detail-time">{{ formatTime(selected.created_at) }}</span>
+          <NButton
+            v-if="selected.type === 'cron_job' && cronJobIdFromLink(selected.link)"
+            size="tiny"
+            secondary
+            type="primary"
+            @click="viewCronJobDetail"
+          >
+            <template #icon><NIcon><Open /></NIcon></template>
+            {{ t('notifications.viewCronJob') }}
+          </NButton>
         </div>
         <div class="nt-detail-content">
           <p class="nt-detail-body">{{ selected.content || '-' }}</p>

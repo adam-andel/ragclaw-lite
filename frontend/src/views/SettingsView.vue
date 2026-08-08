@@ -10,7 +10,7 @@ import {
 } from 'naive-ui'
 import { Settings, Save, Flash, Key, Globe, AlertCircle, CheckmarkCircle, HelpCircle, Download, Refresh, Copy, Pause, Play, CloseCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
-import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, getJwtAuth, regenerateJwtAuth, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig, type JwtAuthConfig } from '@/api/settings'
+import { getLLMConfig, updateLLMConfig, testLLMConnection, getSandboxNetwork, updateSandboxNetwork, getReplAuth, regenerateReplAuth, getEmbeddingModelStatus, downloadEmbeddingModel, pauseEmbeddingDownload, resumeEmbeddingDownload, cancelEmbeddingDownload, deleteEmbeddingModel, switchEmbeddingModel, checkEmbeddingDimension, switchToNone, getReindexStatus, startReindex, getHttpsConfig, updateHttpsConfig, getJwtAuth, regenerateJwtAuth, type LLMConfig, type SandboxNetworkConfig, type ReplAuthConfig, type EmbeddingModelStatus, type EmbeddingModelOption, type ReindexStatus, type HTTPSConfig, type JwtAuthConfig } from '@/api/settings'
 import PluginManagementSection from '@/components/settings/PluginManagementSection.vue'
 import { currentLocale } from '@/i18n/useLocale'
 import { useAuthStore } from '@/stores/auth'
@@ -146,6 +146,10 @@ function isModelInstalled(m: string) {
 
 const switchBtnLabel = computed(() => {
   const installed = isModelInstalled(selectedModel.value)
+  // Disabling vector search ("None") → the action is Switch & Clear All.
+  if (selectedModel.value === '') {
+    return t('settings.embeddingModelMgmt.switchClearBtn')
+  }
   const conflict = dimensionConflict.value !== ''
   return installed && !conflict
     ? t('settings.embeddingModelMgmt.switchBtn')
@@ -153,6 +157,12 @@ const switchBtnLabel = computed(() => {
 })
 
 const switchBtnDisabled = computed(() => {
+  // "None" (disable vector search): actionable only when vector search is
+  // currently enabled, i.e. the configured model is not already empty.
+  if (selectedModel.value === '') {
+    if (switching.value || reindexing.value) return true
+    return embeddingStatus.value.configured_model === ''
+  }
   if (!selectedModel.value || switching.value || reindexing.value) return true
   if (selectedModel.value === embeddingStatus.value.configured_model) return true
   return !isModelInstalled(selectedModel.value)
@@ -224,9 +234,34 @@ function startReindexPolling() {
   }, 2000)
 }
 
-const embeddingSelectOptions = computed(() =>
-  embeddingOptions.value.map((o) => ({ label: o.label, value: o.id })),
-)
+// vue-i18n uses "." as a path separator, so the model ids (which contain "."
+// and "/", e.g. "BAAI/bge-small-zh-v1.5") cannot be used directly as i18n key
+// paths. Map each id to a special-character-free key under modelLabels.
+const MODEL_LABEL_KEY: Record<string, string> = {
+  'BAAI/bge-small-zh-v1.5': 'bgeSmallZh',
+  'BAAI/bge-base-zh-v1.5': 'bgeBaseZh',
+  'BAAI/bge-large-zh-v1.5': 'bgeLargeZh',
+  'BAAI/bge-small-en-v1.5': 'bgeSmallEn',
+  'BAAI/bge-base-en-v1.5': 'bgeBaseEn',
+  'BAAI/bge-large-en-v1.5': 'bgeLargeEn',
+  '': 'none',
+}
+
+const embeddingSelectOptions = computed(() => {
+  // Touch currentLocale so this recomputes when the UI language changes.
+  void currentLocale.value
+  return embeddingOptions.value.map((o) => ({
+    label: t(`settings.embeddingModelMgmt.modelLabels.${MODEL_LABEL_KEY[o.id] ?? ''}`, o.label),
+    value: o.id,
+  }))
+})
+
+// Localized name of the currently configured model, matching the dropdown labels.
+// Falls back to the raw id when the id isn't in the i18n map (unknown model).
+const currentModelLabel = computed(() => {
+  const id = embeddingStatus.value.configured_model || config.value.embedding_model || ''
+  return t(`settings.embeddingModelMgmt.modelLabels.${MODEL_LABEL_KEY[id] ?? ''}`, id || 'None')
+})
 
 // ── Selected-model-centric state (the dropdown drives install/download) ──
 const selectedInstalled = computed(() =>
@@ -270,7 +305,11 @@ async function loadEmbeddingStatus() {
     embeddingOptions.value = s.options || []
     // Only pre-select on first load; never override the user's current choice
     // during subsequent refreshes (e.g. while a download is polling).
-    if (s.configured_model && !selectedModel.value) selectedModel.value = s.configured_model
+    if (!selectedModel.value) {
+      // Pre-select the currently configured model (empty string = "None" /
+      // vector search disabled is a valid state, not a language default).
+      selectedModel.value = s.configured_model || ""
+    }
   } catch (e: any) {
     // non-fatal; section just stays in its last known state
   }
@@ -448,6 +487,18 @@ async function doReindex(target: string) {
 async function handleReindex() {
   const target = selectedModel.value
   if (!target) return
+  // "None" selected → disable vector search AND wipe all vectors. This is an
+  // explicit, destructive action, so always require a second confirmation.
+  if (target === '') {
+    dialog.warning({
+      title: t('settings.embeddingModelMgmt.switchNoneTitle'),
+      content: t('settings.embeddingModelMgmt.switchNoneConfirm'),
+      positiveText: t('settings.embeddingModelMgmt.switchNoneOk'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => { doSwitchNone() },
+    })
+    return
+  }
   // When the button reads "Switch & Re-index" (an incompatible-dimension switch),
   // the action will wipe ALL vector indexes. Pop a second confirmation that
   // re-states the dimension-conflict warning before proceeding.
@@ -462,6 +513,33 @@ async function handleReindex() {
     return
   }
   await doReindex(target)
+}
+
+// Switch to "None" (disable vector search) and clear all vectors in one action.
+async function doSwitchNone() {
+  switching.value = true
+  reindexStatus.value = {
+    status: 'running',
+    phase: 'deleting',
+    params: {},
+    progress: 0,
+    current: 0,
+    total: 0,
+    error: '',
+  }
+  reindexing.value = true
+  try {
+    const res = await switchToNone()
+    config.value.embedding_model = res.model
+    await loadEmbeddingStatus()
+    message.success(t('settings.embeddingModelMgmt.switchNoneDone'))
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail ?? e?.message ?? t('settings.saveFailed'))
+  } finally {
+    switching.value = false
+    reindexing.value = false
+    reindexStatus.value = { status: 'idle', phase: '', params: {}, progress: 0, error: '', current: 0, total: 0 }
+  }
 }
 
 // "Re-index Now" = re-embed ALL documents (including chunked ones that were
@@ -1114,7 +1192,7 @@ async function handleTest() {
           <p class="muted" style="margin: 0 0 16px;font-size: 13px">{{ t('settings.embeddingModelMgmt.desc') }}</p>
           <NFormItem :label="t('settings.embeddingModelMgmt.currentLabel')">
             <span class="muted" style="font-size: 14px; font-weight: 500">
-              {{ embeddingStatus.configured_model || config.embedding_model }}
+              {{ currentModelLabel }}
             </span>
           </NFormItem>
           <NFormItem>

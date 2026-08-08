@@ -11,33 +11,45 @@ guard against switching to an incompatible dimension.
 EMBEDDING_MODEL_OPTIONS = [
     {
         "id": "BAAI/bge-small-zh-v1.5",
-        "label": "BGE small · 中文 · 512维 · ~130MB（快）",
+        "label": "BGE small · Chinese · 512-dim · ~130MB (fast)",
         "dimension": 512,
         "size": "130MB",
     },
     {
         "id": "BAAI/bge-base-zh-v1.5",
-        "label": "BGE base · 中文 · 768维 · ~400MB",
+        "label": "BGE base · Chinese · 768-dim · ~400MB",
         "dimension": 768,
         "size": "400MB",
     },
     {
         "id": "BAAI/bge-large-zh-v1.5",
-        "label": "BGE large · 中文 · 1024维 · ~1.3GB（更准）",
+        "label": "BGE large · Chinese · 1024-dim · ~1.3GB (accurate)",
         "dimension": 1024,
         "size": "1.3GB",
     },
     {
         "id": "BAAI/bge-small-en-v1.5",
-        "label": "BGE small · 英文 · 512维 · ~130MB",
+        "label": "BGE small · English · 512-dim · ~130MB",
         "dimension": 512,
         "size": "130MB",
     },
     {
+        "id": "BAAI/bge-base-en-v1.5",
+        "label": "BGE base · English · 768-dim · ~400MB",
+        "dimension": 768,
+        "size": "400MB",
+    },
+    {
         "id": "BAAI/bge-large-en-v1.5",
-        "label": "BGE large · 英文 · 1024维 · ~1.3GB",
+        "label": "BGE large · English · 1024-dim · ~1.3GB",
         "dimension": 1024,
         "size": "1.3GB",
+    },
+    {
+        "id": "",
+        "label": "None · disable vector search",
+        "dimension": None,
+        "size": "0",
     },
 ]
 

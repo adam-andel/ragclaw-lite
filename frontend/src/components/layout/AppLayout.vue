@@ -78,11 +78,13 @@ watch(() => route.path, () => {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 .main-content {
   position: relative;
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-6) var(--space-8);
   background: var(--color-bg);
 }

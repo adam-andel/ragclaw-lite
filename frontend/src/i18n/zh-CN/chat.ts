@@ -105,6 +105,7 @@ export default {
   downloadX: '下载 {name}',
   pageX: '第{page}页',
   regenerate: '重新生成',
+  editQuery: '修改',
   streamError: '❌ 错误: {msg}',
   sendFailed: '发送失败: {msg}，已恢复输入',
   loadConversationFailed: '加载对话失败：{msg}',

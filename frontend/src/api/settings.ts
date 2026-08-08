@@ -164,6 +164,19 @@ export async function switchEmbeddingModel(model: string, force = false): Promis
   return res.data
 }
 
+// ── Switch to "None" (disable vector search) AND wipe all vectors in one action ──
+export interface SwitchNoneResult {
+  model: string
+  installed: boolean
+  cleared_vectors: boolean
+  cleared_count: number
+}
+
+export async function switchToNone(): Promise<SwitchNoneResult> {
+  const res = await client.post('/embedding-model/switch-none')
+  return res.data
+}
+
 // ── Dry-run dimension check (no mutation) ──
 // Returns 200 when switching is safe; throws HTTP 409 (detail carries
 // existing/new dimension + vector count) when the dimensions are incompatible.

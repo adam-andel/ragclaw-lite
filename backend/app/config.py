@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     skills_dir: Path = data_dir / "skills"
 
     # --- Embedding ---
-    embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    embedding_model: str = ""  # empty = no embedding model (vector search disabled)
     embedding_device: str = "cpu"  # "cuda" if GPU available
 
     # --- Chunking ---

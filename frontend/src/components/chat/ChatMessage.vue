@@ -3,7 +3,7 @@ import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MarkdownIt from 'markdown-it'
 import { NTag, NButton, NIcon, NSpin } from 'naive-ui'
-import { Copy, Refresh, Download } from '@vicons/ionicons5'
+import { Copy, Refresh, Download, Create } from '@vicons/ionicons5'
 import { currentLocale } from '@/i18n/useLocale'
 import AppModal from '@/components/common/AppModal.vue'
 import type { ChatMessage } from '@/types'
@@ -25,7 +25,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   regenerate: [assistantMsgId: string]
+  editQuery: [content: string]
 }>()
+
+function editQuery() {
+  emit('editQuery', message.content)
+}
 
 const auth = useAuthStore()
 
@@ -453,6 +458,10 @@ onBeforeUnmount(() => {
       </NButton>
     </div>
     <div v-if="!isStreaming && message.role === 'user'" class="message-actions">
+      <NButton text size="tiny" @click="editQuery" class="msg-action-btn">
+        <template #icon><NIcon><Create /></NIcon></template>
+        {{ t('chat.editQuery') }}
+      </NButton>
       <div class="copy-btn-wrapper">
         <NButton text size="tiny" @click="copyText(message.content)" class="msg-action-btn">
           <template #icon><NIcon><Copy /></NIcon></template>
@@ -575,6 +584,15 @@ mark.search-hit.active {
   background: #3b82f6;
   color: white;
   border-color: transparent;
+  /* Cap height for long queries; the text area scrolls instead of the bubble growing. */
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+.user .message-body .message-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
 }
 .message-meta {
   display: flex; align-items: center; gap: var(--space-2);

@@ -166,6 +166,13 @@ async def switch_embedding_model(
     and nothing is mutated.
     """
     target = body.model
+    if target == "":
+        # Disabling vector search is handled by the dedicated /switch-none
+        # endpoint, which also wipes all vectors in one explicit action.
+        raise HTTPException(
+            status_code=400,
+            detail="EMBEDDING_MODEL_EMPTY_USE_SWITCH_NONE",
+        )
     if not is_known_model(target):
         raise HTTPException(status_code=400, detail=f"EMBEDDING_MODEL_UNKNOWN: {target}")
 
@@ -223,6 +230,19 @@ async def switch_embedding_model(
     }
 
 
+@router.post("/switch-none")
+async def switch_to_none(current_user=Depends(get_current_admin)):
+    """Disable vector search: set the configured model to empty AND wipe all
+    vectors. This is the explicit "switch to None + clear all" action; both
+    steps happen together only when the admin confirms via the UI button.
+    """
+    from app.services.vector_store import vector_store
+
+    await config_manager.update({"embedding_model": ""})
+    cleared = vector_store.clear_all()
+    return {"model": "", "installed": False, "cleared_vectors": True, "cleared_count": cleared}
+
+
 class CheckRequest(BaseModel):
     model: str
 
@@ -239,6 +259,13 @@ async def check_embedding_model(
     identity differs. Returns 200 otherwise.
     """
     target = body.model
+    if target == "":
+        # Switching to "None" has no dimension/conflict concept; the dedicated
+        # /switch-none endpoint performs the wipe + disable in one explicit action.
+        raise HTTPException(
+            status_code=400,
+            detail="EMBEDDING_MODEL_EMPTY_USE_SWITCH_NONE",
+        )
     if not is_known_model(target):
         raise HTTPException(status_code=400, detail=f"EMBEDDING_MODEL_UNKNOWN: {target}")
 

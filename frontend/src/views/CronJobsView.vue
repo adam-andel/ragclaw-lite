@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput,
   NIcon, useMessage, NSpace, NPopconfirm,
   NInputNumber, NTag, NSpin, NTooltip, NDescriptions, NDescriptionsItem,
-  NEmpty, NSelect, NCard,
+  NEmpty, NSelect,
 } from 'naive-ui'
 import { Add, Trash, Create, Play, Time, Ban, CheckmarkCircle, Search, Refresh } from '@vicons/ionicons5'
 import StatusToggle from '@/components/common/StatusToggle.vue'
@@ -14,7 +15,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import {
-  listCronJobs, createCronJob, updateCronJob, deleteCronJob,
+  listCronJobs, getCronJob, createCronJob, updateCronJob, deleteCronJob,
   toggleCronJob, runCronJobNow, resetCronJob, listCronJobRuns,
 } from '@/api/cronJobs'
 import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
@@ -25,6 +26,7 @@ import { useCronDescribe } from '@/composables/useCronDescribe'
 const message = useMessage()
 const { t } = useI18n()
 const { format: formatCron } = useCronDescribe()
+const route = useRoute()
 
 // ── Data ──
 
@@ -139,7 +141,34 @@ function refreshDetail() {
   else detailJob.value = null
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // Deep-link support: open a specific job's detail modal with logs when
+  // navigated from a notification (e.g. /cron-jobs?job=<id>&logs=1).
+  const jobId = route.query.job as string | undefined
+  if (jobId) {
+    // Fetch the job directly so it works regardless of pagination/filters.
+    let job = jobs.value.find(j => j.id === jobId)
+    if (!job) {
+      try {
+        job = await getCronJob(jobId)
+      } catch {
+        job = undefined
+      }
+    }
+    if (job) {
+      openDetail(job)
+      if (route.query.logs) await openRuns(job)
+    }
+    // Clean the deep-link params from the URL bar without triggering a Vue Router
+    // navigation. NOTE: the page-layer is keyed by route.fullPath (see AppLayout.vue),
+    // so router.replace() would remount CronJobsView and wipe the just-opened modal.
+    // history.replaceState updates the URL without re-navigating, keeping the modal open.
+    if (route.query.job || route.query.logs) {
+      window.history.replaceState(window.history.state, '', '/cron-jobs')
+    }
+  }
+})
 
 // ── CRUD ──
 
@@ -277,6 +306,15 @@ async function openRuns(job: CronJob) {
   runsPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+// Scroll back up to the "Execution Log" heading whenever the log page changes,
+// so the user always lands at the top of the new page's logs.
+function onRunsPageChange(page: number) {
+  runsPage.value = page
+  nextTick(() => {
+    runsPreviewTitle.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
 // ── Helpers ──
 
 function formatTime(t?: string | null) {
@@ -373,8 +411,8 @@ function isPaused(job: CronJob) {
           <div class="cj-card-desc" v-if="job.description">{{ job.description }}</div>
 
           <div class="cj-card-meta">
-            <span class="cj-meta-label">{{ t('cron.runCount') }}</span>
-            <span class="cj-meta-value">{{ job.run_count }}</span>
+            <span class="cj-meta-label">{{ t('cron.lastRun') }}</span>
+            <span class="cj-meta-value">{{ formatTime(job.last_run_at) }}</span>
           </div>
 
           <div class="cj-card-meta">
@@ -438,30 +476,32 @@ function isPaused(job: CronJob) {
 
       <!-- Run logs: revealed inline when the Logs button is clicked -->
       <div v-if="showDetailRuns" class="detail-runs">
-        <h3 ref="runsPreviewTitle" class="runs-preview-title">{{ t('cron.execLog') }}</h3>
+        <div ref="runsPreviewTitle" class="runs-preview-title">
+          <span class="runs-preview-title-text">{{ t('cron.execLog') }}</span>
+          <AppPagination
+            always-show
+            class="runs-inline-pager"
+            :page="runsPage"
+            :page-size="runsPerPage"
+            :item-count="runs.length"
+            @update:page="onRunsPageChange"
+          />
+        </div>
         <div class="runs-modal">
           <NSpin :show="runsLoading">
             <div v-if="!runsLoading && runs.length === 0" class="empty">{{ t('cron.noRunRecords') }}</div>
             <div v-else class="run-list">
-              <NCard v-for="run in pagedRuns" :key="run.id" size="small" style="margin-bottom: 12px">
+              <div v-for="run in pagedRuns" :key="run.id" class="run-card">
                 <div class="run-meta">
                   <NTag :type="run.status === 'executed' ? 'success' : 'error'">{{ run.status }}</NTag>
                   <span class="run-time">{{ formatTime(run.started_at) }}</span>
                 </div>
                 <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
                 <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>
-              </NCard>
+              </div>
             </div>
           </NSpin>
         </div>
-        <AppPagination
-          always-show
-          class="runs-footer-pager"
-          :page="runsPage"
-          :page-size="runsPerPage"
-          :item-count="runs.length"
-          @update:page="runsPage = $event"
-        />
       </div>
 
       <template #footer>
@@ -627,6 +667,9 @@ html.dark .cj-card-desc {
   text-align: center;
   padding: 32px 0;
 }
+.run-card {
+  margin-bottom: 12px;
+}
 .run-meta {
   display: flex;
   align-items: center;
@@ -645,8 +688,6 @@ html.dark .cj-card-desc {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--text-sm);
-  max-height: 240px;
-  overflow-y: auto;
 }
 .run-error {
   color: var(--color-error);
@@ -657,31 +698,37 @@ html.dark .cj-card-desc {
 .detail-runs {
   display: flex;
   flex-direction: column;
-  max-height: 80vh;
-  margin-top: var(--space-6, 24px);
-  padding-top: var(--space-4, 16px);
+  margin-top: 4px;
+  padding-top: 2px;
   border-top: 1px solid var(--color-border, #eee);
 }
 .runs-preview-title {
-  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* Pin the heading row to the top of the modal's scroll area so it never
+     scrolls out of view. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
   margin: 0 0 var(--space-3, 12px);
+  background: var(--color-surface, #fff);
+}
+.runs-preview-title-text {
   font-size: var(--text-base, 15px);
   font-weight: 600;
   color: var(--color-text, #1f2937);
 }
-/* Inner scroll region: flex:1 + min-height:0 makes scrolling work inside a flex column */
+.runs-inline-pager {
+  margin-left: auto;
+}
+/* Log area grows with content; the page/modal scrolls as a whole instead of
+   an inner region being height-capped. */
 .runs-modal {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
-.detail-runs > .runs-footer-pager {
-  flex-shrink: 0;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border, #eee);
 }
 /* Sticky footer pagination: the list scrolls, the pager stays pinned at the
    bottom of the viewport (mirrors WorkspaceView.vue). */

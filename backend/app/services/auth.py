@@ -1,5 +1,7 @@
 """JWT authentication utilities."""
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -12,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.models.refresh_token import RefreshToken
 from app.services.config_manager import config_manager
 
 # --- Config ---
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 30  # 30 min; refreshed transparently via refresh token
+REFRESH_TOKEN_TTL_DAYS = 30  # rotated to a fresh value on every use
 
 
 def get_jwt_secret() -> str:
@@ -67,6 +71,101 @@ def decode_token(token: str) -> dict | None:
         return jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
     except JWTError:
         return None
+
+
+# --- Refresh tokens (opaque, DB-backed, revocable, rotatable) ---
+def _hash_refresh_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def issue_raw_refresh_token() -> str:
+    """Generate a new opaque refresh token (returned to the client once)."""
+    return secrets.token_urlsafe(48)
+
+
+async def create_refresh_token(
+    db: AsyncSession,
+    user_id: str,
+    raw: str,
+    device: str | None = None,
+) -> RefreshToken:
+    """Persist a refresh token (hashed) and return the ORM row."""
+    rt = RefreshToken(
+        user_id=user_id,
+        token_hash=_hash_refresh_token(raw),
+        device=device,
+        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_TTL_DAYS),
+    )
+    db.add(rt)
+    await db.flush()
+    return rt
+
+
+async def rotate_refresh_token(
+    db: AsyncSession,
+    old: RefreshToken,
+    device: str | None = None,
+) -> tuple[RefreshToken, str]:
+    """Revoke the old refresh token and issue a brand-new one (rotation).
+
+    Returns ``(new_row, raw_token)``; the caller is responsible for committing
+    and returning ``raw_token`` to the client exactly once.
+    """
+    old.is_revoked = True
+    raw = issue_raw_refresh_token()
+    new_rt = await create_refresh_token(db, old.user_id, raw, device=device)
+    await db.flush()
+    return new_rt, raw
+
+
+async def verify_refresh_token(
+    db: AsyncSession,
+    raw: str,
+    user_id: str | None = None,
+) -> RefreshToken | None:
+    """Validate a raw refresh token and return its (still-valid) row, else None.
+
+    Checks hash match, not revoked, not expired, and (optionally) ownership.
+    Does NOT revoke/rotate — callers decide (refresh rotates; logout revokes).
+    """
+    token_hash = _hash_refresh_token(raw)
+    stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+    result = await db.execute(stmt)
+    rt = result.scalar_one_or_none()
+    if rt is None or rt.is_revoked:
+        return None
+    if rt.expires_at < datetime.utcnow():
+        return None
+    if user_id is not None and rt.user_id != user_id:
+        return None
+    return rt
+
+
+async def revoke_refresh_token(db: AsyncSession, raw: str) -> bool:
+    """Revoke a single refresh token (logout). Returns True if one was revoked."""
+    rt = await verify_refresh_token(db, raw)
+    if rt is None:
+        return False
+    rt.is_revoked = True
+    await db.flush()
+    return True
+
+
+async def revoke_all_user_refresh_tokens(db: AsyncSession, user_id: str) -> int:
+    """Revoke every refresh token for a user (logout-all / password change / disable).
+
+    Returns the number of rows revoked.
+    """
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id, RefreshToken.is_revoked == False  # noqa: E712
+        )
+    )
+    rows = result.scalars().all()
+    for rt in rows:
+        rt.is_revoked = True
+    await db.flush()
+    return len(rows)
 
 
 # --- FastAPI Dependencies ---

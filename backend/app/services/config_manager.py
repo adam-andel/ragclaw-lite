@@ -811,7 +811,7 @@ class ConfigManager:
     @property
     def embedding_model(self) -> str:
         with self._lock:
-            return self._config.get("embedding_model", "BAAI/bge-small-zh-v1.5")
+            return self._config.get("embedding_model", "")
 
     @property
     def llm_provider(self) -> str:

@@ -7,8 +7,9 @@ import { NInput, NButton, NIcon, NTag, NCard, NEmpty, NSpace, NSpin, NSwitch, NT
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
-import AppCard from '@/components/common/AppCard.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
+import KbPickCard from '@/components/kb/KbPickCard.vue'
+import AppCard from '@/components/common/AppCard.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, updateConversationSummary, compactConversation } from '@/api/chat'
@@ -358,22 +359,29 @@ function setPendingBubble(opts: {
 
 // Last-resort recovery: if /status is unavailable, derive the durable pause state
 // from the messages we already loaded. A suspended run persists an assistant message
-// whose text is the tool-round hint and whose status is null — that is unambiguous.
+// whose text is the tool-round hint and whose status is null — AND that message is the
+// LAST assistant message in the thread (the run stopped there, nothing follows it).
+// Scanning all history would wrongly re-flag already-resolved suspensions that linger
+// in the message list as stale "round limit reached" entries.
 function restorePendingFromMessages(convId: string) {
   const hint = /round limit reached|reply ['"]continue['"]/i
+  let last: ChatMsg | undefined
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
-    if (m.role !== 'assistant') continue
-    if ((m as any)._pending === true) return // already shown
-    if ((m.status === null || m.status === undefined || m.status === 'pending') && m.content && hint.test(m.content)) {
-      setPendingBubble({
-        message: m.content,
-        convId,
-        kind: (m as any).kind || 'tool_round',
-        messageId: m.id,
-      })
-      return
+    if (m.role === 'assistant') {
+      last = m as ChatMsg
+      break
     }
+  }
+  if (!last || (last as any)._pending === true) return
+  if ((last.status === null || last.status === undefined || last.status === 'pending') &&
+      last.content && hint.test(last.content)) {
+    setPendingBubble({
+      message: last.content,
+      convId,
+      kind: (last as any).kind || 'tool_round',
+      messageId: last.id,
+    })
   }
 }
 let abortCtl: AbortController | null = null
@@ -1436,6 +1444,22 @@ async function regenerateAnswer(assistantMsgId: string) {
   doStream(userMsg.content, proxyMsg, userMsg.id, true, null, workspaceDir.value)
 }
 
+// Fill the composer with an existing user query. If the input already has text,
+// append to the tail instead of overwriting it.
+function editQueryToInput(content: string) {
+  const cur = inputText.value
+  if (cur.trim().length > 0) {
+    const sep = cur.endsWith('\n') ? '' : '\n'
+    inputText.value = cur + sep + content
+  } else {
+    inputText.value = content
+  }
+  nextTick(() => {
+    const el = inputRef.value?.textareaElRef?.value || inputRef.value?.inputElRef?.value
+    el?.focus()
+  })
+}
+
 function stopStream() {
   abortCtl?.abort()
   isStreaming.value = false
@@ -1563,39 +1587,23 @@ function handleKeydown(e: KeyboardEvent) {
           <div class="empty-icon">🧠</div>
           <h3>{{ t('chat.newConversationPickKb') }}</h3>
           <div v-if="kbs.length > 0" class="center-panel-list">
-            <AppCard class="kb-pick-card"
+            <KbPickCard
+              variant="none"
               :active="!selectedKbId"
-              role="button" tabindex="0"
-              @click="selectedKbId = ''"
-              @keydown.enter.prevent="selectedKbId = ''"
-              @keydown.space.prevent="selectedKbId = ''"
-            >
-              <div class="kb-pick-inner">
-                <div class="kb-pick-avatar kb-pick-avatar-none">🚫</div>
-                <div class="kb-pick-body">
-                  <strong class="kb-pick-name">{{ t('chat.noKb') }}</strong>
-                </div>
-              </div>
-            </AppCard>
-            <AppCard v-for="kb in kbPreview" :key="kb.id" class="kb-pick-card"
+              :select-id="''"
+              :name="t('chat.noKb')"
+              @select="selectedKbId = ($event ?? '')"
+            />
+            <KbPickCard
+              v-for="kb in kbPreview"
+              :key="kb.id"
+              variant="normal"
+              :kb="kb"
               :active="kb.id === selectedKbId"
-              role="button" tabindex="0"
-              @click="selectedKbId = kb.id"
-              @keydown.enter.prevent="selectedKbId = kb.id"
-              @keydown.space.prevent="selectedKbId = kb.id"
-            >
-              <div class="kb-pick-inner">
-                <div class="kb-pick-avatar">📚</div>
-                <div class="kb-pick-body">
-                  <strong class="kb-pick-name">{{ kb.name }}</strong>
-                  <span v-if="kb.description" class="kb-pick-desc">{{ kb.description }}</span>
-                  <div class="kb-pick-stats">
-                    <span class="kb-pick-chip">{{ t('chat.docCount', { count: kb.doc_count }) }}</span>
-                    <span class="kb-pick-chip">{{ t('chat.chunkCount', { count: kb.vector_count }) }}</span>
-                  </div>
-                </div>
-              </div>
-            </AppCard>
+              :select-id="kb.id"
+              :stats="[t('chat.docCount', { count: kb.doc_count }), t('chat.chunkCount', { count: kb.vector_count })]"
+              @select="selectedKbId = ($event ?? '')"
+            />
           </div>
           <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
             {{ t('chat.moreKbs', { count: kbs.length }) }}
@@ -1644,6 +1652,7 @@ function handleKeydown(e: KeyboardEvent) {
           :search-keyword="searchKw"
           :active-match="msg.id === activeMatchId"
           @regenerate="regenerateAnswer"
+          @edit-query="editQueryToInput"
         />
       </template>
 
@@ -2357,28 +2366,6 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   white-space: nowrap;
-}
-.kb-pick-inner { display: flex; align-items: flex-start; gap: 10px; }
-.kb-pick-avatar {
-  flex-shrink: 0;
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-  background: var(--color-primary-soft);
-}
-.kb-pick-avatar-none { background: var(--color-border); }
-.kb-pick-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
-.kb-pick-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-pick-desc { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kb-pick-stats { display: flex; flex-wrap: wrap; gap: 6px; }
-.kb-pick-chip {
-  font-size: 0.7rem; line-height: 1.4;
-  color: var(--color-text-muted);
-  background: var(--color-surface-2, #f1f5f9);
-  border: 1px solid var(--color-border);
-  border-radius: 9999px;
-  padding: 1px 8px;
 }
 .picker-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
 .picker-footer-hint { font-size: var(--text-xs); color: var(--color-text-muted); }

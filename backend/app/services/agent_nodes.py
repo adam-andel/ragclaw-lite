@@ -719,6 +719,39 @@ def _build_meta_skill_tools() -> list[dict]:
             },
             "_source": "meta",
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_memory",
+                "description": (
+                    "Read or write the user's persistent profile memory (the 'Memory & Preferences' "
+                    "field). Call this whenever the user explicitly asks to change what you remember "
+                    "about them — to remember something, note a preference, or save a fact (e.g. "
+                    "'remember that I prefer replies in Chinese'), OR to forget / edit a previously "
+                    "saved fact or preference (e.g. 'forget my project codename'). The intended "
+                    "workflow is: first call with action='read' to fetch the current memory text, edit "
+                    "it in your reasoning (add, delete, or modify lines), then call again with "
+                    "action='write' and the full, updated text to persist it. Do NOT call this for "
+                    "trivial small talk — only when the user clearly wants the profile memory changed."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["read", "write"],
+                            "description": "Use 'read' to fetch the current memory text (no write), or 'write' to persist the full edited memory text provided in 'content'.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Required only for action='write' — the complete, updated memory text to save (replacing the previous content). Ignored for action='read'.",
+                        },
+                    },
+                    "required": ["action"],
+                },
+            },
+            "_source": "meta",
+        },
     ]
 
 
@@ -1716,6 +1749,63 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
         return {"result": f"[create_cron] error: {e}", "endpoint": None}
 
 
+async def _execute_update_memory(state: dict, args: dict) -> dict:
+    """Execute update_memory tool directly — read or write profile memory.
+
+    Session-injected ``user_id`` / ``tenant_id`` ensure the LLM cannot spoof
+    ownership. ``action`` selects the operation:
+      - 'read': return the current memory text verbatim (no mutation).
+      - 'write': persist ``content`` as the full, updated memory text, replacing
+        the previous content. Capped at 2000 characters (matching the frontend
+        maxlength); longer input is truncated. The LLM is expected to have read
+        first and supplied the complete edited text.
+    """
+    from app.models.user import User
+
+    action = (args.get("action") or "read").strip().lower()
+    if action not in ("read", "write"):
+        return {"result": "[update_memory] error: 'action' must be 'read' or 'write'", "endpoint": None}
+
+    user_id = state.get("user_id")
+    tenant_id = state.get("tenant_id")
+    if not user_id:
+        return {"result": "[update_memory] error: no authenticated user in session", "endpoint": None}
+
+    MAX_LEN = 2000
+
+    async with async_session() as db:
+        query = select(User).where(User.id == user_id)
+        if tenant_id is not None:
+            query = query.where(User.tenant_id == tenant_id)
+        user = (await db.execute(query)).scalar_one_or_none()
+        if not user:
+            return {"result": "[update_memory] error: user not found", "endpoint": None}
+
+        if action == "read":
+            current = user.memory or ""
+            return {
+                "result": f"[update_memory] read: current memory ({len(current)} chars):\n"
+                          f"<<<MEMORY_START>>>\n{current}\n<<<MEMORY_END>>>",
+                "endpoint": None,
+            }
+
+        # action == 'write'
+        content = (args.get("content") or "").strip()
+        if not content:
+            return {"result": "[update_memory] error: 'content' is required for action='write'", "endpoint": None}
+        new_memory = content
+        if len(new_memory) > MAX_LEN:
+            new_memory = new_memory[:MAX_LEN]
+        user.memory = new_memory
+        await db.commit()
+
+    logger.info("update_memory: wrote memory for user=%s (len=%d)", user_id, len(new_memory))
+    return {
+        "result": f"[update_memory] write: saved {len(new_memory)} chars. Profile memory updated.",
+        "endpoint": None,
+    }
+
+
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
     logger.warning(">>> tool_executor ENTER: tool_calls=%d round=%d <<<",
@@ -1788,6 +1878,10 @@ async def tool_executor_node(state: dict) -> dict:
         # ── create_cron: intercepted tool, write to DB directly (no MCP call) ──
         if tname == "create_cron":
             return await _execute_create_cron(state, args)
+
+        # ── update_memory: intercepted tool, append to user profile memory ──
+        if tname == "update_memory":
+            return await _execute_update_memory(state, args)
 
         # ── MCP tool path ──
         # Get MCP server config from tool definition metadata
