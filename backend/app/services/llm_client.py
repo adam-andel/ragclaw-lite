@@ -49,6 +49,43 @@ class LLMBudgetExceeded(Exception):
     """
 
 
+# Longest slice of a provider error body carried into the exception message.
+# Enough for every provider's explanation sentence, short enough that a verbose
+# HTML error page never becomes the user-facing message.
+PROVIDER_ERROR_BODY_LIMIT = 600
+
+
+class LLMProviderError(Exception):
+    """A non-2xx response from the provider, carrying its explanation text.
+
+    ``httpx``'s own ``HTTPStatusError`` message is only the status line plus the
+    request URL -- the response BODY is not part of it. That made the downstream
+    error classifier structurally unable to recognise a context-window overflow
+    (the provider says "maximum context length is ..." in the body, and nothing
+    else does), so every provider 400 reached the user as
+    ``Client error '400 Bad Request' for url 'https://api...'``: not localized,
+    not actionable, and leaking our endpoint. Carrying a truncated body fixes
+    both -- the classifier can match on it, and unclassifiable failures now show
+    the provider's own wording instead of the URL.
+    """
+
+
+def _raise_provider_error(response: "httpx.Response", where: str) -> None:
+    """Raise LLMProviderError for a non-2xx response (no-op when the call is OK).
+
+    For streaming responses the body must already have been read (``aread()``);
+    the caller does that before calling in.
+    """
+    if response.status_code < 400:
+        return
+    try:
+        body = response.text
+    except Exception:  # body not readable (e.g. an un-read stream): status only
+        body = ""
+    detail = body.strip()[:PROVIDER_ERROR_BODY_LIMIT] if body else "(no response body)"
+    raise LLMProviderError(f"{where} failed with HTTP {response.status_code}: {detail}")
+
+
 def _non_stream_timeout() -> "httpx.Timeout":
     """Per-call timeout for non-streaming calls; a hung model fails fast."""
     return httpx.Timeout(
@@ -201,6 +238,7 @@ class LLMClient:
             raise LLMBudgetExceeded(LLM_BUDGET_EXCEEDED_CODE)
         if response.status_code != 200:
             logger.error("chat error %d: %s", response.status_code, response.text[:1000])
+            _raise_provider_error(response, "chat")
         response.raise_for_status()
 
         data = response.json()
@@ -248,6 +286,13 @@ class LLMClient:
         # do NOT retry here: a failed provider call (auth/quota/connect error)
         # must reach the user as-is, and silent retries only delay that signal.
         async with self._client.stream("POST", url, headers=headers, json=body) as response:
+            if response.status_code != 200:
+                # A streamed response arrives with headers only; the error body has
+                # to be pulled in explicitly before it can be read or reported.
+                await response.aread()
+                logger.error("chat_stream error %d: %s",
+                             response.status_code, response.text[:1000])
+                _raise_provider_error(response, "chat_stream")
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
@@ -338,6 +383,7 @@ class LLMClient:
                          response.status_code, response.text)
             logger.error("chat_with_tools FULL request that failed: %s",
                          json.dumps(body, ensure_ascii=False))
+            _raise_provider_error(response, "chat_with_tools")
         response.raise_for_status()
 
         data = response.json()

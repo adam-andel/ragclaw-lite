@@ -97,14 +97,14 @@ QUERY_KEEP_TAIL_FRAC = 0.35
 # condensation. Below this, condensing saves almost nothing -- and because the
 # middle-segment summary is capped at SUMMARY_MAX_TOKENS, short queries can even
 # grow. Oversized queries are rejected at the API entry point
-# (query_exceeds_context_window) before any heavy processing, so nothing here
+# (classify_entry_overflow) before any heavy processing, so nothing here
 # needs to truncate them. Tunable.
 QUERY_COMPRESS_MIN_TOKENS = 2048
 
 # The query is never hard-truncated at the assembly point: oversized queries are
-# rejected at the API entry point (query_exceeds_context_window), and any residual
-# overflow that survives fit_assembly_context is surfaced to the caller as an
-# upstream 400 rather than silently mangling the user's question.
+# rejected at the API entry point (classify_entry_overflow), and any residual
+# overflow that survives fit_assembly_context is raised as ContextWindowExceeded
+# rather than silently mangling the user's question.
 
 # Prompts below were consolidated into the backend i18n dict (app/services/i18n):
 #   summary_prompt, summary_recompact_prompt, query_condensed_warning,
@@ -142,46 +142,108 @@ def _budget() -> int:
     return total_budget()
 
 
-def _empty_context_request_tokens(query: str) -> int:
+# Bare user-facing codes for the two ways a request can fail to fit. Both are
+# localized by the frontend via ``errors.backendErrorCodes`` -- never put prose
+# here. They are raised/returned by the two context gates:
+#   Gate A (entry)    -- classify_entry_overflow, cheap, runs before any work
+#   Gate B (assembly) -- fit_assembly_context, precise, sees the real tool list
+QUERY_TOO_LONG = "QUERY_TOO_LONG"
+CONTEXT_PREFIX_TOO_LARGE = "CONTEXT_PREFIX_TOO_LARGE"
+
+
+class ContextWindowExceeded(RuntimeError):
+    """Raised with a BARE error code when a request cannot be made to fit.
+
+    Gate A rejects at the entry point where it is cheap but only approximate (the
+    tool schemas and an auto-routed skill body are not known yet). Gate B is the
+    precise closing point: by the time fit_assembly_context has emptied every
+    droppable component and the request STILL overflows, no amount of further
+    trimming can help, and letting the call proceed only buys an upstream 400
+    whose provider text the user should never see. Raising here converts that
+    into a clean localizable code.
+    """
+
+
+def _empty_context_request_tokens(
+    query: str,
+    *,
+    kb_prompt: str = "",
+    user_memory: str = "",
+    ws_context: str = "",
+    skill_prompt: str | None = None,
+) -> int:
     """Token cost of the request if EVERYTHING but the fixed prefix + query were
     dropped -- i.e. the floor ``fit_assembly_context`` can reach.
 
     Reproduces the unconditionally-emitted head of ``_assemble`` in agent_nodes.py
-    (the tool-mode system prompt + the "## Task Background" block built from the
-    configured system prompt) plus a minimal user question, so the entry-point
-    firewall can measure the same floor fit would hit at its empty-context
-    fallthrough. This is the floor of the real prefix -- an active skill / KB /
-    user-memory can add more -- which errs toward letting borderline queries
-    through to the precise fit guard rather than rejecting them outright.
+    (the tool-mode system prompt + the "## Task Background" block) plus a minimal
+    user question, so the entry-point firewall measures the same floor fit would
+    hit at its empty-context fallthrough. Task background is assembled in the same
+    order as the real one: ``skill_prompt + kb_context + ws_context`` followed by
+    the user-memory section.
+
+    The four optional pieces are passed in rather than read from a global because
+    they are request-scoped: the caller knows the active KB, the signed-in user's
+    memory, the selected working directory, and -- when the skill was selected
+    EXPLICITLY -- that skill's SKILL.md body. Auto-routed skills are resolved by
+    the LLM router inside the graph and cannot be known here, so their body is
+    still missing from this floor; the precise ceiling stays with fit
+    (``ContextWindowExceeded``). Tool schemas are deliberately excluded: their
+    cost is only known once the graph has built the tool list, and guessing here
+    would reject requests that actually fit.
     """
     tool_sys = _t("tool_system", config_manager.prompt_language, tool_desc="")
-    task_bg = "## Task Background (reference only)\n" + (config_manager.system_prompt or "")
+    task_bg = skill_prompt if skill_prompt is not None else (config_manager.system_prompt or "")
+    if kb_prompt:
+        task_bg += f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}"
+    task_bg += ws_context
+    if user_memory:
+        task_bg += f"\n\n## User Memory & Preferences\n{user_memory}"
     msgs = [
         {"role": "system", "content": tool_sys},
-        {"role": "system", "content": task_bg},
+        {"role": "system", "content": "## Task Background (reference only)\n" + task_bg},
         {"role": "user", "content": "## Question\n" + query},
     ]
     return count_messages_tokens(msgs)
 
 
-def query_exceeds_context_window(query: str) -> bool:
-    """True when the query cannot fit even with an empty surrounding context.
+def classify_entry_overflow(
+    query: str,
+    *,
+    kb_prompt: str = "",
+    user_memory: str = "",
+    ws_context: str = "",
+    skill_prompt: str | None = None,
+) -> str | None:
+    """Bare error code when the request cannot fit even with an empty context.
 
-    Used as an early-exit guard at the request entry point so an oversized query
-    is rejected before any history compression, RAG, or LLM call runs.
+    Returns ``None`` when the request is worth attempting, otherwise the code the
+    frontend localizes via ``errors.backendErrorCodes``:
 
-    The check reserves the fixed system-prefix cost (see
-    ``_empty_context_request_tokens``): fit_assembly_context can drop
-    history / summary / RAG / tool records, but it can never shrink the system
-    prefix, so a query that overflows *even with an empty context* can only end
-    in an upstream 400. We catch that case here and return a clean user-facing
-    QUERY_TOO_LONG instead of burning tokens on a doomed request. (Tool schemas
-    are reserved separately inside fit via ``eff_budget``; they are not yet known
-    at the entry point, so this guard deliberately ignores them.)
+    * ``CONTEXT_PREFIX_TOO_LARGE`` -- the fixed prefix ALONE overflows. Nothing
+      the user writes in the message box can fix this; the KB instructions, user
+      memory or skill body must shrink (or the model needs a bigger window).
+    * ``QUERY_TOO_LONG`` -- the prefix fits but this question does not.
+
+    Splitting the two matters: telling someone to shorten a one-line question
+    when the real problem is a 100k-token KB prompt sends them chasing the wrong
+    thing. Used as an early-exit guard at the request entry point so a doomed
+    request is rejected before any history compression, RAG, or LLM call runs --
+    fit_assembly_context can drop history / summary / RAG / tool records, but it
+    can never shrink the system prefix.
     """
-    if not query:
-        return False
-    return _empty_context_request_tokens(query) > _budget()
+    kwargs = {
+        "kb_prompt": kb_prompt,
+        "user_memory": user_memory,
+        "ws_context": ws_context,
+        "skill_prompt": skill_prompt,
+    }
+    budget = _budget()
+    if _empty_context_request_tokens("", **kwargs) > budget:
+        return CONTEXT_PREFIX_TOO_LARGE
+    if query and _empty_context_request_tokens(query, **kwargs) > budget:
+        return QUERY_TOO_LONG
+    return None
 
 
 def _overhead() -> int:
@@ -1223,9 +1285,13 @@ def fit_assembly_context(
     The result is purely transient: callers assemble THIS submission's messages
     from the returned components and must NOT write anything back to the database
     or mutate state. The query is returned unchanged -- oversized queries are
-    rejected at the API entry point (query_exceeds_context_window) and any
-    residual overflow is surfaced to the caller as an upstream 400, so this
-    function never truncates the user's question.
+    rejected at the API entry point (classify_entry_overflow), so this function
+    never truncates the user's question.
+
+    Raises ``ContextWindowExceeded`` (bare code ``CONTEXT_PREFIX_TOO_LARGE`` or
+    ``QUERY_TOO_LONG``) when phase 2 empties every droppable component and the
+    request still overflows -- see the exhausted branch at the end for why that
+    is a hard failure rather than a warning.
 
     Returns ``(summary, history, rag, memory, payload, query, dropped)``.
     """
@@ -1413,21 +1479,27 @@ def fit_assembly_context(
             cur_p = []
             dropped = True
             continue
-        # Context is empty and the system prefix + query (plus the tool schema, if
-        # any) still overflow: the query is returned untrimmed (oversized queries
-        # are rejected at the API entry point and residual overflow surfaces as an
-        # upstream 400), so nothing left to give -- surface it and let the call proceed.
-
-        # Even a single-token query over an empty context overflows: the fixed
-        # system prefix (and tool definitions, if present) alone exceed the window.
-        # Nothing left to give -- surface it and let the call proceed (a
-        # misconfigured context_window, or too many/too-large tool schemas, not a
-        # runtime condition we can trim our way out of).
+        # ---- Exhausted: every droppable component is empty and it STILL overflows #
+        # Only the untrimmable parts are left: the system prefix (skill body, KB
+        # instructions, working-dir note, user memory), the tool schemas and the
+        # user's question -- and the question is never truncated here. Nothing
+        # further can be given up, so this is the precise closing point for the
+        # overflow. Letting the call proceed would only buy an upstream 400 whose
+        # provider text is useless (and endpoint-leaking) to the user, so raise a
+        # bare localizable code instead.
+        #
+        # Which code depends on WHAT is oversized: measuring the request with the
+        # query dropped too separates "your fixed prefix cannot fit" (nothing the
+        # user types will help) from "this particular question is too long". Gate A
+        # makes the same split at the entry point, but only approximately -- it
+        # cannot see the tool schemas or an auto-routed skill body, both of which
+        # are known here.
+        residual = count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q, cur_mem))
+        prefix_only = count_messages_tokens(build_messages("", [], "", [], "", ""))
+        code = CONTEXT_PREFIX_TOO_LARGE if prefix_only > eff_budget else QUERY_TOO_LONG
         logger.warning(
-            "fit_assembly_context exhausted: %d tokens still over budget %d with an "
-            "empty context and a minimal query (system prefix + %d tool-schema tokens overflow).",
-            count_messages_tokens(build_messages(cur_s, cur_h, cur_r, cur_p, cur_q, cur_mem)),
-            budget,
-            tools_tok,
+            "fit_assembly_context exhausted: %d tokens still over budget %d with an empty "
+            "context (prefix alone=%d, tool schemas=%d, effective budget=%d) -> %s",
+            residual, budget, prefix_only, tools_tok, eff_budget, code,
         )
-        return cur_s, cur_h, cur_r, cur_mem, cur_p, cur_q, dropped
+        raise ContextWindowExceeded(code)

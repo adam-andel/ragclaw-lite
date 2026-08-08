@@ -24,7 +24,15 @@ from app.models.document import Document, Chunk
 from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
-from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS, _strip_tool_call_noise, _normalize_download_url
+from app.services.agent_nodes import (
+    MAX_SKILL_SWITCHES,
+    MAX_TOOL_ROUNDS,
+    _strip_tool_call_noise,
+    _normalize_download_url,
+    _build_working_dir_prompt,
+    _get_skill_index,
+)
+from app.services.skill_manager import read_skill_md, parse_skill_md
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens, count_text_tokens
 from app.services.config_manager import config_manager
@@ -32,7 +40,8 @@ from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
     CompactionError,
-    query_exceeds_context_window,
+    ContextWindowExceeded,
+    classify_entry_overflow,
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
@@ -693,6 +702,15 @@ _CONTEXT_OVERFLOW_HINTS = (
     "input is too long",
     "sequence length",
     "reduce the length of the messages",
+    # Reachable only since the provider response BODY started travelling with the
+    # exception (see llm_client.LLMProviderError); these are the phrasings the
+    # earlier status-line-only message could never contain.
+    "token limit",
+    "however, you requested",
+    "reduce your prompt",
+    "input length",
+    "输入过长",
+    "提示过长",
     "上下文长度",
     "上下文窗口",
     "超出上下文",
@@ -729,12 +747,42 @@ def _classify_llm_error(e: Exception) -> str:
     Quota/rate-limit failures are excluded first: they share the "exceeded"
     wording but need the real provider text, not a "shorten your question" hint.
     """
+    # Our own context gates already carry a bare code; pass it straight through
+    # instead of running it past the provider-text heuristics.
+    if isinstance(e, ContextWindowExceeded):
+        return str(e)
     text = str(e).lower()
     if any(hint in text for hint in _NON_CONTEXT_HINTS):
         return str(e)
     if any(hint in text for hint in _CONTEXT_OVERFLOW_HINTS):
         return "LLM_CONTEXT_EXCEEDED"
     return str(e)
+
+
+async def _explicit_skill_prompt(skill_id: str | None) -> str | None:
+    """SKILL.md body of an EXPLICITLY selected skill, for the entry-point gate.
+
+    Returns None when no skill was pinned by the user (the gate then falls back to
+    the configured system prompt, which is what the graph would use) or when the
+    skill cannot be read. Auto-routed skills are intentionally not resolved here:
+    routing runs an LLM call inside the graph, which is exactly the expensive work
+    this gate exists to avoid. Any failure degrades to None -- a slightly optimistic
+    floor is fine, the precise ceiling lives in fit_assembly_context.
+    """
+    if not skill_id:
+        return None
+    try:
+        idx = await _get_skill_index(skill_id)
+        folder = (idx or {}).get("folder_name")
+        if not folder:
+            return None
+        content = read_skill_md(folder)
+        if not content:
+            return None
+        return parse_skill_md(content).get("body") or None
+    except Exception as e:  # never block a request on a gate-input lookup
+        logger.warning("entry gate: skill prompt lookup failed for %s: %s", skill_id, e)
+        return None
 
 
 @router.post("/chat/stream")
@@ -1026,14 +1074,23 @@ async def chat_stream(
                             })
                             return
 
-                    # ── 1a-bis. Reject oversized queries before any heavy processing ──
-                    # (history compression, RAG, file reads, LLM calls). If the raw
-                    # query alone already exhausts the input budget there is nothing to
-                    # salvage, so fail fast with a user-facing message.
-                    if query_exceeds_context_window(request.query):
-                        enqueue("error", {
-                            "message": "QUERY_TOO_LONG",
-                        })
+                    # ── 1a-bis. Reject doomed requests before any heavy processing ──
+                    # (history compression, RAG, file reads, LLM calls). The gate
+                    # measures the same floor the assembly point would reach: the
+                    # fixed prefix (skill body / KB instructions / working-dir note /
+                    # user memory) plus the query, with everything droppable removed.
+                    # Resolved once and reused by the post-file-expansion re-check.
+                    gate_inputs = {
+                        "kb_prompt": kb_prompt,
+                        "user_memory": current_user.memory or "",
+                        "ws_context": _build_working_dir_prompt(
+                            {"workspace_id": request.workspace_dir or ""}
+                        ),
+                        "skill_prompt": await _explicit_skill_prompt(request.skill_id),
+                    }
+                    overflow_code = classify_entry_overflow(request.query, **gate_inputs)
+                    if overflow_code:
+                        enqueue("error", {"message": overflow_code})
                         return
 
                     # ── 1b. Pre-create the assistant message so the final content
@@ -1074,10 +1131,9 @@ async def chat_stream(
                     # ── 1a-ter. Re-check after file expansion: expanded_query can be
                     # far larger than request.query once large files are spliced in.
                     # Same fast-fail as above.
-                    if query_exceeds_context_window(expanded_query):
-                        enqueue("error", {
-                            "message": "QUERY_TOO_LONG",
-                        })
+                    overflow_code = classify_entry_overflow(expanded_query, **gate_inputs)
+                    if overflow_code:
+                        enqueue("error", {"message": overflow_code})
                         return
 
                     # Compress history / summary / query if it would overflow the
