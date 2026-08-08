@@ -1,13 +1,23 @@
 """SQLite database setup via SQLAlchemy async.
 
-Schema is declarative: ``Base.metadata.create_all(checkfirst=True)`` compares
-the ORM models against the live database and only creates missing tables/columns.
-No migration files, no revision chain — the ORM models *are* the schema source
-of truth. On startup ``init_db`` creates any missing tables, then seeds idempotent
-default data.
+Schema management has three stages, all idempotent and all run on every startup:
+
+1. ``Base.metadata.create_all(checkfirst=True)`` — creates whole missing tables
+   from the ORM models. It never modifies an existing table.
+2. ``schema_patches.run_patches()`` — every change ``create_all`` cannot make
+   (add/drop column, change type, rebuild index, backfill data). Each patch
+   guards itself on live schema state, so there is no revision chain and no
+   ordering constraint between stacks.
+3. ``schema_patches.detect_drift()`` — compares the ORM models against the live
+   database and logs anything still missing, catching the case where a model
+   changed but nobody wrote the matching patch.
+
+The ORM models under ``app/models`` are the schema source of truth. There are no
+migration files.
 """
 
 import asyncio
+import logging
 import secrets
 import uuid
 from collections.abc import Iterable
@@ -119,13 +129,14 @@ async def init_db():
 
 
 async def _create_tables():
-    """Create any tables/columns defined by ORM models that are missing in the database.
+    """Bring the database in line with the ORM models (create → patch → verify).
 
-    Uses ``Base.metadata.create_all(checkfirst=True)`` under an async connection.
-    Importing ``app.models`` ensures every ORM model is registered on Base.metadata
-    before the diff runs.
+    Importing ``app.models`` ensures every ORM model is registered on
+    Base.metadata before any of the three stages run.
     """
     import app.models  # noqa: F401
+    from app.schema_patches import detect_drift, run_patches
+
     async with engine.begin() as conn:
         # WAL lets readers proceed while a writer is active and avoids the
         # "database is locked" busy errors under concurrent read/write on
@@ -134,7 +145,28 @@ async def _create_tables():
             from sqlalchemy import text
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA busy_timeout=5000"))
+
+        # 1) Whole missing tables, straight from the models.
         await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+
+        # 2) Everything create_all cannot do, each guarded on live schema state.
+        await conn.run_sync(run_patches)
+
+        # 3) Verify the result actually matches the models. A mismatch here means
+        #    a model changed without a matching patch — surface it at startup
+        #    instead of letting it fail as "no such column" mid-request later.
+        problems = await conn.run_sync(detect_drift, Base.metadata)
+
+    if problems:
+        _schema_logger = logging.getLogger("ragclaw.schema")
+        _schema_logger.error(
+            "[schema] DRIFT DETECTED — the database does not match the ORM models. "
+            "A model was changed without a matching patch in app/schema_patches.py. "
+            "%d problem(s):",
+            len(problems),
+        )
+        for problem in problems:
+            _schema_logger.error("[schema]   - %s", problem)
 
 
 async def _seed_db():

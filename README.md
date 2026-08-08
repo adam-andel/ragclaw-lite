@@ -231,7 +231,8 @@ ragclaw/
 │   └── app/
 │       ├── main.py             # Entry point
 │       ├── config.py           # Config
-│       ├── database.py         # SQLite entry (init_db: declarative create_all + seed)
+│       ├── database.py         # SQLite entry (init_db: create_all + patches + drift check + seed)
+│       ├── schema_patches.py   # Idempotent schema patches (add/drop column, type change, ...)
 │       ├── models/             # ORM models (incl. Skill/MCPServer)
 │       ├── schemas/            # Pydantic (incl. skill/mcp schema)
 │       ├── routers/            # API routes
@@ -354,13 +355,23 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## 🗄️ Database / 数据库构建
 
-Schema is declarative: the ORM models in `backend/app/models/` define the database.
-On startup `Base.metadata.create_all(checkfirst=True)` creates any missing tables
-and columns automatically — no migration files, no revision chain. Idempotent
-seed data follows (built-in MCP server).
+The ORM models in `backend/app/models/` are the schema source of truth. There are
+no migration files and no revision chain. Every startup runs three idempotent
+stages:
 
-Schema 由 ORM 模型声明式定义。启动时 `create_all(checkfirst=True)` 自动补建缺失
-的表和列 — 无需迁移文件、无需版本链，直接改模型即可。
+1. **`create_all(checkfirst=True)`** — creates whole missing tables from the models.
+   It never modifies a table that already exists.
+2. **Idempotent patches** (`backend/app/schema_patches.py`) — everything step 1
+   cannot do: add/drop a column, change a type, rebuild an index, backfill data.
+   Each patch guards itself on *live schema state*, so it is safe to re-run forever
+   and there is no ordering constraint between stacks.
+3. **Drift detection** — compares the models against the live database and logs an
+   error listing anything still missing, so a model changed without a matching
+   patch is caught at startup instead of failing mid-request later.
+
+Schema 以 `backend/app/models/` 下的 ORM 模型为唯一事实来源，无迁移文件、无版本链。
+每次启动执行三个幂等阶段：`create_all` 补建缺失的表 → 幂等 patch 处理加列/删列/改类型
+等 `create_all` 做不到的变更 → 漂移检测对比模型与实际库并报告差异。
 
 ### Fresh install / 全新安装
 
@@ -370,14 +381,38 @@ Delete `data/sqlite/ragclaw.db` and start the backend — the DB and seed data r
 
 ### Evolve schema / 演进 schema
 
-Edit the ORM models under `app/models/`, then restart — new tables and columns are
-auto-created. For destructive changes (drop column, rename table), write a one-off
-SQL migration in `_seed_db`. Restart is enough; multi-stack concurrency is safe
-because each stack runs the same idempotent `create_all`.
+**Adding a whole new table** — define the model, restart. Done; `create_all` picks
+it up.
 
-修改 `app/models/` 下的 ORM 模型后重启即可，新表和新增列自动补建。删除列/重命名等
-破坏性变更写一条一次性 SQL 到 `_seed_db` 里。多栈并行安全 — 每个栈独立执行同一
-套幂等逻辑。
+**Any change to an existing table** (add/drop column, change type, add index,
+backfill) — edit the model *and* append a patch to `backend/app/schema_patches.py`:
+
+```python
+Patch(
+    name="users.avatar_url",
+    applied=lambda insp: has_column(insp, "users", "avatar_url"),
+    apply=["ALTER TABLE users ADD COLUMN avatar_url TEXT"],
+)
+```
+
+The model change makes fresh installs correct; the patch brings existing databases
+to the same shape. Forget the patch and startup logs a loud `DRIFT DETECTED` error
+naming the missing column.
+
+Rules: guard on **live schema state**, never on a version number — a sibling stack
+may have applied a different subset. Patches are **append-only**; deleting one
+breaks any database that has not applied it yet. For a drop, invert the predicate
+(`applied` means "desired end state reached", so a drop is applied once the column
+is gone). Pass a callable instead of a SQL list for multi-step work such as
+SQLite's table-rebuild dance.
+
+Multi-stack is safe by construction: every stack runs the same self-guarding
+patches in any order, with no shared version counter to conflict over.
+
+新增整张表：改模型后重启即可。**修改已有表**（加列/删列/改类型/加索引/回填）必须
+同时在 `app/schema_patches.py` 追加一条幂等 patch —— 模型保证全新安装正确，patch 保证
+存量库收敛到同一形状；忘写会在启动时被漂移检测报错。patch 只增不删，判断条件必须基于
+实际库结构而非版本号。
 
 ---
 
