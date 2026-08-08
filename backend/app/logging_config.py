@@ -2,11 +2,8 @@
 
 RAGClaw's own loggers (``ragclaw.*``) propagate to the *root* logger. By default
 root has NO handler, so INFO-level records are silently dropped (only WARNING+
-reach stderr via logging's last-resort handler). Two things attach a *root*
-handler at startup and must be cleaned up: uvicorn may set
-``disable_existing_loggers=True`` (marking our loggers disabled), and
-``alembic upgrade`` calls ``fileConfig(alembic.ini)`` which attaches a
-timestamp-less ``console`` handler to root — duplicating every ragclaw.* line.
+reach stderr via logging's last-resort handler). uvicorn may set
+``disable_existing_loggers=True`` (marking our loggers disabled).
 ``setup_logging()`` re-enables disabled loggers, removes every root handler it
 did not install, and attaches a single timestamped stderr handler to root so
 ragclaw.* INFO logs become visible (and de-duplicated). Call it from the lifespan
@@ -49,7 +46,7 @@ def _is_production() -> bool:
 def setup_logging(level: int | None = None) -> None:
     """Ensure RAGClaw loggers emit to stderr at the right level.
 
-    Safe to call multiple times. Fixes four logging pitfalls:
+    Safe to call multiple times. Fixes three logging pitfalls:
       1) uvicorn's ``disable_existing_loggers`` marks our loggers disabled — we
          re-enable them.
       2) Under ``uvicorn --reload`` the worker is forked and its ``sys.stderr``
@@ -57,13 +54,7 @@ def setup_logging(level: int | None = None) -> None:
          (parent) bound to a dead stream. We always (re)bind to the CURRENT
          ``sys.stderr`` so logs actually reach the container's captured stderr
          (and thus ``docker logs``).
-      3) ``alembic.ini``'s ``console`` handler is applied to the *root* logger via
-         ``fileConfig()`` during ``alembic upgrade`` at startup. Its format
-         (``"%(levelname)-5.5s [%(name)s] %(message)s"``) emits every record
-         WITHOUT a timestamp, duplicating each ragclaw.* line our handler already
-         emits. We drop every root handler we did not install so only our
-         timestamped handler remains.
-      4) dev prints INFO, production prints WARNING+ only (see _is_production).
+      3) dev prints INFO, production prints WARNING+ only (see _is_production).
     """
     if level is None:
         level = logging.WARNING if _is_production() else logging.INFO
@@ -74,15 +65,8 @@ def setup_logging(level: int | None = None) -> None:
 
     # 2) Ensure root holds EXACTLY one handler: ours. Drop every existing root
     #    handler before re-adding a fresh one bound to the CURRENT sys.stderr.
-    #    We must remove handlers we did NOT install, not just our stale one:
-    #      * uvicorn --reload forks a worker and redirects sys.stderr, leaving a
-    #        handler captured at import time bound to a dead stream;
-    #      * alembic.ini's "console" handler is applied to root via fileConfig()
-    #        during `alembic upgrade` at startup. Its format
-    #        ("%(levelname)-5.5s [%(name)s] %(message)s") emits ragclaw.* records
-    #        WITHOUT a timestamp, duplicating every line our handler already
-    #        emits — the "first" (timestamp-less) copy the user sees in docker
-    #        logs. Removing it leaves a single timestamped handler on root.
+    #    uvicorn --reload forks a worker and redirects sys.stderr, leaving a
+    #    handler captured at import time bound to a dead stream.
     #    uvicorn's own startup/access logs are unaffected — they travel through
     #    uvicorn's dedicated handlers (uvicorn.error / uvicorn.access, which set
     #    propagate=False), not root.

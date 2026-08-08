@@ -1,13 +1,10 @@
 """SQLite database setup via SQLAlchemy async.
 
-Schema is owned by Alembic (see ``migrations/``). On startup ``init_db`` runs
-``alembic upgrade head`` to bring the schema to the latest version, then seeds
-idempotent default data (admin user, default MCP server).
-
-All tables are defined as SQLAlchemy models under ``app/models``; the single
-baseline Alembic migration (``migrations/versions/*_initial_schema.py``) creates
-the full schema from those models. Future schema changes are made by adding new
-Alembic revisions — there is no hand-rolled migration chain.
+Schema is declarative: ``Base.metadata.create_all(checkfirst=True)`` compares
+the ORM models against the live database and only creates missing tables/columns.
+No migration files, no revision chain — the ORM models *are* the schema source
+of truth. On startup ``init_db`` creates any missing tables, then seeds idempotent
+default data.
 """
 
 import asyncio
@@ -15,7 +12,6 @@ import secrets
 import uuid
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -100,29 +96,21 @@ def allocate_repl_uid(existing: Iterable[int]) -> int:
 # ─── Public API ───
 
 async def init_db():
-    """Apply database migrations (Alembic) and seed idempotent default data."""
-    await asyncio.to_thread(_run_alembic_upgrade)
+    """Create tables from ORM models (declarative) and seed idempotent default data."""
+    await _create_tables()
     await asyncio.to_thread(_seed_db)
 
 
-def _run_alembic_upgrade():
-    """Run all pending Alembic migrations against the configured database."""
-    from alembic import command
-    from alembic.config import Config
+async def _create_tables():
+    """Create any tables/columns defined by ORM models that are missing in the database.
 
-    base_dir = Path(__file__).resolve().parent.parent
-    cfg = Config(str(base_dir / "alembic.ini"))
-    # Point Alembic at our env/versions and the application's database URL.
-    cfg.set_main_option("script_location", str(base_dir / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
-    command.upgrade(cfg, "head")
-    # Alembic's env.py calls fileConfig(alembic.ini), which attaches its own
-    # timestamp-less "console" handler to the root logger — duplicating every
-    # ragclaw.* line our handler emits. Re-apply our logging setup immediately
-    # so startup-time ragclaw INFO logs (MCP push, BGE warmup, ...) are not
-    # doubled before the first HTTP request reaches the per-request middleware.
-    from app.logging_config import setup_logging
-    setup_logging()
+    Uses ``Base.metadata.create_all(checkfirst=True)`` under an async connection.
+    Importing ``app.models`` ensures every ORM model is registered on Base.metadata
+    before the diff runs.
+    """
+    import app.models  # noqa: F401
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all, checkfirst=True)
 
 
 def _seed_db():

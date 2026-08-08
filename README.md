@@ -231,8 +231,7 @@ ragclaw/
 │   └── app/
 │       ├── main.py             # Entry point
 │       ├── config.py           # Config
-│       ├── database.py         # SQLite entry (init_db: alembic upgrade + seed)
-│       ├── migrations/         # Alembic migrations (incl. single initial-schema baseline)
+│       ├── database.py         # SQLite entry (init_db: declarative create_all + seed)
 │       ├── models/             # ORM models (incl. Skill/MCPServer)
 │       ├── schemas/            # Pydantic (incl. skill/mcp schema)
 │       ├── routers/            # API routes
@@ -342,7 +341,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 | Agent orchestration | LangGraph | Declarative state graph, conditional routing + multi-turn tool calls |
 | Execution engine (Claw) | REPL sandbox (Python / Shell / Node.js) | Multi-language code exec + workspace file management (the agent's "hands") |
 | Vector DB | ChromaDB | Embedded, zero-config (RAG vector store) |
-| Meta DB | SQLite + SQLAlchemy + Alembic | Single-file store + versioned migrations (baseline + incremental) |
+| Meta DB | SQLite + SQLAlchemy (declarative) | ORM models are schema source of truth; auto-create on startup |
 | Embedding | BGE-small-zh-v1.5 | 384-dim Chinese vectors |
 | LLM | OpenAI / Qwen / Ollama | Swappable, supports tool calling |
 | Memory | Mem0 (optional) | Cross-session memory, loaded in parallel without adding latency |
@@ -355,40 +354,30 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## 🗄️ Database / 数据库构建
 
-Metadata uses a single-file SQLite; the schema is managed by **Alembic** versioned migrations (no more hand-rolled incremental patch scripts).
+Schema is declarative: the ORM models in `backend/app/models/` define the database.
+On startup `Base.metadata.create_all(checkfirst=True)` creates any missing tables
+and columns automatically — no migration files, no revision chain. Idempotent
+seed data follows (built-in MCP server).
 
-元数据使用单文件 SQLite，schema 由 **Alembic** 版本化迁移统一管理，不再依赖自研的增量补丁脚本。
-
-- **Schema source**: `migrations/versions/2624081b4b65_initial_schema.py` (a single *initial schema* baseline that creates all 16 business tables + constraints/indexes at once). All later schema evolution is expressed via new migration files.
-- **Build entry**: `app/database.py`'s `init_db()` runs, in order:
-  1. `alembic upgrade head` (applies all migrations; no-op if already current);
-  2. idempotent seed (writes default admin `admin`, doc-management skill `doc-manager`, Python-executor MCP Server).
-- **Dependency**: `alembic` is added to `backend/requirements.txt`.
+Schema 由 ORM 模型声明式定义。启动时 `create_all(checkfirst=True)` 自动补建缺失
+的表和列 — 无需迁移文件、无需版本链，直接改模型即可。
 
 ### Fresh install / 全新安装
 
-Delete `data/sqlite/ragclaw.db` and start the backend — the DB and seed data rebuild automatically (fits the open-source "fresh project" posture).
+Delete `data/sqlite/ragclaw.db` and start the backend — the DB and seed data rebuild automatically.
 
-删除 `data/sqlite/ragclaw.db` 后启动后端，数据库与种子数据会自动重建（契合开源「全新项目」姿态）。
+删除 `data/sqlite/ragclaw.db` 后启动后端，数据库与种子数据会自动重建。
 
-### Evolve schema (standard flow) / 演进 schema（标准流程）
+### Evolve schema / 演进 schema
 
-1. Edit the ORM models under `app/models/`;
-2. Generate a migration (you can isolate-test against an empty DB via `ALEMBIC_DB_URL`, leaving the real DB untouched):
-   ```bash
-   cd backend
-   ALEMBIC_DB_URL="sqlite+aiosqlite:////tmp/test.db" \
-     python -m alembic revision --autogenerate -m "add column xxx"
-   ```
-3. **Always review** the generated migration to confirm it only contains the intended create/alter operations before committing.
+Edit the ORM models under `app/models/`, then restart — new tables and columns are
+auto-created. For destructive changes (drop column, rename table), write a one-off
+SQL migration in `_seed_db`. Restart is enough; multi-stack concurrency is safe
+because each stack runs the same idempotent `create_all`.
 
-### Upgrade an existing dev DB to this baseline / 既有开发库升级到本基线
-
-An old DB built by the legacy mechanism will error on `alembic upgrade head` because subtables already exist. Two options:
-
-- **Keep data**: first bring the old schema up to the baseline (missing tables/columns), then `alembic stamp head` to mark it as baselined;
-- **Start over**: simply delete `data/sqlite/ragclaw.db` and rebuild.
-> The legacy `_migrations` table can stay (harmless); the new mechanism uses `alembic_version`.
+修改 `app/models/` 下的 ORM 模型后重启即可，新表和新增列自动补建。删除列/重命名等
+破坏性变更写一条一次性 SQL 到 `_seed_db` 里。多栈并行安全 — 每个栈独立执行同一
+套幂等逻辑。
 
 ---
 
