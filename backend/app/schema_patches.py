@@ -130,6 +130,52 @@ class Patch:
 # Append new patches at the END. Order matters only when one patch depends on
 # another's result (e.g. add a column, then backfill it). Never delete a patch.
 
+def _add_conversation_summary_columns(conn: Connection) -> None:
+    """Add the two conversation-compression columns introduced by the summary
+    cursor work.
+
+    ``summary_msg_seq`` carries a server-side default of 0 so existing rows and
+    fresh inserts both agree;     ``summary_archived_count`` defaults to 0 via the
+    Python model default, but a server default keeps it non-null on direct SQL
+    inserts too.
+    """
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        conn.exec_driver_sql(
+            'ALTER TABLE conversations ADD COLUMN summary_msg_seq INTEGER NOT NULL DEFAULT 0'
+        )
+        conn.exec_driver_sql(
+            'ALTER TABLE conversations ADD COLUMN summary_archived_count INTEGER NOT NULL DEFAULT 0'
+        )
+    else:
+        # Postgres: ADD COLUMN with DEFAULT populates existing rows and sets the
+        # column default in one step.
+        conn.exec_driver_sql(
+            'ALTER TABLE conversations ADD COLUMN summary_msg_seq INTEGER NOT NULL DEFAULT 0'
+        )
+        conn.exec_driver_sql(
+            'ALTER TABLE conversations ADD COLUMN summary_archived_count INTEGER NOT NULL DEFAULT 0'
+        )
+
+
+def _add_message_seq_and_token_columns(conn: Connection) -> None:
+    """Add ``Message.seq`` and ``Message.content_token_count``.
+
+    Both are nullable in the ORM model. ``seq`` is assigned by the Python-side
+    ``_next_message_seq`` default at insert time, so existing rows keep NULL
+    (the seq cursor simply starts fresh for them) and new rows get a dense,
+    monotonic per-conversation value. ``content_token_count`` is a nullable
+    bookkeeping field written at insert time.
+    """
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN seq INTEGER')
+        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN content_token_count INTEGER')
+    else:
+        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN seq INTEGER')
+        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN content_token_count INTEGER')
+
+
 PATCHES: list[Patch] = [
     # Example — kept commented as a template for the next real patch.
     #
@@ -138,6 +184,26 @@ PATCHES: list[Patch] = [
     #     applied=lambda insp: has_column(insp, "users", "avatar_url"),
     #     apply=["ALTER TABLE users ADD COLUMN avatar_url TEXT"],
     # ),
+
+    # Conversation compression cursor (summary fold position + archived fold count).
+    Patch(
+        name="conversations.summary_msg_seq+summary_archived_count",
+        applied=lambda insp: (
+            has_column(insp, "conversations", "summary_msg_seq")
+            and has_column(insp, "conversations", "summary_archived_count")
+        ),
+        apply=_add_conversation_summary_columns,
+    ),
+
+    # Per-conversation message ordering key + per-message content token bookkeeping.
+    Patch(
+        name="messages.seq+content_token_count",
+        applied=lambda insp: (
+            has_column(insp, "messages", "seq")
+            and has_column(insp, "messages", "content_token_count")
+        ),
+        apply=_add_message_seq_and_token_columns,
+    ),
 ]
 
 
