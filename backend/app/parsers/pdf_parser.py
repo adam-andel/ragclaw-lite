@@ -1,8 +1,8 @@
-"""PDF document parser using PyMuPDF (fitz)."""
+"""PDF document parser using PyMuPDF."""
 
 import re
 from pathlib import Path
-import fitz  # PyMuPDF
+import pymupdf
 
 from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
@@ -24,7 +24,7 @@ class PDFParser(BaseParser):
         )
 
     def parse(self, file_path: Path) -> ParsedDocument:
-        doc = fitz.open(file_path)
+        doc = pymupdf.open(file_path)
         title = file_path.stem
         all_sections: list[ParsedSection] = []
 

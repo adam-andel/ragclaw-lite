@@ -16,22 +16,44 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PORT=9200
 
 source "$SCRIPT_DIR/lib/common.sh"
-source "$SCRIPT_DIR/lib/mirror.sh"
+
+# Build sources (all default to the OFFICIAL source). Pass only to use a mirror;
+# NO reachability probing is done.
+#   --registry <domain>  Docker base-image registry (empty -> docker.io).
+#   --apt <url>          Debian apt mirror base URL (empty -> distro default).
+#   --pypi <url>         PyPI index URL (empty -> official pypi.org).
+REGISTRY_ARG=""
+APT_MIRROR=""
+PYPI_MIRROR=""
 
 # Dev-mode toggle: optional leading --dev / --prod flag (env RAGCLAW_DEV default).
 # mcp-repl has no dev overlay of its own, but honoring the flag keeps its
 # `compose` file list in sync with a dev-mode backend stack.
 RAGCLAW_DEV="${RAGCLAW_DEV:-0}"
-case "${1:-}" in
-  --dev)  RAGCLAW_DEV=1; shift ;;
-  --prod) RAGCLAW_DEV=0; shift ;;
-esac
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --dev)      RAGCLAW_DEV=1 ;;
+    --prod)     RAGCLAW_DEV=0 ;;
+    --registry) REGISTRY_ARG="${2:-}"; shift ;;
+    --apt)      APT_MIRROR="${2:-}";  shift ;;
+    --pypi)     PYPI_MIRROR="${2:-}"; shift ;;
+    *) c_yellow "Unknown flag: $1" ;;
+  esac
+  shift
+done
 COMPOSE_FILE="$ROOT/docker-compose.yml"
 if [ "$RAGCLAW_DEV" = "1" ] && [ -f "$ROOT/docker-compose.dev.yml" ]; then
   COMPOSE_DEV="$ROOT/docker-compose.dev.yml"
 fi
 
-REQUIRED_IMAGES=("library/python:3.12-slim")
+# Populate the global BUILD_ARGS array from the explicit source vars (only inject
+# when set, so the common official-source path keeps all FROM/apt/pip layers cached).
+build_args() {
+  BUILD_ARGS=()
+  [ -n "$REGISTRY_ARG" ] && BUILD_ARGS+=( --build-arg "REGISTRY=$REGISTRY_ARG" )
+  [ -n "$APT_MIRROR" ]   && BUILD_ARGS+=( --build-arg "APT_MIRROR=$APT_MIRROR" )
+  [ -n "$PYPI_MIRROR" ]  && BUILD_ARGS+=( --build-arg "PYPI_MIRROR=$PYPI_MIRROR" )
+}
 
 # ---- helpers ----
 test_compose_available() {
@@ -56,18 +78,9 @@ start_docker_repl() {
     c_red "ERROR: docker-compose.yml missing or lacks mcp-repl service"
     return 1
   fi
-  local build_mirror
-  build_mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-  if [ -z "$build_mirror" ]; then
-    c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-    return 1
-  fi
-  local arg=()
-  if [ "$build_mirror" != "docker.io" ]; then
-    arg=(--build-arg REGISTRY="$build_mirror")
-  fi
-  c_cyan "=== Building (registry: $build_mirror) ==="
-  compose build --progress=plain "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; return 1; }
+  build_args
+  c_cyan "=== Building (registry: ${REGISTRY_ARG:-<official>}, apt: ${APT_MIRROR:-<official>}, pypi: ${PYPI_MIRROR:-<official>}) ==="
+  compose build --progress=plain "${BUILD_ARGS[@]}" mcp-repl || { c_red "ERROR: build failed"; return 1; }
   echo
   c_cyan "=== Starting container ==="
   # ragclaw-egress owns a fixed internal IP (172.30.0.2) on $(proj_name)_ragclaw-internal.
@@ -167,17 +180,9 @@ case "$ACTION" in
     ;;
   build)
     assert_docker
-    build_mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-    if [ -z "$build_mirror" ]; then
-      c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-      exit 1
-    fi
-    local arg=()
-    if [ "$build_mirror" != "docker.io" ]; then
-      arg=(--build-arg REGISTRY="$build_mirror")
-    fi
-    c_dim "Rebuilding mcp-repl image (registry: $build_mirror, --no-cache) ..."
-    compose build --progress=plain "${arg[@]}" --no-cache mcp-repl
+    build_args
+    c_dim "Rebuilding mcp-repl image (registry: ${REGISTRY_ARG:-<official>}, --no-cache) ..."
+    compose build --progress=plain "${BUILD_ARGS[@]}" --no-cache mcp-repl
     ;;
   reload)
     assert_docker
@@ -186,17 +191,9 @@ case "$ACTION" in
       exit 1
     fi
     test_docker_repl && stop_docker_repl
-    build_mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-    if [ -z "$build_mirror" ]; then
-      c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"
-      exit 1
-    fi
-    local arg=()
-    if [ "$build_mirror" != "docker.io" ]; then
-      arg=(--build-arg REGISTRY="$build_mirror")
-    fi
-    c_cyan "=== Building (registry: $build_mirror) ==="
-    compose build --progress=plain "${arg[@]}" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
+    build_args
+    c_cyan "=== Building (registry: ${REGISTRY_ARG:-<official>}, apt: ${APT_MIRROR:-<official>}, pypi: ${PYPI_MIRROR:-<official>}) ==="
+    compose build --progress=plain "${BUILD_ARGS[@]}" mcp-repl || { c_red "ERROR: build failed"; exit 1; }
     echo
     c_cyan "=== Starting container ==="
     repair_egress_network
@@ -229,11 +226,16 @@ case "$ACTION" in
     fi
     ;;
   *)
-    c_yellow "Usage: bash bin/sh/mcp_repl.sh [--dev|--prod] [start|stop|reload|status|build|logs]"
+    c_yellow "Usage: bash bin/sh/mcp_repl.sh [FLAGS] [start|stop|reload|status|build|logs]"
     echo
-    echo "  --dev   Use docker-compose.dev.yml overlay (harmless for mcp-repl;"
-    echo "          keeps compose file list in sync with the dev backend stack)"
-    echo "  --prod  Force base docker-compose.yml (default)"
+    echo "  FLAGS:"
+    echo "    --dev       Use docker-compose.dev.yml overlay (harmless for mcp-repl;"
+    echo "                keeps compose file list in sync with the dev backend stack)"
+    echo "    --prod      Force base docker-compose.yml (default)"
+    echo "    --registry <domain>  Docker base-image registry (default: docker.io)"
+    echo "    --apt   <url>        apt mirror base URL (default: distro official)"
+    echo "    --pypi  <url>        PyPI index URL (default: pypi.org)"
+    echo "  Build sources are used verbatim; no reachability check is performed."
     echo
     echo "  start   Start REPL server (build + up, container mode)"
     echo "  stop    Stop REPL server"

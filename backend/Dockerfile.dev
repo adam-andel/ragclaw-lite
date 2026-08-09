@@ -12,30 +12,54 @@
 # /app/backend/requirements.lock at container start, writing through the bind-mount to
 # the HOST ./backend so the lock can be committed for production to consume.
 #
-# REGISTRY build arg: set to a China mirror domain when docker.io is unreachable
+# REGISTRY build arg: set to a mirror domain when docker.io is unreachable.
 #   docker compose build --build-arg REGISTRY=docker.m.daocloud.io
+# APT_MIRROR build arg: Debian apt mirror HOST (no scheme). Pass a bare host
+# name, e.g. mirrors.tuna.tsinghua.edu.cn — the http(s):// scheme and /debian
+# path in debian.sources are preserved. (Do NOT include https:// here.)
+#   docker compose build --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+# PYPI_MIRROR build arg: PyPI index URL. Empty -> official pypi.org (no
+# --index-url passed, so pip uses its default). Set to a mirror (e.g.
+# https://pypi.tuna.tsinghua.edu.cn/simple) to override.
+#   docker compose build --build-arg PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+# TORCH_INDEX build arg: the torch-only index for the CPU wheel. torch lives
+# ONLY here, so it is always passed as a SUPPLEMENTARY --extra-index-url.
 ARG REGISTRY=docker.io
+ARG APT_MIRROR=""
+ARG PYPI_MIRROR=""
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+
 FROM ${REGISTRY}/library/python:3.12-slim
+
+# Re-declare source ARGs inside the build stage so their (inherited) values are
+# visible to RUN below. ARGs declared BEFORE `FROM` are NOT visible after it
+# unless re-declared here; the defaults are inherited from the global ARGs above.
+# No default is repeated here so the single source of truth stays BEFORE `FROM`.
+ARG APT_MIRROR
+ARG PYPI_MIRROR
+ARG TORCH_INDEX
 
 WORKDIR /app
 
 # ── Layer 1: System deps (rarely changes) ──
 # Note: libgl1-mesa-glx was removed in Debian 12 (Bookworm), use libgl1 instead.
-RUN (apt-get update && \
-     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) || \
-    (sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
-     apt-get update && \
-     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) \
+# When APT_MIRROR is set, rewrite the deb.debian.org host to the mirror. The
+# scheme in debian.sources is preserved; any scheme the caller may have prepended
+# to APT_MIRROR is stripped first so both "host" and "https://host" inputs work.
+RUN if [ -n "$APT_MIRROR" ]; then \
+      MIRROR_HOST=$(echo "$APT_MIRROR" | sed -E 's#^https?://##'); \
+      sed -i -E "s#https?://deb\.debian\.org#https://$MIRROR_HOST#g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Layer 2: Build config & mirror fallback (no installs here) ──
+# ── Layer 2: Build config (no installs here) ──
 # HF_HOME points into the persistent /app/data volume so a BGE model installed
 # on demand from the Settings UI at runtime survives container restarts.
 ENV HF_HOME=/app/data/hf_cache
 # Disable the Xet CAS storage backend (default since huggingface_hub 0.26.0).
 ENV HF_HUB_DISABLE_XET=1
-# Domestic PyPI mirror (overridable at build time); used only as a fallback.
-ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # ── Layer 3: Python deps from requirements.txt (FLOATING, dev-style) ──
 # Installed from requirements.txt (third-party deps ONLY — the project itself is
@@ -47,13 +71,13 @@ ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 # CRITICAL: torch (+cpu wheel) lives ONLY on the pytorch index, so it is passed as an
 # EXTRA index — NOT --index-url, which would shadow PyPI for the other ~160 pkgs.
 # This MUST match the prod Dockerfile's index so the regenerated lock pins torch==*+cpu.
+# When PYPI_MIRROR is empty (the default), we DON'T pass --index-url at all so pip
+# falls back to the official pypi.org; only a non-empty mirror overrides it.
 COPY backend/requirements.txt ./backend/
 RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
-    (pip install -r backend/requirements.txt \
-        --extra-index-url https://download.pytorch.org/whl/cpu || \
-     pip install -r backend/requirements.txt \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        --index-url ${PYPI_MIRROR})
+    pip install -r backend/requirements.txt \
+        ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}} \
+        --extra-index-url ${TORCH_INDEX}
 
 # ── Layer 4: Regenerate the lockfile from the freshly-resolved dev install ──
 # pip freeze snapshots the exact RESOLVED versions of every third-party package.

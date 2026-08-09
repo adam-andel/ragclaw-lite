@@ -7,6 +7,7 @@ python-docx>=0.8,<2.0
 python-pptx>=0.6,<1.0
 matplotlib>=3.8,<4.0
 fpdf2>=2.8,<3.0
+pymupdf>=1.24.3,<2.0
 reportlab>=4.0,<5.0
 openpyxl>=3.1,<4.0
 # Transitive: numpy comes with pandas
