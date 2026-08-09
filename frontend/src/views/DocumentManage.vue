@@ -20,6 +20,7 @@ import {
   updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB, removeDocumentFromKB,
 } from '@/api/documents'
 import client from '@/api/client'
+import { budgetWarningTexts } from '@/utils/budgetWarning'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
 import KbPickerModal from '@/components/kb/KbPickerModal.vue'
@@ -331,12 +332,19 @@ async function handleKbSubmit() {
       await loadDocs()
       return
     } else {
-      await updateKnowledgeBase(kbFormId.value, {
+      const res = await updateKnowledgeBase(kbFormId.value, {
         name: kbFormName.value,
         description: kbFormDesc.value || undefined,
         prompt: kbFormPrompt.value || undefined,
       })
       message.success(t('documents.kbUpdated'))
+      // Non-blocking budget warning: this instruction is prepended to the
+      // system prefix on every turn that hits the KB. The form closes right
+      // after saving, so it is reported as a persistent (closable) toast rather
+      // than an inline bar. duration 0 = stays until dismissed.
+      for (const text of budgetWarningTexts(res?.data?.warnings, t)) {
+        message.warning(text, { duration: 0 })
+      }
     }
     await loadKBs()
     showKbForm.value = false

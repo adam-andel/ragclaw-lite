@@ -18,6 +18,15 @@ export default {
   budgetWarningCodes: {
     CONTEXT_WINDOW_LOW_HEADROOM:
       'Context window is {cw} tokens, output limit {mt} tokens, fixed overhead (system prompt, tools, retrieval and memory slots) {ov} tokens — only about {left} tokens remain for conversation content. Long conversations may be auto-truncated to keep requests deliverable. Increase the context window or lower the output limit.',
+    PROMPT_FIELD_TOO_LARGE:
+      '"{field}" is about {tok} tokens — {pct}% of the {cw}-token context window, above the recommended {limit}. It is sent in full on every single turn, permanently squeezing the room left for history and retrieval and triggering compaction sooner. Trim it, or raise the context window.',
+  },
+  // Localized labels for the `field` param of PROMPT_FIELD_TOO_LARGE.
+  budgetWarningFields: {
+    system_prompt: 'System prompt',
+    kb_prompt: 'Knowledge base instruction',
+    user_memory: 'Profile memory & preferences',
+    pinned_instruction: 'Pinned conversation instruction',
   },
   embeddingModel: 'Embedding Model',
   embeddingModelTip: 'Uses the local Embedding model by default.',

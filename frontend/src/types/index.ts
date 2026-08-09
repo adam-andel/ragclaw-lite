@@ -59,6 +59,9 @@ export interface KnowledgeBase {
   vector_count: number
   created_at: string
   updated_at: string
+  // Non-blocking config-time warnings; only the update endpoint fills this in
+  // (e.g. the KB instruction eats too large a share of the context window).
+  warnings?: { code: string; params?: Record<string, unknown> }[]
 }
 
 export interface KBCreatePayload {

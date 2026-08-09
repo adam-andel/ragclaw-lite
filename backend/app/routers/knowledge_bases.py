@@ -19,6 +19,7 @@ from app.schemas.document import (
 )
 from app.schemas.user import UserResponse
 from app.services.auth import get_current_user, get_current_staff
+from app.services.context_budget import check_field_budget
 from app.services.vector_store import vector_store
 from app.services.cache import answer_cache
 
@@ -49,12 +50,15 @@ async def _get_kb_stats(kb_id: str, db: AsyncSession) -> tuple[int, int]:
     return doc_count, vec_count
 
 
-async def _kb_to_response(kb: KnowledgeBase, db: AsyncSession) -> KBResponse:
+async def _kb_to_response(
+    kb: KnowledgeBase, db: AsyncSession, warnings: list[dict] | None = None
+) -> KBResponse:
     doc_count, vec_count = await _get_kb_stats(kb.id, db)
     return KBResponse(
         id=kb.id, name=kb.name, description=kb.description, prompt=kb.prompt,
         doc_count=doc_count, vector_count=vec_count,
         created_at=kb.created_at, updated_at=kb.updated_at,
+        warnings=warnings or [],
     )
 
 async def _rebuild_kb_bm25(db: AsyncSession, kb_id: str):
@@ -171,6 +175,7 @@ async def update_kb(
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
         raise HTTPException(403, "只能修改自己创建的知识库")
 
+    warnings: list[dict] = []
     if data.name is not None:
         kb.name = data.name
     if data.description is not None:
@@ -180,9 +185,14 @@ async def update_kb(
         # The instruction changed → cached answers were generated under the old
         # prompt and must not be served. Bust this KB's cache.
         answer_cache.invalidate(kb.id)
+        # Config-time budget check: this instruction is prepended to the system
+        # prefix on every turn that hits this KB, so an oversized one silently
+        # shrinks the room left for history and retrieval. Non-blocking -- the
+        # save has already happened, we only report.
+        warnings = check_field_budget(kb.prompt, "kb_prompt")
     await db.commit()
     await db.refresh(kb)
-    return await _kb_to_response(kb, db)
+    return await _kb_to_response(kb, db, warnings)
 
 
 @router.delete("/{kb_id}")

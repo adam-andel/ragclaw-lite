@@ -22,6 +22,7 @@ import { listKnowledgeBases } from '@/api/documents'
 import { listSkills } from '@/api/skills'
 import { renderStreamingHtml } from '@/utils/think'
 import { backendErrorMessage } from '@/utils/backendError'
+import { budgetWarningTexts } from '@/utils/budgetWarning'
 import type { ChatMessage as ChatMsg, Skill } from '@/types'
 
 const route = useRoute()
@@ -817,6 +818,12 @@ async function savePin() {
     pinnedInstruction.value = res.pinned_instruction || ''
     pinDraft.value = pinnedInstruction.value
     nmessage.success(text ? t('chat.contextModal.pinSaved') : t('chat.contextModal.pinCleared'))
+    // Non-blocking budget warning: the pin is re-sent in the system prefix on
+    // every turn, so an oversized one is flagged at edit time. The character
+    // cap above is a separate abuse guard. duration 0 = stays until dismissed.
+    for (const warnText of budgetWarningTexts(res.warnings, t)) {
+      nmessage.warning(warnText, { duration: 0 })
+    }
   } catch (e: any) {
     nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
   } finally {

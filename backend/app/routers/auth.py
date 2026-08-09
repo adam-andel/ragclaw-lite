@@ -16,6 +16,7 @@ from app.schemas.user import (
     TokenResponse, UserResponse, UserUpdateRequest,
     RefreshRequest, RefreshResponse,
 )
+from app.services.context_budget import check_field_budget
 from app.services.auth import (
     hash_password, verify_password, create_access_token, get_current_user,
     issue_raw_refresh_token, create_refresh_token,
@@ -172,17 +173,24 @@ async def update_me(
     db: AsyncSession = Depends(get_db),
 ):
     """Update current user profile."""
+    warnings: list[dict] = []
     if data.display_name is not None:
         current_user.display_name = data.display_name
     if data.email is not None:
         current_user.email = data.email
     if data.memory is not None:
         current_user.memory = data.memory
+        # Config-time budget check: profile memory ships in the system prefix on
+        # every turn, so an oversized one permanently shrinks the room left for
+        # history and retrieval. Non-blocking -- the save stands, we only report.
+        warnings = check_field_budget(current_user.memory, "user_memory")
     if data.password is not None:
         current_user.hashed_password = hash_password(data.password)
     await db.commit()
     await db.refresh(current_user)
-    return UserResponse.model_validate(current_user)
+    resp = UserResponse.model_validate(current_user)
+    resp.warnings = warnings
+    return resp
 
 
 MAX_AVATAR_SIZE = 1 * 1024 * 1024  # 1MB

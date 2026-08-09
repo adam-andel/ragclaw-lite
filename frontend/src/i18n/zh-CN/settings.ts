@@ -18,6 +18,15 @@ export default {
   budgetWarningCodes: {
     CONTEXT_WINDOW_LOW_HEADROOM:
       '当前窗口 {cw} token、输出上限 {mt} token、系统提示词与检索/记忆等固定开销 {ov} token，留给对话内容的空间仅约 {left} token。长对话可能被自动截断以保证请求成功发送。建议增大上下文窗口或减小输出上限。',
+    PROMPT_FIELD_TOO_LARGE:
+      '「{field}」约 {tok} token，占上下文窗口（{cw}）的 {pct}%，已超过建议上限 {limit} token。该内容每一轮对话都会被完整发送，会持续挤占历史消息与检索结果的空间，导致更早触发压缩。建议精简内容，或增大上下文窗口。',
+  },
+  // Localized labels for the `field` param of PROMPT_FIELD_TOO_LARGE.
+  budgetWarningFields: {
+    system_prompt: '系统提示词',
+    kb_prompt: '知识库提示词',
+    user_memory: '用户记忆与偏好',
+    pinned_instruction: '对话常驻指令',
   },
   embeddingModel: 'Embedding 模型',
   embeddingModelTip: '默认使用本地 Embedding 模型。',

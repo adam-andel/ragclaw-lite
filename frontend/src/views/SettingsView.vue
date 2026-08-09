@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { backendErrorMessage } from '@/utils/backendError'
+import { budgetWarningText as sharedBudgetWarningText, type BudgetWarning } from '@/utils/budgetWarning'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
@@ -735,23 +736,16 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 // status (e.g. "API Key 已保存"). A Set dedupes and collapses multiple edits.
 const pendingLabels = new Set<string>()
 
-// Non-blocking warnings returned by the backend config sanity check (e.g. the
-// context window is too small to hold the fixed overhead). Shown as a yellow
-// bar after a save; cleared when the next save reports no warnings.
-// Structured as { code, params } per project convention: the backend emits a
-// bare code and the frontend localizes it via settings.budgetWarningCodes.
-interface BudgetWarning {
-  code: string
-  params?: Record<string, unknown>
-}
+// Non-blocking warnings returned by the backend config sanity check (window
+// headroom, oversized system prompt). Shown as a yellow bar after a save;
+// cleared when the next save reports no warnings. Structured as { code, params }
+// per project convention: the backend emits a bare code and the frontend
+// localizes it -- shared with the KB / profile / pin save paths via
+// utils/budgetWarning.
 const budgetWarnings = ref<BudgetWarning[]>([])
 
-// Map a structured backend warning to a localized message; unknown codes fall
-// back to the raw code so nothing is silently swallowed.
 function budgetWarningText(w: BudgetWarning): string {
-  const key = `settings.budgetWarningCodes.${w.code}`
-  const msg = t(key, (w.params || {}) as Record<string, string>)
-  return msg === key ? w.code : msg
+  return sharedBudgetWarningText(w, t)
 }
 
 function scheduleSave(label?: unknown) {

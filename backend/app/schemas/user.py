@@ -52,6 +52,12 @@ class UserResponse(BaseModel):
     tenant_id: str | None = None
     memory: str | None = None
     created_at: datetime
+    # Non-blocking config-time warnings, e.g. profile memory eating too large a
+    # share of the context window. Only populated when the profile-update
+    # endpoint actually rewrote `memory`; every other response leaves it empty.
+    # Each entry is {"code": <BARE_CODE>, "params": {...}} -- localized by the
+    # frontend.
+    warnings: list[dict] = []
 
     model_config = {"from_attributes": True}
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, h } from 'vue'
 import { backendErrorMessage } from '@/utils/backendError'
+import { budgetWarningTexts } from '@/utils/budgetWarning'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NAvatar, NIcon,
@@ -111,6 +112,13 @@ async function handleSave() {
     const res = await client.put('/auth/me', payload)
     auth.user = res.data
     message.success(t('profile.profileUpdated'))
+    // Non-blocking budget warning: the memory just saved rides in the system
+    // prefix on every turn, so an oversized one is flagged here rather than
+    // surfacing as a truncated context mid-inference. duration 0 keeps it up
+    // until dismissed (messages are closable app-wide).
+    for (const text of budgetWarningTexts(res.data?.warnings, t)) {
+      message.warning(text, { duration: 0 })
+    }
     form.value.password = ''
     form.value.passwordConfirm = ''
   } catch (e: any) {

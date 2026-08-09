@@ -26,6 +26,11 @@ class KBResponse(BaseModel):
     vector_count: int = 0
     created_at: datetime
     updated_at: datetime
+    # Non-blocking config-time warnings, e.g. the KB instruction eating too
+    # large a share of the context window. Only populated by the update
+    # endpoint; list/create responses always leave it empty. Each entry is
+    # {"code": <BARE_CODE>, "params": {...}} -- the frontend localizes it.
+    warnings: list[dict] = []
 
     model_config = {"from_attributes": True}
 

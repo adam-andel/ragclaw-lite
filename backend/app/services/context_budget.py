@@ -35,7 +35,7 @@ from functools import lru_cache
 
 from app.services.config_manager import config_manager, SUMMARY_SAFETY_MARGIN
 from app.services.i18n import t as _t
-from app.services.token_count import count_messages_tokens
+from app.services.token_count import count_messages_tokens, count_text_tokens
 
 # Share of ``avail`` reserved for the two query-driven enhancements. Both are
 # re-retrieved from scratch every turn, so over-reserving only wastes headroom
@@ -200,3 +200,68 @@ def default_budget() -> ContextBudget:
     return compute(
         prefix_tokens=estimate_prefix_tokens(), tool_tokens=default_tool_tokens()
     )
+
+
+# ---------------------------------------------------------------------------
+# Config-time validation of user-authored prompt text
+# ---------------------------------------------------------------------------
+
+# Soft ceiling for ONE hand-written field (system prompt, KB instruction,
+# profile memory, pinned instruction). Every one of these rides in the request
+# on every single turn, so a bloated field permanently shrinks the persistent
+# slot: history gets compacted sooner and RAG returns fewer chunks.
+#
+# min(percentage, absolute) rather than a bare percentage because the two
+# degenerate at opposite ends of the window range. On a 1M-token window 10%
+# would be 100k tokens -- no hand-written instruction should ever approach
+# that, so the absolute cap becomes the binding one. On an 8k window the
+# absolute cap never fires and the percentage does the work.
+FIELD_WARN_PCT = 10
+FIELD_WARN_ABS = 10_000
+
+
+def field_warn_limit() -> int:
+    """Token count above which a single authored field is flagged."""
+    return min(
+        config_manager.context_window * FIELD_WARN_PCT // 100, FIELD_WARN_ABS
+    )
+
+
+def check_field_budget(text: str | None, field: str) -> list[dict]:
+    """Config-time soft check for one user-authored prompt field.
+
+    Returns a list of structured warnings (empty = OK) shaped exactly like
+    :meth:`config_manager.validate_compression_budget` output, i.e.
+    ``{"code": <BARE_CODE>, "params": {...}}``. Per project convention the
+    backend never bakes user-facing copy -- the frontend maps ``code`` (and the
+    ``field`` param) to localized text.
+
+    This is NON-BLOCKING by design: the save always succeeds. Runtime safety is
+    already guaranteed elsewhere (Gate A rejects a prefix that cannot fit, and
+    ``fit_assembly_context`` trims whatever still overflows). The point here is
+    to make the cost visible AT EDIT TIME, where the author can act on it,
+    instead of surfacing it as a mid-inference failure hours later.
+
+    ``field`` is a bare identifier (``system_prompt`` / ``kb_prompt`` /
+    ``user_memory`` / ``pinned_instruction``), not a display label.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    tok = count_text_tokens(text)
+    limit = field_warn_limit()
+    if tok <= limit:
+        return []
+    window = max(1, config_manager.context_window)
+    return [
+        {
+            "code": "PROMPT_FIELD_TOO_LARGE",
+            "params": {
+                "field": field,
+                "tok": tok,
+                "limit": limit,
+                "pct": round(tok * 100 / window, 1),
+                "cw": config_manager.context_window,
+            },
+        }
+    ]

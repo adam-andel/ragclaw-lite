@@ -155,7 +155,12 @@ export const putPinInstruction = (id: string, pinnedInstruction: string) =>
     body: JSON.stringify({ pinned_instruction: pinnedInstruction }),
   })
     .then(handleResponse)
-    .then((r) => r.json()) as Promise<{ pinned_instruction: string }>
+    .then((r) => r.json()) as Promise<{
+    pinned_instruction: string
+    // Non-blocking budget warning when the pin eats too large a share of the
+    // context window (it is re-sent in the system prefix on every turn).
+    warnings?: { code: string; params?: Record<string, unknown> }[]
+  }>
 
 // Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)
 export const getPendingLimit = (id: string) =>

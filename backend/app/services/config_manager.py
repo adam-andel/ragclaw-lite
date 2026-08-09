@@ -951,16 +951,26 @@ class ConfigManager:
         schemas fall back to a constant, since the enabled tool set is not known
         until the agent graph is assembled.
 
+        Two independent checks run here and their warnings accumulate:
+
+        1. Window headroom -- the persistent slot still holds MIN_CONTENT_ROOM.
+        2. System-prompt mass -- the active system prompt alone does not eat an
+           unreasonable share of the window (see context_budget.check_field_budget).
+           The other authored fields (KB instruction, profile memory, pinned
+           instruction) are checked at their own save endpoints; only the system
+           prompt is owned by Settings.
+
         Trigger points: called at startup (main.py lifespan, after init) and
         inside update() on every Settings save.
         """
         # Deferred import: context_budget imports config_manager at module
         # level, so a top-level import here would close the cycle.
-        from app.services.context_budget import default_budget
+        from app.services.context_budget import check_field_budget, default_budget
 
+        warnings: list[dict] = []
         b = default_budget()
         if b.persistent < MIN_CONTENT_ROOM:
-            return [
+            warnings.append(
                 {
                     "code": "CONTEXT_WINDOW_LOW_HEADROOM",
                     "params": {
@@ -970,8 +980,11 @@ class ConfigManager:
                         "left": max(b.persistent, 0),
                     },
                 }
-            ]
-        return []
+            )
+        # Only the prompt actually in effect for the configured language is
+        # measured -- the inactive translation costs nothing at inference time.
+        warnings.extend(check_field_budget(self.system_prompt, "system_prompt"))
+        return warnings
 
     async def update(self, data: dict) -> dict:
         """Partial update. API keys go to encrypted file; other settings go to DB."""

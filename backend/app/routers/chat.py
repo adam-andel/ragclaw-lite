@@ -37,6 +37,7 @@ from app.services.skill_manager import read_skill_md, parse_skill_md
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens, count_text_tokens
 from app.services.config_manager import config_manager
+from app.services.context_budget import check_field_budget
 from app.services.conversation_summary import (
     build_context_with_summary,
     compact_conversation,
@@ -1999,6 +2000,11 @@ async def put_pin_instruction(
     conversation is busy (streaming / compacting) is rejected with 409
     CONVERSATION_BUSY; an excessively long pin is rejected with 400
     PIN_INSTRUCTION_TOO_LONG.
+
+    The character cap above is an abuse guard, independent of the returned
+    ``warnings``: those are the non-blocking config-time budget check (the pin
+    rides in the prefix on every turn, so its token mass is worth surfacing at
+    edit time even when it is well under the character cap).
     """
     value = payload.pinned_instruction or ""
     if len(value) > PIN_INSTRUCTION_MAX_CHARS:
@@ -2010,7 +2016,10 @@ async def put_pin_instruction(
     conv.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(conv)
-    return {"pinned_instruction": conv.pinned_instruction or ""}
+    return {
+        "pinned_instruction": conv.pinned_instruction or "",
+        "warnings": check_field_budget(conv.pinned_instruction, "pinned_instruction"),
+    }
 
 
 @router.post("/conversations/{conv_id}/compact", response_model=ConversationSummaryState)
