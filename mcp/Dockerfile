@@ -18,8 +18,8 @@ FROM ${REGISTRY}/library/python:3.12-slim
 # visible to RUN below. ARGs declared BEFORE `FROM` are NOT visible after it
 # unless re-declared here; the defaults are inherited from the global ARGs above.
 # No default is repeated here so the single source of truth stays BEFORE `FROM`.
-ARG APT_MIRROR
-ARG PYPI_MIRROR
+ARG APT_MIRROR=""
+ARG PYPI_MIRROR=""
 
 # Create non-root user (least privilege)
 RUN useradd -m -s /bin/bash mcpuser

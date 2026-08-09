@@ -1,40 +1,39 @@
 @echo off
-chcp 65001 >nul
-title RAGClaw æŽ§åˆ¶èœå•
+title RAGClaw ¿ØÖÆ²Ëµ¥
 
 cd /d "%~dp0..\.."
 
-REM ===== ä¸‰ä¸ªé•œåƒæºï¼ˆå…¨éƒ¨ä¼ å…¥åº•å±‚è„šæœ¬ï¼›ç•™ç©ºå³å®˜æ–¹æºï¼‰=====
-REM SOURCE_REGISTRY : Docker åŸºç¡€é•œåƒä»“åº“åŸŸåï¼Œç©º -> docker.io
-REM SOURCE_APT      : Debian apt é•œåƒä¸»æœºåï¼ˆå¯å¸¦ä¹Ÿå¯ä¸å¸¦ https://ï¼‰ï¼Œç©º -> å‘è¡Œç‰ˆå®˜æ–¹æº
-REM SOURCE_PYPI     : PyPI é•œåƒåœ°å€ï¼ˆéœ€å®Œæ•´ URLï¼Œå¦‚ https://pypi.tuna.tsinghua.edu.cn/simpleï¼‰ï¼Œç©º -> å®˜æ–¹ pypi.org
+REM ===== Èý¸ö¾µÏñÔ´£¨È«²¿´«Èëµ×²ã½Å±¾£»Áô¿Õ¼´¹Ù·½Ô´£©=====
+REM SOURCE_REGISTRY : Docker »ù´¡¾µÏñ²Ö¿âÓòÃû£¬¿Õ -> docker.io
+REM SOURCE_APT      : Debian apt ¾µÏñÖ÷»úÃû£¨¿É´øÒ²¿É²»´ø https://£©£¬¿Õ -> ·¢ÐÐ°æ¹Ù·½Ô´
+REM SOURCE_PYPI     : PyPI ¾µÏñµØÖ·£¨ÐèÍêÕû URL£¬Èç https://pypi.tuna.tsinghua.edu.cn/simple£©£¬¿Õ -> ¹Ù·½ pypi.org
 set "SOURCE_REGISTRY=docker.1ms.run"
 set "SOURCE_APT=mirrors.tuna.tsinghua.edu.cn"
 set "SOURCE_PYPI=https://pypi.tuna.tsinghua.edu.cn/simple"
 
 echo.
 echo   ===================================
-echo     RAGClaw-Lite æŽ§åˆ¶èœå•
+echo     RAGClaw-Lite ¿ØÖÆ²Ëµ¥
 echo   ===================================
 echo.
-echo     å½“å‰é•œåƒæºè®¾ç½®ï¼š
+echo     µ±Ç°¾µÏñÔ´ÉèÖÃ£º
 echo       registry : %SOURCE_REGISTRY%
 echo       apt      : %SOURCE_APT%
 echo       pypi     : %SOURCE_PYPI%
 echo.
-echo     [1] å¯åŠ¨å…¨éƒ¨ï¼ˆç”Ÿäº§çŽ¯å¢ƒï¼‰
-echo         -^> æž„å»ºé•œåƒï¼ˆragclaw mcp-repl ragclaw-egress nginxï¼‰+ å¯åŠ¨å®¹å™¨
-echo     [2] é‡æ–°åŠ è½½å…¨éƒ¨ï¼ˆç”Ÿäº§çŽ¯å¢ƒï¼‰
-echo         -^> ä»…é‡å»ºå®¹å™¨ï¼ˆcompose up -d --force-recreateï¼‰ï¼Œä¸é‡æ–°æž„å»ºé•œåƒ
-echo     [3] åœæ­¢å…¨éƒ¨
-echo         -^> æš‚åœæ‰€æœ‰å®¹å™¨ï¼ˆé•œåƒä¸Žæ•°æ®å·ä¿ç•™ï¼‰
-echo     [4] æŸ¥çœ‹çŠ¶æ€
-echo         -^> åˆ—å‡ºæœåŠ¡ / å¯¹å¤–ç«¯å£ / å¥åº·çŠ¶æ€
-echo     [5] ä»…åŽç«¯ï¼ˆç”Ÿäº§çŽ¯å¢ƒï¼‰
-echo         -^> ä»…æž„å»ºå¹¶å¯åŠ¨åŽç«¯æœåŠ¡ï¼ˆragclawï¼‰
-echo     [0] é€€å‡º
+echo     [1] Æô¶¯È«²¿£¨Éú²ú»·¾³£©
+echo         -^> ¹¹½¨¾µÏñ£¨ragclaw mcp-repl ragclaw-egress nginx£©+ Æô¶¯ÈÝÆ÷
+echo     [2] ÖØÐÂ¼ÓÔØÈ«²¿£¨Éú²ú»·¾³£©
+echo         -^> ½öÖØ½¨ÈÝÆ÷£¨compose up -d --force-recreate£©£¬²»ÖØÐÂ¹¹½¨¾µÏñ
+echo     [3] Í£Ö¹È«²¿
+echo         -^> ÔÝÍ£ËùÓÐÈÝÆ÷£¨¾µÏñÓëÊý¾Ý¾í±£Áô£©
+echo     [4] ²é¿´×´Ì¬
+echo         -^> ÁÐ³ö·þÎñ / ¶ÔÍâ¶Ë¿Ú / ½¡¿µ×´Ì¬
+echo     [5] ½öºó¶Ë£¨Éú²ú»·¾³£©
+echo         -^> ½ö¹¹½¨²¢Æô¶¯ºó¶Ë·þÎñ£¨ragclaw£©
+echo     [0] ÍË³ö
 echo.
-set /p choice="è¯·é€‰æ‹©: "
+set /p choice="ÇëÑ¡Ôñ: "
 
 if "%choice%"=="1" powershell -ExecutionPolicy Bypass -File "bin\psl\start.ps1" -Action start -Registry "%SOURCE_REGISTRY%" -Apt "%SOURCE_APT%" -Pypi "%SOURCE_PYPI%"
 if "%choice%"=="2" powershell -ExecutionPolicy Bypass -File "bin\psl\start.ps1" -Action reload -Registry "%SOURCE_REGISTRY%" -Apt "%SOURCE_APT%" -Pypi "%SOURCE_PYPI%"
