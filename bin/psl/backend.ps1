@@ -6,19 +6,34 @@
 # run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down ragclaw
+#
+# Build sources (registry / apt / pypi) are passed EXPLICITLY via parameters and
+# forwarded verbatim as --build-arg. No reachability probing — mirrors
+# bin/sh/backend.sh. Set them only when you want a mirror.
 
-param([string]$Action = "start")
+param(
+    [string]$Action = "start",
+    [string]$Registry = "",   # Docker base-image registry (empty -> docker.io)
+    [string]$Apt = "",        # Debian apt mirror host (empty -> distro official)
+    [string]$Pypi = ""        # PyPI index URL (empty -> official pypi.org)
+)
 
 $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
-# Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
-. (Join-Path $PSScriptRoot "lib\mirror.ps1")
 # Shared helpers (Get-RagclawPublishedPort — real host port resolver)
 . (Join-Path $PSScriptRoot "lib\common.ps1")
 
-# Images the ragclaw Dockerfile pulls (multi-stage: node build + python runtime).
-$RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
+# Build-arg array from the explicit source params. Only inject a build-arg when
+# the caller set it, so the common (official-source) path keeps FROM + apt/pip
+# layers cached — mirrors bin/sh/backend.sh.
+function Get-BuildArgs {
+    $argsArray = @()
+    if ($Registry) { $argsArray += "--build-arg", "REGISTRY=$Registry" }
+    if ($Apt)      { $argsArray += "--build-arg", "APT_MIRROR=$Apt" }
+    if ($Pypi)     { $argsArray += "--build-arg", "PYPI_MIRROR=$Pypi" }
+    return $argsArray
+}
 
 # =====================================================================
 # Helpers
@@ -64,16 +79,10 @@ function Start-DockerBackend {
         return
     }
 
-    # Find working mirror for build-time image pull
-    $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
-    if (-not $buildMirror) {
-        Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-        return
-    }
-    $arg = @()
-    if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
-    Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-    docker compose --progress=plain -f $ComposeFile build @arg ragclaw
+    # Build with explicit source args (no mirror probing)
+    $buildArgs = Get-BuildArgs
+    Write-Host ("=== Building (registry: " + $(if ($Registry) { $Registry } else { "<official>" }) + ", apt: " + $(if ($Apt) { $Apt } else { "<official>" }) + ", pypi: " + $(if ($Pypi) { $Pypi } else { "<official>" }) + ") ===") -ForegroundColor Cyan
+    docker compose --progress=plain -f $ComposeFile build @buildArgs ragclaw
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: build failed" -ForegroundColor Red
         return
@@ -160,15 +169,9 @@ switch ($Action) {
 
     "build" {
         Assert-Docker
-        $buildMirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
-        if (-not $buildMirror) {
-            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-            return
-        }
-        $arg = @()
-        if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
-        Write-Host "Rebuilding ragclaw image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
-        docker compose --progress=plain -f $ComposeFile build @arg --no-cache ragclaw
+        $buildArgs = Get-BuildArgs
+        Write-Host ("Rebuilding ragclaw image (registry: " + $(if ($Registry) { $Registry } else { "<official>" }) + ", --no-cache) ...") -ForegroundColor Gray
+        docker compose --progress=plain -f $ComposeFile build @buildArgs --no-cache ragclaw
     }
 
     "reload" {
@@ -207,7 +210,7 @@ switch ($Action) {
     }
 
     default {
-        Write-Host "Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs]" -ForegroundColor Yellow
+        Write-Host "Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs] [-Registry ...] [-Apt ...] [-Pypi ...]" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  start       Start backend (build + up, container mode)"
         Write-Host "  stop        Stop backend"
