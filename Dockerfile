@@ -23,17 +23,40 @@ COPY frontend/ .
 RUN npx vite build
 
 # ===== Stage 2: Python Runtime =====
+# APT_MIRROR defaults to the Debian official source when the build arg is unset.
+# Pass a BARE HOST (no scheme), e.g. --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+# (do NOT include https:// — the scheme in debian.sources is preserved).
+# PyPI index URL. Empty -> official pypi.org (no --index-url passed, pip uses
+# its default). Set to a mirror (e.g. https://pypi.tuna.tsinghua.edu.cn/simple)
+# to override. TORCH_INDEX is the torch-only CPU-wheel index, always passed as a
+# SUPPLEMENTARY --extra-index-url (torch lives ONLY there).
+ARG APT_MIRROR=""
+ARG PYPI_MIRROR=""
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
+
 FROM ${REGISTRY}/library/python:3.12-slim AS runtime
+
+# Re-declare source ARGs inside the build stage so their (inherited) values are
+# visible to RUN below. ARGs declared BEFORE `FROM` are NOT visible after it
+# unless re-declared here; the defaults are inherited from the global ARGs above.
+# No default is repeated here so the single source of truth stays BEFORE `FROM`.
+ARG APT_MIRROR=""
+ARG PYPI_MIRROR=""
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
 
 WORKDIR /app
 
 # ── Layer 1: System deps (rarely changes) ──
 # Note: libgl1-mesa-glx was removed in Debian 12 (Bookworm), use libgl1 instead
-RUN (apt-get update && \
-     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) || \
-    (sed -i 's|http://deb.debian.org|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources && \
-     apt-get update && \
-     apt-get install -y --no-install-recommends libgl1 libglib2.0-0) \
+# When APT_MIRROR is set, rewrite the deb.debian.org host to the mirror. The
+# scheme in debian.sources is preserved; any scheme the caller may have prepended
+# to APT_MIRROR is stripped first so both "host" and "https://host" inputs work.
+RUN if [ -n "$APT_MIRROR" ]; then \
+      MIRROR_HOST=$(echo "$APT_MIRROR" | sed -E 's#^https?://##'); \
+      sed -i -E "s#https?://deb\.debian\.org#https://$MIRROR_HOST#g" /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Layer 2: Build config & mirror fallback (no installs here) ──
@@ -46,9 +69,6 @@ ENV HF_HOME=/app/data/hf_cache
 # but far more reliable. Set before python starts so huggingface_hub reads it
 # at import time (the flag is cached when the module is first imported).
 ENV HF_HUB_DISABLE_XET=1
-# Domestic PyPI mirror (overridable at build time via --build-arg PYPI_MIRROR=...);
-# used only as a fallback when the official index is unreachable.
-ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # ── Layer 3: Python deps — fully pinned from requirements.lock ──
 # Mirror of frontend's `--frozen-lockfile`: every direct + transitive dep version
@@ -59,10 +79,8 @@ ARG PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 COPY backend/requirements.lock ./backend/
 RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install -r backend/requirements.lock \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-    || pip install -r backend/requirements.lock \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        --index-url ${PYPI_MIRROR}
+        ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}} \
+        --extra-index-url ${TORCH_INDEX}
 
 # ── Layer 4: Backend code (most frequent changes) ──
 COPY backend/ backend/

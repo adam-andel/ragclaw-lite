@@ -8,23 +8,26 @@
 # This script drives `docker compose` directly for the base stack
 # (ragclaw / mcp-repl / ragclaw-egress). It does NOT delegate to backend.ps1 or
 # mcp_repl.ps1 — those remain available for per-service control.
+#
+# Build sources (registry / apt / pypi) are passed EXPLICITLY via parameters and
+# forwarded verbatim as --build-arg. No reachability probing is performed — this
+# mirrors bin/sh/start.sh. Set them only when you want a mirror.
 
-param([string]$Action = "start")
+param(
+    [string]$Action = "start",
+    [string]$Registry = "",   # Docker base-image registry (empty -> docker.io)
+    [string]$Apt = "",        # Debian apt mirror host (empty -> distro official)
+    [string]$Pypi = ""        # PyPI index URL (empty -> official pypi.org)
+)
 
 $BinDir      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root        = Split-Path -Parent (Split-Path -Parent $BinDir)
 $ComposeFile = Join-Path $Root "docker-compose.yml"
 
-# Shared Docker registry-mirror probing (Get-WorkingMirrorDomain, etc.)
-. (Join-Path $PSScriptRoot "lib\mirror.ps1")
 # Shared helpers (Get-RagclawPublishedPort — real host port resolver)
 . (Join-Path $PSScriptRoot "lib\common.ps1")
 # Secret generation (Initialize-RagclawSecrets — idempotent first-run generator)
 . (Join-Path $PSScriptRoot "lib\gen-secrets.ps1")
-
-# start builds the whole stack; ragclaw is multi-stage (node + python), the other
-# services are python-only, so the union is python:3.12-slim + node:22-alpine.
-$RequiredImages = @("library/python:3.12-slim", "library/node:22-alpine")
 
 # =====================================================================
 # Helpers
@@ -83,17 +86,20 @@ function Resolve-Entry {
     }
 }
 
-function Build-Stack([string]$Mirror) {
-    Write-Host "=== Building (registry: $Mirror) ===" -ForegroundColor Cyan
-    # REGISTRY defaults to docker.io in every Dockerfile. Only pass --build-arg
-    # when the working mirror is actually NOT the default, so that on the common
-    # path (official registry reachable) BuildKit sees NO build-arg change and
-    # keeps all the FROM + apt/pip layers cached. Matches the bash build_stack().
-    $arg = @()
-    if ($Mirror -ne "docker.io") {
-        $arg += "--build-arg", "REGISTRY=$Mirror"
-    }
-    docker compose --progress=plain -f $ComposeFile build @arg ragclaw mcp-repl ragclaw-egress nginx
+# Build-arg array from the explicit source params. Only inject a build-arg when
+# the caller set it, so the common (official-source) path keeps all FROM + apt/pip
+# layers cached — mirrors bin/sh/start.sh::build_stack().
+function Get-BuildArgs {
+    $argsArray = @()
+    if ($Registry) { $argsArray += "--build-arg", "REGISTRY=$Registry" }
+    if ($Apt)      { $argsArray += "--build-arg", "APT_MIRROR=$Apt" }
+    if ($Pypi)     { $argsArray += "--build-arg", "PYPI_MIRROR=$Pypi" }
+    return $argsArray
+}
+
+function Build-Stack([string[]]$BuildArgs) {
+    Write-Host ("=== Building (registry: " + $(if ($Registry) { $Registry } else { "<official>" }) + ", apt: " + $(if ($Apt) { $Apt } else { "<official>" }) + ", pypi: " + $(if ($Pypi) { $Pypi } else { "<official>" }) + ") ===") -ForegroundColor Cyan
+    docker compose --progress=plain -f $ComposeFile build @BuildArgs ragclaw mcp-repl ragclaw-egress nginx
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -129,13 +135,9 @@ switch ($Action) {
             Write-Host "ERROR: docker-compose.yml not found at $ComposeFile" -ForegroundColor Red
             return
         }
-        $mirror = Get-WorkingMirrorDomain -RequiredImages $RequiredImages
-        if (-not $mirror) {
-            Write-Host "ERROR: no working mirror available (all registries rate-limited or unreachable)" -ForegroundColor Red
-            return
-        }
+        $buildArgs = Get-BuildArgs
         Initialize-RagclawSecrets
-        if (-not (Build-Stack $mirror)) { return }
+        if (-not (Build-Stack $buildArgs)) { return }
         Write-Host ""
         Write-Host "=== Starting stack ===" -ForegroundColor Cyan
         if (-not (Up-Stack)) { return }

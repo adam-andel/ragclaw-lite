@@ -15,8 +15,24 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONTAINER_PORT=8000   # backend container port; host port = RAGCLAW_PORT / .env / random
 
 source "$SCRIPT_DIR/lib/common.sh"
-source "$SCRIPT_DIR/lib/mirror.sh"
 source "$SCRIPT_DIR/lib/gen-secrets.sh"
+
+# ---- Build sources (all default to the OFFICIAL source) ----
+# These are passed straight through as build-args; NO reachability probing is
+# done anymore. Set them only when you want a mirror.
+#   --registry <domain>   Docker base-image registry (FROM ${REGISTRY}/...).
+#                         empty  -> docker.io (Dockerfiles' built-in default).
+#   --apt <url>           Debian/Alpine apt/apk mirror base URL.
+#                         empty  -> distro default (deb.debian.org / dl-cdn...).
+#   --pypi <url>          PyPI index URL for pip install.
+#                         empty  -> official pypi.org.
+# Examples:
+#   bash bin/sh/start.sh --registry docker.m.daocloud.io \
+#                        --apt https://mirrors.tuna.tsinghua.edu.cn \
+#                        --pypi https://pypi.tuna.tsinghua.edu.cn/simple start
+REGISTRY_ARG=""
+APT_MIRROR=""
+PYPI_MIRROR=""
 
 # Open a URL in the default browser: xdg-open (Linux) preferred, else open (macOS).
 open_browser() {
@@ -29,13 +45,19 @@ open_browser() {
 }
 
 # Dev-mode toggle: optional leading --dev / --prod / --watch flags (env RAGCLAW_DEV default).
+# Build sources (--registry / --apt / --pypi) all default to the OFFICIAL source
+# when omitted; pass them only to use a mirror. No source is ever probed for
+# reachability — whatever the caller passes (or nothing) is forwarded verbatim.
 RAGCLAW_DEV="${RAGCLAW_DEV:-0}"
 WATCH=0
 while [[ "${1:-}" == --* ]]; do
   case "$1" in
-    --dev)   RAGCLAW_DEV=1 ;;
-    --prod)  RAGCLAW_DEV=0 ;;
-    --watch) WATCH=1 ;;
+    --dev)    RAGCLAW_DEV=1 ;;
+    --prod)   RAGCLAW_DEV=0 ;;
+    --watch)  WATCH=1 ;;
+    --registry) REGISTRY_ARG="${2:-}"; shift ;;
+    --apt)    APT_MIRROR="${2:-}";  shift ;;
+    --pypi)   PYPI_MIRROR="${2:-}"; shift ;;
     *) c_yellow "Unknown flag: $1" ;;
   esac
   shift
@@ -47,14 +69,6 @@ fi
 # --dev implies the mcp-repl hot-reload watcher (Route B, watch_mcp.sh).
 if is_dev_mode; then
   WATCH=1
-fi
-
-# start builds the whole stack; ragclaw is multi-stage (node + python), the other
-# services are python-only, so the union is python:3.12-slim + node:22-alpine.
-# In dev mode, frontend-dev also pulls library/node:22-bookworm-slim.
-REQUIRED_IMAGES=("library/python:3.12-slim" "library/node:22-alpine")
-if is_dev_mode; then
-  REQUIRED_IMAGES+=("library/node:22-bookworm-slim")
 fi
 
 # ---- mcp-repl hot-reload watcher (Route B) ----
@@ -101,23 +115,20 @@ stop_watcher() {
 }
 
 # ---- helpers ----
-build_stack() {  # $1 = mirror
-  c_cyan "=== Building stack (registry: $1, mode: $(mode_label)) ==="
-  local arg=()
-  # REGISTRY defaults to docker.io in every Dockerfile. Only pass --build-arg
-  # when the working mirror is actually NOT the default, so that on the common
-  # path (official registry reachable) BuildKit sees NO build-arg change and
-  # keeps all the FROM + apt/pip layers cached. This is what prevents the
-  # "cache keeps growing because REGISTRY is always re-injected" problem.
-  if [ "$1" != "docker.io" ]; then
-    arg=(--build-arg REGISTRY="$1")
-  fi
-  # All services consume REGISTRY (base-image mirror). frontend/Dockerfile.dev
-  # now declares ARG REGISTRY too, so it gets the same mirror as everything else.
-  compose build --progress=plain "${arg[@]}" ragclaw mcp-repl ragclaw-egress nginx || return 1
+build_stack() {
+  c_cyan "=== Building stack (registry: ${REGISTRY_ARG:-<official>}, apt: ${APT_MIRROR:-<official>}, pypi: ${PYPI_MIRROR:-<official>}, mode: $(mode_label)) ==="
+  local -a bargs=()
+  # Each build-arg defaults to the distro/official source inside the Dockerfiles
+  # when omitted, so on the common path (official sources) BuildKit keeps all the
+  # FROM + apt/pip layers cached. We only inject a build-arg when the caller
+  # explicitly set it via --registry / --apt / --pypi.
+  [ -n "$REGISTRY_ARG" ] && bargs+=( --build-arg "REGISTRY=$REGISTRY_ARG" )
+  [ -n "$APT_MIRROR" ]   && bargs+=( --build-arg "APT_MIRROR=$APT_MIRROR" )
+  [ -n "$PYPI_MIRROR" ]  && bargs+=( --build-arg "PYPI_MIRROR=$PYPI_MIRROR" )
+  compose build --progress=plain "${bargs[@]}" ragclaw mcp-repl ragclaw-egress nginx || return 1
   if is_dev_mode; then
     c_cyan "=== Building frontend-dev (Vite HMR) ==="
-    compose build --progress=plain "${arg[@]}" frontend-dev || return 1
+    compose build --progress=plain "${bargs[@]}" frontend-dev || return 1
   fi
 }
 
@@ -133,18 +144,14 @@ up_stack() {  # $1 = "force" to --force-recreate
 }
 
 # Shared pre-flight + build for `start` and `reload`: validate docker & compose
-# file, pick a working mirror, generate secrets, and build images. Exits the
-# script on hard failures. frontend-dev dependency reconciliation (including
-# freshly added deps like cronstrue) is handled entirely by the container
-# entrypoint (docker-entrypoint.dev.sh), which runs `pnpm install` on every
-# start — no volume surgery is needed here.
+# file, generate secrets, and build images. Exits the script on hard failures.
+# Build sources (--registry / --apt / --pypi) are whatever the caller passed,
+# all defaulting to the official source — NO reachability probing is done.
 prepare_stack() {
   assert_docker
   [ -f "$COMPOSE_FILE" ] || { c_red "ERROR: docker-compose.yml not found at $COMPOSE_FILE"; exit 1; }
-  local mirror="$(get_working_mirror_domain "${REQUIRED_IMAGES[@]}")"
-  [ -z "$mirror" ] && { c_red "ERROR: no working mirror available (all registries rate-limited or unreachable)"; exit 1; }
   gen_secrets
-  build_stack "$mirror" || exit 1
+  build_stack || exit 1
 }
 
 # Bring the stack up, wait for health, and print the post-start summary.
@@ -280,7 +287,18 @@ case "${1:-start}" in
     ;;
 
   *)
-    c_yellow "Usage: bash bin/sh/start.sh [--dev|--prod] [start|stop|reload|status]"
-    c_yellow "  --dev  implies the mcp-repl hot-reload watcher (no separate terminal needed)"
+    c_yellow "Usage: bash bin/sh/start.sh [FLAGS] [start|stop|reload|status]"
+    c_yellow "  FLAGS:"
+    c_yellow "    --dev       dev mode (Vite HMR + mcp-repl hot-reload watcher)"
+    c_yellow "    --prod      prod mode (default)"
+    c_yellow "    --registry <domain>  Docker base-image registry (default: docker.io)"
+    c_yellow "    --apt   <url>        apt/apk mirror base URL (default: distro official)"
+    c_yellow "    --pypi  <url>        PyPI index URL (default: pypi.org)"
+    c_yellow "  Build sources are used verbatim; no reachability check is performed."
+    c_yellow "  Examples:"
+    c_yellow "    bash bin/sh/start.sh --dev start"
+    c_yellow "    bash bin/sh/start.sh --registry docker.m.daocloud.io \\"
+    c_yellow "                         --apt https://mirrors.tuna.tsinghua.edu.cn \\"
+    c_yellow "                         --pypi https://pypi.tuna.tsinghua.edu.cn/simple start"
     ;;
 esac
