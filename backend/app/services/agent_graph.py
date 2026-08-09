@@ -256,16 +256,20 @@ class RagclawAgentGraph:
         memory context, tool results, rag context, and user query.
         """
         active_skill = state.get("active_skill") or {}
-        system_prompt = active_skill.get(
+        # Part 1 (identity/security) is the ALWAYS-ON base — never replaced by an
+        # active skill. Part 2 (native capabilities) is replaced by the skill's own
+        # system_prompt when one is selected, otherwise the constant base.
+        identity_prompt = config_manager.system_prompt_identity
+        cap_prompt = active_skill.get(
             "system_prompt",
-            config_manager.system_prompt,
+            config_manager.system_prompt_capabilities,
         )
 
-        # KB-specific instruction (set by skill_router_node), appended after the
-        # stable system prompt so the cached prefix stays consistent across KBs.
+        # KB-specific instruction (set by skill_router_node). Lands in system②
+        # together with system_prompt / user_memory / pin, so system① (the always-on
+        # constants) stays a stable, independently cacheable prefix regardless of which
+        # KB or pinned instruction is active.
         kb_prompt = state.get("kb_prompt") or ""
-        if kb_prompt:
-            system_prompt = system_prompt + "\n\n## Knowledge Base Background & Preferences\n" + kb_prompt
 
         # ── Final-answer guidance: an ALWAYS-ON constant suffix (merged from the
         # old branch-only final_stage_note). It forbids the model from emitting
@@ -318,14 +322,44 @@ class RagclawAgentGraph:
         # parameters (never read from `state`) so the phase-3 query truncation and
         # memory trimming can take effect.
         def _assemble(s, h, rag, payload, q, mem):
-            # Per-conversation pinned instruction: a sacred prefix that
+            # Per-conversation pinned instruction (system②) — a sacred prefix that
             # fit_assembly_context never trims. Always injected, never folded into
             # summary_text. Mirrors the floor format in _empty_context_request_tokens.
             pin = state.get("pinned_instruction") or ""
-            sys_prefix = system_prompt + cron_rule + file_rule + final_answer_rule
+            user_memory = (state.get("user_memory") or "").strip()
+
+            # system① — ALWAYS-ON constants (cron is gated by include_cron_rule but
+            # constant within a session; file/final are unconditional). Placed FIRST
+            # with its own cache breakpoint so this stable block is shared across all
+            # requests regardless of the active skill/config/system_prompt.
+            const_prefix = cron_rule + file_rule + final_answer_rule
+
+            # system② — ALWAYS-ON identity/security base (Part 1) + per-session
+            # context (KB / user memory / pinned instruction). Part 1 is never
+            # replaced by an active skill, so it stays a stable base regardless of
+            # which skill or config is active.
+            var_prefix = identity_prompt
+            if kb_prompt:
+                var_prefix += f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}"
+            if user_memory:
+                var_prefix += f"\n\n## User Memory & Preferences\n{user_memory}"
             if pin:
-                sys_prefix += f"\n\n## Pinned Instructions\n{pin}"
-            msgs = [{"role": "system", "content": sys_prefix}]
+                var_prefix += f"\n\n## Pinned Instructions\n{pin}"
+
+            # system③ — native-capability base (Part 2), placed LAST among the
+            # system messages so it is the OUTERMOST cache unit. It changes most
+            # often (an active skill replaces it with its own system_prompt), so
+            # keeping it at the tail means skill/KP/pin churn invalidates only this
+            # trailing block, not the stable identity base above.
+            cap_prefix = cap_prompt
+
+            msgs = []
+            if const_prefix.strip():
+                msgs.append({"role": "system", "content": const_prefix})
+            if var_prefix.strip():
+                msgs.append({"role": "system", "content": var_prefix})
+            if cap_prefix.strip():
+                msgs.append({"role": "system", "content": cap_prefix})
             if s:
                 msgs.append(
                     {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s}

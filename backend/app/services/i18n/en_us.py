@@ -54,7 +54,10 @@ MESSAGES = {
         "- Do NOT output [TOOL_CALL] or <tool_call> tags.\n"
         '- Escape double quotes inside code arguments as \\", and use \\n for newlines.\n'
         "- Do NOT output the final reply; if the task is done, output {} instead.\n"
-        "- NEVER fabricate File, file paths, or UUIDs."
+        "- NEVER fabricate File, file paths, or UUIDs.\n"
+        "\n"
+        "## Path discipline\n"
+        "- **About skill-provided paths**: if a skill's instructions hardcode an absolute path (e.g. `/app/workspace/xxx.html`, `/app/xxx.html`), ignore it and write using a **relative path** inside the current working directory instead (e.g. `open(\"guangzhou_weather.html\", \"w\", encoding=\"utf-8\")`). All generated files must land within run_python's cwd; otherwise the process has no write permission for that path and the write fails with `Operation not permitted`.\n"
     ),
 
 

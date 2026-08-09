@@ -42,7 +42,10 @@ MESSAGES = {
         "- 不要用 ``` 包裹 JSON\n"
         "- 不要输出 [TOOL_CALL] 或 <tool_call> 标签\n"
         "- 代码参数中的双引号需用 \\\" 转义，换行用 \\n\n"
-        "- **绝对不要**编造File、文件路径或 uuid"
+        "- **绝对不要**编造File、文件路径或 uuid\n"
+        "\n"
+        "## 路径纪律\n"
+        "- **关于技能（skill）给出的路径**：若某个技能的指令里写死了绝对路径（例如 `/app/workspace/xxx.html`、`/app/xxx.html` 等），必须忽略它，改在当前工作目录下用**相对路径**写文件（如直接 `open(\"guangzhou_weather.html\", \"w\", encoding=\"utf-8\")`）。所有生成的文件都必须落在 run_python 的 cwd 内；否则进程对该路径无写权限，会导致 `Operation not permitted` 写入失败。\n"
     ),
 
     # Rule appended to the final-generation system prompt: when a tool produced

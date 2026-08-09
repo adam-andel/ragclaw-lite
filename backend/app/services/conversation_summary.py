@@ -194,7 +194,17 @@ def _empty_context_request_tokens(
     guessing here would reject requests that actually fit.
     """
     tool_sys = _t("tool_system", config_manager.prompt_language, tool_desc="")
-    task_bg = skill_prompt if skill_prompt is not None else (config_manager.system_prompt or "")
+    if skill_prompt is not None:
+        # Explicitly-selected skill: its body replaces Part 2 (capabilities), with
+        # the always-on identity base (Part 1) prepended — mirroring the real
+        # assembly in agent_nodes._assemble.
+        task_bg = config_manager.system_prompt_identity + "\n\n" + skill_prompt
+    else:
+        task_bg = (
+            config_manager.system_prompt_identity
+            + "\n\n"
+            + config_manager.system_prompt_capabilities
+        )
     if kb_prompt:
         task_bg += f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}"
     task_bg += ws_context

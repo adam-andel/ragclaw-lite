@@ -809,10 +809,10 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
     skill_md_content = read_skill_md(folder_name)
     if not skill_md_content:
         logger.warning("_load_skill_body_and_tools: SKILL.md not found for folder=%s", folder_name)
-        return config_manager.system_prompt, []
+        return config_manager.system_prompt_capabilities, []
 
     parsed = parse_skill_md(skill_md_content)
-    system_prompt = parsed["body"] or config_manager.system_prompt
+    system_prompt = parsed["body"] or config_manager.system_prompt_capabilities
     mcp_server_names = parsed.get("mcp_servers", [])
 
     script_tools = discover_tools(folder_name)
@@ -1316,7 +1316,11 @@ async def tool_decision_node(state: dict) -> dict:
             logger.info("Tool decision: tool errored (round %d), giving LLM one chance to fix. Error: %.200s",
                        tool_round, prev_results[-1][:200])
     active = state.get("active_skill") or {}
-    skill_prompt = active.get("system_prompt", config_manager.system_prompt)
+    # Part 1 (identity/security) is always prepended; Part 2 (native capabilities)
+    # is the active skill's system_prompt when present, else the constant base.
+    skill_prompt = config_manager.system_prompt_identity + "\n\n" + active.get(
+        "system_prompt", config_manager.system_prompt_capabilities
+    )
     kb_prompt = state.get("kb_prompt") or ""
     if not kb_prompt:
         kb_prompt = await get_kb_prompt(state["kb_id"])

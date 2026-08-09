@@ -140,7 +140,8 @@ def estimate_prefix_tokens() -> int:
     system prompt) so callers pay tokenization once per configuration.
     """
     return _prefix_tokens_cached(
-        config_manager.prompt_language, config_manager.system_prompt or ""
+        config_manager.prompt_language,
+        (config_manager.system_prompt_identity + "\n\n" + config_manager.system_prompt_capabilities) or "",
     )
 
 
