@@ -9,15 +9,13 @@
 # --index-url passed, pip uses its default). Set to a mirror to override.
 #   docker compose build --build-arg PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple mcp-repl
 ARG REGISTRY=docker.io
-ARG APT_MIRROR=""
-ARG PYPI_MIRROR=""
 
 FROM ${REGISTRY}/library/python:3.12-slim
 
-# Re-declare source ARGs inside the build stage so their (inherited) values are
-# visible to RUN below. ARGs declared BEFORE `FROM` are NOT visible after it
-# unless re-declared here; the defaults are inherited from the global ARGs above.
-# No default is repeated here so the single source of truth stays BEFORE `FROM`.
+# Declare source ARGs inside the build stage so they are visible to RUN below.
+# ARGs are NOT visible across `FROM` boundaries, so they MUST be declared here
+# (after FROM) with their defaults; values can still be overridden via
+# --build-arg at build time.
 ARG APT_MIRROR=""
 ARG PYPI_MIRROR=""
 

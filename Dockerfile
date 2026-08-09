@@ -30,16 +30,12 @@ RUN npx vite build
 # its default). Set to a mirror (e.g. https://pypi.tuna.tsinghua.edu.cn/simple)
 # to override. TORCH_INDEX is the torch-only CPU-wheel index, always passed as a
 # SUPPLEMENTARY --extra-index-url (torch lives ONLY there).
-ARG APT_MIRROR=""
-ARG PYPI_MIRROR=""
-ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
-
 FROM ${REGISTRY}/library/python:3.12-slim AS runtime
 
-# Re-declare source ARGs inside the build stage so their (inherited) values are
-# visible to RUN below. ARGs declared BEFORE `FROM` are NOT visible after it
-# unless re-declared here; the defaults are inherited from the global ARGs above.
-# No default is repeated here so the single source of truth stays BEFORE `FROM`.
+# Declare source ARGs inside the build stage so they are visible to RUN below.
+# ARGs are NOT visible across `FROM` boundaries, so they MUST be declared here
+# (after FROM) with their defaults; values can still be overridden via
+# --build-arg at build time.
 ARG APT_MIRROR=""
 ARG PYPI_MIRROR=""
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cpu
