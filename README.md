@@ -231,8 +231,8 @@ ragclaw/
 │   └── app/
 │       ├── main.py             # Entry point
 │       ├── config.py           # Config
-│       ├── database.py         # SQLite entry (init_db: alembic upgrade + seed)
-│       ├── migrations/         # Alembic migrations (incl. single initial-schema baseline)
+│       ├── database.py         # SQLite entry (init_db: create_all + patches + drift check + seed)
+│       ├── schema_patches.py   # Idempotent schema patches (add/drop column, type change, ...)
 │       ├── models/             # ORM models (incl. Skill/MCPServer)
 │       ├── schemas/            # Pydantic (incl. skill/mcp schema)
 │       ├── routers/            # API routes
@@ -342,7 +342,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 | Agent orchestration | LangGraph | Declarative state graph, conditional routing + multi-turn tool calls |
 | Execution engine (Claw) | REPL sandbox (Python / Shell / Node.js) | Multi-language code exec + workspace file management (the agent's "hands") |
 | Vector DB | ChromaDB | Embedded, zero-config (RAG vector store) |
-| Meta DB | SQLite + SQLAlchemy + Alembic | Single-file store + versioned migrations (baseline + incremental) |
+| Meta DB | SQLite + SQLAlchemy (declarative) | ORM models are schema source of truth; auto-create on startup |
 | Embedding | BGE-small-zh-v1.5 | 384-dim Chinese vectors |
 | LLM | OpenAI / Qwen / Ollama | Swappable, supports tool calling |
 | Memory | Mem0 (optional) | Cross-session memory, loaded in parallel without adding latency |
@@ -355,40 +355,64 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## 🗄️ Database / 数据库构建
 
-Metadata uses a single-file SQLite; the schema is managed by **Alembic** versioned migrations (no more hand-rolled incremental patch scripts).
+The ORM models in `backend/app/models/` are the schema source of truth. There are
+no migration files and no revision chain. Every startup runs three idempotent
+stages:
 
-元数据使用单文件 SQLite，schema 由 **Alembic** 版本化迁移统一管理，不再依赖自研的增量补丁脚本。
+1. **`create_all(checkfirst=True)`** — creates whole missing tables from the models.
+   It never modifies a table that already exists.
+2. **Idempotent patches** (`backend/app/schema_patches.py`) — everything step 1
+   cannot do: add/drop a column, change a type, rebuild an index, backfill data.
+   Each patch guards itself on *live schema state*, so it is safe to re-run forever
+   and there is no ordering constraint between stacks.
+3. **Drift detection** — compares the models against the live database and logs an
+   error listing anything still missing, so a model changed without a matching
+   patch is caught at startup instead of failing mid-request later.
 
-- **Schema source**: `migrations/versions/2624081b4b65_initial_schema.py` (a single *initial schema* baseline that creates all 16 business tables + constraints/indexes at once). All later schema evolution is expressed via new migration files.
-- **Build entry**: `app/database.py`'s `init_db()` runs, in order:
-  1. `alembic upgrade head` (applies all migrations; no-op if already current);
-  2. idempotent seed (writes default admin `admin`, doc-management skill `doc-manager`, Python-executor MCP Server).
-- **Dependency**: `alembic` is added to `backend/requirements.txt`.
+Schema 以 `backend/app/models/` 下的 ORM 模型为唯一事实来源，无迁移文件、无版本链。
+每次启动执行三个幂等阶段：`create_all` 补建缺失的表 → 幂等 patch 处理加列/删列/改类型
+等 `create_all` 做不到的变更 → 漂移检测对比模型与实际库并报告差异。
 
 ### Fresh install / 全新安装
 
-Delete `data/sqlite/ragclaw.db` and start the backend — the DB and seed data rebuild automatically (fits the open-source "fresh project" posture).
+Delete `data/sqlite/ragclaw.db` and start the backend — the DB and seed data rebuild automatically.
 
-删除 `data/sqlite/ragclaw.db` 后启动后端，数据库与种子数据会自动重建（契合开源「全新项目」姿态）。
+删除 `data/sqlite/ragclaw.db` 后启动后端，数据库与种子数据会自动重建。
 
-### Evolve schema (standard flow) / 演进 schema（标准流程）
+### Evolve schema / 演进 schema
 
-1. Edit the ORM models under `app/models/`;
-2. Generate a migration (you can isolate-test against an empty DB via `ALEMBIC_DB_URL`, leaving the real DB untouched):
-   ```bash
-   cd backend
-   ALEMBIC_DB_URL="sqlite+aiosqlite:////tmp/test.db" \
-     python -m alembic revision --autogenerate -m "add column xxx"
-   ```
-3. **Always review** the generated migration to confirm it only contains the intended create/alter operations before committing.
+**Adding a whole new table** — define the model, restart. Done; `create_all` picks
+it up.
 
-### Upgrade an existing dev DB to this baseline / 既有开发库升级到本基线
+**Any change to an existing table** (add/drop column, change type, add index,
+backfill) — edit the model *and* append a patch to `backend/app/schema_patches.py`:
 
-An old DB built by the legacy mechanism will error on `alembic upgrade head` because subtables already exist. Two options:
+```python
+Patch(
+    name="users.avatar_url",
+    applied=lambda insp: has_column(insp, "users", "avatar_url"),
+    apply=["ALTER TABLE users ADD COLUMN avatar_url TEXT"],
+)
+```
 
-- **Keep data**: first bring the old schema up to the baseline (missing tables/columns), then `alembic stamp head` to mark it as baselined;
-- **Start over**: simply delete `data/sqlite/ragclaw.db` and rebuild.
-> The legacy `_migrations` table can stay (harmless); the new mechanism uses `alembic_version`.
+The model change makes fresh installs correct; the patch brings existing databases
+to the same shape. Forget the patch and startup logs a loud `DRIFT DETECTED` error
+naming the missing column.
+
+Rules: guard on **live schema state**, never on a version number — a sibling stack
+may have applied a different subset. Patches are **append-only**; deleting one
+breaks any database that has not applied it yet. For a drop, invert the predicate
+(`applied` means "desired end state reached", so a drop is applied once the column
+is gone). Pass a callable instead of a SQL list for multi-step work such as
+SQLite's table-rebuild dance.
+
+Multi-stack is safe by construction: every stack runs the same self-guarding
+patches in any order, with no shared version counter to conflict over.
+
+新增整张表：改模型后重启即可。**修改已有表**（加列/删列/改类型/加索引/回填）必须
+同时在 `app/schema_patches.py` 追加一条幂等 patch —— 模型保证全新安装正确，patch 保证
+存量库收敛到同一形状；忘写会在启动时被漂移检测报错。patch 只增不删，判断条件必须基于
+实际库结构而非版本号。
 
 ---
 

@@ -73,7 +73,7 @@ function Start-DockerBackend {
     $arg = @()
     if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
     Write-Host "=== Building (registry: $buildMirror) ===" -ForegroundColor Cyan
-    docker compose -f $ComposeFile build --progress=plain @arg ragclaw
+    docker compose --progress=plain -f $ComposeFile build @arg ragclaw
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: build failed" -ForegroundColor Red
         return
@@ -168,7 +168,7 @@ switch ($Action) {
         $arg = @()
         if ($buildMirror -ne "docker.io") { $arg += "--build-arg", "REGISTRY=$buildMirror" }
         Write-Host "Rebuilding ragclaw image (registry: $buildMirror, --no-cache) ..." -ForegroundColor Gray
-        docker compose -f $ComposeFile build --progress=plain @arg --no-cache ragclaw
+        docker compose --progress=plain -f $ComposeFile build @arg --no-cache ragclaw
     }
 
     "reload" {

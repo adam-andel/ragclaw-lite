@@ -1,21 +1,27 @@
 """SQLite database setup via SQLAlchemy async.
 
-Schema is owned by Alembic (see ``migrations/``). On startup ``init_db`` runs
-``alembic upgrade head`` to bring the schema to the latest version, then seeds
-idempotent default data (admin user, default MCP server).
+Schema management has three stages, all idempotent and all run on every startup:
 
-All tables are defined as SQLAlchemy models under ``app/models``; the single
-baseline Alembic migration (``migrations/versions/*_initial_schema.py``) creates
-the full schema from those models. Future schema changes are made by adding new
-Alembic revisions — there is no hand-rolled migration chain.
+1. ``Base.metadata.create_all(checkfirst=True)`` — creates whole missing tables
+   from the ORM models. It never modifies an existing table.
+2. ``schema_patches.run_patches()`` — every change ``create_all`` cannot make
+   (add/drop column, change type, rebuild index, backfill data). Each patch
+   guards itself on live schema state, so there is no revision chain and no
+   ordering constraint between stacks.
+3. ``schema_patches.detect_drift()`` — compares the ORM models against the live
+   database and logs anything still missing, catching the case where a model
+   changed but nobody wrote the matching patch.
+
+The ORM models under ``app/models`` are the schema source of truth. There are no
+migration files.
 """
 
 import asyncio
+import logging
 import secrets
 import uuid
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -26,9 +32,28 @@ settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 settings.skills_dir.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = f"sqlite+aiosqlite:///{settings.sqlite_path}"
+# Database URL is supplied via settings (DATABASE_URL), defaulting to the local
+# SQLite file so the project still runs with a one-command `docker compose up`
+# and no external Postgres. Swap to e.g.
+#   postgresql+asyncpg://user:pass@host:5432/ragclaw
+# for production-grade concurrent access. No SQLite-specific connect_args are
+# attached here — both aiosqlite and asyncpg are happy without them.
+DATABASE_URL = settings.database_url or f"sqlite+aiosqlite:///{settings.sqlite_path}"
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False})
+engine = create_async_engine(DATABASE_URL, echo=False)
+
+# ─── Write concurrency limiter ───
+# SQLite serializes all writes behind a single file lock, so a burst of
+# concurrent write requests (upload / process / delete / reindex triggered
+# from the API) can hit "database is locked". This semaphore caps how many
+# write requests may enter the DB at once from the API process. Background
+# writers (doc_processor task, reindex daemon thread) are NOT covered here —
+# they run serially on their own and simply queue behind the SQLite lock.
+# Raising this above 1 on SQLite gives little benefit (the lock is still
+# single-writer); it mainly smooths request handling and prevents lock
+# contention spikes. On Postgres this becomes a soft concurrency cap.
+WRITE_CONCURRENCY = 4
+write_semaphore = asyncio.Semaphore(WRITE_CONCURRENCY)
 
 
 class _AsyncSessionProxy:
@@ -46,12 +71,10 @@ class _AsyncSessionProxy:
     _engines: dict[str, object] = {}
 
     def _get_engine(self):
-        url = f"sqlite+aiosqlite:///{settings.sqlite_path}"
+        url = settings.database_url or f"sqlite+aiosqlite:///{settings.sqlite_path}"
         eng = self._engines.get(url)
         if eng is None:
-            eng = create_async_engine(
-                url, echo=False, connect_args={"check_same_thread": False}
-            )
+            eng = create_async_engine(url, echo=False)
             self._engines[url] = eng
         return eng
 
@@ -100,84 +123,109 @@ def allocate_repl_uid(existing: Iterable[int]) -> int:
 # ─── Public API ───
 
 async def init_db():
-    """Apply database migrations (Alembic) and seed idempotent default data."""
-    await asyncio.to_thread(_run_alembic_upgrade)
-    await asyncio.to_thread(_seed_db)
+    """Create tables from ORM models (declarative) and seed idempotent default data."""
+    await _create_tables()
+    await _seed_db()
 
 
-def _run_alembic_upgrade():
-    """Run all pending Alembic migrations against the configured database."""
-    from alembic import command
-    from alembic.config import Config
+async def _create_tables():
+    """Bring the database in line with the ORM models (create → patch → verify).
 
-    base_dir = Path(__file__).resolve().parent.parent
-    cfg = Config(str(base_dir / "alembic.ini"))
-    # Point Alembic at our env/versions and the application's database URL.
-    cfg.set_main_option("script_location", str(base_dir / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
-    command.upgrade(cfg, "head")
-    # Alembic's env.py calls fileConfig(alembic.ini), which attaches its own
-    # timestamp-less "console" handler to the root logger — duplicating every
-    # ragclaw.* line our handler emits. Re-apply our logging setup immediately
-    # so startup-time ragclaw INFO logs (MCP push, BGE warmup, ...) are not
-    # doubled before the first HTTP request reaches the per-request middleware.
-    from app.logging_config import setup_logging
-    setup_logging()
+    Importing ``app.models`` ensures every ORM model is registered on
+    Base.metadata before any of the three stages run.
+    """
+    import app.models  # noqa: F401
+    from app.schema_patches import detect_drift, run_patches
+
+    async with engine.begin() as conn:
+        # WAL lets readers proceed while a writer is active and avoids the
+        # "database is locked" busy errors under concurrent read/write on
+        # SQLite. Harmless no-op on Postgres (skipped via the URL check).
+        if DATABASE_URL.startswith("sqlite"):
+            from sqlalchemy import text
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA busy_timeout=5000"))
+
+        # 1) Whole missing tables, straight from the models.
+        await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+
+        # 2) Everything create_all cannot do, each guarded on live schema state.
+        await conn.run_sync(run_patches)
+
+        # 3) Verify the result actually matches the models. A mismatch here means
+        #    a model changed without a matching patch — surface it at startup
+        #    instead of letting it fail as "no such column" mid-request later.
+        problems = await conn.run_sync(detect_drift, Base.metadata)
+
+    if problems:
+        _schema_logger = logging.getLogger("ragclaw.schema")
+        _schema_logger.error(
+            "[schema] DRIFT DETECTED — the database does not match the ORM models. "
+            "A model was changed without a matching patch in app/schema_patches.py. "
+            "%d problem(s):",
+            len(problems),
+        )
+        for problem in problems:
+            _schema_logger.error("[schema]   - %s", problem)
 
 
-def _seed_db():
+async def _seed_db():
     """Seed idempotent default data (default MCP server).
 
     The admin user is intentionally NOT auto-seeded: the first user registers
     themselves as the super admin via ``POST /api/auth/register`` on first
     launch (see ``app/routers/auth.py``). That keeps the bootstrap credentials
     user-chosen instead of a hardcoded ``admin/admin123``.
+
+    Runs through the async session so it works against both SQLite and
+    Postgres without any raw driver or dialect-specific SQL.
     """
-    import sqlite3
-
-    raw = sqlite3.connect(str(settings.sqlite_path))
-    try:
-        _seed_defaults(raw)
-        raw.commit()
-    finally:
-        raw.close()
-
-
-def _seed_defaults(raw):
-    """Seed default MCP Server (idempotent).
-
-    Creates:
-    1. Default MCP Server 'Python Executor' (if not exists) — provides the
-       native file/code execution tools (e.g. run_python) that claw exposes as
-       always-available meta tools (see agent_nodes._build_all_meta_tools).
-    """
-    print("[seed] Checking default MCP Server...")
     import hashlib
 
-    # Deterministic UUIDs
+    from sqlalchemy import select
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models.skill import MCPServer
+
+    # Deterministic UUID
     mcp_id = str(uuid.UUID(hashlib.md5(b"ragclaw-default-python-repl").hexdigest()))
-    now = datetime.now(timezone.utc).isoformat()
 
-    # Default MCP Server: Python Executor (platform-mandated, built-in).
-    existing = raw.execute("SELECT id FROM mcp_servers WHERE id = ?", (mcp_id,)).fetchone()
-    if not existing:
-        raw.execute(
-            "INSERT INTO mcp_servers(id, name, transport_type, endpoint, timeout_seconds, is_active, is_builtin, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (mcp_id, "Python Executor", "http", "http://mcp-repl:9200/mcp", 30, 1, 1, now),
+    async with async_session() as session:
+        existing = await session.scalar(
+            select(MCPServer.id).where(MCPServer.id == mcp_id).limit(1)
         )
-        print("[seed] MCP Server 'Python Executor' created (built-in)")
-    else:
-        print("[seed] MCP Server 'Python Executor' already exists")
-
-    # Idempotently (re)assert the built-in flag on the existing row so the
-    # Python Executor is always treated as a platform-managed server, even if
-    # the column was just added by a migration on an older database.
-    raw.execute(
-        "UPDATE mcp_servers SET is_builtin = 1 WHERE id = ? AND COALESCE(is_builtin, 0) = 0",
-        (mcp_id,),
-    )
-
+        if existing is None:
+            session.add(MCPServer(
+                id=mcp_id,
+                name="Python Executor",
+                transport_type="http",
+                endpoint="http://mcp-repl:9200/mcp",
+                timeout_seconds=30,
+                is_active=True,
+                is_builtin=True,
+            ))
+            print("[seed] MCP Server 'Python Executor' created (built-in)")
+        else:
+            # (Re)assert the built-in flag on the existing row so the Python
+            # Executor is always treated as a platform-managed server, even if
+            # the column was just added by a migration on an older database.
+            # Use the per-dialect ON CONFLICT upsert so the same code path works
+            # on both SQLite and Postgres.
+            insert_stmt = (
+                pg_insert(MCPServer) if DATABASE_URL.startswith("postgresql")
+                else sqlite_insert(MCPServer)
+            ).values(
+                id=mcp_id, name="Python Executor", transport_type="http",
+                endpoint="http://mcp-repl:9200/mcp", timeout_seconds=30,
+                is_active=True, is_builtin=True,
+            ).on_conflict_do_update(
+                index_elements=[MCPServer.id],
+                set_={MCPServer.is_builtin.key: True},
+            )
+            await session.execute(insert_stmt)
+            print("[seed] MCP Server 'Python Executor' already exists")
+        await session.commit()
     print("[seed] defaults done")
 
 
@@ -185,3 +233,17 @@ async def get_db() -> AsyncSession:
     """FastAPI dependency: yield an async DB session."""
     async with async_session() as session:
         yield session
+
+
+async def serialize_writes():
+    """FastAPI dependency: cap concurrent write requests to the database.
+
+    SQLite allows only one writer at a time, so a burst of concurrent write
+    endpoints (upload / process / delete / reindex) would otherwise contend on
+    the file lock and raise "database is locked". Acquiring this semaphore
+    before the handler body limits how many writes run simultaneously from the
+    API process. Background writers (doc_processor, reindex daemon) are not
+    routed through this dependency and serialize themselves.
+    """
+    async with write_semaphore:
+        yield

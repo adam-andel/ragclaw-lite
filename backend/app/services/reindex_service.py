@@ -5,16 +5,19 @@ every Chroma collection is wiped (see ``embedding_model.switch``). This service
 rebuilds them: it re-embeds every completed document with the *now active* model
 and re-pushes the vectors into each knowledge base the document is linked to.
 
-It runs in a daemon thread with a synchronous ``sqlite3`` connection so it can be
-launched from anywhere (a FastAPI request handler, or the model-download worker
-thread) without depending on the asyncio event loop.
+It runs in a daemon thread, but all database access goes through the async
+SQLAlchemy session (the worker drives its own event loop via ``asyncio.run``),
+so it is dialect-agnostic and works against both SQLite and Postgres.
 """
 
+import asyncio
 import struct
 import threading
 
-from app.config import settings
-from app.models.document import DocStatus
+from sqlalchemy import select, update
+
+from app.database import async_session
+from app.models.document import Document, Chunk, KBDocument, DocStatus
 from app.services.embedder import embedder_service
 from app.services.vector_store import vector_store
 
@@ -125,7 +128,6 @@ class ReindexService:
             self._set(status=_ReindexStatus.RUNNING, progress=0.0, current=0,
                       total=0, error="", phase=_ReindexPhase.DELETING, params={})
             try:
-                from app.services.vector_store import vector_store
                 vector_store.clear_all()
             except Exception as e:
                 self._set(status=_ReindexStatus.FAILED,
@@ -133,32 +135,32 @@ class ReindexService:
                           error=str(e), params={})
                 return
 
-        import sqlite3
-
+        # All DB access happens through the async session. The worker runs in a
+        # daemon thread with no ambient event loop, so drive it with asyncio.run.
         try:
-            conn = sqlite3.connect(str(settings.sqlite_path), timeout=30)
+            asyncio.run(self._run_reindex())
         except Exception as e:
             self._set(status=_ReindexStatus.FAILED,
-                      phase=_ReindexPhase.ERR_DB_OPEN, error=str(e), params={})
-            return
+                      phase=_ReindexPhase.ERR_REEMBED_FAILED,
+                      error=str(e), params={})
 
-        try:
-            cur = conn.cursor()
-            # NOTE: SQLAlchemy persists the DocStatus *member name* (e.g. "CHUNKED"),
-            # not its value ("chunked"). Filter on the names to match the stored rows.
-            target_statuses = (
-                DocStatus.CHUNKED.name,
-                DocStatus.COMPLETED.name,
-                DocStatus.FAILED.name,
-                DocStatus.EMBEDDING.name,
-            )
-            placeholders = ",".join("?" for _ in target_statuses)
-            cur.execute(
-                f"SELECT id, filename FROM documents "
-                f"WHERE status IN ({placeholders})",
-                target_statuses,
-            )
-            docs = cur.fetchall()
+    async def _run_reindex(self) -> None:
+        # NOTE: SQLAlchemy persists the DocStatus *member name* (e.g. "CHUNKED"),
+        # not its value ("chunked"). Filter on the names to match the stored rows.
+        target_statuses = (
+            DocStatus.CHUNKED.name,
+            DocStatus.COMPLETED.name,
+            DocStatus.FAILED.name,
+            DocStatus.EMBEDDING.name,
+        )
+
+        async with async_session() as session:
+            docs = (
+                await session.execute(
+                    select(Document.id, Document.filename)
+                    .where(Document.status.in_(target_statuses))
+                )
+            ).all()
             total = len(docs)
             self._set(status=_ReindexStatus.RUNNING, current=0, total=total,
                       progress=0.0, error="",
@@ -167,13 +169,16 @@ class ReindexService:
 
             for i, (doc_id, filename) in enumerate(docs, start=1):
                 try:
-                    self._reindex_doc(cur, conn, doc_id)
+                    await self._reindex_doc(session, doc_id)
                 except Exception as e:
-                    conn.execute(
-                        "UPDATE documents SET status=?, error_message=?, progress=0 WHERE id=?",
-                        (DocStatus.FAILED.name, str(e)[:500], doc_id),
+                    await session.execute(
+                        update(Document)
+                        .where(Document.id == doc_id)
+                        .values(status=DocStatus.FAILED,
+                                error_message=str(e)[:500],
+                                progress=0)
                     )
-                    conn.commit()
+                    await session.commit()
                 self._set(current=i,
                           progress=round(i / total * 100, 1) if total else 100.0,
                           phase=_ReindexPhase.PROCESSED,
@@ -181,55 +186,58 @@ class ReindexService:
 
             self._set(status=_ReindexStatus.COMPLETED, progress=100.0,
                       phase=_ReindexPhase.COMPLETED, params={"total": total})
-        except Exception as e:
-            self._set(status=_ReindexStatus.FAILED,
-                      phase=_ReindexPhase.ERR_REEMBED_FAILED,
-                      error=str(e), params={})
-        finally:
-            conn.close()
 
-    def _reindex_doc(self, cur, conn, doc_id: str) -> None:
+    async def _reindex_doc(self, session, doc_id: str) -> None:
         # Mark as in-progress so the UI reflects per-document activity.
-        conn.execute(
-            "UPDATE documents SET status=?, progress=50, error_message='' WHERE id=?",
-            (DocStatus.EMBEDDING.name, doc_id),
+        await session.execute(
+            update(Document)
+            .where(Document.id == doc_id)
+            .values(status=DocStatus.EMBEDDING, progress=50, error_message="")
         )
-        conn.commit()
+        await session.commit()
 
-        cur.execute(
-            "SELECT id, content, chunk_index, heading, page, token_count "
-            "FROM chunks WHERE doc_id=? ORDER BY chunk_index",
-            (doc_id,),
-        )
-        rows = cur.fetchall()
-        if not rows:
-            conn.execute(
-                "UPDATE documents SET status=?, progress=100, chunk_count=0 WHERE id=?",
-                (DocStatus.COMPLETED.name, doc_id),
+        rows = (
+            await session.execute(
+                select(Chunk.id, Chunk.content, Chunk.chunk_index,
+                       Chunk.heading, Chunk.page, Chunk.token_count)
+                .where(Chunk.doc_id == doc_id)
+                .order_by(Chunk.chunk_index)
             )
-            conn.commit()
+        ).all()
+        if not rows:
+            await session.execute(
+                update(Document)
+                .where(Document.id == doc_id)
+                .values(status=DocStatus.COMPLETED, progress=100, chunk_count=0)
+            )
+            await session.commit()
             return
 
-        texts = [r[1] for r in rows]
+        texts = [r.content for r in rows]
         embeddings = embedder_service.embed(texts)  # list[list[float]]
 
         # Persist the freshly computed embeddings back into the chunk cache.
-        for (cid, _content, _cidx, _heading, _page, _tcount), emb in zip(rows, embeddings):
+        for row, emb in zip(rows, embeddings):
             blob = struct.pack(f"{len(emb)}f", *emb)
-            conn.execute("UPDATE chunks SET embedding=? WHERE id=?", (blob, cid))
+            await session.execute(
+                update(Chunk).where(Chunk.id == row.id).values(embedding=blob)
+            )
 
         chunk_dicts = []
-        for (cid, content, cidx, heading, page, tcount), emb in zip(rows, embeddings):
+        for row, emb in zip(rows, embeddings):
             chunk_dicts.append({
-                "id": cid, "content": content, "embedding": emb,
-                "doc_id": doc_id, "chunk_index": cidx,
-                "heading": heading or "", "page": page,
-                "token_count": tcount,
+                "id": row.id, "content": row.content, "embedding": emb,
+                "doc_id": doc_id, "chunk_index": row.chunk_index,
+                "heading": row.heading or "", "page": row.page,
+                "token_count": row.token_count,
             })
 
         # Re-push into every linked knowledge base's Chroma collection.
-        cur.execute("SELECT kb_id FROM kb_documents WHERE doc_id=?", (doc_id,))
-        kb_ids = [r[0] for r in cur.fetchall()]
+        kb_ids = (
+            await session.execute(
+                select(KBDocument.kb_id).where(KBDocument.doc_id == doc_id)
+            )
+        ).scalars().all()
 
         for kb_id in kb_ids:
             try:
@@ -238,11 +246,12 @@ class ReindexService:
                 pass
             vector_store.add_chunks_cached(kb_id, chunk_dicts)
 
-        conn.execute(
-            "UPDATE documents SET status=?, progress=100, chunk_count=? WHERE id=?",
-            (DocStatus.COMPLETED.name, len(rows), doc_id),
+        await session.execute(
+            update(Document)
+            .where(Document.id == doc_id)
+            .values(status=DocStatus.COMPLETED, progress=100, chunk_count=len(rows))
         )
-        conn.commit()
+        await session.commit()
 
 
 # Module-level singleton
