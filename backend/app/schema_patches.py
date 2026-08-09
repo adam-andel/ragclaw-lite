@@ -176,6 +176,16 @@ def _add_message_seq_and_token_columns(conn: Connection) -> None:
         conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN content_token_count INTEGER')
 
 
+def _add_conversation_pinned_instruction(conn: Connection) -> None:
+    """Add the per-conversation pinned instruction column.
+
+    Nullable TEXT. Existing rows keep NULL (no pin); the context assembler treats
+    an empty pin as a no-op. Reuses the same ALTER for both dialects -- SQLite and
+    Postgres both accept ``ADD COLUMN ... TEXT`` without a NOT NULL / default here.
+    """
+    conn.exec_driver_sql('ALTER TABLE conversations ADD COLUMN pinned_instruction TEXT')
+
+
 PATCHES: list[Patch] = [
     # Example — kept commented as a template for the next real patch.
     #
@@ -203,6 +213,13 @@ PATCHES: list[Patch] = [
             and has_column(insp, "messages", "content_token_count")
         ),
         apply=_add_message_seq_and_token_columns,
+    ),
+
+    # Per-conversation pinned instruction (always-injected system prefix).
+    Patch(
+        name="conversations.pinned_instruction",
+        applied=lambda insp: has_column(insp, "conversations", "pinned_instruction"),
+        apply=_add_conversation_pinned_instruction,
     ),
 ]
 

@@ -98,6 +98,9 @@ class ConversationDetail(BaseModel):
     # Minimum un-summarized history mass (tokens) required before manual
     # compaction may start -- mirrors segment_thresholds(context_window)[0].
     min_compact_tok: int = 0
+    # Per-conversation pinned instruction (always injected into the system prefix).
+    # None when unset; the context assembler treats empty as a no-op.
+    pinned_instruction: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -134,6 +137,21 @@ class SummarySegmentDeleteRequest(BaseModel):
     """
 
     segment_text: str = Field(default="")
+
+
+# Hard cap on a pinned instruction. Kept generous (≈500 tokens) but bounded so a
+# runaway pin cannot silently eat the whole context window. The API rejects longer
+# values with a bare PIN_INSTRUCTION_TOO_LONG code; the UI surfaces it via i18n.
+PIN_INSTRUCTION_MAX_CHARS = 2000
+
+
+class PinInstructionRequest(BaseModel):
+    """Set / clear a conversation's pinned instruction.
+
+    Sent verbatim to ``PUT /conversations/{id}/pin``. Empty string clears the pin.
+    """
+
+    pinned_instruction: str = Field(default="")
 
 
 class CompactRequest(BaseModel):

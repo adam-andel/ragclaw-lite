@@ -61,6 +61,8 @@ from app.schemas.chat import (
     PendingLimitResponse,
     SummaryUpdateRequest,
     SummarySegmentDeleteRequest,
+    PinInstructionRequest,
+    PIN_INSTRUCTION_MAX_CHARS,
 )
 
 router = APIRouter(prefix="/api", tags=["Chat"])
@@ -1174,6 +1176,7 @@ async def chat_stream(
                             {"workspace_id": request.workspace_dir or ""}
                         ),
                         "skill_prompt": await _explicit_skill_prompt(request.skill_id),
+                        "pinned_instruction": getattr(conv, "pinned_instruction", "") or "",
                     }
                     overflow_code = classify_entry_overflow(request.query, **gate_inputs)
                     if overflow_code:
@@ -1248,6 +1251,7 @@ async def chat_stream(
                         "tenant_id": current_user.tenant_id,
                         "user_memory": current_user.memory or "",
                         "conversation_history": recent_history,
+                        "pinned_instruction": getattr(conv, "pinned_instruction", "") or "",
                         "conversation_summary": summary_text,
                         "conversation_id": conv_id,
                         # v2: user-selected workspace sub-directory ("" = root).
@@ -1968,6 +1972,45 @@ async def delete_summary_segment(
     await db.commit()
     await db.refresh(conv)
     return await _summary_state(conv, db)
+
+
+@router.get("/conversations/{conv_id}/pin")
+async def get_pin_instruction(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the conversation's pinned instruction (empty string when unset)."""
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    return {"pinned_instruction": conv.pinned_instruction or ""}
+
+
+@router.put("/conversations/{conv_id}/pin")
+async def put_pin_instruction(
+    conv_id: str,
+    payload: PinInstructionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or clear a conversation's pinned instruction.
+
+    The pin is injected into every turn's system prefix (a sacred, non-trimmable
+    block) and is never folded into summary_text. Mutating it while the
+    conversation is busy (streaming / compacting) is rejected with 409
+    CONVERSATION_BUSY; an excessively long pin is rejected with 400
+    PIN_INSTRUCTION_TOO_LONG.
+    """
+    value = payload.pinned_instruction or ""
+    if len(value) > PIN_INSTRUCTION_MAX_CHARS:
+        raise HTTPException(400, "PIN_INSTRUCTION_TOO_LONG")
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    if await _load_pending_state(db, conv_id) is not None:
+        raise HTTPException(409, "CONVERSATION_BUSY")
+    conv.pinned_instruction = value.strip() or None
+    conv.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(conv)
+    return {"pinned_instruction": conv.pinned_instruction or ""}
 
 
 @router.post("/conversations/{conv_id}/compact", response_model=ConversationSummaryState)

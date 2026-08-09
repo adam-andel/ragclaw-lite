@@ -83,6 +83,10 @@ class Conversation(Base):
     # memory. There is no secondary summary tier -- archived folds are recalled
     # on demand instead of being re-summarized into an always-injected block.
     summary_archived_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Per-conversation pinned instruction. Always injected into the LLM system
+    # prefix (a sacred, non-trimmable block) so it applies to every turn. Never
+    # folded into summary_text and never written back by context compression.
+    pinned_instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     messages: Mapped[list["Message"]] = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.seq"

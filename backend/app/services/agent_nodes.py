@@ -1373,6 +1373,11 @@ async def tool_decision_node(state: dict) -> dict:
         task_background = skill_prompt + kb_context + ws_context
         if user_memory:
             task_background += f"\n\n## User Memory & Preferences\n{user_memory}"
+        # Per-conversation pinned instruction: a sacred prefix that fit_assembly_context
+        # never trims. Always injected, never folded into summary_text.
+        pin = state.get("pinned_instruction") or ""
+        if pin:
+            task_background += f"\n\n## Pinned Instructions\n{pin}"
         msgs = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## Task Background (reference only)\n" + task_background},

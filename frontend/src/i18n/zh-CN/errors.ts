@@ -19,6 +19,7 @@ export default {
     EMPTY_SEGMENT: '摘要段落内容为空，无法删除。',
     NOTHING_TO_COMPACT: '没有可压缩的对话记录，全部消息都已折叠进摘要。',
     HISTORY_TOO_SHORT: '未摘要的历史对话还不够长，暂不需要压缩（可继续对话，或等上下文接近上限时自动压缩）。',
+    PIN_INSTRUCTION_TOO_LONG: '常驻指令过长，请精简后再保存（上限见输入框提示）。',
     SUMMARY_LLM_FAILED: '摘要生成失败，未做任何改动，请稍后重试。',
     CRON_JOB_NOT_FOUND: '定时任务不存在',
     CRON_JOB_FORBIDDEN: '无权访问该定时任务',

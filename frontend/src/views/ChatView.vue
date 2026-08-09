@@ -12,7 +12,7 @@ import KbPickCard from '@/components/kb/KbPickCard.vue'
 import AppCard from '@/components/common/AppCard.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline, Eye } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, compactConversation, deleteSummarySegment } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, compactConversation, deleteSummarySegment, putPinInstruction } from '@/api/chat'
 import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
@@ -729,6 +729,11 @@ const ctxBusy = ref(false)
 // Minimum un-summarized history mass (tokens) required before manual compaction
 // may start -- mirrors the backend segment_thresholds(context_window)[0].
 const minCompactTok = ref(0)
+// Per-conversation pinned instruction: injected into every turn's system prefix.
+const pinnedInstruction = ref('') // current saved value
+const pinDraft = ref('')          // textarea contents
+const pinBusy = ref(false)
+const PIN_MAX = 2000              // mirrors backend PIN_INSTRUCTION_MAX_CHARS
 
 // Shares of the WINDOW (not of each other), so the two numbers add up to the
 // same percentage the meter shows.
@@ -749,11 +754,12 @@ const ctxSummarySegments = computed(() =>
 )
 const hasSummary = computed(() => ctxSummarySegments.value.length > 0)
 
-function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number; min_compact_tok?: number }) {
+function applySummaryState(s: ConversationSummaryState | { summary_text?: string; summary_msg_seq?: number; total_messages?: number; summary_archived_count?: number; min_compact_tok?: number; pinned_instruction?: string | null }) {
   ctxSummaryText.value = s.summary_text || ''
   summaryMsgCount.value = s.summary_msg_seq || 0
   totalMessages.value = s.total_messages || 0
   minCompactTok.value = (s as any).min_compact_tok || 0
+  pinnedInstruction.value = (s as any).pinned_instruction || ''
 }
 
 async function openContextModal() {
@@ -765,6 +771,7 @@ async function openContextModal() {
     // which rides on the existing conversation-detail endpoint.
     const detail = await getConversation(conversationId.value, false)
     applySummaryState(detail)
+    pinDraft.value = pinnedInstruction.value
   } catch (e: any) {
     nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
   } finally {
@@ -795,6 +802,31 @@ async function runCompact() {
   } finally {
     ctxBusy.value = false
   }
+}
+
+async function savePin() {
+  if (!guardContextAction()) return
+  const text = pinDraft.value
+  if (text.length > PIN_MAX) {
+    nmessage.warning(t('chat.contextModal.pinTooLong', { max: PIN_MAX }))
+    return
+  }
+  pinBusy.value = true
+  try {
+    const res = await putPinInstruction(conversationId.value!, text)
+    pinnedInstruction.value = res.pinned_instruction || ''
+    pinDraft.value = pinnedInstruction.value
+    nmessage.success(text ? t('chat.contextModal.pinSaved') : t('chat.contextModal.pinCleared'))
+  } catch (e: any) {
+    nmessage.error(backendErrorMessage(e?.message) || t('chat.contextModal.loadFailed'))
+  } finally {
+    pinBusy.value = false
+  }
+}
+
+async function clearPin() {
+  pinDraft.value = ''
+  await savePin()
 }
 
 // ── Summary view modal (segmented, paginated, hover-delete) ──
@@ -1962,6 +1994,39 @@ function handleKeydown(e: KeyboardEvent) {
 
         </NSpin>
 
+        <!-- Pinned instruction: injected into every turn's system prefix -->
+        <div class="ctx-pin">
+          <div class="ctx-pin-title">{{ t('chat.contextModal.pinTitle') }}</div>
+          <NInput
+            v-model:value="pinDraft"
+            type="textarea"
+            :placeholder="t('chat.contextModal.pinPlaceholder', { max: PIN_MAX })"
+            :disabled="pinBusy || isStreaming || isReadonly"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+          />
+          <div class="ctx-pin-meta">
+            <span class="ctx-pin-hint">{{ t('chat.contextModal.pinHint') }}</span>
+            <span class="ctx-pin-count" :class="{ over: pinDraft.length > PIN_MAX }">
+              {{ pinDraft.length }} / {{ PIN_MAX }}
+            </span>
+          </div>
+          <div class="ctx-pin-actions">
+            <NButton
+              size="small"
+              type="primary"
+              :loading="pinBusy"
+              :disabled="pinBusy || isStreaming || isReadonly"
+              @click="savePin"
+            >{{ t('chat.contextModal.pinSave') }}</NButton>
+            <NButton
+              size="small"
+              tertiary
+              :disabled="pinBusy || isStreaming || isReadonly || !pinDraft"
+              @click="clearPin"
+            >{{ t('chat.contextModal.pinClear') }}</NButton>
+          </div>
+        </div>
+
         <p class="ctx-compact-hint">
           {{ t('chat.contextModal.compactHint', { min: minCompactTok, max: minCompactTok * 4 }) }}
         </p>
@@ -2799,6 +2864,45 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-text-muted);
+}
+.ctx-pin {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 8px;
+}
+.ctx-pin-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+.ctx-pin-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+}
+.ctx-pin-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+.ctx-pin-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.ctx-pin-count.over {
+  color: #e8804f;
+  font-weight: 600;
+}
+.ctx-pin-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 .ctx-breakdown,
 .ctx-cursor {

@@ -318,7 +318,14 @@ class RagclawAgentGraph:
         # parameters (never read from `state`) so the phase-3 query truncation and
         # memory trimming can take effect.
         def _assemble(s, h, rag, payload, q, mem):
-            msgs = [{"role": "system", "content": system_prompt + cron_rule + file_rule + final_answer_rule}]
+            # Per-conversation pinned instruction: a sacred prefix that
+            # fit_assembly_context never trims. Always injected, never folded into
+            # summary_text. Mirrors the floor format in _empty_context_request_tokens.
+            pin = state.get("pinned_instruction") or ""
+            sys_prefix = system_prompt + cron_rule + file_rule + final_answer_rule
+            if pin:
+                sys_prefix += f"\n\n## Pinned Instructions\n{pin}"
+            msgs = [{"role": "system", "content": sys_prefix}]
             if s:
                 msgs.append(
                     {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s}

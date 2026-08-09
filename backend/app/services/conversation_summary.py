@@ -171,6 +171,7 @@ def _empty_context_request_tokens(
     user_memory: str = "",
     ws_context: str = "",
     skill_prompt: str | None = None,
+    pinned_instruction: str = "",
 ) -> int:
     """Token cost of the request if EVERYTHING but the fixed prefix + query were
     dropped -- i.e. the floor ``fit_assembly_context`` can reach.
@@ -180,17 +181,17 @@ def _empty_context_request_tokens(
     user question, so the entry-point firewall measures the same floor fit would
     hit at its empty-context fallthrough. Task background is assembled in the same
     order as the real one: ``skill_prompt + kb_context + ws_context`` followed by
-    the user-memory section.
+    the user-memory section and the pinned-instruction block.
 
-    The four optional pieces are passed in rather than read from a global because
-    they are request-scoped: the caller knows the active KB, the signed-in user's
-    memory, the selected working directory, and -- when the skill was selected
-    EXPLICITLY -- that skill's SKILL.md body. Auto-routed skills are resolved by
-    the LLM router inside the graph and cannot be known here, so their body is
-    still missing from this floor; the precise ceiling stays with fit
-    (``ContextWindowExceeded``). Tool schemas are deliberately excluded: their
-    cost is only known once the graph has built the tool list, and guessing here
-    would reject requests that actually fit.
+    The optional pieces are passed in rather than read from a global because they
+    are request-scoped: the caller knows the active KB, the signed-in user's
+    memory, the selected working directory, the pinned instruction and -- when the
+    skill was selected EXPLICITLY -- that skill's SKILL.md body. Auto-routed
+    skills are resolved by the LLM router inside the graph and cannot be known
+    here, so their body is still missing from this floor; the precise ceiling
+    stays with fit (``ContextWindowExceeded``). Tool schemas are deliberately
+    excluded: their cost is only known once the graph has built the tool list, and
+    guessing here would reject requests that actually fit.
     """
     tool_sys = _t("tool_system", config_manager.prompt_language, tool_desc="")
     task_bg = skill_prompt if skill_prompt is not None else (config_manager.system_prompt or "")
@@ -199,6 +200,8 @@ def _empty_context_request_tokens(
     task_bg += ws_context
     if user_memory:
         task_bg += f"\n\n## User Memory & Preferences\n{user_memory}"
+    if pinned_instruction:
+        task_bg += f"\n\n## Pinned Instructions\n{pinned_instruction}"
     msgs = [
         {"role": "system", "content": tool_sys},
         {"role": "system", "content": "## Task Background (reference only)\n" + task_bg},
@@ -214,6 +217,7 @@ def classify_entry_overflow(
     user_memory: str = "",
     ws_context: str = "",
     skill_prompt: str | None = None,
+    pinned_instruction: str = "",
 ) -> str | None:
     """Bare error code when the request cannot fit even with an empty context.
 
@@ -237,6 +241,7 @@ def classify_entry_overflow(
         "user_memory": user_memory,
         "ws_context": ws_context,
         "skill_prompt": skill_prompt,
+        "pinned_instruction": pinned_instruction,
     }
     budget = _budget()
     if _empty_context_request_tokens("", **kwargs) > budget:

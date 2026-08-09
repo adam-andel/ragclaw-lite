@@ -145,6 +145,18 @@ export const deleteSummarySegment = (id: string, segmentText: string) =>
     body: JSON.stringify({ segment_text: segmentText }),
   }).then(summaryStateResponse)
 
+// Set or clear a conversation's pinned instruction. Empty string clears it. The
+// backend rejects values longer than PIN_INSTRUCTION_MAX_CHARS with
+// PIN_INSTRUCTION_TOO_LONG. Returns the persisted value.
+export const putPinInstruction = (id: string, pinnedInstruction: string) =>
+  fetch(`/api/conversations/${id}/pin`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ pinned_instruction: pinnedInstruction }),
+  })
+    .then(handleResponse)
+    .then((r) => r.json()) as Promise<{ pinned_instruction: string }>
+
 // Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)
 export const getPendingLimit = (id: string) =>
   fetch(`/api/conversations/${id}/pending`, { headers: authHeaders() })

@@ -19,6 +19,7 @@ export default {
     EMPTY_SEGMENT: 'The summary segment is empty and cannot be deleted.',
     NOTHING_TO_COMPACT: 'Nothing left to compact — every message is already folded into the summary.',
     HISTORY_TOO_SHORT: 'The un-summarized history is still too short to compact. Keep chatting, or let automatic compaction kick in as the context approaches its limit.',
+    PIN_INSTRUCTION_TOO_LONG: 'The pinned instruction is too long. Please shorten it before saving (see the limit shown in the input).',
     SUMMARY_LLM_FAILED: 'Summarization failed; nothing was changed. Please try again.',
     CRON_JOB_NOT_FOUND: 'Cron job not found',
     CRON_JOB_FORBIDDEN: 'You do not have permission to access this cron job',
