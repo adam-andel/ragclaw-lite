@@ -96,8 +96,23 @@ export const getConversationMessages = (id: string, page: number | string = 'las
     .then((r) => r.json())
 }
 
-export const deleteConversation = (id: string) =>
-  fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handleResponse)
+export interface ConversationDeleteResult {
+  status: string // 'deleting' — the row is gone, child rows are purged in the background
+  aborted_run: boolean // whether a live generation was cancelled to make the delete possible
+}
+
+// 202 Accepted: the backend removes the conversation row synchronously (so it is
+// gone from every listing immediately) and purges messages / agent steps /
+// archived memory in a throttled background task. Failures throw the bare error
+// code so the caller can localize it and roll its optimistic UI update back.
+export const deleteConversation = async (id: string): Promise<ConversationDeleteResult> => {
+  const r = handleResponse(
+    await fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }),
+  )
+  const body = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(body?.detail || `HTTP_${r.status}`)
+  return body as ConversationDeleteResult
+}
 
 // ── Persistent context (compressed summary + folding cursor) ──
 export interface ConversationSummaryState {

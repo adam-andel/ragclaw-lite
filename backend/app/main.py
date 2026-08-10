@@ -245,6 +245,16 @@ async def lifespan(app: FastAPI):
         print("Memory archive startup task scheduled")
     except Exception as e:
         print(f"Memory archive startup warning: {e}")
+    # Conversation deletion drops the parent row inline and purges the child rows
+    # in a throttled background task. A process that died between the two leaves
+    # orphans behind, so sweep them on the way up (batched, so a large backlog
+    # cannot slow startup down).
+    try:
+        from app.services import conversation_purge
+        _asyncio.create_task(conversation_purge.sweep_orphans())
+        print("Conversation orphan sweep scheduled")
+    except Exception as e:
+        print(f"Conversation orphan sweep warning: {e}")
     # Initialize MCP tool registry
     try:
         from app.services.tool_registry import tool_registry

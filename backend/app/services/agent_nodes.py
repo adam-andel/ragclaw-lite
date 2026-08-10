@@ -1316,11 +1316,13 @@ async def tool_decision_node(state: dict) -> dict:
             logger.info("Tool decision: tool errored (round %d), giving LLM one chance to fix. Error: %.200s",
                        tool_round, prev_results[-1][:200])
     active = state.get("active_skill") or {}
-    # Part 1 (identity/security) is always prepended; Part 2 (native capabilities)
-    # is the active skill's system_prompt when present, else the constant base.
-    skill_prompt = config_manager.system_prompt_identity + "\n\n" + active.get(
-        "system_prompt", config_manager.system_prompt_capabilities
-    )
+    # Part 1 (identity/security) is the ALWAYS-ON base; Part 2 (native capabilities /
+    # skill body) is the active skill's system_prompt when present, else the constant
+    # base. They are kept as SEPARATE components: identity stays in the stable
+    # task-background block while the variable skill_body is emitted as its OWN
+    # trailing system message, so a skill switch only busts that final cache unit.
+    identity_prompt = config_manager.system_prompt_identity
+    skill_body = active.get("system_prompt", config_manager.system_prompt_capabilities)
     kb_prompt = state.get("kb_prompt") or ""
     if not kb_prompt:
         kb_prompt = await get_kb_prompt(state["kb_id"])
@@ -1374,18 +1376,24 @@ async def tool_decision_node(state: dict) -> dict:
         # the task background so the LLM can personalize. Kept separate from the
         # auto-extracted MEM0 memory graph. Empty string when nothing is set.
         user_memory = (state.get("user_memory") or "").strip()
-        task_background = skill_prompt + kb_context + ws_context
+        pin = state.get("pinned_instruction") or ""
+        # Stable base (cache-friendly order): identity + KB + user memory + pinned
+        # instructions + working dir. The variable skill_body is NOT merged here — it
+        # becomes its own trailing system message below so skill switches invalidate
+        # only that final unit, not this stable prefix.
+        task_background = identity_prompt + kb_context
         if user_memory:
             task_background += f"\n\n## User Memory & Preferences\n{user_memory}"
-        # Per-conversation pinned instruction: a sacred prefix that fit_assembly_context
-        # never trims. Always injected, never folded into summary_text.
-        pin = state.get("pinned_instruction") or ""
         if pin:
             task_background += f"\n\n## Pinned Instructions\n{pin}"
+        if ws_context:
+            task_background += "\n\n" + ws_context
         msgs = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## Task Background (reference only)\n" + task_background},
         ]
+        if skill_body.strip():
+            msgs.append({"role": "system", "content": skill_body})
         if s:
             msgs.append({"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s})
         if h:
