@@ -116,7 +116,24 @@ def _set_limits():
 # Per-execution timezone (IANA) for the current tool call, validated and set by
 # execute() from the caller-supplied "timezone" argument, then read by each
 # language run_fn when building the child environment. None => container default.
-_exec_tz: str | None = None
+#
+# Stored on a *thread-local* (NOT a module global) on purpose: the server is
+# threaded (ThreadingHTTPServer) and execute() blocks on the concurrency slot
+# (_acquire_slot) after setting the TZ. With a module global, a concurrent
+# request in another thread would clobber _exec_tz while this one waits, so the
+# resumed execution would build its child env with the *wrong* timezone (often
+# None -> UTC). A thread-local keeps each request's TZ isolated. execute() sets
+# it at the top of every call, so even a reused thread can never read a stale
+# value.
+_thread_tz = threading.local()
+
+
+def _set_exec_tz(tz: str | None) -> None:
+    _thread_tz.value = tz
+
+
+def _get_exec_tz() -> str | None:
+    return getattr(_thread_tz, "value", None)
 
 
 def _validate_tz(tz: str | None) -> str | None:
@@ -911,10 +928,50 @@ def _py_ast_prescreen(code: str) -> str | None:
     return None
 
 
+# Prepended to every executed Python script so the time calls the LLM
+# commonly reaches for -- datetime.utcnow(), datetime.now(timezone.utc), and
+# time.gmtime() -- observe the *user's* local timezone (injected as the TZ env
+# var) instead of UTC. datetime.now() already honours TZ; these legacy
+# UTC-returning calls do not, which is why file timestamps used to come out in
+# UTC regardless of the user's locale. Scoped to the sandbox subprocess only;
+# does not touch the host or backend. Epoch-based time.time() is left untouched
+# so APIs that genuinely need true UTC seconds still get them.
+_TZ_PREAMBLE = r'''
+import sys as _tz_sys
+import datetime as _tz_dt
+import time as _tz_time
+_tz_orig_dt = _tz_dt.datetime  # capture base class before shadowing
+
+class _TZDateTime(_tz_orig_dt):
+    @classmethod
+    def now(cls, tz=None):
+        # datetime.now() already honours TZ; force UTC-aware calls to local so
+        # file timestamps reflect the user's locale instead of UTC.
+        if tz is None or tz is _tz_dt.timezone.utc:
+            return _tz_orig_dt.now()
+        return _tz_orig_dt.now(tz)
+    @classmethod
+    def utcnow(cls):
+        return _tz_orig_dt.now()
+
+# Shadow the module-level datetime class. Runs before user code, so both
+# `import datetime; datetime.datetime.now()` and `from datetime import datetime`
+# resolve to the local-time-aware subclass.
+_tz_sys.modules["datetime"].datetime = _TZDateTime
+
+_tz_gmtime = _tz_time.gmtime
+def _tz_local_gmtime(seconds=None):
+    # Current-time gmtime() -> local; epoch conversions keep real UTC.
+    return _tz_time.localtime() if seconds is None else _tz_gmtime(seconds)
+_tz_time.gmtime = _tz_local_gmtime
+'''
+
+
 def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
     """Execute Python code in isolated subprocess (preserved from original)."""
     guard = _py_build_guard(workdir)
-    full_code = guard + "\n" + code if guard else code
+    # Align UTC-returning time calls to the user's locale before user code runs.
+    full_code = (guard + _TZ_PREAMBLE + "\n" + code) if guard else (_TZ_PREAMBLE + "\n" + code)
 
     # Write the script INSIDE workdir (owned by the target account) so the
     # dropped-privilege child can read it (a root-owned /tmp script would be 0600).
@@ -927,7 +984,7 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
         except OSError:
             pass
 
-        env = _sanitize_env(_exec_tz)
+        env = _sanitize_env(_get_exec_tz())
         # The path-convergence shim reads REPL_ALLOW_DIR to map workspace-root
         # absolute paths onto the sandbox while preserving sub-path structure.
         # It must be injected explicitly: when the server is started with
@@ -1099,7 +1156,7 @@ def _run_shell(code: str, workdir: str, timeout: int, acct=None) -> str:
         # cd to workdir, then execute; use set -e for early failure
         shell_cmd = ["/bin/sh", "-c", f"cd '{workdir}' && {code}"]
 
-    env = _sanitize_env(_exec_tz)
+    env = _sanitize_env(_get_exec_tz())
     # Shell cannot be shimmed the way Python/JS are (writes happen at syscall
     # level via >, cp, tee...). LD_PRELOAD would need to shorten paths and
     # bind-mount would need CAP_SYS_ADMIN + the mount syscall that seccomp
@@ -1392,7 +1449,7 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
         except OSError:
             pass
 
-        env = _sanitize_env(_exec_tz)
+        env = _sanitize_env(_get_exec_tz())
         # Workspace ROOT (not workdir): the path-convergence shim maps
         # <wsroot>/a/b onto <sandbox>/a/b, preserving sub-path structure. Using
         # workdir here would make wsroot == sandbox and silently disable that.
@@ -1504,11 +1561,11 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
                 workspace_id: str | None = None, user: str | None = None,
                 uid: int | None = None, tz: str | None = None) -> tuple[str, list[dict]]:
-        # Stash the caller's timezone so the language-specific run_fn can inject
-        # it into the child environment (TZ var). Kept on a module global because
-        # run_fn is a pre-built closure without a tz parameter.
-        global _exec_tz
-        _exec_tz = _validate_tz(tz)
+        # Stash the caller's timezone (thread-local) so the language-specific
+        # run_fn can inject it into the child environment (TZ var). run_fn is a
+        # pre-built closure without a tz parameter, so we thread-local it instead
+        # of a module global (see _thread_tz above for why a global is unsafe).
+        _set_exec_tz(_validate_tz(tz))
         t0 = time.time()
 
         # Pre-screen
@@ -1538,8 +1595,9 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             generated = _collect_generated_files(workdir, before)
 
             elapsed_ms = int((time.time() - t0) * 1000)
-            logger.info("exec_ok lang=%s user=%s uuid=%s elapsed_ms=%d output_len=%d files=%d",
+            logger.info("exec_ok lang=%s user=%s uuid=%s tz=%s elapsed_ms=%d output_len=%d files=%d",
                         lang, user or "-", os.path.basename(workdir) if _allow_dir else "-",
+                        _get_exec_tz(),
                         elapsed_ms, len(result), len(generated))
             return result, generated
         except subprocess.TimeoutExpired:

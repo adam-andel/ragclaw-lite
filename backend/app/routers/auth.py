@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -25,6 +26,27 @@ from app.services.auth import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+# Structural allowlist for an IANA timezone string. Rejects path traversal
+# ("..", leading "/") and anything outside [A-Za-z0-9_./-]. The REPL sandbox
+# performs the authoritative validity check against its zoneinfo data, so this
+# only guards against obviously malformed / injection-shaped input here.
+_TZ_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
+def _validate_timezone(tz: str | None) -> str | None:
+    """Return a sanitized IANA timezone, or None to clear.
+
+    Raises HTTPException(400) on a structurally invalid non-empty value.
+    """
+    if tz is None:
+        return None
+    tz = tz.strip()
+    if not tz:
+        return None
+    if ".." in tz or tz.startswith("/") or not _TZ_RE.match(tz):
+        raise HTTPException(400, "INVALID_TIMEZONE")
+    return tz
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -184,6 +206,10 @@ async def update_me(
         # every turn, so an oversized one permanently shrinks the room left for
         # history and retrieval. Non-blocking -- the save stands, we only report.
         warnings = check_field_budget(current_user.memory, "user_memory")
+    if data.timezone is not None:
+        # Persist the user's locale so code execution / scheduling stamp times
+        # in their timezone instead of the sandbox container's default UTC.
+        current_user.timezone = _validate_timezone(data.timezone)
     if data.password is not None:
         current_user.hashed_password = hash_password(data.password)
     await db.commit()

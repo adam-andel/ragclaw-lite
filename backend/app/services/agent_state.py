@@ -27,6 +27,12 @@ class RagclawAgentState(TypedDict):
     skill_id: str | None          # Optional: force a specific SKILL
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt
+    # User's IANA timezone (e.g. "Asia/Shanghai"), resolved from the profile with
+    # the browser-detected value as fallback. Propagated to the REPL sandbox so
+    # datetime.now()/strftime stamp files in the user's local time instead of the
+    # container default (UTC). MUST stay declared here: StateGraph builds its
+    # channels from this TypedDict and silently drops any undeclared key.
+    timezone: str
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
     conversation_summary: str          # Compressed oldest history; injected as a system message (see conversation_summary.py)
 

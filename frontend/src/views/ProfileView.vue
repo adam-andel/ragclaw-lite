@@ -5,7 +5,7 @@ import { budgetWarningTexts } from '@/utils/budgetWarning'
 import { useI18n } from 'vue-i18n'
 import {
   NForm, NFormItem, NInput, NButton, NAvatar, NIcon,
-  NCard, NText, useMessage,
+  NCard, NText, NSelect, useMessage,
 } from 'naive-ui'
 import { PersonCircle, ShieldCheckmark, Mail, LockClosed, Create, ImageOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
@@ -84,9 +84,27 @@ async function removeCustomAvatar() {
 }
 
 // ── Form ──
+// Browser-detected IANA timezone, used as the default when the user has not
+// saved an explicit one yet. The select list itself is generated from
+// Intl.supportedValuesOf('timeZone') so it covers every region — nothing is
+// hardcoded to a single locale (this is a global project).
+const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+
+const timezoneOptions = (() => {
+  let zones: string[] = []
+  try {
+    // supportedValuesOf is available in modern browsers; guard for older ones.
+    zones = (Intl as any).supportedValuesOf('timeZone') as string[]
+  } catch {
+    zones = [detectedTimezone]
+  }
+  return zones.map((z) => ({ label: z, value: z }))
+})()
+
 const form = ref({
   display_name: auth.user?.display_name || '',
   email: auth.user?.email || '',
+  timezone: auth.user?.timezone || detectedTimezone,
   memory: auth.user?.memory || '',
   password: '',
   passwordConfirm: '',
@@ -104,6 +122,7 @@ async function handleSave() {
     const payload: Record<string, string> = {
       display_name: form.value.display_name,
       email: form.value.email || '',
+      timezone: form.value.timezone,
       memory: form.value.memory,
     }
     if (form.value.password) {
@@ -239,6 +258,18 @@ const roleColor = computed(() => {
               <NIcon :component="Mail" />
             </template>
           </NInput>
+        </NFormItem>
+
+        <NFormItem :label="t('profile.timezone')">
+          <NSelect
+            v-model:value="form.timezone"
+            :options="timezoneOptions"
+            filterable
+            :placeholder="t('profile.timezonePlaceholder')"
+          />
+          <template #feedback>
+            <span class="tz-hint">{{ t('profile.timezoneHint', { detected: detectedTimezone }) }}</span>
+          </template>
         </NFormItem>
 
         <NFormItem :label="t('profile.newPassword')">
@@ -415,6 +446,12 @@ const roleColor = computed(() => {
 .memory-hint {
   margin: 0 0 var(--space-2);
   padding-left: calc(100px + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.tz-hint {
   font-size: var(--text-xs);
   color: var(--color-text-muted);
   line-height: 1.5;

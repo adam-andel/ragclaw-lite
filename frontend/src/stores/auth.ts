@@ -13,6 +13,7 @@ export interface UserInfo {
   avatar_url: string | null
   tenant_id: string | null
   memory: string
+  timezone: string | null
   created_at: string
 }
 
@@ -121,6 +122,19 @@ export const useAuthStore = defineStore('auth', () => {
       client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
       const res = await client.get('/auth/me')
       user.value = res.data
+      // First-run convenience: if the user has no timezone set yet, persist the
+      // browser-detected one so file timestamps / scheduled tasks default to
+      // their locale without forcing a manual pick. Only fires when empty, so
+      // it never overwrites an explicit choice. Best-effort — ignore failures.
+      if (!res.data.timezone) {
+        try {
+          const detected = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+          const pr = await client.put('/auth/me', { timezone: detected })
+          user.value = pr.data
+        } catch {
+          // keep the GET result; detection is best-effort
+        }
+      }
       // Single immediate status check; ChatView also runs refreshLlmStatus()
       // (polling) so the input self-enables once the backend finishes startup.
       const hr = await fetch('/api/health')
