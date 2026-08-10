@@ -129,7 +129,8 @@ MESSAGES = {
     # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}
     "skill_switch_limit": (
         'use_skill: skill-switch limit reached ({switch_count}/{quota}); '
-        'cannot load "{name}". Reply "continue" to add quota and auto-retry.'
+        'cannot load "{name}". Reply "continue" to add quota and auto-retry. '
+        'To change this permanently, adjust Skill-switch Cap in Settings (0 = unlimited).'
     ),
 
     # Self-heal prompt for malformed tool calls. Placeholders: {tool_name}, {snippet}

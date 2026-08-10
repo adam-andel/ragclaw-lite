@@ -27,6 +27,11 @@ from cryptography.hazmat.primitives.serialization import (
 
 from app.config import settings
 
+# Default cap on use_skill pushes per run (skill-chaining guard). This is the single source of
+# truth for the factory default; it is user-configurable via Settings -> Skill-switch quota
+# (0 = unlimited) and read from DB at runtime.
+MAX_SKILL_SWITCHES = 5
+
 LEGACY_SYSTEM_PROMPT_FULL = """你就是 ragclaw —— 一个以「claw（爪）」为核心、以「rag（检索增强生成）」为辅助的智能体。
 
 ## 你的身份
@@ -618,6 +623,8 @@ class ConfigManager:
             "llm_concurrency": 3,
             # Agent tool-decision rounds (applies to all chats + cron, default 10)
             "agent_round_quota": 10,  # max agent tool-decision rounds per run
+            # Agent skill-switch cap (applies to all chats + cron, default = MAX_SKILL_SWITCHES)
+            "skill_switch_quota": MAX_SKILL_SWITCHES,  # max skill switches (use_skill pushes) per run
             # Embedding
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
@@ -653,6 +660,8 @@ class ConfigManager:
             "llm_concurrency": 3,
             # Agent tool-decision rounds (applies to all chats + cron, default 10)
             "agent_round_quota": 10,  # max agent tool-decision rounds per run
+            # Agent skill-switch cap (applies to all chats + cron, default = MAX_SKILL_SWITCHES)
+            "skill_switch_quota": MAX_SKILL_SWITCHES,  # max skill switches (use_skill pushes) per run
             "embedding_model": settings.embedding_model,
             # HTTPS / TLS (nginx reverse proxy, prod only)
             "https_enabled": False,
@@ -932,6 +941,15 @@ class ConfigManager:
                 return 10
 
     @property
+    def skill_switch_quota(self) -> int:
+        """Max skill switches per run, for all chats and cron jobs (default = MAX_SKILL_SWITCHES)."""
+        with self._lock:
+            try:
+                return int(self._config.get("skill_switch_quota", MAX_SKILL_SWITCHES))
+            except (TypeError, ValueError):
+                return MAX_SKILL_SWITCHES
+
+    @property
     def embedding_model(self) -> str:
         with self._lock:
             return self._config.get("embedding_model", "")
@@ -1133,6 +1151,7 @@ class ConfigManager:
             "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
             "cache_ttl_seconds",
             "agent_round_quota",
+            "skill_switch_quota",
             "summary_archive_high_pct",
             "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
             "repl_auth_secret", "jwt_secret",

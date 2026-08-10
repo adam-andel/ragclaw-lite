@@ -43,6 +43,7 @@ export default {
     CONFIG_CONTEXT_WINDOW_RANGE: '上下文窗口必须在 1-10,000,000 之间。',
     CONFIG_CONCURRENCY_RANGE: '并发数必须在 1-50 之间。',
     CONFIG_AGENT_ROUND_QUOTA_RANGE: '工具调用轮次配额必须在 0-200 之间（0 表示不限轮数）。',
+    CONFIG_SKILL_SWITCH_QUOTA_RANGE: '技能切换次数上限必须在 0-200 之间（0 表示不限次数）。',
     CONFIG_ARCHIVE_HIGH_RANGE: '归档触发阈值（高）必须在 1-100 之间（占上下文窗口的百分比）。',
     CONFIG_SANDBOX_NETWORK_MODE: 'network mode 必须是 deny / allow / allowlist 之一。',
     SANDBOX_POLICY_UPDATED: '沙盒策略已更新，立即生效。',
