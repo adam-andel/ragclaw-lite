@@ -734,11 +734,11 @@ def _build_meta_skill_tools() -> list[dict]:
                         "action": {
                             "type": "string",
                             "enum": ["read", "write"],
-                            "description": "Use 'read' to fetch the current memory text (no write), or 'write' to persist the full edited memory text provided in 'content'.",
+                            "description": "Use 'read' to fetch the current memory text (no write), or 'write' to persist the memory text provided in 'content' (an empty string clears the memory).",
                         },
                         "content": {
                             "type": "string",
-                            "description": "Required only for action='write' — the complete, updated memory text to save (replacing the previous content). Ignored for action='read'.",
+                            "description": "Used only for action='write' — the complete, updated memory text to save (replacing the previous content). An empty or whitespace-only value CLEARS the memory. Ignored for action='read'.",
                         },
                     },
                     "required": ["action"],
@@ -1769,10 +1769,11 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
       - 'read': return the current memory text verbatim (no mutation).
       - 'write': persist ``content`` as the full, updated memory text, replacing
         the previous content. Capped at 2000 characters (matching the frontend
-        maxlength). When the supplied text exceeds the cap, the write is REJECTED
+        maxlength). An empty/whitespace-only ``content`` is VALID and clears the
+        memory. When the supplied text exceeds the cap, the write is REJECTED
         (no silent truncation) and the model is told to surface this to the user
         and point them to the Profile page. The LLM is expected to have read first
-        and supplied the complete edited text.
+        and supplied the complete edited text (or an empty string to clear).
     """
     from app.models.user import User
 
@@ -1804,9 +1805,9 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
             }
 
         # action == 'write'
+        # Empty content is allowed and means "clear the memory". Only strip
+        # surrounding whitespace; a blank/whitespace-only value clears memory.
         content = (args.get("content") or "").strip()
-        if not content:
-            return {"result": "[update_memory] error: 'content' is required for action='write'", "endpoint": None}
         if len(content) > MAX_LEN:
             # Reject instead of silently truncating: the model must tell the user
             # and let them edit on the Profile page. No DB write happens.
@@ -1823,6 +1824,11 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
         await db.commit()
 
     logger.info("update_memory: wrote memory for user=%s (len=%d)", user_id, len(content))
+    if len(content) == 0:
+        return {
+            "result": "[update_memory] write: memory cleared (empty content). Profile memory updated.",
+            "endpoint": None,
+        }
     return {
         "result": f"[update_memory] write: saved {len(content)} chars. Profile memory updated.",
         "endpoint": None,

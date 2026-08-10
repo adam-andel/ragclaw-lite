@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, h } from 'vue'
+import { ref, computed, h, onMounted } from 'vue'
 import { backendErrorMessage } from '@/utils/backendError'
 import { budgetWarningTexts } from '@/utils/budgetWarning'
 import { useI18n } from 'vue-i18n'
@@ -146,6 +146,26 @@ async function handleSave() {
     saving.value = false
   }
 }
+
+// ── Sync from store on mount ──
+// The memory field (and other profile fields) can be changed out-of-band — e.g.
+// the LLM edits memory via the update_memory tool, writing the DB directly. The
+// auth store is not auto-refreshed on such writes, so without an explicit re-fetch
+// the form would show stale data until a full page reload. On mount we re-fetch
+// the profile and back-fill the editable fields so the page reflects the latest
+// server state the moment it opens.
+function syncFormFromStore() {
+  if (!auth.user) return
+  form.value.display_name = auth.user.display_name || ''
+  form.value.email = auth.user.email || ''
+  form.value.timezone = auth.user.timezone || detectedTimezone
+  form.value.memory = auth.user.memory || ''
+}
+
+onMounted(async () => {
+  await auth.fetchMe()
+  syncFormFromStore()
+})
 
 // ── Role label ──
 const roleLabel = computed(() => {
