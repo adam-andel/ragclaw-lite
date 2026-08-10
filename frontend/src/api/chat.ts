@@ -1,18 +1,46 @@
 import type { Conversation, SSEEvent } from '@/types'
 import { i18n } from '@/i18n'
+import { useAuthStore } from '@/stores/auth'
 
 export function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// Thin 401 handler for one-shot responses (SSE, deletes). Unlike the old
+// behaviour it does NOT wipe storage or force a full-page reload — a full
+// reload would clear sessionStorage (where the refresh token lives), silently
+// killing transparent renewal for every subsequent request. Instead we let the
+// global auth store own logout via SPA navigation.
 function handleResponse(r: Response) {
   if (r.status === 401) {
-    localStorage.removeItem('token')
-    window.location.href = '/login'
+    const auth = useAuthStore()
+    // By the time we reach here, authFetch has already attempted one transparent
+    // refresh and retried. If we still got 401, the session is genuinely dead, so
+    // log out via SPA navigation (no full-page reload — that would wipe
+    // sessionStorage and break other in-flight requests).
+    if (!auth.refreshToken) auth.logout()
     throw new Error(i18n.global.t('errors.loginExpiredShort'))
   }
   return r
+}
+
+// fetch wrapper that mirrors the axios client's transparent refresh: on 401 we
+// attempt one silent token refresh, then retry the request with the new token
+// (authHeaders reads the refreshed token from localStorage). This keeps every
+// chat API call resilient to the 30-min access-token expiry without a reload.
+async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const doFetch = () =>
+    fetch(url, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } })
+
+  let res = await doFetch()
+  if (res.status === 401) {
+    const auth = useAuthStore()
+    if (await auth.refresh()) {
+      res = await doFetch()
+    }
+  }
+  return handleResponse(res)
 }
 
 // SSE Streaming Chat
@@ -28,25 +56,36 @@ export async function* streamChat(
   timezone?: string,
   attach?: boolean,
 ): AsyncGenerator<SSEEvent> {
-  const response = await fetch('/api/chat/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify({
-      query,
-      kb_id: kbId,
-      conversation_id: conversationId,
-      skill_id: skillId,
-      skip_cache: skipCache,
-      resume_action: resumeAction ?? undefined,
-      workspace_dir: workspaceDir ?? '',
-      timezone: timezone ?? undefined,
-      attach: attach ?? false,
-    }),
-    signal,
+  const payload = JSON.stringify({
+    query,
+    kb_id: kbId,
+    conversation_id: conversationId,
+    skill_id: skillId,
+    skip_cache: skipCache,
+    resume_action: resumeAction ?? undefined,
+    workspace_dir: workspaceDir ?? '',
+    timezone: timezone ?? undefined,
+    attach: attach ?? false,
   })
+
+  const doFetch = () =>
+    fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: payload,
+      signal,
+    })
+
+  let response = await doFetch()
+  // Transparent refresh on 401, then retry the stream once with the new token.
+  if (response.status === 401) {
+    if (await useAuthStore().refresh()) {
+      response = await doFetch()
+    }
+  }
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({ detail: 'Request failed' }))
@@ -81,18 +120,17 @@ export async function* streamChat(
 
 // Conversations
 export const listConversations = () =>
-  fetch('/api/conversations', { headers: authHeaders() }).then(handleResponse).then((r) => r.json()) as Promise<Conversation[]>
+  authFetch('/api/conversations').then((r) => r.json()) as Promise<Conversation[]>
 
 export const getConversation = (id: string, includeMessages = true) =>
-  fetch(`/api/conversations/${id}?include_messages=${includeMessages}`, { headers: authHeaders() }).then(handleResponse).then((r) => r.json())
+  authFetch(`/api/conversations/${id}?include_messages=${includeMessages}`).then((r) => r.json())
 
 // Server-side paginated conversation messages: page is 1-based (oldest first); pass 'last' to fetch the newest page
 export const getConversationMessages = (id: string, page: number | string = 'last', pageSize = 10) => {
   const qs = new URLSearchParams()
   qs.set('page', String(page))
   qs.set('page_size', String(pageSize))
-  return fetch(`/api/conversations/${id}/messages?${qs.toString()}`, { headers: authHeaders() })
-    .then(handleResponse)
+  return authFetch(`/api/conversations/${id}/messages?${qs.toString()}`)
     .then((r) => r.json())
 }
 
@@ -107,7 +145,7 @@ export interface ConversationDeleteResult {
 // code so the caller can localize it and roll its optimistic UI update back.
 export const deleteConversation = async (id: string): Promise<ConversationDeleteResult> => {
   const r = handleResponse(
-    await fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: authHeaders() }),
+    await authFetch(`/api/conversations/${id}`, { method: 'DELETE' }),
   )
   const body = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(body?.detail || `HTTP_${r.status}`)
@@ -136,17 +174,17 @@ async function summaryStateResponse(r: Response): Promise<ConversationSummarySta
 
 // Replace the summary text. The folding cursor is server-side immutable here.
 export const updateConversationSummary = (id: string, summaryText: string) =>
-  fetch(`/api/conversations/${id}/summary`, {
+  authFetch(`/api/conversations/${id}/summary`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ summary_text: summaryText }),
   }).then(summaryStateResponse)
 
 // Fold the oldest `fraction` of the un-summarized history into the summary.
 export const compactConversation = (id: string, fraction = 0.5) =>
-  fetch(`/api/conversations/${id}/compact`, {
+  authFetch(`/api/conversations/${id}/compact`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fraction }),
   }).then(summaryStateResponse)
 
@@ -154,9 +192,9 @@ export const compactConversation = (id: string, fraction = 0.5) =>
 // the first segment whose (stripped) text equals `segmentText` and leaves the
 // folding cursor untouched.
 export const deleteSummarySegment = (id: string, segmentText: string) =>
-  fetch(`/api/conversations/${id}/summary/segments`, {
+  authFetch(`/api/conversations/${id}/summary/segments`, {
     method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ segment_text: segmentText }),
   }).then(summaryStateResponse)
 
@@ -164,12 +202,11 @@ export const deleteSummarySegment = (id: string, segmentText: string) =>
 // backend rejects values longer than PIN_INSTRUCTION_MAX_CHARS with
 // PIN_INSTRUCTION_TOO_LONG. Returns the persisted value.
 export const putPinInstruction = (id: string, pinnedInstruction: string) =>
-  fetch(`/api/conversations/${id}/pin`, {
+  authFetch(`/api/conversations/${id}/pin`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ pinned_instruction: pinnedInstruction }),
   })
-    .then(handleResponse)
     .then((r) => r.json()) as Promise<{
     pinned_instruction: string
     // Non-blocking budget warning when the pin eats too large a share of the
@@ -179,8 +216,7 @@ export const putPinInstruction = (id: string, pinnedInstruction: string) =>
 
 // Restore suspension state after refresh: return the conversation's pending quota suspension awaiting user confirmation (or null)
 export const getPendingLimit = (id: string) =>
-  fetch(`/api/conversations/${id}/pending`, { headers: authHeaders() })
-    .then(handleResponse)
+  authFetch(`/api/conversations/${id}/pending`)
     .then((r) => r.json())
     .catch(() => null)
 
@@ -198,7 +234,6 @@ export interface ConversationRunStatus {
 // (running) or the conversation is durably paused (pending). The frontend uses
 // this to re-attach to the live stream instead of showing a stale pause bubble.
 export const getConversationStatus = (id: string) =>
-  fetch(`/api/conversations/${id}/status`, { headers: authHeaders() })
-    .then(handleResponse)
+  authFetch(`/api/conversations/${id}/status`)
     .then((r) => r.json())
     .catch(() => ({ running: false, pending: null }))

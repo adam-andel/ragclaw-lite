@@ -69,7 +69,24 @@ export const useAuthStore = defineStore('auth', () => {
     if (!refreshToken.value) return false
     try {
       const res = await client.post('/auth/refresh', { refresh_token: refreshToken.value })
+      // Persist the fresh tokens. The refresh response carries no user info, so
+      // we keep the existing cached user. If user is somehow null we fall back
+      // to re-fetching the profile below. `as UserInfo` is safe here: even if
+      // user.value is null at this instant, the /auth/me call below restores it
+      // before any consumer observes the null state.
       setAuth(res.data.access_token, user.value as UserInfo, res.data.refresh_token)
+      // If we had no cached user (e.g. the page loaded, then the access token
+      // expired before fetchMe ran), re-fetch the profile now that we hold a
+      // fresh, valid access token. Without this, user would be left null and
+      // `isLoggedIn` would flip to false, ejecting the user to the login view.
+      if (!user.value) {
+        try {
+          const me = await client.get('/auth/me')
+          setAuth(token.value!, me.data, refreshToken.value)
+        } catch {
+          /* best-effort; keep whatever state we have */
+        }
+      }
       return true
     } catch {
       return false
