@@ -74,6 +74,7 @@ const config = ref<LLMConfig>({
   prompt_language: 'en',
   cache_ttl_seconds: 3600,
   agent_round_quota: 0,
+  skill_switch_quota: 0,
   summary_archive_high_pct: 40,
   is_configured: false,
 })
@@ -812,6 +813,7 @@ async function doSave() {
     prompt_language: config.value.prompt_language,
     cache_ttl_seconds: config.value.cache_ttl_seconds,
     agent_round_quota: config.value.agent_round_quota,
+    skill_switch_quota: config.value.skill_switch_quota,
     summary_archive_high_pct: config.value.summary_archive_high_pct,
   }
   if (apiKeyInput.value.trim()) {
@@ -1155,6 +1157,25 @@ async function handleTest() {
             <NInputNumber v-model:value="config.agent_round_quota" :min="0" :max="200" :step="1" @update:value="clearTest(); scheduleSave(t('settings.agentRoundQuota'))" />
             <span class="muted" style="margin-left:8px;font-size:12px">
               {{ config.agent_round_quota === 0 ? t('settings.agentRoundQuotaUnlimited') : t('settings.agentRoundQuotaHint', { n: config.agent_round_quota }) }}
+            </span>
+          </NFormItem>
+
+          <!-- Skill-switch cap (applies to all chats + cron) -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.skillSwitchQuota') }}
+                <NTooltip trigger="hover" :width="320">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span>{{ t('settings.tip.skillSwitchQuota') }}</span>
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.skill_switch_quota" :min="0" :max="200" :step="1" @update:value="clearTest(); scheduleSave(t('settings.skillSwitchQuota'))" />
+            <span class="muted" style="margin-left:8px;font-size:12px">
+              {{ config.skill_switch_quota === 0 ? t('settings.skillSwitchQuotaUnlimited') : t('settings.skillSwitchQuotaHint', { n: config.skill_switch_quota }) }}
             </span>
           </NFormItem>
 

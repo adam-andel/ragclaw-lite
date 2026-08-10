@@ -26,7 +26,6 @@ from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
 from app.services.agent_nodes import (
-    MAX_SKILL_SWITCHES,
     MAX_TOOL_ROUNDS,
     _strip_tool_call_noise,
     _normalize_download_url,
@@ -685,7 +684,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
     """
     pl = pending.get("pending_limit") or {}
     if mode == "continue":
-        quota_ss = pending["skill_switch_quota"] + MAX_SKILL_SWITCHES
+        quota_ss = pending["skill_switch_quota"] + config_manager.skill_switch_quota
         quota_tr = pending["tool_round_quota"] + config_manager.agent_round_quota
         tool_calls = pl.get("deferred_tool_call")
         resume_action = "continue"
@@ -711,7 +710,11 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "conversation_summary": summary_text,
         "conversation_id": conv_id,
         "workspace_id": pending["workspace_id"],
-        "timezone": request.timezone or "UTC",
+        # Prefer the user's persisted profile timezone, then the per-request
+        # browser-detected value, then UTC. Avoids relying solely on the
+        # browser's auto-detected timezone (which containerized/privacy browsers
+        # often report as UTC) so file/code timestamps match the user's locale.
+        "timezone": current_user.timezone or request.timezone or "UTC",
         "active_skill": pending["active_skill"],
         "available_tools": pending["available_tools"],
         "rag_context": pending["rag_context"],
@@ -1324,7 +1327,7 @@ async def chat_stream(
                         "retrieval_ms": 0,
                         "skip_cache": request.skip_cache,
                         "kb_prompt": kb_prompt,
-                        "skill_switch_quota": MAX_SKILL_SWITCHES,
+                        "skill_switch_quota": config_manager.skill_switch_quota,
                         "tool_round_quota": config_manager.agent_round_quota,
                         "pending_limit": None,
                         "resume_action": None,

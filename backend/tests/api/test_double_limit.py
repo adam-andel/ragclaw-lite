@@ -62,7 +62,7 @@ def _pending_state() -> dict:
         "tool_round_quota": MAX_TOOL_ROUNDS,
         "pending_limit": {
             "kind": "tool_round",
-            "message": "Tool-call round limit reached",
+            "message": "tool_round_limit",
             "deferred_tool_call": None,
         },
     }

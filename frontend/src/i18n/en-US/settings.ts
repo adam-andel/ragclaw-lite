@@ -143,6 +143,7 @@ export default {
     cacheTtl: 'Cache validity (seconds) for identical questions. Default 3600s (60 min). Set 0 to fully disable caching. Takes effect immediately and does not affect already-cached entries (expiry judged by each entry\'s creation time).',
     contextWindow: 'Max context window (tokens) of the current model. Used as the denominator for the "context usage" bar on the chat page. Varies widely by model (e.g. gpt-4o = 128000, Claude = 200000, some local/Chinese models = 32000/64000). Takes effect immediately.',
     agentRoundQuota: 'For a single Agent run (all chats and cron jobs), the maximum number of "think → call tool → observe" loops. Execution stops and outputs current progress once the limit is reached. Increase it when tasks are complex or the LLM often emits broken code (e.g. Windows path escaping, null bytes) to reduce failures from exhausted rounds. Set to 0 for unlimited rounds (recommended only for trusted long-running tasks). Clicking "Continue" adds the same number of rounds on top of the current quota. Takes effect immediately.',
+    skillSwitchQuota: 'For a single Agent run (all chats and cron jobs), the maximum number of skill switches (use_skill loads / chained calls). Execution stops and waits for your confirmation once the limit is reached (reply "Continue" to add the same number). Increase it when the model thrashes between skills without producing output; set to 0 for unlimited. Takes effect immediately.',
     archiveHigh: 'When the L0 (most-recent summary window) share of the PERSISTENT budget reaches this percent, archiving fires: older fold paragraphs are written to vector memory (recalled on demand) while the most recent paragraph stays inline. The persistent budget is what remains of the context window after the output reserve, system prompt, tool definitions and the retrieval / memory slots — so this percentage is not a share of the whole window. Default 40%.',
   },
   maxConcurrency: 'Max Concurrency',
@@ -152,6 +153,9 @@ export default {
   archiveHigh: 'Archive Trigger Threshold (High)',
   agentRoundQuotaHint: 'Each chat/cron run allows up to {n} tool-decision rounds',
   agentRoundQuotaUnlimited: 'Unlimited rounds (0)',
+  skillSwitchQuota: 'Skill-switch Cap',
+  skillSwitchQuotaHint: 'Each chat/cron run allows up to {n} skill switches',
+  skillSwitchQuotaUnlimited: 'Unlimited switches (0)',
   cacheSecondsApprox: '{seconds} s ≈ {minutes} min',
   testConnection: 'Test Connection',
   test: {

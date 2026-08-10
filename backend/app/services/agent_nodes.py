@@ -11,7 +11,7 @@ from app.services.vector_store import vector_store
 from app.services.bm25_index import bm25_index
 from app.services import memory_archive
 from app.services.llm_client import llm_client
-from app.services.config_manager import config_manager
+from app.services.config_manager import config_manager, MAX_SKILL_SWITCHES
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, get_skill_by_name,
@@ -32,7 +32,6 @@ logger = logging.getLogger("ragclaw.agent")
 logger.setLevel(logging.INFO)
 
 MAX_TOOL_ROUNDS = 5
-MAX_SKILL_SWITCHES = 4  # Route D: cap on use_skill pushes to prevent runaway chaining
 
 # ── Agent tool-decision output cap ──
 # Hard ceiling (safety rail against runaway generation) of 32768 tokens; but
@@ -1047,7 +1046,7 @@ async def skill_switcher_node(state: dict) -> dict:
             if not name:
                 _emit(state, "skill_switch_fail", "use_skill: no skill_name was provided.")
                 return _skill_control_return(tc, "use_skill: no skill_name was provided.", stack, state)
-            quota = state.get("skill_switch_quota", MAX_SKILL_SWITCHES)
+            quota = state.get("skill_switch_quota", config_manager.skill_switch_quota)
             if switch_count >= quota:
                # Suspend: wait for user confirmation ("continue" = replay after adding quota) instead of silently rejecting
                 msg = build_skill_switch_limit_message(
@@ -1294,9 +1293,10 @@ async def tool_decision_node(state: dict) -> dict:
     # quota == 0 means unlimited rounds
     if quota != 0 and tool_round >= quota:
         logger.info("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
-       # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
-        msg = (f"Tool-call round limit reached ({tool_round}/{quota}). "
-               f"Reply 'continue' to add more rounds and keep going.")
+        # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit).
+        # Emit a stable, language-neutral code as the hint; the actual localized reminder
+        # text is owned by the frontend i18n (chat.toolRoundLimitHint) keyed on kind="tool_round".
+        msg = "tool_round_limit"
         _emit(state, "tool_round_limit", msg)
         return {
             "tool_calls": None,

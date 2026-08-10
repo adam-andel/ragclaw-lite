@@ -35,6 +35,7 @@ class LLMConfigUpdate(BaseModel):
     prompt_language: str | None = None
     cache_ttl_seconds: int | None = None
     agent_round_quota: int | None = None  # max agent tool-decision rounds per run (chats + cron)
+    skill_switch_quota: int | None = None  # max skill switches per run (chats + cron)
     summary_archive_high_pct: int | None = None  # L0 share of the persistent budget (%) that triggers archiving
 
     @field_validator("llm_temperature")
@@ -70,6 +71,13 @@ class LLMConfigUpdate(BaseModel):
     def agent_round_quota_range(cls, v):
         if v is not None and not (0 <= v <= 200):
             raise ValueError("CONFIG_AGENT_ROUND_QUOTA_RANGE")
+        return v
+
+    @field_validator("skill_switch_quota")
+    @classmethod
+    def skill_switch_quota_range(cls, v):
+        if v is not None and not (0 <= v <= 200):
+            raise ValueError("CONFIG_SKILL_SWITCH_QUOTA_RANGE")
         return v
 
     @field_validator("summary_archive_high_pct")

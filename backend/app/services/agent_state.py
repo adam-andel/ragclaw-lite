@@ -80,7 +80,7 @@ class RagclawAgentState(TypedDict):
     conversation_id: str | None   # Conversation id, used to scope the workspace_id
 
    # ── Quota model (replaces hard-constant comparison; "continue" = quota += MAX, history count untouched) ───
-    skill_switch_quota: int      # Current total skill-switch quota, initialized to MAX_SKILL_SWITCHESS
-    tool_round_quota: int        # Current total tool-round quota, initialized to MAX_TOOL_ROUNDSS
+    skill_switch_quota: int      # Current total skill-switch quota, initialized to MAX_SKILL_SWITCHES
+    tool_round_quota: int        # Current total tool-round quota, initialized to MAX_TOOL_ROUNDS
     pending_limit: dict | None   # Suspension info: {kind, message, deferred_tool_call}; non-empty means awaiting user confirmation
     resume_action: str | None    # "continue" | "stop" | None (new question))

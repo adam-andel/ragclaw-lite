@@ -112,6 +112,7 @@ export default {
   resumeHint: 'Or just type a new question below (this is treated as "Stop" and ends this turn)',
   userStoppedNote: 'The user manually stopped this turn.',
   generationFailedNote: '⚠️ Generation failed for this turn. Please retry. The completed processing steps are kept above.',
+  toolRoundLimitHint: 'Tool-call round limit reached. Reply "continue" to add more rounds and keep going; to change it permanently, adjust Tool-call Round Quota in Settings (0 = unlimited).',
   you: 'You',
   thinkingProcess: '💭 Thinking process',
   citationMissingChunk: 'This historical citation is missing a chunk index; full content cannot be loaded',

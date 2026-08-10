@@ -293,6 +293,8 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         "tool_round": 0,
         # Max agent tool-decision rounds (configurable, default 10; applies to all runs).
         "tool_round_quota": config_manager.agent_round_quota,
+        # Max skill switches (configurable, default 4; applies to all runs).
+        "skill_switch_quota": config_manager.skill_switch_quota,
         "route": None,
         "cache_hit": None,
         "final_answer": None,
