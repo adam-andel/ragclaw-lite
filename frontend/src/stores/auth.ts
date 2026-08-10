@@ -127,8 +127,19 @@ export const useAuthStore = defineStore('auth', () => {
       const health = await hr.json()
       llmConfigured.value = !!health.llm_reachable
       if (health.context_window) contextWindow.value = health.context_window
-    } catch {
-      clearAuth()
+    } catch (e: any) {
+      // Do NOT clearAuth() here. A 401 (expired access token) is already
+      // handled by the client response interceptor, which refreshes the token
+      // and retries; if the refresh also fails it logs the user out there.
+      // Wiping auth on transient errors (network blip, 5xx) here would destroy
+      // the refresh token and break silent renewal, forcing a re-login.
+      // Only treat a genuine auth failure as terminal (interceptor owns logout).
+      const status = e?.response?.status
+      if (status === 401) {
+        // interceptor already attempted refresh+retry; if we still land here the
+        // session is truly dead. Avoid clobbering tokens on non-auth errors.
+        if (!token.value) clearAuth()
+      }
     }
   }
 

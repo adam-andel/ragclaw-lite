@@ -672,6 +672,7 @@ def _snapshot_state(state: dict) -> dict:
         "skill_switch_quota": state.get("skill_switch_quota"),
         "tool_round_quota": state.get("tool_round_quota"),
         "pending_limit": state.get("pending_limit"),
+        "download_entries": state.get("download_entries", []),
     }
 
 
@@ -728,6 +729,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "pending_limit": None,
         "resume_action": resume_action,
         "agent_steps": [],
+        "download_entries": pending.get("download_entries", []),
         "emit": emit_fn,
         "emit_usage": emit_usage_fn,
     }
