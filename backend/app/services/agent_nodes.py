@@ -1294,9 +1294,10 @@ async def tool_decision_node(state: dict) -> dict:
     # quota == 0 means unlimited rounds
     if quota != 0 and tool_round >= quota:
         logger.info("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)
-       # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit)）
-        msg = (f"Tool-call round limit reached ({tool_round}/{quota}). "
-               f"Reply 'continue' to add more rounds and keep going.")
+        # Suspend: rounds exhausted, wait for user confirmation (after resume the LLM re-decides, because the LLM was not called yet when the limit was hit).
+        # Emit a stable, language-neutral code as the hint; the actual localized reminder
+        # text is owned by the frontend i18n (chat.toolRoundLimitHint) keyed on kind="tool_round".
+        msg = "tool_round_limit"
         _emit(state, "tool_round_limit", msg)
         return {
             "tool_calls": None,

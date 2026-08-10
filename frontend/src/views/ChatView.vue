@@ -365,7 +365,9 @@ function setPendingBubble(opts: {
 // Scanning all history would wrongly re-flag already-resolved suspensions that linger
 // in the message list as stale "round limit reached" entries.
 function restorePendingFromMessages(convId: string) {
-  const hint = /round limit reached|reply ['"]continue['"]/i
+  // The backend stores a stable, language-neutral code ("tool_round_limit") as the
+  // hint; the localized reminder text is rendered from frontend i18n (chat.toolRoundLimitHint).
+  const hint = /tool_round_limit/i
   let last: ChatMsg | undefined
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
@@ -429,6 +431,11 @@ function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
       // plus a localized failure note so the turn is never silently blank after
       // a page refresh / reopen. The agent steps above are replayed too.
       return { ...base, content: (m.content || '') + '\n\n' + t('chat.generationFailedNote') }
+    }
+    if ((m.content || '').trim() === 'tool_round_limit') {
+      // A tool-round suspension hint persisted by the backend as a stable code;
+      // render the localized reminder instead of the raw code after refresh / reopen.
+      return { ...base, content: t('chat.toolRoundLimitHint') }
     }
     return base
   })
@@ -1807,7 +1814,7 @@ function handleKeydown(e: KeyboardEvent) {
       <div v-if="pendingLimit" key="resume-inline-bubble" class="resume-inline-bubble" role="alert">
         <div class="resume-bubble-icon">⏸️</div>
         <div class="resume-bubble-body">
-          <div class="resume-bubble-msg">{{ pendingLimit.message }}</div>
+          <div class="resume-bubble-msg">{{ t('chat.toolRoundLimitHint') }}</div>
           <div class="resume-bubble-actions">
             <NButton type="primary" :loading="isStreaming" @click="continueResume">
               {{ t('chat.continueResume') }}
