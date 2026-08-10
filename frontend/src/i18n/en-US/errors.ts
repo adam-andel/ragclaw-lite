@@ -15,6 +15,8 @@ export default {
     CONTEXT_PREFIX_TOO_LARGE: 'The fixed prompt alone already exceeds the model context limit, so shortening your question will not help. Trim the knowledge base instructions, user memory or skill prompt, or switch to a model with a larger context window.',
     LLM_CONTEXT_EXCEEDED: 'This request exceeded the model context limit and was stopped. Shorten your question, attach fewer files, or start a new conversation and try again.',
     CONVERSATION_BUSY: 'This conversation has a paused turn awaiting your confirmation. Resolve it before editing the context.',
+    CONVERSATION_NOT_FOUND: 'That conversation no longer exists. Please refresh and try again.',
+    CONVERSATION_FORBIDDEN: 'You cannot modify this conversation — only its owner may delete it.',
     SEGMENT_NOT_FOUND: 'That summary segment was already removed or no longer exists. Please refresh and try again.',
     EMPTY_SEGMENT: 'The summary segment is empty and cannot be deleted.',
     NOTHING_TO_COMPACT: 'Nothing left to compact — every message is already folded into the summary.',

@@ -15,6 +15,8 @@ export default {
     CONTEXT_PREFIX_TOO_LARGE: '固定提示词本身已超出模型上下文上限，缩短提问也无法解决。请精简知识库指令、用户记忆或技能提示词，或改用上下文窗口更大的模型。',
     LLM_CONTEXT_EXCEEDED: '本次请求超出模型上下文上限，已自动终止。请精简提问、减少上传文件或开启新对话后重试。',
     CONVERSATION_BUSY: '该对话有正在等待确认的暂停回合，请先处理后再修改上下文。',
+    CONVERSATION_NOT_FOUND: '该对话不存在或已被删除，请刷新后重试。',
+    CONVERSATION_FORBIDDEN: '无权操作该对话，对话仅创建者可以删除。',
     SEGMENT_NOT_FOUND: '该摘要段落已被移除或不存在，请刷新后重试。',
     EMPTY_SEGMENT: '摘要段落内容为空，无法删除。',
     NOTHING_TO_COMPACT: '没有可压缩的对话记录，全部消息都已折叠进摘要。',

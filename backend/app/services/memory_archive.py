@@ -29,7 +29,7 @@ startup.
 
 import asyncio
 import logging
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 
 import app.database as db_mod
 from app.models.memory_chunk import MemoryChunk
@@ -197,18 +197,12 @@ def schedule_memory_embedding(conv_id: str, chunk_dicts: list[dict]):
     task.add_done_callback(_MEM_TASKS.discard)
 
 
-async def purge_memory(conv_id: str, db):
-    """Delete all memory for a conversation: vectors, BM25 index, and DB rows."""
-    mem_kb = f"mem_{conv_id}"
-    try:
-        vector_store.delete_collection(mem_kb)
-    except Exception:
-        pass
-    bm25_index.delete_kb(mem_kb)
-    await db.execute(
-        delete(MemoryChunk).where(MemoryChunk.conversation_id == conv_id)
-    )
-    unmark_has_memory(conv_id)
+# Tearing a conversation's memory down (vectors + BM25 + memory_chunks rows) now
+# lives in ``services.conversation_purge``: dropping a Chroma collection is
+# blocking disk I/O and the row delete has to be batched, so it belongs in the
+# throttled background purge rather than on the delete request path. This module
+# still owns the in-memory has_memory flag, which the request clears inline via
+# ``unmark_has_memory``.
 
 
 async def process_pending_memory():

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, h, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { currentLocale } from '@/i18n/useLocale'
@@ -10,9 +10,9 @@ import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import KbPickCard from '@/components/kb/KbPickCard.vue'
 import AppCard from '@/components/common/AppCard.vue'
-import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline, Eye } from '@vicons/ionicons5'
+import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline, Eye, Trash } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, compactConversation, deleteSummarySegment, putPinInstruction } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, deleteConversation, compactConversation, deleteSummarySegment, putPinInstruction } from '@/api/chat'
 import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
@@ -910,6 +910,93 @@ async function loadConversations() {
   } catch { conversations.value = [] }
 }
 
+// ── Deleting a conversation from the history modal ──
+// Deletion is destructive and cascades (messages, agent traces, compressed
+// summary, archived memory), so it always goes through a confirm dialog — and
+// the dialog explicitly calls out an in-flight generation, because confirming
+// kills it.
+const deletingConvId = ref<string | null>(null)
+
+async function confirmDeleteConv(c: any) {
+  if (deletingConvId.value) return
+  const id = c.id as string
+  const title = c.title || t('chat.untitledConversation')
+
+  // Ask the backend whether this conversation is mid-generation. getConversationStatus
+  // swallows its own errors (reports not-running), so this can never block the dialog.
+  // The local isStreaming check covers the conversation on screen, whose run this tab
+  // owns.
+  const status = await getConversationStatus(id)
+  const streaming = !!status?.running || (id === conversationId.value && isStreaming.value)
+
+  const body = t('chat.deleteConvConfirmBody', { title })
+    + (streaming ? '\n\n' + t('chat.deleteConvStreamingWarn') : '')
+
+  dialog.warning({
+    title: t('chat.deleteConvConfirmTitle'),
+    // pre-line so the streaming warning reads as its own paragraph.
+    content: () => h('div', { style: 'white-space: pre-line' }, body),
+    positiveText: t('chat.deleteConvConfirmOk'),
+    negativeText: t('chat.deleteConvConfirmCancel'),
+    onPositiveClick: () => { void removeConversation(id) },
+  })
+}
+
+// Optimistic delete: every client-side trace of the conversation goes the moment
+// the user confirms, then the request is fired. The backend deletes the
+// conversation row synchronously and purges its messages / agent steps /
+// archived memory in a throttled background task, so the list never needs to
+// wait on that work. If the request fails, the row is restored where it was.
+async function removeConversation(id: string) {
+  const index = conversations.value.findIndex((x: any) => x.id === id)
+  if (index === -1) return
+  const snapshot = conversations.value[index]
+  const savedSettings = convSettingsMap.value[id]
+  const wasCurrent = conversationId.value === id
+
+  deletingConvId.value = id
+  conversations.value.splice(index, 1)
+  // Keep the modal's pager in range when the last row of a page disappears.
+  if (convPage.value > convTotalPages.value) convPage.value = convTotalPages.value
+  chatUnread.clearConversation(id)
+  if (savedSettings !== undefined) {
+    // Otherwise this dead id keeps a row in the conv-settings localStorage blob forever.
+    delete convSettingsMap.value[id]
+    saveConvSettings()
+  }
+  if (localStorage.getItem('ragclaw:last-conv') === id) {
+    // Otherwise the next mount (or the sidebar) reopens a conversation that is gone.
+    localStorage.removeItem('ragclaw:last-conv')
+  }
+  if (wasCurrent) {
+    // Drop this tab's half of the stream right away; the backend aborts its own
+    // producer as part of the delete. Leaving the view parked on a deleted
+    // conversation would 404 on the next send.
+    abortCtl?.abort()
+    abortCtl = null
+    isStreaming.value = false
+    queuePosition.value = null
+    resetToNewConversation()
+  }
+
+  try {
+    const res = await deleteConversation(id)
+    nmessage.success(res?.aborted_run ? t('chat.convDeletedAborted') : t('chat.convDeleted'))
+  } catch (e: any) {
+    // Put the row back where it was. The view reset above is intentionally NOT
+    // undone: re-opening a conversation whose delete just failed is more
+    // confusing than landing on a fresh one, and the row is right there in the list.
+    conversations.value.splice(Math.min(index, conversations.value.length), 0, snapshot)
+    if (savedSettings !== undefined) {
+      convSettingsMap.value[id] = savedSettings
+      saveConvSettings()
+    }
+    nmessage.error(backendErrorMessage(e?.message) || t('chat.convDeleteFailed'))
+  } finally {
+    deletingConvId.value = null
+  }
+}
+
 onMounted(async () => {
   isReadonly.value = false
 
@@ -1573,20 +1660,30 @@ function cancelQueue() {
   abortCtl = null
 }
 
-function newConversation() {
+// Return the view to the "no conversation open" state. Split out of
+// newConversation() because deleting the conversation you are currently viewing
+// needs exactly this reset but must NOT refresh the list from the server: at
+// that point the optimistic removal has already happened locally while the row
+// still exists in the backend, so a reload would put it straight back.
+function resetToNewConversation() {
   conversationId.value = undefined
   messages.value = []
   currentPage.value = 1
   totalPages.value = 1
   totalRounds.value = 0
   contextTokens.value = 0
+  pendingLimit.value = null
   isReadonly.value = false
   emptyMode.value = 'kb'
   // Starting a fresh conversation clears the remembered open conversation.
   localStorage.removeItem('ragclaw:last-conv')
-  loadConversations()
   // Drop any route query and show the bare /chat so the watcher renders the KB picker.
   router.replace('/chat')
+}
+
+function newConversation() {
+  resetToNewConversation()
+  loadConversations()
 }
 
 const isComposing = ref(false)
@@ -1780,6 +1877,23 @@ function handleKeydown(e: KeyboardEvent) {
               <span v-if="chatUnread.hasUnreadConversation(c.id)" class="conv-unread-badge">{{ t('chat.hasUnread') }}</span>
             </div>
           </div>
+          <!-- .stop everywhere: the whole row is a button that opens the conversation,
+               so an un-stopped click/Enter would navigate before (or instead of) deleting.
+               .prevent on keydown also suppresses the native button click Enter/Space
+               would otherwise generate, keeping it to exactly one invocation. -->
+          <NButton
+            class="conv-row-delete"
+            size="tiny" quaternary circle
+            :title="t('chat.deleteConversation')"
+            :aria-label="t('chat.deleteConversation')"
+            :loading="deletingConvId === c.id"
+            :disabled="!!deletingConvId"
+            @click.stop="confirmDeleteConv(c)"
+            @keydown.enter.stop.prevent="confirmDeleteConv(c)"
+            @keydown.space.stop.prevent="confirmDeleteConv(c)"
+          >
+            <template #icon><NIcon size="15"><Trash /></NIcon></template>
+          </NButton>
         </div>
       </div>
       <AppPagination
@@ -2375,6 +2489,22 @@ function handleKeydown(e: KeyboardEvent) {
 .conv-row-body {
   flex: 1;
   min-width: 0;
+}
+/* Delete affordance in the "all conversations" modal. Dimmed rather than hidden:
+   fully invisible until hover is undiscoverable and unreachable by keyboard. */
+.conv-row-delete {
+  align-self: center;
+  flex-shrink: 0;
+  opacity: .45;
+  transition: opacity .15s ease, color .15s ease;
+}
+.conv-row:hover .conv-row-delete,
+.conv-row-delete:focus-visible {
+  opacity: 1;
+}
+.conv-row-delete:hover {
+  opacity: 1;
+  color: var(--color-danger);
 }
 .conv-row-title {
   font-size: 14px;

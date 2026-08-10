@@ -12,7 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,7 @@ from app.services.conversation_summary import (
 )
 from app.services.llm_semaphore import llm_limiter
 from app.services import memory_archive
+from app.services import conversation_purge
 from app.services.i18n import t as _t
 
 from app.schemas.chat import (
@@ -750,6 +751,11 @@ class RunHandle:
     done: asyncio.Event = field(default_factory=asyncio.Event)
     stream_msg_id: str | None = None
     producer_task: asyncio.Task | None = None
+    # Set by _abort_run when the run is killed on purpose (the conversation is
+    # being deleted). It tells the SSE consumer that the producer's
+    # CancelledError is expected, so the stream ends quietly instead of
+    # surfacing as a request crash.
+    aborted: bool = False
 
 
 # conversation_id -> active run handle. Process-local (single worker). A refresh
@@ -770,6 +776,47 @@ def _emit_run(handle: RunHandle, line: str) -> None:
             q.put_nowait(line)
         except asyncio.QueueFull:
             pass
+
+
+# How long a caller waits for an aborted producer to unwind. Cancellation lands
+# on the producer's next await (normally the LLM stream), so this returns in
+# milliseconds; the timeout only bounds a producer parked in a non-cancellable
+# executor call.
+_ABORT_WAIT_S = 3.0
+
+
+async def _abort_run(conv_id: str) -> bool:
+    """Kill the in-flight streaming run of a conversation, if any.
+
+    Returns True when a live run was actually aborted.
+
+    Deleting a conversation mid-stream requires this. The producer deliberately
+    outlives its client (see the note in ``generate``'s finally), so left alone it
+    would finish generating and write the assistant message + agent_steps into a
+    conversation row that no longer exists. SQLite runs with foreign keys OFF, so
+    those inserts would not fail -- they would silently become orphan rows.
+    """
+    handle = RUN_REGISTRY.pop(conv_id, None)
+    if handle is None or handle.done.is_set():
+        return False
+
+    handle.aborted = True
+    task = handle.producer_task
+    if task is not None and not task.done():
+        task.cancel()
+        # asyncio.wait -- NOT await/wait_for -- so the producer's CancelledError
+        # is never re-raised into the caller's own task.
+        await asyncio.wait({task}, timeout=_ABORT_WAIT_S)
+
+    # Release every attached client. The producer's finally normally does this,
+    # but not if it was cancelled before that block was ever reached.
+    for q in list(handle.subscribers):
+        try:
+            q.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+    handle.done.set()
+    return True
 
 
 # Substrings that mark a context-window overflow. After every trimming guard has
@@ -1612,6 +1659,10 @@ async def chat_stream(
                 await sse_queue.put(None)
 
         producer_task = asyncio.create_task(producer())
+        # Publish the task on the handle so _abort_run can cancel it (deleting a
+        # conversation mid-stream). Without this the registry knows a run exists
+        # but has no way to stop it.
+        handle.producer_task = producer_task
         try:
             while True:
                 event = await sse_queue.get()
@@ -1627,10 +1678,16 @@ async def chat_stream(
             # sessions for persistence, so the writes succeed regardless of the
             # request lifecycle. Swallow only non-cancellation errors so a
             # finished/errored producer never crashes the already-closed stream.
+            #
+            # The one exception is a DELIBERATE abort (_abort_run, i.e. the
+            # conversation is being deleted): there the producer was cancelled on
+            # purpose and ending this stream quietly is the correct response. A
+            # cancellation of THIS task still propagates.
             try:
                 await producer_task
             except asyncio.CancelledError:
-                raise
+                if not (handle.aborted and producer_task.cancelled()):
+                    raise
             except Exception:
                 pass
 
@@ -2061,29 +2118,51 @@ async def compact_conversation_endpoint(
     return await _summary_state(conv, db)
 
 
-@router.delete("/conversations/{conv_id}")
+@router.delete("/conversations/{conv_id}", status_code=202)
 async def delete_conversation(conv_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Delete a conversation. Only the owner (or admin) can delete."""
+    """Delete a conversation. Only the owner can delete.
+
+    Accepted-and-purging, not deleted-and-done. Only the work that must be
+    correct the instant the response returns happens inline:
+
+      1. abort any in-flight generation, so nothing writes into the conversation
+         after its row is gone;
+      2. drop the in-memory state that would keep serving it (history cache,
+         has-memory flag);
+      3. delete the ``conversations`` row itself -- a single indexed DELETE, so
+         the conversation disappears from every listing immediately.
+
+    The expensive half (thousands of ``messages`` / ``agent_steps`` rows, the
+    Chroma collection) is handed to ``conversation_purge``, which drains it in
+    throttled batches. Deliberately NOT ``db.delete(conv)``: the ORM cascade
+    loads every child row into memory and issues per-row DELETEs inside this
+    request, holding SQLite's writer lock long enough to stall live chat turns.
+    """
     result = await db.execute(select(Conversation).where(Conversation.id == conv_id))
     conv = result.scalar_one_or_none()
     if not conv:
-        raise HTTPException(404, "Conversation not found")
-    # Only owner or admin can delete
-    if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
-        raise HTTPException(403, "无权删除")
-    # Admin can only delete their own conversations
+        raise HTTPException(404, "CONVERSATION_NOT_FOUND")
+    # A conversation is private to its owner -- admins included. Legacy rows with
+    # no user_id stay deletable by anyone (same rule as the rest of this router).
     if conv.user_id and conv.user_id != current_user.id:
-        raise HTTPException(403, "管理员只能删除自己的对话")
-    # Drop any persisted pending-limit snapshot for this conversation.
-    await _clear_pending_state(db, conv_id)
-    # Drop cached history so a reused/recreated conversation never serves stale rows.
+        raise HTTPException(403, "CONVERSATION_FORBIDDEN")
+
+    # 1) Stop any live run BEFORE the row goes away. Left running, the producer
+    #    would finish and persist its assistant message into a dead conversation.
+    aborted = await _abort_run(conv_id)
+
+    # 2) In-memory state. Both are cheap and must be gone before the next turn of
+    #    any other conversation can observe them.
     _evict_history_cache(conv_id)
-    # Drop archived conversation memory (vectors, BM25 index, DB rows) so deleting a
-    # conversation leaves no orphaned memory chunks / Chroma collections.
-    await memory_archive.purge_memory(conv_id, db)
-    await db.delete(conv)
+    memory_archive.unmark_has_memory(conv_id)
+
+    # 3) The only DB write on the request path.
+    await db.execute(delete(Conversation).where(Conversation.id == conv_id))
     await db.commit()
-    return {"status": "deleted"}
+
+    # 4) Everything heavy, off the request path.
+    conversation_purge.schedule_purge(conv_id)
+    return {"status": "deleting", "aborted_run": aborted}
 
 
 # ── Background helpers ──
