@@ -24,9 +24,19 @@ class RagclawAgentState(TypedDict):
     # Injected into the system prompt so the LLM can personalize. Empty when
     # the user has not written anything.
     user_memory: str
+    # Per-conversation pinned instruction (system②) — a sacred prefix that
+    # fit_assembly_context never trims. Empty when the conversation has none.
+    # MUST stay declared here (see the note on `timezone` below).
+    pinned_instruction: str
     skill_id: str | None          # Optional: force a specific SKILL
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt
+    # User's IANA timezone (e.g. "Asia/Shanghai"), resolved from the profile with
+    # the browser-detected value as fallback. Propagated to the REPL sandbox so
+    # datetime.now()/strftime stamp files in the user's local time instead of the
+    # container default (UTC). MUST stay declared here: StateGraph builds its
+    # channels from this TypedDict and silently drops any undeclared key.
+    timezone: str
     conversation_history: list[dict]  # [{"role": "user"|"assistant", "content": "..."}]
     conversation_summary: str          # Compressed oldest history; injected as a system message (see conversation_summary.py)
 

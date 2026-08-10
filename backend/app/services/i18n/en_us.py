@@ -126,13 +126,6 @@ MESSAGES = {
         "network policy blocked the required access, naming the host(s) needed."
     ),
 
-    # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}
-    "skill_switch_limit": (
-        'use_skill: skill-switch limit reached ({switch_count}/{quota}); '
-        'cannot load "{name}". Reply "continue" to add quota and auto-retry. '
-        'To change this permanently, adjust Skill-switch Cap in Settings (0 = unlimited).'
-    ),
-
     # Self-heal prompt for malformed tool calls. Placeholders: {tool_name}, {snippet}
     "selfheal": (
         "Your previous tool call was NOT valid JSON and could not be parsed. "

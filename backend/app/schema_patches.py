@@ -221,6 +221,14 @@ PATCHES: list[Patch] = [
         applied=lambda insp: has_column(insp, "conversations", "pinned_instruction"),
         apply=_add_conversation_pinned_instruction,
     ),
+
+    # Per-user IANA timezone (profile setting; drives locale-correct timestamps
+    # in code execution / scheduling instead of the sandbox's default UTC).
+    Patch(
+        name="users.timezone",
+        applied=lambda insp: has_column(insp, "users", "timezone"),
+        apply=["ALTER TABLE users ADD COLUMN timezone TEXT"],
+    ),
 ]
 
 

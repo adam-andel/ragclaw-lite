@@ -1311,8 +1311,12 @@ async def chat_stream(
                         # Replaces the old per-conversation <ws> (conv_id) so all of a
                         # user's tool outputs land in their persistent workspace root.
                         "workspace_id": request.workspace_dir or "",
-                        # User's local IANA timezone for cron scheduling (e.g. Asia/Shanghai)
-                        "timezone": request.timezone or "UTC",
+                        # Prefer the user's persisted profile timezone, then the
+                        # per-request browser-detected value, then UTC. Browsers in
+                        # containers / privacy modes often report UTC, so the profile
+                        # value must win. Used for cron scheduling and propagated to
+                        # the REPL sandbox for local-time file stamps.
+                        "timezone": current_user.timezone or request.timezone or "UTC",
                         "active_skill": None,
                         "available_tools": [],
                         "rag_context": "",

@@ -113,6 +113,7 @@ export default {
   userStoppedNote: '用户已手动终止本轮对话。',
   generationFailedNote: '⚠️ 本轮生成失败，请重试。已在上文保留处理过程中已完成的系统步骤。',
   toolRoundLimitHint: '工具调用轮次已达上限。请回复「继续」以追加额度后继续运行；如需长期调整，可在「设置 → 工具调用轮次配额」中修改上限（设为 0 表示不限轮数）。',
+  skillSwitchLimitHint: '技能切换次数已达上限。请回复「继续」以追加额度后继续运行；如需长期调整，可在「设置 → 技能切换次数上限」中修改上限（设为 0 表示不限次数）。',
   you: '你',
   thinkingProcess: '💭 思考过程',
   citationMissingChunk: '该历史引用缺少分块索引，无法加载完整内容',

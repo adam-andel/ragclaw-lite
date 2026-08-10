@@ -51,6 +51,7 @@ class UserResponse(BaseModel):
     avatar_url: str | None = None
     tenant_id: str | None = None
     memory: str | None = None
+    timezone: str | None = None
     created_at: datetime
     # Non-blocking config-time warnings, e.g. profile memory eating too large a
     # share of the context window. Only populated when the profile-update
@@ -76,6 +77,10 @@ class UserUpdateRequest(BaseModel):
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=4)
     memory: str | None = None
+    # IANA timezone (e.g. "Asia/Shanghai", "America/New_York"). Send null/empty to
+    # clear back to the browser-detected/UTC default. Validated structurally in
+    # the handler; the REPL sandbox re-validates against its zoneinfo data.
+    timezone: str | None = None
 
 
 class UserCreateRequest(BaseModel):

@@ -365,9 +365,10 @@ function setPendingBubble(opts: {
 // Scanning all history would wrongly re-flag already-resolved suspensions that linger
 // in the message list as stale "round limit reached" entries.
 function restorePendingFromMessages(convId: string) {
-  // The backend stores a stable, language-neutral code ("tool_round_limit") as the
-  // hint; the localized reminder text is rendered from frontend i18n (chat.toolRoundLimitHint).
-  const hint = /tool_round_limit/i
+  // The backend stores a stable, language-neutral code ("tool_round_limit" or
+  // "skill_switch_limit") as the hint; the localized reminder text is rendered from
+  // frontend i18n (chat.toolRoundLimitHint / chat.skillSwitchLimitHint).
+  const hint = /tool_round_limit|skill_switch_limit/i
   let last: ChatMsg | undefined
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
@@ -382,7 +383,9 @@ function restorePendingFromMessages(convId: string) {
     setPendingBubble({
       message: last.content,
       convId,
-      kind: (last as any).kind || 'tool_round',
+      // Infer the suspension kind from the stable code (don't rely on a stored
+      // `kind` field that may be absent after refresh).
+      kind: (last.content || '').trim() === 'skill_switch_limit' ? 'skill_switch' : 'tool_round',
       messageId: last.id,
     })
   }
@@ -432,10 +435,15 @@ function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
       // a page refresh / reopen. The agent steps above are replayed too.
       return { ...base, content: (m.content || '') + '\n\n' + t('chat.generationFailedNote') }
     }
-    if ((m.content || '').trim() === 'tool_round_limit') {
-      // A tool-round suspension hint persisted by the backend as a stable code;
-      // render the localized reminder instead of the raw code after refresh / reopen.
+    const suspendedCode = (m.content || '').trim()
+    if (suspendedCode === 'tool_round_limit') {
+      // A suspension hint persisted by the backend as a stable code; render the
+      // localized reminder instead of the raw code after refresh / reopen.
       return { ...base, content: t('chat.toolRoundLimitHint') }
+    }
+    if (suspendedCode === 'skill_switch_limit') {
+      // Same for the skill-switch suspension code.
+      return { ...base, content: t('chat.skillSwitchLimitHint') }
     }
     return base
   })
@@ -1814,7 +1822,7 @@ function handleKeydown(e: KeyboardEvent) {
       <div v-if="pendingLimit" key="resume-inline-bubble" class="resume-inline-bubble" role="alert">
         <div class="resume-bubble-icon">⏸️</div>
         <div class="resume-bubble-body">
-          <div class="resume-bubble-msg">{{ t('chat.toolRoundLimitHint') }}</div>
+          <div class="resume-bubble-msg">{{ pendingLimit.kind === 'skill_switch' ? t('chat.skillSwitchLimitHint') : t('chat.toolRoundLimitHint') }}</div>
           <div class="resume-bubble-actions">
             <NButton type="primary" :loading="isStreaming" @click="continueResume">
               {{ t('chat.continueResume') }}

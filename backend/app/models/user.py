@@ -45,3 +45,9 @@ class User(Base):
     # model can personalize. Deliberately kept separate from the auto-extracted
     # MEM0 memory graph (see agent_nodes.py).
     memory: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # User's IANA timezone (e.g. "Asia/Shanghai", "America/New_York"). Persisted
+    # from the profile so code execution and scheduling stamp files/times in the
+    # user's locale instead of the sandbox container's default UTC. Nullable:
+    # when unset the request-time browser-detected value (or UTC) is used.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

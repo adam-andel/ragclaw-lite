@@ -1,5 +1,6 @@
 """User management routes (admin/moderator)."""
 
+import re
 import uuid
 import logging
 import httpx
@@ -18,6 +19,21 @@ from app.services.config_manager import config_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
+
+# Mirror of auth.py's timezone allowlist (kept local to avoid a router<->router
+# import). The REPL sandbox does the authoritative zoneinfo check.
+_TZ_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
+def _validate_timezone(tz: str | None) -> str | None:
+    if tz is None:
+        return None
+    tz = tz.strip()
+    if not tz:
+        return None
+    if ".." in tz or tz.startswith("/") or not _TZ_RE.match(tz):
+        raise HTTPException(400, "INVALID_TIMEZONE")
+    return tz
 
 
 async def _delete_repl_user_dir(repl_uid: int) -> None:
@@ -180,6 +196,8 @@ async def update_user(
         if current_user.role == UserRole.MODERATOR and new_role != UserRole.USER:
             raise HTTPException(403, "USER_ROLE_PERMISSION")
         user.role = new_role
+    if data.timezone is not None:
+        user.timezone = _validate_timezone(data.timezone)
     if data.is_active is not None:
         user.is_active = data.is_active
     if data.password is not None:
