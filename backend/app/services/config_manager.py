@@ -27,10 +27,13 @@ from cryptography.hazmat.primitives.serialization import (
 
 from app.config import settings
 
-# Default cap on use_skill pushes per run (skill-chaining guard). This is the single source of
-# truth for the factory default; it is user-configurable via Settings -> Skill-switch quota
-# (0 = unlimited) and read from DB at runtime.
-MAX_SKILL_SWITCHES = 5
+# Quota/cap defaults (agent_round_quota, skill_switch_quota, llm_context_window) live inline in
+# _build_defaults() as literals, matching every other setting — that dict is the single source of truth.
+
+# Config keys that hold secrets. These are persisted only to the encrypted config.enc file,
+# never to the (plaintext) system_settings DB table, and are therefore excluded from the
+# non-sensitive defaults seeded into the DB. Single source of truth for what counts as secret.
+SECRET_CONFIG_KEYS = ("llm_api_key", "embedding_api_key")
 
 LEGACY_SYSTEM_PROMPT_FULL = """你就是 ragclaw —— 一个以「claw（爪）」为核心、以「rag（检索增强生成）」为辅助的智能体。
 
@@ -557,7 +560,8 @@ class ConfigManager:
         """
         legacy_file_existed = False
         with self._lock:
-            self._config = self._build_defaults()
+            self._defaults = self._build_defaults()
+            self._config = dict(self._defaults)
             if self._config_file.exists():
                 try:
                     saved = json.loads(_decrypt(self._config_file.read_bytes()))
@@ -619,12 +623,12 @@ class ConfigManager:
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
-            "llm_context_window": 128000,  # max context window (tokens) for the configured model
+            "llm_context_window": 192000,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
-            # Agent tool-decision rounds (applies to all chats + cron, default 10)
-            "agent_round_quota": 10,  # max agent tool-decision rounds per run
-            # Agent skill-switch cap (applies to all chats + cron, default = MAX_SKILL_SWITCHES)
-            "skill_switch_quota": MAX_SKILL_SWITCHES,  # max skill switches (use_skill pushes) per run
+            # max agent tool-decision rounds per run (applies to all chats + cron)
+            "agent_round_quota": 20,
+            # max skill switches per run (use_skill pushes) per run
+            "skill_switch_quota": 10,
             # Embedding
             "embedding_model": settings.embedding_model,
             "embedding_api_key": "",
@@ -636,7 +640,7 @@ class ConfigManager:
             # Agent-graph prompt language: "zh" | "en" (default "en") — switch to "zh" for Chinese
             "prompt_language": "en",
             # Cache
-            "cache_ttl_seconds": 3600,
+            "cache_ttl_seconds": settings.cache_ttl_seconds,
             # Memory archive (L0 rolling summary window -> vector/BM25 memory)
             "summary_archive_high_pct": 40,  # L0 share of the persistent budget that triggers archiving
             # Sandbox network policy
@@ -650,37 +654,15 @@ class ConfigManager:
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
+        """All factory defaults except secret keys.
+
+        Derived from the single source of truth ``_build_defaults`` so the field
+        list is never maintained in two places. Keys in SECRET_CONFIG_KEYS are
+        excluded because they must not be persisted to the (plaintext) DB.
+        """
         return {
-            "llm_provider": settings.llm_provider,
-            "llm_model": settings.llm_model,
-            "llm_base_url": settings.llm_base_url,
-            "llm_temperature": settings.llm_temperature,
-            "llm_max_tokens": settings.llm_max_tokens,
-            "llm_context_window": 128000,  # max context window (tokens) for the configured model
-            "llm_concurrency": 3,
-            # Agent tool-decision rounds (applies to all chats + cron, default 10)
-            "agent_round_quota": 10,  # max agent tool-decision rounds per run
-            # Agent skill-switch cap (applies to all chats + cron, default = MAX_SKILL_SWITCHES)
-            "skill_switch_quota": MAX_SKILL_SWITCHES,  # max skill switches (use_skill pushes) per run
-            "embedding_model": settings.embedding_model,
-            # HTTPS / TLS (nginx reverse proxy, prod only)
-            "https_enabled": False,
-            "llm_system_prompt": DEFAULT_SYSTEM_PROMPT,
-            "llm_system_prompt_en": DEFAULT_SYSTEM_PROMPT_EN,
-            "prompt_language": "en",
-            "cache_ttl_seconds": 3600,
-            "summary_archive_high_pct": 40,
-            "sandbox_network_mode": "deny",
-            "sandbox_allow_domains": "",
-            "sandbox_allow_methods": "",
-            # repl_auth_secret is auto-generated on first boot by
-            # _ensure_repl_auth_secret and rotated via the admin UI. It is no
-            # longer sourced from a mounted Docker secret file (Plan B).
-            "repl_auth_secret": "",
-            # jwt_secret is auto-generated on first boot by _ensure_jwt_secret
-            # and rotated via the admin UI. It is no longer sourced from a
-            # mounted Docker secret file (DB-ified, mirrors repl_auth_secret).
-            "jwt_secret": "",
+            k: v for k, v in self._build_defaults().items()
+            if k not in SECRET_CONFIG_KEYS
         }
 
     async def _load_from_db(self, legacy_file_existed: bool):
@@ -709,7 +691,7 @@ class ConfigManager:
             defaults_to_save = self._build_non_sensitive_defaults()
             if legacy_file_existed:
                 for k, v in self._config.items():
-                    if k in {"llm_api_key", "embedding_api_key"}:
+                    if k in SECRET_CONFIG_KEYS:
                         continue
                     defaults_to_save[k] = v
 
@@ -722,8 +704,8 @@ class ConfigManager:
             if legacy_file_existed:
                 with self._lock:
                     keys_only = {
-                        "llm_api_key": self._config.get("llm_api_key", ""),
-                        "embedding_api_key": self._config.get("embedding_api_key", ""),
+                        "llm_api_key": self._get("llm_api_key"),
+                        "embedding_api_key": self._get("embedding_api_key"),
                     }
                     self._config.update(keys_only)
                     self._persist_keys_locked()
@@ -739,8 +721,8 @@ class ConfigManager:
         """
         self._config_file.parent.mkdir(parents=True, exist_ok=True)
         keys_only = {
-            "llm_api_key": self._config.get("llm_api_key", ""),
-            "embedding_api_key": self._config.get("embedding_api_key", ""),
+            "llm_api_key": self._get("llm_api_key"),
+            "embedding_api_key": self._get("embedding_api_key"),
         }
         plain = json.dumps(keys_only, ensure_ascii=False)
         self._config_file.write_bytes(_encrypt(plain))
@@ -756,7 +738,7 @@ class ConfigManager:
         survives restarts — no mounted secret file overrides it on boot.
         """
         with self._lock:
-            current = self._config.get("repl_auth_secret", "") or ""
+            current = self._get("repl_auth_secret")
         if current:
             return
         new_secret = _generate_repl_auth_secret()
@@ -778,7 +760,7 @@ class ConfigManager:
         rotation takes effect on the next token sign/verify with zero restart.
         """
         with self._lock:
-            current = self._config.get("jwt_secret", "") or ""
+            current = self._get("jwt_secret")
         if current:
             return
         new_secret = _generate_jwt_secret()
@@ -792,7 +774,7 @@ class ConfigManager:
     @property
     def api_key(self) -> str:
         with self._lock:
-            return self._config.get("llm_api_key", "")
+            return self._get("llm_api_key")
 
     @property
     def is_configured(self) -> bool:
@@ -888,76 +870,84 @@ class ConfigManager:
             self.set_reachable(False)
             return False
 
+    def _get(self, key):
+        """Read a config value, falling back to the factory default from _build_defaults().
+
+        Keeps default values in a single source of truth instead of duplicating
+        them as .get(key, literal) fallbacks across every getter.
+        """
+        return self._config.get(key, self._defaults.get(key))
+
     @property
     def base_url(self) -> str:
         with self._lock:
-            return self._config.get("llm_base_url", "")
+            return self._get("llm_base_url")
 
     @property
     def context_window(self) -> int:
         """Max context window (tokens) of the configured model (for UI usage bars)."""
         with self._lock:
             try:
-                return int(self._config.get("llm_context_window", 128000))
+                return int(self._get("llm_context_window"))
             except (TypeError, ValueError):
-                return 128000
+                return self._defaults.get("llm_context_window")
 
     @property
     def summary_archive_high_pct(self) -> int:
         """L0 share of the persistent budget that triggers archiving to long-term memory."""
         with self._lock:
             try:
-                return int(self._config.get("summary_archive_high_pct", 40))
+                return int(self._get("summary_archive_high_pct"))
             except (TypeError, ValueError):
-                return 40
+                return self._defaults.get("summary_archive_high_pct")
 
     @property
     def model(self) -> str:
         with self._lock:
-            return self._config.get("llm_model", "")
+            return self._get("llm_model")
 
     @property
     def temperature(self) -> float:
         with self._lock:
-            return self._config.get("llm_temperature", 0.4)
+            return self._get("llm_temperature")
 
     @property
     def max_tokens(self) -> int:
         with self._lock:
-            return self._config.get("llm_max_tokens", 4096)
+            return int(self._get("llm_max_tokens"))
 
     @property
     def concurrency(self) -> int:
         with self._lock:
-            return self._config.get("llm_concurrency", 3)
+            return int(self._get("llm_concurrency"))
 
     @property
     def agent_round_quota(self) -> int:
-        """Max agent tool-decision rounds per run, for all chats and cron jobs (default 10)."""
+        """Max agent tool-decision rounds per run, for all chats and cron jobs."""
         with self._lock:
             try:
-                return int(self._config.get("agent_round_quota", 10))
+                return int(self._get("agent_round_quota"))
             except (TypeError, ValueError):
-                return 10
+                return self._defaults.get("agent_round_quota")
 
     @property
     def skill_switch_quota(self) -> int:
-        """Max skill switches per run, for all chats and cron jobs (default = MAX_SKILL_SWITCHES)."""
+        """Max skill switches per run, for all chats and cron jobs."""
         with self._lock:
             try:
-                return int(self._config.get("skill_switch_quota", MAX_SKILL_SWITCHES))
+                return int(self._get("skill_switch_quota"))
             except (TypeError, ValueError):
-                return MAX_SKILL_SWITCHES
+                return self._defaults.get("skill_switch_quota")
 
     @property
     def embedding_model(self) -> str:
         with self._lock:
-            return self._config.get("embedding_model", "")
+            return self._get("embedding_model")
 
     @property
     def llm_provider(self) -> str:
         with self._lock:
-            return self._config.get("llm_provider", "openai")
+            return self._get("llm_provider")
 
     @property
     def platform(self) -> str:
@@ -992,27 +982,27 @@ class ConfigManager:
     @property
     def embedding_api_key(self) -> str:
         with self._lock:
-            return self._config.get("embedding_api_key", "")
+            return self._get("embedding_api_key")
 
     @property
     def cache_ttl_seconds(self) -> int:
         with self._lock:
-            return self._config.get("cache_ttl_seconds", 3600)
+            return self._get("cache_ttl_seconds")
 
     @property
     def sandbox_network_mode(self) -> str:
         with self._lock:
-            return self._config.get("sandbox_network_mode", "deny")
+            return self._get("sandbox_network_mode")
 
     @property
     def sandbox_allow_domains(self) -> str:
         with self._lock:
-            return self._config.get("sandbox_allow_domains", "")
+            return self._get("sandbox_allow_domains")
 
     @property
     def sandbox_allow_methods(self) -> str:
         with self._lock:
-            return self._config.get("sandbox_allow_methods", "")
+            return self._get("sandbox_allow_methods")
 
     @property
     def repl_auth_secret(self) -> str:
@@ -1022,7 +1012,7 @@ class ConfigManager:
         isolation is enabled out of the box without manual .env setup.
         """
         with self._lock:
-            return self._config.get("repl_auth_secret", "") or ""
+            return self._get("repl_auth_secret")
 
     @property
     def jwt_secret(self) -> str:
@@ -1034,7 +1024,7 @@ class ConfigManager:
         UI — so rotation takes effect immediately, with no backend restart.
         """
         with self._lock:
-            return self._config.get("jwt_secret", "") or ""
+            return self._get("jwt_secret")
 
     @property
     def system_prompt(self) -> str:
@@ -1046,7 +1036,7 @@ class ConfigManager:
     def system_prompt_identity(self) -> str:
         """Identity/security base (Part 1), selected by prompt_language."""
         with self._lock:
-            lang = self._config.get("prompt_language", "en")
+            lang = self._get("prompt_language")
             if lang == "en":
                 return (self._config.get("llm_system_prompt_en") or "").strip() or DEFAULT_SYSTEM_PROMPT_IDENTITY_EN
             return (self._config.get("llm_system_prompt") or "").strip() or DEFAULT_SYSTEM_PROMPT_IDENTITY
@@ -1055,7 +1045,7 @@ class ConfigManager:
     def system_prompt_capabilities(self) -> str:
         """Native-capability base (Part 2), selected by prompt_language.
         Replaced at runtime by an active skill's system_prompt when one is selected."""
-        lang = self._config.get("prompt_language", "en")
+        lang = self._get("prompt_language")
         if lang == "en":
             return DEFAULT_SYSTEM_PROMPT_CAPABILITIES_EN
         return DEFAULT_SYSTEM_PROMPT_CAPABILITIES
@@ -1064,7 +1054,7 @@ class ConfigManager:
     def prompt_language(self) -> str:
         """Agent-graph prompt language: 'zh' | 'en' (default 'en'; switch to 'zh' for Chinese)."""
         with self._lock:
-            return self._config.get("prompt_language", "en")
+            return self._get("prompt_language")
 
     # ── Public API ──
 
@@ -1078,7 +1068,7 @@ class ConfigManager:
             # dedicated /api/config/repl-auth endpoint returns the real value.
             c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
 
-            c["is_configured"] = bool(self._config.get("llm_api_key", ""))
+            c["is_configured"] = bool(self._get("llm_api_key"))
             c["is_reachable"] = self._llm_reachable
             c["is_valid_llm_config"] = self.is_valid_llm_config
             # API keys are always sourced from the Settings UI (encrypted into
@@ -1143,24 +1133,13 @@ class ConfigManager:
 
     async def update(self, data: dict) -> dict:
         """Partial update. API keys go to encrypted file; other settings go to DB."""
-        allowed = {
-            "llm_provider", "llm_model", "llm_api_key",
-            "llm_base_url", "llm_temperature", "llm_max_tokens",
-            "llm_concurrency", "embedding_model", "embedding_api_key",
-            "llm_context_window",
-            "llm_system_prompt", "llm_system_prompt_en", "prompt_language",
-            "cache_ttl_seconds",
-            "agent_round_quota",
-            "skill_switch_quota",
-            "summary_archive_high_pct",
-            "sandbox_network_mode", "sandbox_allow_domains", "sandbox_allow_methods",
-            "repl_auth_secret", "jwt_secret",
-            "https_enabled",
-        }
+        # Updatable keys are exactly the full field set (single source of truth in
+        # _build_defaults) — never maintain this list separately.
+        allowed = set(self._build_defaults().keys())
         patch = {k: v for k, v in data.items() if k in allowed and v is not None}
 
-        encrypted_patch = {k: v for k, v in patch.items() if k in {"llm_api_key", "embedding_api_key"}}
-        db_patch = {k: v for k, v in patch.items() if k not in {"llm_api_key", "embedding_api_key"}}
+        encrypted_patch = {k: v for k, v in patch.items() if k in SECRET_CONFIG_KEYS}
+        db_patch = {k: v for k, v in patch.items() if k not in SECRET_CONFIG_KEYS}
 
         with self._lock:
             self._config.update(patch)
@@ -1200,7 +1179,7 @@ class ConfigManager:
     @property
     def https_enabled(self) -> bool:
         with self._lock:
-            return bool(self._config.get("https_enabled", False))
+            return bool(self._get("https_enabled"))
 
     @property
     def https_cert(self) -> str:
@@ -1218,7 +1197,7 @@ class ConfigManager:
     def get_https_config(self) -> dict:
         """Masked HTTPS status for the settings UI (no secret material)."""
         with self._lock:
-            enabled = bool(self._config.get("https_enabled", False))
+            enabled = bool(self._get("https_enabled"))
             meta = self._config.get("https_cert_meta")
         c, k = self._read_volume_cert_key()
         return {

@@ -24,7 +24,7 @@ from app.database import async_session as _async_session  # noqa: F401
 from app.models.conversation import Conversation
 from app.models.conversation import PendingLimitState as _PLS
 from app.services.agent_graph import ragclaw_agent_graph
-from app.services.agent_nodes import MAX_SKILL_SWITCHES, MAX_TOOL_ROUNDS
+from app.services.config_manager import config_manager
 
 
 def _auth(token: str) -> dict:
@@ -81,8 +81,8 @@ def _pending_state_payload() -> dict:
         "workspace_id": "ws-1",
         "skill_switch_count": 1,
         "tool_round": 2,
-        "skill_switch_quota": MAX_SKILL_SWITCHES,
-        "tool_round_quota": MAX_TOOL_ROUNDS,
+        "skill_switch_quota": config_manager.skill_switch_quota,
+        "tool_round_quota": config_manager.agent_round_quota,
         # the pause
         "pending_limit": {
             "kind": "skill_switch",
@@ -110,8 +110,8 @@ def _answer_state_payload() -> dict:
         "workspace_id": "ws-1",
         "skill_switch_count": 1,
         "tool_round": 2,
-        "skill_switch_quota": MAX_SKILL_SWITCHES,
-        "tool_round_quota": MAX_TOOL_ROUNDS,
+        "skill_switch_quota": config_manager.skill_switch_quota,
+        "tool_round_quota": config_manager.agent_round_quota,
     }
 
 

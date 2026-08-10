@@ -26,7 +26,6 @@ from app.services.auth import get_current_user
 from app.services.cache import answer_cache
 from app.services.repl_auth import get_user_repl_uid
 from app.services.agent_nodes import (
-    MAX_TOOL_ROUNDS,
     _strip_tool_call_noise,
     _normalize_download_url,
     _build_working_dir_prompt,

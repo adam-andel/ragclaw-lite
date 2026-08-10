@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.services import agent_nodes as nodes
+from app.services.config_manager import config_manager
 from app.services.agent_nodes import (
     _emit,
     skill_loader_node,
@@ -253,7 +254,7 @@ class TestSkillSwitcher:
             emit, "use_skill", '{"skill_name": "文档生成助手"}',
             skill_stack=[{"name": "PPT美化", "id": "p1", "folder_name": "x"}],
             loaded_skill_ids=["p1"],
-            skill_switch_count=nodes.MAX_SKILL_SWITCHES,
+            skill_switch_count=config_manager.skill_switch_quota,
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
