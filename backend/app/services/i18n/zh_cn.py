@@ -170,4 +170,12 @@ MESSAGES = {
         "以确保本次回答能正常生成。"
     ),
     "tool_desc_heading": "## 可用工具",
+
+    # update_memory 'write' rejected because the supplied text exceeds the 2000-char
+    # cap. The write is NOT performed (no silent truncation). The model must surface
+    # this to the user and point them to the Profile page. Follows prompt_language.
+    "memory_too_long": (
+        "用户记忆过长，无法保存。本次写入已被拒绝，未做任何修改。"
+        "请告知用户：记忆超出长度限制，并建议用户自行前往「个人资料」页修改。"
+    ),
 }

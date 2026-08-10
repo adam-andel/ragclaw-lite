@@ -207,4 +207,13 @@ MESSAGES = {
         "response could be generated."
     ),
     "tool_desc_heading": "## Available tools",
+
+    # update_memory 'write' rejected because the supplied text exceeds the 2000-char
+    # cap. The write is NOT performed (no silent truncation). The model must surface
+    # this to the user and point them to the Profile page. Follows prompt_language.
+    "memory_too_long": (
+        "User memory is too long to save. This write was "
+        "rejected and no changes were made. Inform the user that the memory exceeds "
+        "the length limit, and advise them to edit it themselves on the Profile page."
+    ),
 }

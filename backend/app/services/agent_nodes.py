@@ -1774,8 +1774,10 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
       - 'read': return the current memory text verbatim (no mutation).
       - 'write': persist ``content`` as the full, updated memory text, replacing
         the previous content. Capped at 2000 characters (matching the frontend
-        maxlength); longer input is truncated. The LLM is expected to have read
-        first and supplied the complete edited text.
+        maxlength). When the supplied text exceeds the cap, the write is REJECTED
+        (no silent truncation) and the model is told to surface this to the user
+        and point them to the Profile page. The LLM is expected to have read first
+        and supplied the complete edited text.
     """
     from app.models.user import User
 
@@ -1810,15 +1812,24 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
         content = (args.get("content") or "").strip()
         if not content:
             return {"result": "[update_memory] error: 'content' is required for action='write'", "endpoint": None}
-        new_memory = content
-        if len(new_memory) > MAX_LEN:
-            new_memory = new_memory[:MAX_LEN]
-        user.memory = new_memory
+        if len(content) > MAX_LEN:
+            # Reject instead of silently truncating: the model must tell the user
+            # and let them edit on the Profile page. No DB write happens.
+            logger.warning(
+                "update_memory: write rejected for user=%s (len=%d exceeds cap=%d)",
+                user_id, len(content), MAX_LEN,
+            )
+            return {
+                "result": f"[update_memory] write rejected: {_t('memory_too_long', config_manager.prompt_language)}",
+                "endpoint": None,
+            }
+
+        user.memory = content
         await db.commit()
 
-    logger.info("update_memory: wrote memory for user=%s (len=%d)", user_id, len(new_memory))
+    logger.info("update_memory: wrote memory for user=%s (len=%d)", user_id, len(content))
     return {
-        "result": f"[update_memory] write: saved {len(new_memory)} chars. Profile memory updated.",
+        "result": f"[update_memory] write: saved {len(content)} chars. Profile memory updated.",
         "endpoint": None,
     }
 
