@@ -24,6 +24,10 @@ class RagclawAgentState(TypedDict):
     # Injected into the system prompt so the LLM can personalize. Empty when
     # the user has not written anything.
     user_memory: str
+    # Per-conversation pinned instruction (system②) — a sacred prefix that
+    # fit_assembly_context never trims. Empty when the conversation has none.
+    # MUST stay declared here (see the note on `timezone` below).
+    pinned_instruction: str
     skill_id: str | None          # Optional: force a specific SKILL
     kb_id: str                    # Single KB per conversation (design rule)
     kb_prompt: str               # KB-specific instruction injected into system prompt
