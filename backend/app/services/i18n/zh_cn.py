@@ -102,13 +102,6 @@ MESSAGES = {
         "所需访问，同时指出需要放行的主机。"
     ),
 
-    # Skill-switch quota exhausted message. Placeholders: {name}, {switch_count}, {quota}
-    "skill_switch_limit": (
-        "use_skill：已达技能切换上限（{switch_count}/{quota}），"
-        "无法加载「{name}」。请回复「继续」以追加额度后自动重试。"
-        "如需长期调整，可在「设置 → 技能切换次数上限」中修改（设为 0 表示不限次数）。"
-    ),
-
     # Self-heal prompt for malformed tool calls. Placeholders: {tool_name}, {snippet}
     "selfheal": (
         "你上一次的工具调用不是合法 JSON，无法被解析。"

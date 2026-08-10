@@ -94,7 +94,7 @@ _ROUTE_FILE_INTENT_KEYWORDS = (
 # Prompt text now lives in app/services/i18n (mirrors frontend/src/i18n):
 # zh_cn.py / en_us.py hold the templates; t() resolves by id + locale.
 # These wrappers keep the original function names/signatures so call sites
-# (build_intent_router_prompt / build_tool_system_prompt / build_skill_switch_limit_message
+# (build_intent_router_prompt / build_tool_system_prompt
 # / build_selfheal_prompt) are unchanged. lang='zh' (config_manager.prompt_language
 # default) reproduces the original Chinese behavior; lang='en' selects the English A/B variants.
 from app.services.i18n import t as _t
@@ -108,11 +108,6 @@ def build_intent_router_prompt(query: str, skill_list: str, lang: str = "zh") ->
 def build_tool_system_prompt(tool_desc: str, lang: str = "zh") -> str:
     """Forced tool-call JSON system prompt. lang='zh' reproduces the original behavior."""
     return _t("tool_system", lang, tool_desc=tool_desc)
-
-
-def build_skill_switch_limit_message(name: str, switch_count: int, quota: int, lang: str = "zh") -> str:
-    """Suspension message when skill-switch quota is exhausted. lang='zh' = original."""
-    return _t("skill_switch_limit", lang, name=name, switch_count=switch_count, quota=quota)
 
 
 def _try_parse_tool_call(content: str, available_tools: list[dict]) -> list[dict] | None:
@@ -1049,9 +1044,9 @@ async def skill_switcher_node(state: dict) -> dict:
             quota = state.get("skill_switch_quota", config_manager.skill_switch_quota)
             if switch_count >= quota:
                # Suspend: wait for user confirmation ("continue" = replay after adding quota) instead of silently rejecting
-                msg = build_skill_switch_limit_message(
-                    name, switch_count, quota, lang=config_manager.prompt_language
-                )
+                # Emit a stable, language-neutral code; the localized reminder text lives in the
+                # frontend chat namespace (chat.skillSwitchLimitHint), mirroring tool_round_limit.
+                msg = "skill_switch_limit"
                 _emit(state, "skill_switch_fail", msg, skill=name)
                 return {
                     "pending_limit": {
