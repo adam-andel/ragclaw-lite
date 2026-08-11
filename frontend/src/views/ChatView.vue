@@ -358,38 +358,6 @@ function setPendingBubble(opts: {
   })
 }
 
-// Last-resort recovery: if /status is unavailable, derive the durable pause state
-// from the messages we already loaded. A suspended run persists an assistant message
-// whose text is the tool-round hint and whose status is null — AND that message is the
-// LAST assistant message in the thread (the run stopped there, nothing follows it).
-// Scanning all history would wrongly re-flag already-resolved suspensions that linger
-// in the message list as stale "round limit reached" entries.
-function restorePendingFromMessages(convId: string) {
-  // The backend stores a stable, language-neutral code ("tool_round_limit" or
-  // "skill_switch_limit") as the hint; the localized reminder text is rendered from
-  // frontend i18n (chat.toolRoundLimitHint / chat.skillSwitchLimitHint).
-  const hint = /tool_round_limit|skill_switch_limit/i
-  let last: ChatMsg | undefined
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const m = messages.value[i]
-    if (m.role === 'assistant') {
-      last = m as ChatMsg
-      break
-    }
-  }
-  if (!last || (last as any)._pending === true) return
-  if ((last.status === null || last.status === undefined || last.status === 'pending') &&
-      last.content && hint.test(last.content)) {
-    setPendingBubble({
-      message: last.content,
-      convId,
-      // Infer the suspension kind from the stable code (don't rely on a stored
-      // `kind` field that may be absent after refresh).
-      kind: (last.content || '').trim() === 'skill_switch_limit' ? 'skill_switch' : 'tool_round',
-      messageId: last.id,
-    })
-  }
-}
 let abortCtl: AbortController | null = null
 const conversationId = ref<string>()
 const messagesContainer = ref<HTMLElement>()
@@ -414,9 +382,11 @@ function onScroll() {
   }
 }
 
-// Load earlier conversations forward: request the previous page from the server, prepend it to the list, and compensate the scroll position to avoid jumps
-// A manually terminated round in history (status==='stopped'): the DB stores only the original hint copy,
-// and at load time overlays a localized termination notice based on the current UI language, so it still shows after refresh.
+// Post-process messages loaded from the server (refresh / pagination / follow-poll).
+// Suspensions are NOT persisted as assistant messages (they live only in
+// pending_limit_states and are surfaced via the need_user_input SSE event + a
+// getPendingLimit rebuild), so there is no "tool_round_limit"/"skill_switch_limit"
+// code to translate here. We only handle the real persisted states.
 function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.map(m => {
     // Map the backend's snake_case agent_steps into the frontend AgentStep shape
@@ -424,26 +394,11 @@ function applyStoppedNote(msgs: ChatMsg[]): ChatMsg[] {
     // ChatMessage component already renders message.agentSteps).
     const steps = (m as any).agent_steps || m.agentSteps || []
     const base = { ...m, agentSteps: steps }
-    if (m.status === 'stopped') {
-      // A manually terminated turn: the DB keeps the original hint copy and we
-      // overlay a localized termination note based on the current UI language.
-      return { ...base, content: (m.content || '') + '\n\n' + t('chat.userStoppedNote') }
-    }
     if (m.status === 'error') {
       // A failed generation: show whatever partial text we captured (if any)
       // plus a localized failure note so the turn is never silently blank after
       // a page refresh / reopen. The agent steps above are replayed too.
       return { ...base, content: (m.content || '') + '\n\n' + t('chat.generationFailedNote') }
-    }
-    const suspendedCode = (m.content || '').trim()
-    if (suspendedCode === 'tool_round_limit') {
-      // A suspension hint persisted by the backend as a stable code; render the
-      // localized reminder instead of the raw code after refresh / reopen.
-      return { ...base, content: t('chat.toolRoundLimitHint') }
-    }
-    if (suspendedCode === 'skill_switch_limit') {
-      // Same for the skill-switch suspension code.
-      return { ...base, content: t('chat.skillSwitchLimitHint') }
     }
     return base
   })
@@ -1315,17 +1270,42 @@ async function loadConversation(id: string) {
           messageId: status.pending.message_id,
         })
       } else {
-        // /status returned no durable pause (or the call succeeded but reported
-        // nothing). Fall back to the messages we already loaded: a suspended run
-        // leaves an assistant message containing the "round limit reached" hint
-        // with status=null, which is unambiguous evidence of a durable pause.
-        restorePendingFromMessages(id)
+        // /status reported no durable pause. As a final fallback, query the
+        // persisted pending-limit state directly (suspensions live in
+        // pending_limit_states, NOT in the messages table, so we must ask the
+        // server rather than scan locally-loaded messages).
+        try {
+          const pending = await getPendingLimit(id)
+          if (pending && pending.message_id) {
+            setPendingBubble({
+              message: pending.message,
+              convId: pending.conversation_id || id,
+              kind: pending.kind,
+              messageId: pending.message_id,
+            })
+          }
+        } catch {
+          // best-effort; never let a transient fetch error wipe the view
+        }
       }
     } catch (statusErr) {
-      // /status can fail (e.g. transient 401/network). Don't leave the user with a
-      // dead view — recover the suspension bubble from the already-loaded messages.
-      console.warn('[ChatView] getConversationStatus failed, recovering from messages', statusErr)
-      restorePendingFromMessages(id)
+      // /status can fail (e.g. transient 401/network). Recover the suspension
+      // bubble from the persisted pending-limit state (not from loaded messages,
+      // since suspensions are never stored as assistant messages).
+      console.warn('[ChatView] getConversationStatus failed, recovering via getPendingLimit', statusErr)
+      try {
+        const pending = await getPendingLimit(id)
+        if (pending && pending.message_id) {
+          setPendingBubble({
+            message: pending.message,
+            convId: pending.conversation_id || id,
+            kind: pending.kind,
+            messageId: pending.message_id,
+          })
+        }
+      } catch {
+        // best-effort; never let a transient fetch error wipe the view
+      }
     }
   } catch (e) {
     console.error('[ChatView] loadConversation failed for', id, e)
@@ -1425,10 +1405,11 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         }
         break
       } else if (event.type === 'need_user_input') {
-        // Suspension: the backend has saved an assistant message (the hint copy) and is
-        // waiting for the user to choose "continue" or "stop" because the tool-call round
-        // quota was hit.
-        // Mirror the finished-stream (done) rules:
+        // Suspension: the backend hit the tool-call round / skill-switch quota and is
+        // waiting for the user to choose "continue" or "stop". The suspension is NOT
+        // persisted as an assistant message (it lives only in pending_limit_states);
+        // the inline bubble below is a frontend-only view-model entry keyed by
+        // event.message_id. Mirror the finished-stream (done) rules:
         //  - If the user is currently looking at THIS conversation, render the suspension
         //    hint bubble inline and surface the continue/stop controls.
         //  - If they have switched to another conversation (still in chat) or to another

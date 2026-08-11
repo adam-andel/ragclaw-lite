@@ -9,7 +9,7 @@ Exercises the FULL chain without a live LLM by patching the agent graph:
   Phase 3  POST /api/chat/stream resume_action=continue → snapshot replayed,
             quota recharged, graph returns final answer, pending cleared.
   Phase 4  POST /api/chat/stream resume_action=stop     → pending cleared,
-            message persisted with status="stopped".
+            no fake assistant message persisted (stop is a termination, not an answer).
 
 The four phases are the complete "SSE end-to-end recovery flow".
 """
@@ -198,14 +198,20 @@ async def test_sse_recovery_e2e(client, user_token, test_kb, monkeypatch):
 
     # pending cleared after stop
     assert await _db_pending(cid) is None
-    # the assistant message persisted with status="stopped"
+    # A stop is a termination of the suspended turn, NOT a new assistant message —
+    # it must NOT persist a fake answer (or any suspension sentinel) into the
+    # messages table. Verify no assistant row with status="stopped" and no row
+    # whose content is a bare suspension code was written by the stop.
     from app.models.conversation import Message
     async with _db_mod.async_session() as db:
         msgs = (await db.execute(
             select(Message).where(Message.conversation_id == cid).order_by(Message.seq.asc())
         )).scalars().all()
     stopped = [m for m in msgs if m.role == "assistant" and m.status == "stopped"]
-    assert stopped, "expected an assistant message with status='stopped'"
+    assert not stopped, "stop must not persist an assistant message with status='stopped'"
+    sentinels = [m for m in msgs
+                 if m.role == "assistant" and m.content in ("tool_round_limit", "skill_switch_limit")]
+    assert not sentinels, "stop must not persist a bare suspension sentinel as an answer"
 
     print("\n✅ SSE 端到端恢复流程全部通过："
           "挂起 → 刷新恢复(GET /pending) → continue 重放 → stop 终止")

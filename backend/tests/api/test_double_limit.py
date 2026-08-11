@@ -3,6 +3,7 @@
 import json
 import uuid
 import pytest
+from sqlalchemy import select
 
 import app.database as _db_mod
 from app.database import async_session as _async_session  # noqa: F401
@@ -143,3 +144,15 @@ async def test_double_limit_emits_twice(client, user_token, test_kb, monkeypatch
     assert done3, "phase3 should emit done"
 
     print("\n✅ backend emits need_user_input on BOTH limits")
+
+    # Suspensions must NOT be persisted as assistant messages (they live only in
+    # pending_limit_states). Verify the messages table holds no bare suspension
+    # sentinel as a fake answer — only the real final answer from phase 3.
+    from app.models.conversation import Message
+    async with _db_mod.async_session() as db:
+        msgs = (await db.execute(
+            select(Message).where(Message.conversation_id == cid).order_by(Message.seq.asc())
+        )).scalars().all()
+    sentinels = [m for m in msgs
+                 if m.role == "assistant" and m.content in ("tool_round_limit", "skill_switch_limit")]
+    assert not sentinels, "suspension must not persist a bare sentinel as an assistant answer"
