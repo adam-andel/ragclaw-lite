@@ -421,12 +421,14 @@ def _build_working_dir_prompt(state: dict) -> str:
     if ws:
         return (
             "\n\n## Working Directory\n"
-            f"The user's current working directory is '{ws}' (relative to their sandbox root). "
-            "Perform all file read, write, and run operations relative to this directory."
+            f"The sandbox root is your working directory. The user has selected the sub-directory '{ws}'. "
+            f"The runtime does NOT auto-change into it, so address files with the '{ws}/' path prefix "
+            f"(e.g. open('{ws}/report.pdf')) or call os.chdir('{ws}') at the start of your code. "
+            "All read/write/run operations resolve relative to the sandbox root."
         )
     return (
         "\n\n## Working Directory\n"
-        "The user's current working directory is the sandbox root (no sub-directory selected). "
+        "The sandbox root is your working directory (no sub-directory selected). "
         "Perform all file read, write, and run operations relative to this root directory."
     )
 
