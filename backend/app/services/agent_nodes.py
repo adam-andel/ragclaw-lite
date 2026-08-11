@@ -11,7 +11,7 @@ from app.services.vector_store import vector_store
 from app.services.bm25_index import bm25_index
 from app.services import memory_archive
 from app.services.llm_client import llm_client
-from app.services.config_manager import config_manager, MAX_SKILL_SWITCHES
+from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, get_skill_by_name,
@@ -30,8 +30,6 @@ from app.services.conversation_summary import (
 
 logger = logging.getLogger("ragclaw.agent")
 logger.setLevel(logging.INFO)
-
-MAX_TOOL_ROUNDS = 5
 
 # ── Agent tool-decision output cap ──
 # Hard ceiling (safety rail against runaway generation) of 32768 tokens; but
@@ -1042,7 +1040,8 @@ async def skill_switcher_node(state: dict) -> dict:
                 _emit(state, "skill_switch_fail", "use_skill: no skill_name was provided.")
                 return _skill_control_return(tc, "use_skill: no skill_name was provided.", stack, state)
             quota = state.get("skill_switch_quota", config_manager.skill_switch_quota)
-            if switch_count >= quota:
+            # quota == 0 means unlimited switches
+            if quota != 0 and switch_count >= quota:
                # Suspend: wait for user confirmation ("continue" = replay after adding quota) instead of silently rejecting
                 # Emit a stable, language-neutral code; the localized reminder text lives in the
                 # frontend chat namespace (chat.skillSwitchLimitHint), mirroring tool_round_limit.
@@ -1284,7 +1283,7 @@ async def tool_decision_node(state: dict) -> dict:
     if not available_tools:
         logger.info("Tool decision: no available tools — skipping tool phase")
         return {"tool_calls": None}
-    quota = state.get("tool_round_quota", MAX_TOOL_ROUNDS)
+    quota = state.get("tool_round_quota", config_manager.agent_round_quota)
     # quota == 0 means unlimited rounds
     if quota != 0 and tool_round >= quota:
         logger.info("Tool decision: max rounds reached (round=%d, quota=%d)", tool_round, quota)

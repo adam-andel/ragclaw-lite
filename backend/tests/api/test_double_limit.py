@@ -8,7 +8,6 @@ import app.database as _db_mod
 from app.database import async_session as _async_session  # noqa: F401
 from app.services.agent_graph import ragclaw_agent_graph
 from app.services.config_manager import config_manager
-from app.services.agent_nodes import MAX_TOOL_ROUNDS
 
 
 def _auth(token: str) -> dict:
@@ -57,9 +56,9 @@ def _pending_state() -> dict:
         "loaded_skill_ids": ["s1"],
         "workspace_id": "ws-1",
         "skill_switch_count": 0,
-        "tool_round": MAX_TOOL_ROUNDS,
+        "tool_round": config_manager.agent_round_quota,
         "skill_switch_quota": 1,
-        "tool_round_quota": MAX_TOOL_ROUNDS,
+        "tool_round_quota": config_manager.agent_round_quota,
         "pending_limit": {
             "kind": "tool_round",
             "message": "tool_round_limit",
@@ -86,7 +85,7 @@ def _answer_state() -> dict:
         "skill_switch_count": 0,
         "tool_round": 0,
         "skill_switch_quota": 1,
-        "tool_round_quota": MAX_TOOL_ROUNDS,
+        "tool_round_quota": config_manager.agent_round_quota,
     }
 
 
