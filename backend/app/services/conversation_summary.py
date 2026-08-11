@@ -172,51 +172,94 @@ def _empty_context_request_tokens(
     ws_context: str = "",
     skill_prompt: str | None = None,
     pinned_instruction: str = "",
+    include_cron_rule: bool = True,
 ) -> int:
     """Token cost of the request if EVERYTHING but the fixed prefix + query were
     dropped -- i.e. the floor ``fit_assembly_context`` can reach.
 
-    Reproduces the unconditionally-emitted head of ``_assemble`` in agent_nodes.py
-    (the tool-mode system prompt + the "## Task Background" block) plus a minimal
-    user question, so the entry-point firewall measures the same floor fit would
-    hit at its empty-context fallthrough. Task background is assembled in the same
-    order as the real one: ``skill_prompt + kb_context + ws_context`` followed by
-    the user-memory section and the pinned-instruction block.
+    Reproduces the unconditionally-emitted head of ``build_generation_messages``
+    (the FINAL-GENERATION assembler in agent_graph.py) -- which is the BINDING
+    constraint. The final-gen prefix always exceeds the tool-decision prefix by
+    the constant block (cron/file/final-answer rules) that ONLY final-gen emits,
+    so modeling the floor on tool-decision under-estimated the real prefix by
+    ~655 tokens and let doomed requests slip past Gate A to be rejected only
+    later by fit_assembly_context (wasting a full assembly + possibly a summary
+    LLM call). System messages are emitted in the same cache-friendly order as
+    the real assembler: const_prefix (system①) -> identity + KB + memory + pin
+    (system②) -> capabilities / explicit skill body (system③) -> user question.
+
+    ``ws_context`` is accepted for caller signature compatibility but intentionally
+    IGNORED: final-gen does not emit the working-directory note (that is a
+    tool-decision-only block), so including it here would over-estimate the
+    final-gen floor. ``include_cron_rule`` mirrors build_generation_messages and
+    defaults to True, matching Gate A's domain (user-facing requests); the cron
+    execution path calls the assembler directly and never reaches Gate A.
 
     The optional pieces are passed in rather than read from a global because they
     are request-scoped: the caller knows the active KB, the signed-in user's
-    memory, the selected working directory, the pinned instruction and -- when the
-    skill was selected EXPLICITLY -- that skill's SKILL.md body. Auto-routed
-    skills are resolved by the LLM router inside the graph and cannot be known
-    here, so their body is still missing from this floor; the precise ceiling
-    stays with fit (``ContextWindowExceeded``). Tool schemas are deliberately
-    excluded: their cost is only known once the graph has built the tool list, and
-    guessing here would reject requests that actually fit.
+    memory, the pinned instruction and -- when the skill was selected EXPLICITLY
+    -- that skill's SKILL.md body. Auto-routed skills are resolved by the LLM
+    router inside the graph and cannot be known here, so their body is still
+    missing from this floor; the residual leak band stays with fit
+    (``ContextWindowExceeded``). Tool schemas are deliberately excluded: their
+    cost is only known once the graph has built the tool list, and guessing here
+    would reject requests that actually fit.
     """
-    tool_sys = _t("tool_system", config_manager.prompt_language, tool_desc="")
-    if skill_prompt is not None:
-        # Explicitly-selected skill: its body replaces Part 2 (capabilities), with
-        # the always-on identity base (Part 1) prepended — mirroring the real
-        # assembly in agent_nodes._assemble.
-        task_bg = config_manager.system_prompt_identity + "\n\n" + skill_prompt
-    else:
-        task_bg = (
-            config_manager.system_prompt_identity
-            + "\n\n"
-            + config_manager.system_prompt_capabilities
-        )
+    # system① -- always-on constants. Lazy import: agent_graph imports THIS module
+    # at top level, so a top-level import of agent_graph here would be circular;
+    # by call time agent_graph is fully loaded.
+    from app.services.agent_graph import sandbox_network_rule
+
+    cron_rule = (
+        "\n\n## Scheduled Task Rule\n\n"
+        "If the user wants to create a recurring or one-time scheduled task "
+        "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer the task "
+        "content yourself. The system creates the scheduled task for you via the "
+        "create_cron tool — call that tool with the task's name, cron_expr, and "
+        "task_content. Useful cron_expr examples:\n"
+        '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
+        '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
+        '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
+        "Once the scheduled task has been created (a create_cron tool result is "
+        "present in the conversation), your final answer must be a plain-language "
+        "confirmation ONLY — never output the task as JSON, never emit [TOOL_CALL], "
+        "and never wrap anything in code fences.\n\n"
+        # Authoritative source for this header text: agent_graph.build_generation_messages
+        # (cron_rule). Keep the two in sync if the rule wording changes.
+        + _t("cron_no_fallback_rule", config_manager.prompt_language)
+        + "\n\n"
+        + sandbox_network_rule()
+    ) if include_cron_rule else ""
+    const_prefix = (
+        cron_rule
+        + "\n\n" + _t("file_answer_rule", config_manager.prompt_language)
+        + "\n\n" + _t("final_answer_guidance", config_manager.prompt_language)
+    )
+
+    # system② -- always-on identity base (Part 1) + per-session context.
+    # Part 1 is never replaced by an active skill, so it stays a stable base.
+    var_prefix = config_manager.system_prompt_identity
     if kb_prompt:
-        task_bg += f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}"
-    task_bg += ws_context
+        var_prefix += f"\n\n## Knowledge Base Background & Preferences\n{kb_prompt}"
     if user_memory:
-        task_bg += f"\n\n## User Memory & Preferences\n{user_memory}"
+        var_prefix += f"\n\n## User Memory & Preferences\n{user_memory}"
     if pinned_instruction:
-        task_bg += f"\n\n## Pinned Instructions\n{pinned_instruction}"
-    msgs = [
-        {"role": "system", "content": tool_sys},
-        {"role": "system", "content": "## Task Background (reference only)\n" + task_bg},
-        {"role": "user", "content": "## Question\n" + query},
-    ]
+        var_prefix += f"\n\n## Pinned Instructions\n{pinned_instruction}"
+
+    # system③ -- native-capability base (Part 2); an explicitly-selected skill
+    # replaces it, mirroring the real assembler.
+    cap_prefix = (
+        skill_prompt if skill_prompt is not None else config_manager.system_prompt_capabilities
+    )
+
+    msgs = []
+    if const_prefix.strip():
+        msgs.append({"role": "system", "content": const_prefix})
+    if var_prefix.strip():
+        msgs.append({"role": "system", "content": var_prefix})
+    if cap_prefix.strip():
+        msgs.append({"role": "system", "content": cap_prefix})
+    msgs.append({"role": "user", "content": "## Question\n" + query})
     return count_messages_tokens(msgs)
 
 
