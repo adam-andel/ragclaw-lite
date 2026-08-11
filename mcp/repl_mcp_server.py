@@ -223,12 +223,14 @@ def _make_workdir(subdir: str | None = None, acct=None) -> str:
     """Resolve a workdir for an execution call.
 
     The workdir is always confined to the caller's sandbox root
-    ``_allow_dir/user_<name>/`` (``_ws_safe`` rejects traversal, so a caller
-    can never escape their own directory).
+    ``_allow_dir/user_u<uid>/`` (``_ws_safe`` rejects traversal, so a caller
+    can never escape their own directory). This mirrors the naming used by
+    ``_workspace_root`` and the per-user workspace/file APIs so that code
+    execution and file management land in the *same* directory.
 
     Behaviour:
       * ``subdir`` empty → the user's **root** directory
-        (``user_<name>/``). This is the default "workspace" the user manages
+        (``user_u<uid>/``). This is the default "workspace" the user manages
         through the UI; REPL tool outputs land here and persist.
       * ``subdir`` set → a user-chosen **sub-directory** (nested paths
         like ``myproject/data`` are allowed). Invalid/traversing values fall
@@ -238,7 +240,7 @@ def _make_workdir(subdir: str | None = None, acct=None) -> str:
     so one user's code can neither read nor be read by others' directories.
     """
     if acct is not None and _allow_dir:
-        base = os.path.join(_allow_dir, "user_" + acct["name"])
+        base = os.path.join(_allow_dir, f"user_u{int(acct['uid'])}")
         _ensure_dir_owned(base, acct, 0o770)
         if subdir:
             target = _ws_safe(base, subdir)
