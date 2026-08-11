@@ -1,5 +1,5 @@
 """Agent graph nodes for the RAGClaw LangGraph state machine."""
-import asyncio, json, logging, time
+import asyncio, json, logging, re, time
 from datetime import datetime
 from urllib.parse import quote, unquote
 from sqlalchemy import select
@@ -1269,6 +1269,40 @@ def _recent_assistant_tool_calls(tool_messages: list, window: int = 3) -> list:
     return out
 
 
+def _tool_result_signature(text: str) -> str:
+    """Normalized signature of a tool result for repeat detection.
+
+    Strips the leading ``[tool_name] `` prefix (which differs per tool) and
+    surrounding whitespace so that two runs of e.g. ``run_python`` that return
+    the same payload but were invoked with slightly different code still count
+    as a repeat. This catches the degenerate "run → same answer → run again"
+    loop that the argument-based guard misses.
+    """
+    if not text:
+        return ""
+    s = text.strip()
+    # Drop a leading "[name] " (or "[name]" with no trailing space) produced by
+    # the executor's result wrappers, so two runs that return the same payload
+    # but were invoked with slightly different code still count as a repeat.
+    s = re.sub(r"^\[[^\]]*\]\s*", "", s)
+    return s.strip()
+
+
+def _recent_tool_result_signatures(tool_messages: list, window: int = 3) -> list:
+    """Most-recent-first normalized signatures of tool results (up to `window` rounds).
+
+    Each "round" normally contributes exactly one tool result message; we take
+    the last `window` such messages regardless of how many tools ran per round.
+    """
+    out = []
+    for m in reversed(tool_messages or []):
+        if m.get("role") == "tool":
+            out.append(_tool_result_signature(m.get("content", "")))
+            if len(out) >= window:
+                break
+    return out
+
+
 async def tool_decision_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
@@ -1603,13 +1637,26 @@ async def tool_decision_node(state: dict) -> dict:
                     and len(set(recent_sigs)) == 1
                     and new_sigs.issubset(set(recent_sigs))
                 )
-                if exact_repeat or degenerate_loop:
+                # Result-level repeat: the model re-invokes a tool with slightly
+                # different arguments but keeps getting back the *same answer*
+                # (e.g. "what is the current working directory" → runs
+                # os.getcwd() three times, each returning the identical path).
+                # The argument-based guard above misses this because the code
+                # text differs; comparing normalized results catches it.
+                recent_results = _recent_tool_result_signatures(
+                    state.get("tool_messages", []), window=3)
+                result_repeat = (
+                    len(recent_results) >= 3
+                    and all(r == recent_results[0] for r in recent_results)
+                    and recent_results[0] != ""
+                )
+                if exact_repeat or degenerate_loop or result_repeat:
                     prev_results = state.get("tool_results", [])
                     last_result = prev_results[-1] if prev_results else ""
                     if not _looks_like_error(last_result):
                         logger.warning(
-                            "Tool decision: loop guard tripped (exact=%s degenerate=%s, round=%d) — forcing stop",
-                            exact_repeat, degenerate_loop, tool_round,
+                            "Tool decision: loop guard tripped (exact=%s degenerate=%s result=%s, round=%d) — forcing stop",
+                            exact_repeat, degenerate_loop, result_repeat, tool_round,
                         )
                         _emit(state, "tool_loop_guard",
                               "Detected repeated calls to the same tool; auto-stopped to avoid an infinite loop and produced the final reply.")
