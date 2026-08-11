@@ -63,7 +63,7 @@ export async function* streamChat(
     skill_id: skillId,
     skip_cache: skipCache,
     resume_action: resumeAction ?? undefined,
-    workspace_dir: workspaceDir ?? '',
+    subdir: workspaceDir ?? '',
     timezone: timezone ?? undefined,
     attach: attach ?? false,
   })

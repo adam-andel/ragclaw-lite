@@ -412,12 +412,12 @@ def _build_working_dir_prompt(state: dict) -> str:
     """Return an English note describing the user's selected working directory.
 
     Injected into the LLM system prompt so file/code operations land in the
-    correct place. ``state["workspace_id"]`` is the user-selected sub-directory
+    correct place. ``state["subdir"]`` is the user-selected sub-directory
     (relative to their sandbox root; "" = root) — it never contains the per-user
     Linux uid, which the REPL sandbox resolves server-side, so it is safe to
     surface to the model. Written in English per explicit request.
     """
-    ws = (state.get("workspace_id") or "").strip()
+    ws = (state.get("subdir") or "").strip()
     if ws:
         return (
             "\n\n## Working Directory\n"
@@ -1703,7 +1703,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
     """Execute create_cron tool directly — write CronJob to DB without MCP round-trip.
 
     Session-injected identity (user_id, tenant_id, kb_id, skill_id, timezone,
-    workspace_id) ensures the LLM cannot spoof ownership. The cron_expr is
+    subdir) ensures the LLM cannot spoof ownership. The cron_expr is
     validated via compute_next_run before persisting.
     """
     from app.services.cron_graph import _make_create_tool
@@ -1730,7 +1730,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
     tenant_id = state.get("tenant_id")
     kb_id = state.get("kb_id")
     skill_id = (state.get("active_skill") or {}).get("id")
-    workspace_dir = state.get("workspace_id") or None
+    subdir = state.get("subdir") or None
 
     # ── Determine timezone: prefer session-level, fall back to UTC ──
     timezone_str = state.get("timezone") or "UTC"
@@ -1741,7 +1741,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
         kb_id=kb_id,
         skill_id=skill_id,
         timezone=timezone_str,
-        workspace_dir=workspace_dir,
+        workspace_dir=subdir,
     )
 
     tool_args = {
@@ -1880,7 +1880,7 @@ async def tool_executor_node(state: dict) -> dict:
                 return {"result": f"[{tname}] error: Python Executor MCP Server not configured", "endpoint": None}
             result = await execute_script_tool(
                 folder_name, script_path, func_name, args, repl_config,
-                workspace_id=state.get("workspace_id"),
+                subdir=state.get("subdir"),
                 user_id=state.get("user_id"),
             )
             if result.ok:
@@ -1939,9 +1939,9 @@ async def tool_executor_node(state: dict) -> dict:
             # Share the conversation workspace so chained skills can read
             # files produced by an earlier skill's tool call.
             call_args = dict(args)
-            ws_id = state.get("workspace_id")
+            ws_id = state.get("subdir")
             if ws_id:
-                call_args["workspace_id"] = ws_id
+                call_args["subdir"] = ws_id
             # Propagate the user's local timezone to the REPL sandbox so that
             # code using datetime.now()/time.strftime stamps files with the
             # user's local time instead of the container's default (UTC).

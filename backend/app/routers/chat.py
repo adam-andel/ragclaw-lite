@@ -665,7 +665,7 @@ def _snapshot_state(state: dict) -> dict:
         "tool_messages": state.get("tool_messages"),
         "skill_stack": state.get("skill_stack"),
         "loaded_skill_ids": state.get("loaded_skill_ids"),
-        "workspace_id": state.get("workspace_id"),
+        "subdir": state.get("subdir"),
         "skill_switch_count": state.get("skill_switch_count"),
         "tool_round": state.get("tool_round"),
         "skill_switch_quota": state.get("skill_switch_quota"),
@@ -708,7 +708,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "conversation_history": recent_history,
         "conversation_summary": summary_text,
         "conversation_id": conv_id,
-        "workspace_id": pending["workspace_id"],
+        "subdir": pending["subdir"],
         # Prefer the user's persisted profile timezone, then the per-request
         # browser-detected value, then UTC. Avoids relying solely on the
         # browser's auto-detected timezone (which containerized/privacy browsers
@@ -1225,7 +1225,7 @@ async def chat_stream(
                         "kb_prompt": kb_prompt,
                         "user_memory": current_user.memory or "",
                         "ws_context": _build_working_dir_prompt(
-                            {"workspace_id": request.workspace_dir or ""}
+                            {"subdir": request.subdir or ""}
                         ),
                         "skill_prompt": await _explicit_skill_prompt(request.skill_id),
                         "pinned_instruction": getattr(conv, "pinned_instruction", "") or "",
@@ -1309,7 +1309,7 @@ async def chat_stream(
                         # v2: user-selected workspace sub-directory ("" = root).
                         # Replaces the old per-conversation <ws> (conv_id) so all of a
                         # user's tool outputs land in their persistent workspace root.
-                        "workspace_id": request.workspace_dir or "",
+                        "subdir": request.subdir or "",
                         # Prefer the user's persisted profile timezone, then the
                         # per-request browser-detected value, then UTC. Browsers in
                         # containers / privacy modes often report UTC, so the profile

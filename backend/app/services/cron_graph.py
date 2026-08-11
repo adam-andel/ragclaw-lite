@@ -300,7 +300,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         "final_answer": None,
         "kb_id": job.kb_id or "",
         "skill_id": job.skill_id,
-        "workspace_id": job.workspace_dir or "",
+        "subdir": job.workspace_dir or "",
         "emit": None,
         "user_id": job.user_id,
         "tenant_id": job.tenant_id,

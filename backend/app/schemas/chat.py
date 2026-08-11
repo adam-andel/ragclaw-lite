@@ -15,9 +15,9 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     skip_cache: bool = False            # Skip the cache when regenerating
     resume_action: str | None = None    # "continue" | "stop" | None (new question))
-    workspace_dir: str | None = None   # Optional: user-selected workspace sub-directory
+    subdir: str | None = None         # Optional: user-selected workspace sub-directory
                                         # (relative under their sandbox root; "" = root).
-                                        # Routed to REPL as workspace_id; confined to user_u<uid>/ by _ws_safe.
+                                        # Routed to REPL as subdir; confined to user_u<uid>/ by _ws_safe.
     timezone: str | None = None        # Optional: user's local IANA timezone (e.g. Asia/Shanghai).
                                         # Used to interpret natural-language times when creating cron jobs.
     attach: bool = False                # Re-attach to an in-flight run after a page refresh (no new turn).

@@ -49,7 +49,7 @@ def _sample_snapshot() -> dict:
         "download_entries": [],
         "skill_stack": [],
         "loaded_skill_ids": ["s1"],
-        "workspace_id": "ws-1",
+        "subdir": "ws-1",
         "skill_switch_count": 1,
         "tool_round": 2,
         "skill_switch_quota": 3,

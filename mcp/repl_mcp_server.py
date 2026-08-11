@@ -219,7 +219,7 @@ def _acquire_slot(timeout: int = 5) -> bool:
     return _exec_semaphore.acquire(timeout=timeout)
 
 
-def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
+def _make_workdir(subdir: str | None = None, acct=None) -> str:
     """Resolve a workdir for an execution call.
 
     The workdir is always confined to the caller's sandbox root
@@ -227,10 +227,10 @@ def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
     can never escape their own directory).
 
     Behaviour:
-      * ``workspace_id`` empty → the user's **root** directory
+      * ``subdir`` empty → the user's **root** directory
         (``user_<name>/``). This is the default "workspace" the user manages
         through the UI; REPL tool outputs land here and persist.
-      * ``workspace_id`` set → a user-chosen **sub-directory** (nested paths
+      * ``subdir`` set → a user-chosen **sub-directory** (nested paths
         like ``myproject/data`` are allowed). Invalid/traversing values fall
         back to the root instead of erroring.
 
@@ -240,20 +240,20 @@ def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
     if acct is not None and _allow_dir:
         base = os.path.join(_allow_dir, "user_" + acct["name"])
         _ensure_dir_owned(base, acct, 0o770)
-        if workspace_id:
-            target = _ws_safe(base, workspace_id)
+        if subdir:
+            target = _ws_safe(base, subdir)
             if target is None:
                 target = base  # fall back to root on any unsafe input
             _ensure_dir_owned(target, acct, 0o770)
             return target
-        # No workspace_id → use the user's root directory directly.
+        # No subdir → use the user's root directory directly.
         return base
 
     # Non-isolated fallback (no per-account chroot): still confine via _ws_safe.
     if _allow_dir:
         root = _allow_dir
-        if workspace_id:
-            target = _ws_safe(root, workspace_id)
+        if subdir:
+            target = _ws_safe(root, subdir)
             if target is None:
                 target = root
         else:
@@ -1559,7 +1559,7 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     channel.
     """
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
-                workspace_id: str | None = None, user: str | None = None,
+                subdir: str | None = None, user: str | None = None,
                 uid: int | None = None, tz: str | None = None) -> tuple[str, list[dict]]:
         # Stash the caller's timezone (thread-local) so the language-specific
         # run_fn can inject it into the child environment (TZ var). run_fn is a
@@ -1588,7 +1588,7 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
             acct = {"uid": uid, "gid": uid, "name": f"u{uid}"}
 
         try:
-            workdir = _make_workdir(workspace_id, acct)
+            workdir = _make_workdir(subdir, acct)
             before = _snapshot_files(workdir)  # snapshot BEFORE running code
             result = run_fn(code, workdir, timeout, acct)
             result = result[:MAX_OUTPUT]
@@ -1642,12 +1642,12 @@ def _build_tools() -> list[dict]:
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "Complete Python code"},
-                "workspace_id": {
+                "subdir": {
                     "type": "string",
                     "description": "Optional: user-selected working subdirectory (relative path, nested paths like myproject/data allowed; "
                                    "the backend locks it inside that user's own workspace root, so other users' files cannot be accessed). "
                                    "When omitted, the user's workspace root is used. "
-                                   "Calls sharing the same workspace_id share the same working directory, so you can generate a file and then process it within one conversation.",
+                                   "Calls sharing the same subdir share the same working directory, so you can generate a file and then process it within one conversation.",
                 },
                 "timezone": {
                     "type": "string",
@@ -1827,7 +1827,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
             code = arguments.get("code", "")
-            workspace_id = arguments.get("workspace_id")
+            subdir = arguments.get("subdir")
             # Caller-supplied IANA timezone (e.g. Asia/Shanghai). Validated inside
             # execute()/_validate_tz(); invalid values are ignored (UTC default).
             caller_tz = arguments.get("timezone")
@@ -1863,7 +1863,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
                 uid = auth_info["uid"] if auth_info else None
-                text, generated = executor(code, workspace_id=workspace_id, user=user, uid=uid, tz=caller_tz)
+                text, generated = executor(code, subdir=subdir, user=user, uid=uid, tz=caller_tz)
                 result = {"content": [{"type": "text", "text": text}]}
                 if generated:
                     result["structuredContent"] = {"files": generated}
