@@ -9,9 +9,15 @@ Exercises the HTTP surface (FastAPI + SSE) with mocked external dependencies:
 Coverage map (v3 plan):
   J1  POST /api/chat/stream -> SSE ``error`` event ``QUERY_TOO_LONG``
   J2  POST /api/chat/stream -> SSE ``error`` event ``CONTEXT_PREFIX_TOO_LARGE``
+  J3  POST /api/chat/stream -> sync fold ``context_compress`` + cursor advance
+  J5  POST /api/chat/stream -> Gate A passes, Gate B (fit) raises precise code
+  J6  POST /api/chat/stream -> provider 400 overflow -> localized ``LLM_CONTEXT_EXCEEDED``
   J7  DELETE /api/conversations/{id}/summary/segments (404 / 400 / 409 / ok)
   J8  POST /api/conversations/{id}/compact (NOTHING_TO_COMPACT / HISTORY_TOO_SHORT / ok)
   J9  GET /api/conversations/{id} surfaces the persistent summary state
+  J10 history cache warm-hit serves tail without rebuild
+  J11 ``_evict_history_cache`` invalidates the warm entry (cold re-fetch)
+  J12 compress warning text localized (zh/en) for ``assembly_trim_warning`` / ``query_condensed_warning``
 """
 import json
 import uuid
@@ -22,11 +28,19 @@ from httpx import AsyncClient
 
 from app.database import async_session
 from app.models.conversation import Conversation, Message, PendingLimitState
+from app.routers import chat as chat_router
 from app.services import conversation_summary as cs
 from app.services.auth import decode_token
-from app.services.conversation_summary import SUMMARY_SEGMENT_DELIM, segment_thresholds
+from app.services.conversation_summary import (
+    ContextWindowExceeded,
+    SUMMARY_SEGMENT_DELIM,
+    _t,
+    segment_thresholds,
+)
 from app.services.token_count import count_text_tokens
 from helpers import set_cfg
+
+import app.services.agent_graph as ag_mod
 
 
 # ── Fixtures / helpers ───────────────────────────────────────────────────────
@@ -37,6 +51,21 @@ async def _init_cm(test_db):
     from app.services.config_manager import config_manager
 
     await config_manager.init()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_history_cache():
+    """Clear the per-conversation history cache ogni test (N21 risk).
+
+    ``_load_history`` memoizes by ``conv_id`` in module-level globals; a stale
+    entry would let one test's warm hit leak into another. Clear before and
+    after so J10/J11 (which mutate the cache) cannot pollute J1–J9.
+    """
+    chat_router._HISTORY_CACHE.clear()
+    chat_router._HISTORY_CACHE_LOCKS.clear()
+    yield
+    chat_router._HISTORY_CACHE.clear()
+    chat_router._HISTORY_CACHE_LOCKS.clear()
 
 
 class FakeLLM:
@@ -366,3 +395,124 @@ async def test_j6_provider_overflow_localized(client, user_token, monkeypatch):
     # A residual provider context-overflow is localized, never surfaced verbatim.
     assert errors[0]["message"] == "LLM_CONTEXT_EXCEEDED"
     assert "maximum context length" not in errors[0]["message"]
+
+
+# ── J5 ───────────────────────────────────────────────────────────────────────
+async def test_j5_gate_b_prefix_overflow_sse(client, user_token, monkeypatch):
+    """Gate A (cheap entry firewall) passes for a small request, but the precise
+    ceiling in ``fit_assembly_context`` still overflows during assembly — e.g. an
+    auto-routed skill body / tool schema that Gate A deliberately does NOT resolve
+    (see ``_explicit_skill_prompt``). The stream must surface that precise code,
+    not leak the raw detail.
+
+    We keep the REAL agent-graph assembly (so the patched ``fit_assembly_context``
+    is actually reached) and only fake the graph's ``run`` to a minimal state.
+    """
+    set_cfg(window=8000, max_tokens=1024)
+    monkeypatch.setattr(cs, "llm_client", FakeLLM())  # not reached on this path
+
+    # Force the precise Gate-B code (simulates an oversized sacred-prefix tail).
+    def _raise_fit(**kwargs):
+        raise ContextWindowExceeded("CONTEXT_PREFIX_TOO_LARGE")
+
+    monkeypatch.setattr(ag_mod, "fit_assembly_context", _raise_fit)
+
+    # Only the graph's ``run`` is faked so the stream reaches real assembly.
+    async def _fake_run(self, *args, **kwargs):
+        return {"query": "hi"}
+
+    monkeypatch.setattr(ag_mod.ragclaw_agent_graph, "run", _fake_run)
+
+    uid = _user_id(user_token)
+    cid = await _make_conv(uid, rounds=2, words=200)  # Gate A floor stays tiny
+    resp = await client.post(
+        "/api/chat/stream",
+        json={"query": "j5-unique-prefix-overflow", "kb_id": "x", "conversation_id": cid},
+        headers=_auth(user_token),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    errors = [e for e in events if e.get("type") == "error"]
+    assert errors, "expected an SSE error event"
+    # Gate B's precise code, surfaced verbatim (not the raw provider text).
+    assert errors[0]["message"] == "CONTEXT_PREFIX_TOO_LARGE"
+
+
+async def test_j5_gate_b_query_overflow_sse(client, user_token, monkeypatch):
+    """Same as J5 but the overflow is in the query portion (``prefix_only`` False
+    bucket) -> ``QUERY_TOO_LONG``. Proves Gate B's code-splitting reaches the client."""
+    set_cfg(window=8000, max_tokens=1024)
+    monkeypatch.setattr(cs, "llm_client", FakeLLM())
+
+    def _raise_fit(**kwargs):
+        raise ContextWindowExceeded("QUERY_TOO_LONG")
+
+    monkeypatch.setattr(ag_mod, "fit_assembly_context", _raise_fit)
+
+    async def _fake_run(self, *args, **kwargs):
+        return {"query": "hi"}
+
+    monkeypatch.setattr(ag_mod.ragclaw_agent_graph, "run", _fake_run)
+
+    uid = _user_id(user_token)
+    cid = await _make_conv(uid, rounds=2, words=200)
+    resp = await client.post(
+        "/api/chat/stream",
+        json={"query": "j5-unique-query-overflow", "kb_id": "x", "conversation_id": cid},
+        headers=_auth(user_token),
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    errors = [e for e in events if e.get("type") == "error"]
+    assert errors, "expected an SSE error event"
+    assert errors[0]["message"] == "QUERY_TOO_LONG"
+
+
+# ── J10 ──────────────────────────────────────────────────────────────────────
+async def test_j10_history_cache_warm_hit(test_db, user_token):
+    """A second ``_load_history`` within the TTL is served from the warm cache
+    (same list object) without rebuilding from the DB."""
+    uid = _user_id(user_token)
+    cid = await _make_conv(uid, rounds=3, words=200)  # 6 messages
+    async with async_session() as db:
+        cold = await chat_router._load_history(cid, db, cursor=1)
+        assert len(cold) == 6
+        assert cid in chat_router._HISTORY_CACHE
+        # Warm hit: identical object, no new query shape.
+        warm = await chat_router._load_history(cid, db, cursor=1)
+        assert warm is chat_router._HISTORY_CACHE[cid]["msgs"]
+        assert len(warm) == 6
+
+
+# ── J11 ──────────────────────────────────────────────────────────────────────
+async def test_j11_history_cache_invalidation(test_db, user_token):
+    """``_evict_history_cache`` drops the warm entry; the next load is cold again
+    (a fresh list object is built from the DB)."""
+    uid = _user_id(user_token)
+    cid = await _make_conv(uid, rounds=3, words=200)
+    async with async_session() as db:
+        first = await chat_router._load_history(cid, db, cursor=1)
+        assert cid in chat_router._HISTORY_CACHE
+        # Eviction clears both the cached payload and the per-conv lock.
+        chat_router._evict_history_cache(cid)
+        assert cid not in chat_router._HISTORY_CACHE
+        assert cid not in chat_router._HISTORY_CACHE_LOCKS
+        # Cold re-fetch after eviction yields a new object, same content.
+        second = await chat_router._load_history(cid, db, cursor=1)
+        assert cid in chat_router._HISTORY_CACHE
+        assert second is not first
+        assert len(second) == len(first) == 6
+
+
+# ── J12 ──────────────────────────────────────────────────────────────────────
+async def test_j12_compress_warning_text():
+    """User-facing compress warnings are localized in zh/en and actually describe
+    trimming/condensing (not generic placeholders)."""
+    zh_trim = _t("assembly_trim_warning", "zh")
+    en_trim = _t("assembly_trim_warning", "en")
+    assert zh_trim and en_trim and zh_trim != en_trim
+    assert "裁剪" in zh_trim  # zh describes trimming
+
+    zh_cond = _t("query_condensed_warning", "zh")
+    en_cond = _t("query_condensed_warning", "en")
+    assert zh_cond != en_cond and "压缩" in zh_cond  # zh describes compression

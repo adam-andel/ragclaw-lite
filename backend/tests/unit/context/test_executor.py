@@ -22,6 +22,7 @@ Coverage map (v3 plan):
   F4      in-flight guard (async): two schedule_summary_pass spawn ONE task
   F5      in-flight guard / CAS (sync): concurrent passes -> exactly one advances
   F3      CAS 0 rows -> lost race discarded, cursor untouched
+  F15/J4  schedule_summary_pass fire-and-forget: cursor deferred to background task
 """
 import asyncio
 import uuid
@@ -34,6 +35,8 @@ from app.models.conversation import Conversation, Message
 from app.services import conversation_summary as cs
 from app.services.conversation_summary import (
     SUMMARY_SEGMENT_DELIM,
+    _BACKGROUND_TASKS,
+    _INFLIGHT,
     _persistent_tokens_in,
     _run_summary_pass_inner,
     _t,
@@ -282,3 +285,43 @@ async def test_f3_cas_zero_rows_discards_lost_race(test_db, monkeypatch):
         # our pass never advanced: cursor stays at the concurrent value, summary untouched
         assert conv.summary_msg_seq == 7
         assert conv.summary_text in (None, "")
+
+
+# ── F15 / J4 ─────────────────────────────────────────────────────────────────
+async def test_f15_async_schedule_defers_cursor(test_db, monkeypatch):
+    """schedule_summary_pass is fire-and-forget: the in-flight guard is set
+    SYNCHRONOUSLY (so two synchronous calls cannot double-spawn), the cursor is
+    NOT advanced inline, and only the background task advances it.
+
+    This is the mechanism behind J4: within a single turn the ``done`` cursor does
+    not move; the next request (after the background fold completes) sees it move.
+    """
+    set_cfg(window=8000, max_tokens=1024)
+    monkeypatch.setattr(cs, "llm_client", FakeLLM())
+    cid = await _seed(6, words=300)  # >=5 rounds -> background fold will advance
+
+    async with async_session() as db:
+        conv = await db.get(Conversation, cid)
+        assert conv.summary_msg_seq == 0  # nothing folded yet
+
+    # Fire-and-forget: returns immediately without awaiting the fold.
+    schedule_summary_pass(cid)
+    assert cid in _INFLIGHT  # guard set synchronously, before any task runs
+    assert _BACKGROUND_TASKS  # task kept referenced (no GC mid-flight)
+
+    # Cursor still 0 right after scheduling (deferred to the background task).
+    async with async_session() as db:
+        conv = await db.get(Conversation, cid)
+        assert conv.summary_msg_seq == 0
+
+    # A second synchronous schedule for the same conv is a no-op (guard holds).
+    before = len(_BACKGROUND_TASKS)
+    schedule_summary_pass(cid)
+    assert len(_BACKGROUND_TASKS) == before
+
+    # Let the background task finish, then the guard is cleared and cursor advanced.
+    await asyncio.gather(*list(_BACKGROUND_TASKS))
+    assert cid not in _INFLIGHT
+    async with async_session() as db:
+        conv = await db.get(Conversation, cid)
+        assert conv.summary_msg_seq > 0  # background fold advanced the cursor
