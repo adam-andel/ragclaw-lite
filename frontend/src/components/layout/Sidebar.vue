@@ -111,14 +111,14 @@ function goToNotifications() {
       <span class="version">Lite</span>
     </div>
 
-    <NMenu
-      :value="selectedKey"
-      :options="menuOptions"
-      :indent="16"
-      @update:value="handleMenuUpdate"
-    />
-
-    <div class="sidebar-spacer" />
+    <div class="sidebar-nav">
+      <NMenu
+        :value="selectedKey"
+        :options="menuOptions"
+        :indent="16"
+        @update:value="handleMenuUpdate"
+      />
+    </div>
 
     <div class="sidebar-footer">
       <div class="notification-entry" role="button" tabindex="0" @click="goToNotifications" @keydown.enter="goToNotifications">
@@ -219,9 +219,13 @@ function goToNotifications() {
   border-radius: var(--radius-sm);
 }
 
-/* ── Spacer to push footer to bottom ── */
-.sidebar-spacer {
+/* ── Scrollable nav region (takes remaining height and scrolls when overflowing) ── */
+.sidebar-nav {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-2) 0;
 }
 
 /* ── Footer ── */

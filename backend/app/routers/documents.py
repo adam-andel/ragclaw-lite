@@ -216,7 +216,7 @@ async def list_all_documents(
     db: AsyncSession = Depends(get_db),
 ):
     conditions = []
-    if current_user.role.value not in ("admin", "moderator"):
+    if current_user.role.value != "admin":
         conditions.append(Document.owner_id == current_user.id)
     if status:
         conditions.append(Document.status == status)

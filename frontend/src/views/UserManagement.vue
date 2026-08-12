@@ -462,7 +462,7 @@ function formatTime(value: string) {
   word-break: break-all;
 }
 
-.create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: #fff; border-radius: 12px; height: 100%; box-sizing: border-box; }
+.create-form { display: flex; flex-direction: column; gap: 14px; padding: 20px 24px; background: var(--color-surface, #fff); border-radius: 12px; height: 100%; box-sizing: border-box; }
 /* Sticky footer pagination: the list scrolls, the pager stays pinned at the
    bottom of the viewport (mirrors WorkspaceView.vue). */
 .pm-flex {

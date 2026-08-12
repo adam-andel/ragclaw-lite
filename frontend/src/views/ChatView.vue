@@ -932,6 +932,15 @@ function onKbPick(id: string | null) {
   showMoreKb.value = false
 }
 
+// Open the "select knowledge base" modal. Refresh the KB list first so a KB created
+// in DocumentManage (or elsewhere) shows up immediately without a full page reload.
+async function openKbPicker() {
+  try {
+    await loadKbs()
+  } catch { /* noop */ }
+  showMoreKb.value = true
+}
+
 async function loadConversations() {
   try {
     conversations.value = await listConversations()
@@ -1025,6 +1034,19 @@ async function removeConversation(id: string) {
   }
 }
 
+// Load knowledge bases. Called on mount and whenever we navigate back to the chat
+// page (ChatView is keep-alive cached, so onMounted does NOT re-run after the user
+// creates a KB in DocumentManage and returns here). Refreshing here ensures a newly
+// created KB shows up immediately in the picker without a full page reload.
+async function loadKbs() {
+  const res = await listKnowledgeBases()
+  kbs.value = res.data
+  const kbFromQuery = route.query.kb as string | undefined
+  if (kbFromQuery && kbs.value.find(k => k.id === kbFromQuery)) {
+    selectedKbId.value = kbFromQuery
+  }
+}
+
 onMounted(async () => {
   isReadonly.value = false
 
@@ -1056,12 +1078,7 @@ onMounted(async () => {
   } catch { /* ignore */ }
 
   try {
-    const res = await listKnowledgeBases()
-    kbs.value = res.data
-    const kbFromQuery = route.query.kb as string | undefined
-    if (kbFromQuery && kbs.value.find(k => k.id === kbFromQuery)) {
-      selectedKbId.value = kbFromQuery
-    }
+    await loadKbs()
   } catch { /* noop */ }
 
   // Load skills for the skill selector
@@ -1807,7 +1824,7 @@ function handleKeydown(e: KeyboardEvent) {
               @select="selectedKbId = ($event ?? '')"
             />
           </div>
-          <NButton v-if="kbHasMore" text size="small" type="primary" @click="showMoreKb = true">
+          <NButton v-if="kbHasMore" text size="small" type="primary" @click="openKbPicker">
             {{ t('chat.moreKbs', { count: kbs.length }) }}
           </NButton>
           <div v-if="kbs.length === 0" class="picker-empty">
@@ -2097,7 +2114,7 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon size="14"><FolderOpen /></NIcon></template>
           {{ t('chat.workspaceDirBtn', { dir: workspaceDir ? workspaceDir : t('workspace.default') }) }}
         </NButton>
-        <NButton size="tiny" ghost class="kb-trigger-btn" @click="showMoreKb = true">
+        <NButton size="tiny" ghost class="kb-trigger-btn" @click="openKbPicker">
           {{ currentKbName }}
         </NButton>
         <NButton size="tiny" ghost class="skill-selector-btn" @click="showSkillModal = true">

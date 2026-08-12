@@ -119,7 +119,7 @@ async def list_kbs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if current_user.role.value in ("admin", "moderator"):
+    if current_user.role.value == "admin":
         result = await db.execute(
             select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())
         )
