@@ -19,6 +19,7 @@ from app.services.skill_manager import (
     get_skill_resource, list_resource_paths,
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
+from app.services.skill_sandbox_link import ensure_user_skill_link
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
@@ -793,13 +794,25 @@ async def _build_all_meta_tools() -> list[dict]:
     return _build_meta_skill_tools() + python_tools
 
 
-async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]:
+async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = None) -> tuple[str, list[dict]]:
     """Load a skill's SKILL.md body + tools.
 
     Shared by the initial skill_loader_node and Route D chaining (skill_switcher_node).
     Returns (system_prompt, tools) where tools already include the
     read_skill_resource tool when the skill has reference/data files.
+
+    Before reading the skill's files, lazily ask mcp-repl to materialise this
+    user's per-sandbox symlink to the skill's resources (POST /skills/link). This
+    is the only write the Backend triggers for skill exposure, and only for the
+    single skill actually in use — best-effort, failures are ignored so the
+    skill body still loads from the shared store.
     """
+    if user_id:
+        try:
+            await ensure_user_skill_link(user_id, folder_name)
+        except Exception as e:  # noqa: BLE001 - must never break the graph
+            logger.warning("_load_skill_body_and_tools: skill link skipped: %s", e)
+
     skill_md_content = read_skill_md(folder_name)
     if not skill_md_content:
         logger.warning("_load_skill_body_and_tools: SKILL.md not found for folder=%s", folder_name)
@@ -931,7 +944,7 @@ async def skill_loader_node(state: dict) -> dict:
     if not folder_name:
         return {"available_tools": meta_tools}
 
-    system_prompt, all_tools = await _load_skill_body_and_tools(folder_name)
+    system_prompt, all_tools = await _load_skill_body_and_tools(folder_name, state.get("user_id"))
     updated_skill = {**active_skill, "system_prompt": system_prompt, "source": "primary"}
 
     # Always-available meta tools for orchestration + native execution (Route D)
@@ -1066,7 +1079,7 @@ async def skill_switcher_node(state: dict) -> dict:
                 _emit(state, "skill_switch_fail", result, skill=skill.name)
                 return _skill_control_return(tc, result, stack, state)
 
-            system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name)
+            system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name, state.get("user_id"))
             new_skill = {
                 "id": skill.id,
                 "name": skill.name,

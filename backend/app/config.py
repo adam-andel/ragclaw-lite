@@ -5,6 +5,7 @@ managed by config_manager. No .env file needed.
 """
 
 from pathlib import Path
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -17,7 +18,29 @@ class Settings(BaseSettings):
     upload_dir: Path = data_dir / "uploads"
     sqlite_path: Path = data_dir / "sqlite" / "ragclaw.db"
     chroma_path: Path = data_dir / "chroma"
-    skills_dir: Path = data_dir / "skills"
+
+    # --- Skills (shared volume: backend mounts rw, mcp-repl mounts ro) ---
+    # Mount point of the shared skills volume. Both backend and mcp-repl mount
+    # this EXACT path. The canonical skill store and the enable/* symlink set
+    # live underneath it, so skill files are readable inside the REPL sandbox
+    # via a per-user symlink that resolves (through enable/*) back to store/*.
+    # Override the mount point with env RAGCLAW_SKILLS_DIR (e.g. local dev).
+    shared_skills_dir: Path = Field(
+        default=Path("/ragclaw_skills"), validation_alias="RAGCLAW_SKILLS_DIR"
+    )
+
+    # Derived layout (properties so env overrides propagate everywhere):
+    #   <shared>/store/<folder>   canonical skill files (source of truth)
+    #   <shared>/enable/<folder>  symlink -> ../store/<folder> (enabled == link exists)
+    @property
+    def skills_dir(self) -> Path:
+        """Canonical skill store, kept as the historical attribute name so all
+        existing call sites (get_skill_dir, scan_skills_dir, ...) keep working."""
+        return self.shared_skills_dir / "store"
+
+    @property
+    def skills_enable_dir(self) -> Path:
+        return self.shared_skills_dir / "enable"
 
     # --- Database ---
     # SQLAlchemy async database URL. Defaults to the local SQLite file so the

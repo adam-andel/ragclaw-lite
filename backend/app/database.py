@@ -18,6 +18,7 @@ migration files.
 
 import asyncio
 import logging
+import os
 import secrets
 import uuid
 from collections.abc import Iterable
@@ -30,7 +31,19 @@ from app.config import settings
 
 settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-settings.skills_dir.mkdir(parents=True, exist_ok=True)
+settings.shared_skills_dir.mkdir(parents=True, exist_ok=True)   # shared skills volume root (/ragclaw_skills)
+settings.skills_dir.mkdir(parents=True, exist_ok=True)          # canonical store (shared/store)
+settings.skills_enable_dir.mkdir(parents=True, exist_ok=True)   # enable/* symlink set (shared/enable)
+
+# Harden traversal: the per-user REPL sandbox runs as a *different* UID than the
+# backend, so these shared-volume dirs must be world-traversable (+x) for that UID
+# to follow the enable/<n> -> store/<n> symlink chain. chmod here makes it
+# independent of the container umask (a umask of 077 would otherwise lock it out).
+for _d in (settings.shared_skills_dir, settings.skills_dir, settings.skills_enable_dir):
+    try:
+        os.chmod(_d, 0o755)
+    except OSError:
+        pass
 
 # Database URL is supplied via settings (DATABASE_URL), defaulting to the local
 # SQLite file so the project still runs with a one-command `docker compose up`
