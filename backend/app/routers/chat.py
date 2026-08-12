@@ -665,7 +665,7 @@ def _snapshot_state(state: dict) -> dict:
         "tool_messages": state.get("tool_messages"),
         "skill_stack": state.get("skill_stack"),
         "loaded_skill_ids": state.get("loaded_skill_ids"),
-        "workspace_id": state.get("workspace_id"),
+        "subdir": state.get("subdir"),
         "skill_switch_count": state.get("skill_switch_count"),
         "tool_round": state.get("tool_round"),
         "skill_switch_quota": state.get("skill_switch_quota"),
@@ -708,7 +708,7 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
         "conversation_history": recent_history,
         "conversation_summary": summary_text,
         "conversation_id": conv_id,
-        "workspace_id": pending["workspace_id"],
+        "subdir": pending["subdir"],
         # Prefer the user's persisted profile timezone, then the per-request
         # browser-detected value, then UTC. Avoids relying solely on the
         # browser's auto-detected timezone (which containerized/privacy browsers
@@ -1225,7 +1225,7 @@ async def chat_stream(
                         "kb_prompt": kb_prompt,
                         "user_memory": current_user.memory or "",
                         "ws_context": _build_working_dir_prompt(
-                            {"workspace_id": request.workspace_dir or ""}
+                            {"subdir": request.subdir or ""}
                         ),
                         "skill_prompt": await _explicit_skill_prompt(request.skill_id),
                         "pinned_instruction": getattr(conv, "pinned_instruction", "") or "",
@@ -1309,7 +1309,7 @@ async def chat_stream(
                         # v2: user-selected workspace sub-directory ("" = root).
                         # Replaces the old per-conversation <ws> (conv_id) so all of a
                         # user's tool outputs land in their persistent workspace root.
-                        "workspace_id": request.workspace_dir or "",
+                        "subdir": request.subdir or "",
                         # Prefer the user's persisted profile timezone, then the
                         # per-request browser-detected value, then UTC. Browsers in
                         # containers / privacy modes often report UTC, so the profile
@@ -1347,23 +1347,18 @@ async def chat_stream(
                         emit_usage_fn=emit_context_usage,
                     )
 
-               # ── 1c. User manually stops: do not replay tools, do not generate an answer,，
-               #        only persist the original suspension hint, and let the frontend overlay a localized termination notice via done.stopped ───
+               # ── 1c. User manually stops: do not replay tools, do not generate an answer.
+                #        A stop is a termination of the current (suspended) turn, NOT a new
+                #        assistant message — so we must NOT persist the suspension code into
+                #        the ``messages`` table (that would echo back as a fake answer on the
+                #        next turn). The frontend overlays a localized termination notice on
+                #        the existing suspension bubble via done.stopped, and the durable
+                #        pending state remains so the user can still "continue" after a stop.
                 if resume_mode == "stop":
-                    plim = pending.get("pending_limit") or {}
-                    base_msg = plim.get("message") or ""
-                    assistant_msg = await _save_assistant_message(
-                        conv_id,
-                        base_msg,
-                        pending.get("citations", []),
-                        cache_hit=False,
-                        msg_id=pending_msg_id,
-                        status="stopped",
-                    )
                     cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
                         "conversation_id": conv_id,
-                        "message_id": assistant_msg.id,
+                        "message_id": pending_msg_id,
                         "cache_hit": False,
                         "ttft_ms": 0,
                         "retrieval_ms": 0,
@@ -1384,25 +1379,31 @@ async def chat_stream(
 
                    # ── 2b. Suspension detection: the graph requests user confirmation ───
                     if state.get("pending_limit"):
-                       # First persist the suspension hint as an assistant message and record its id so it can be replaced in place after the reply
-                        pending_msg = await _save_assistant_message(
-                            conv_id,
-                            state["pending_limit"]["message"],
-                            state.get("citations", []),
-                            cache_hit=False,
-                        )
-                        await _persist_agent_steps(conv_id, pending_msg.id, state.get("agent_steps") or [])
+                        # A suspension is NOT an assistant answer and NOT a user query — it is
+                        # a pure pause in the processing loop. Therefore it must NOT be written
+                        # into the ``messages`` table (which only holds real conversation
+                        # content). Writing the suspension code there would pollute the
+                        # conversation history and get echoed back verbatim by the LLM on the
+                        # next turn. Instead the suspension lives only in pending_limit_states
+                        # (the durable snapshot) and is surfaced to the UI via the transient
+                        # need_user_input SSE event, keyed by a stable bubble id that does NOT
+                        # point at any messages row. The real final answer (produced after the
+                        # user resumes) is persisted separately as a normal assistant message.
+                        bubble_id = str(uuid.uuid4())
+                        # Persist agent-step traces under the bubble id (audit table, decoupled
+                        # from messages — the key is just a stable grouping id here).
+                        await _persist_agent_steps(conv_id, bubble_id, state.get("agent_steps") or [])
                         snap = _snapshot_state(state)
-                        snap["pending_msg_id"] = pending_msg.id
-                        await _save_pending_state(db, conv_id, pending_msg.id, snap)
+                        snap["pending_msg_id"] = bubble_id
+                        await _save_pending_state(db, conv_id, bubble_id, snap)
                         enqueue("need_user_input", {
                             "message": state["pending_limit"]["message"],
                             "conv_id": conv_id,
                             "kind": state["pending_limit"]["kind"],
-                            "message_id": pending_msg.id,
+                            "message_id": bubble_id,
                         })
                         # Drop any dangling 'generating' bubbles from earlier rounds.
-                        await _cleanup_orphan_messages(conv_id, keep_id=pending_msg.id)
+                        await _cleanup_orphan_messages(conv_id, keep_id=bubble_id)
                         return
 
                     if state.get("cache_hit"):

@@ -86,8 +86,8 @@ class RagclawAgentState(TypedDict):
     skill_stack: list[dict]       # Stack of loaded skills; last entry = current/active_skill
     loaded_skill_ids: list[str]   # Dedupe list of loaded skill ids (TypedDict has no set)
     skill_switch_count: int       # Number of use_skill pushes (bounded by skill_switch_quota)
-    workspace_id: str             # Stable workdir shared across tool calls in a turn/conversation
-    conversation_id: str | None   # Conversation id, used to scope the workspace_id
+    subdir: str                   # Stable workdir shared across tool calls in a turn/conversation
+    conversation_id: str | None   # Conversation id, used to scope the subdir
 
    # ── Quota model (replaces hard-constant comparison; "continue" = quota += MAX, history count untouched) ───
     skill_switch_quota: int      # Current total skill-switch quota, initialized to the configured default (config_manager.skill_switch_quota)

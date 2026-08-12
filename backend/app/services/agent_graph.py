@@ -365,7 +365,20 @@ class RagclawAgentGraph:
                     {"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s}
                 )
             if h:
-                msgs.extend(h)
+                # Defense-in-depth: drop any bare suspension sentinel
+                # ("tool_round_limit" / "skill_switch_limit") from history before
+                # it reaches the LLM. Suspensions are no longer persisted as
+                # assistant messages (they live only in pending_limit_states), so
+                # in normal operation history never contains these codes. This
+                # filter remains as a safety net so a stray sentinel can never be
+                # parroted back as a fake answer on the next turn.
+                sentinel = re.compile(r"^(tool_round_limit|skill_switch_limit)\s*$")
+                msgs.extend(
+                    m for m in h
+                    if not (m.get("role") == "assistant"
+                            and isinstance(m.get("content"), str)
+                            and sentinel.match(m["content"].strip()))
+                )
             user_parts = []
             if payload:
                 tool_text = "\n".join(f"- {r}" for r in payload)

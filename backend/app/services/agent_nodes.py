@@ -1,5 +1,5 @@
 """Agent graph nodes for the RAGClaw LangGraph state machine."""
-import asyncio, json, logging, time
+import asyncio, json, logging, re, time
 from datetime import datetime
 from urllib.parse import quote, unquote
 from sqlalchemy import select
@@ -412,21 +412,23 @@ def _build_working_dir_prompt(state: dict) -> str:
     """Return an English note describing the user's selected working directory.
 
     Injected into the LLM system prompt so file/code operations land in the
-    correct place. ``state["workspace_id"]`` is the user-selected sub-directory
+    correct place. ``state["subdir"]`` is the user-selected sub-directory
     (relative to their sandbox root; "" = root) — it never contains the per-user
     Linux uid, which the REPL sandbox resolves server-side, so it is safe to
     surface to the model. Written in English per explicit request.
     """
-    ws = (state.get("workspace_id") or "").strip()
+    ws = (state.get("subdir") or "").strip()
     if ws:
         return (
             "\n\n## Working Directory\n"
-            f"The user's current working directory is '{ws}' (relative to their sandbox root). "
-            "Perform all file read, write, and run operations relative to this directory."
+            f"The sandbox root is your working directory. The user has selected the sub-directory '{ws}'. "
+            f"The runtime does NOT auto-change into it, so address files with the '{ws}/' path prefix "
+            f"(e.g. open('{ws}/report.pdf')) or call os.chdir('{ws}') at the start of your code. "
+            "All read/write/run operations resolve relative to the sandbox root."
         )
     return (
         "\n\n## Working Directory\n"
-        "The user's current working directory is the sandbox root (no sub-directory selected). "
+        "The sandbox root is your working directory (no sub-directory selected). "
         "Perform all file read, write, and run operations relative to this root directory."
     )
 
@@ -1269,6 +1271,40 @@ def _recent_assistant_tool_calls(tool_messages: list, window: int = 3) -> list:
     return out
 
 
+def _tool_result_signature(text: str) -> str:
+    """Normalized signature of a tool result for repeat detection.
+
+    Strips the leading ``[tool_name] `` prefix (which differs per tool) and
+    surrounding whitespace so that two runs of e.g. ``run_python`` that return
+    the same payload but were invoked with slightly different code still count
+    as a repeat. This catches the degenerate "run → same answer → run again"
+    loop that the argument-based guard misses.
+    """
+    if not text:
+        return ""
+    s = text.strip()
+    # Drop a leading "[name] " (or "[name]" with no trailing space) produced by
+    # the executor's result wrappers, so two runs that return the same payload
+    # but were invoked with slightly different code still count as a repeat.
+    s = re.sub(r"^\[[^\]]*\]\s*", "", s)
+    return s.strip()
+
+
+def _recent_tool_result_signatures(tool_messages: list, window: int = 3) -> list:
+    """Most-recent-first normalized signatures of tool results (up to `window` rounds).
+
+    Each "round" normally contributes exactly one tool result message; we take
+    the last `window` such messages regardless of how many tools ran per round.
+    """
+    out = []
+    for m in reversed(tool_messages or []):
+        if m.get("role") == "tool":
+            out.append(_tool_result_signature(m.get("content", "")))
+            if len(out) >= window:
+                break
+    return out
+
+
 async def tool_decision_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
@@ -1603,13 +1639,26 @@ async def tool_decision_node(state: dict) -> dict:
                     and len(set(recent_sigs)) == 1
                     and new_sigs.issubset(set(recent_sigs))
                 )
-                if exact_repeat or degenerate_loop:
+                # Result-level repeat: the model re-invokes a tool with slightly
+                # different arguments but keeps getting back the *same answer*
+                # (e.g. "what is the current working directory" → runs
+                # os.getcwd() three times, each returning the identical path).
+                # The argument-based guard above misses this because the code
+                # text differs; comparing normalized results catches it.
+                recent_results = _recent_tool_result_signatures(
+                    state.get("tool_messages", []), window=3)
+                result_repeat = (
+                    len(recent_results) >= 3
+                    and all(r == recent_results[0] for r in recent_results)
+                    and recent_results[0] != ""
+                )
+                if exact_repeat or degenerate_loop or result_repeat:
                     prev_results = state.get("tool_results", [])
                     last_result = prev_results[-1] if prev_results else ""
                     if not _looks_like_error(last_result):
                         logger.warning(
-                            "Tool decision: loop guard tripped (exact=%s degenerate=%s, round=%d) — forcing stop",
-                            exact_repeat, degenerate_loop, tool_round,
+                            "Tool decision: loop guard tripped (exact=%s degenerate=%s result=%s, round=%d) — forcing stop",
+                            exact_repeat, degenerate_loop, result_repeat, tool_round,
                         )
                         _emit(state, "tool_loop_guard",
                               "Detected repeated calls to the same tool; auto-stopped to avoid an infinite loop and produced the final reply.")
@@ -1703,7 +1752,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
     """Execute create_cron tool directly — write CronJob to DB without MCP round-trip.
 
     Session-injected identity (user_id, tenant_id, kb_id, skill_id, timezone,
-    workspace_id) ensures the LLM cannot spoof ownership. The cron_expr is
+    subdir) ensures the LLM cannot spoof ownership. The cron_expr is
     validated via compute_next_run before persisting.
     """
     from app.services.cron_graph import _make_create_tool
@@ -1730,7 +1779,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
     tenant_id = state.get("tenant_id")
     kb_id = state.get("kb_id")
     skill_id = (state.get("active_skill") or {}).get("id")
-    workspace_dir = state.get("workspace_id") or None
+    subdir = state.get("subdir") or None
 
     # ── Determine timezone: prefer session-level, fall back to UTC ──
     timezone_str = state.get("timezone") or "UTC"
@@ -1741,7 +1790,7 @@ async def _execute_create_cron(state: dict, args: dict) -> dict:
         kb_id=kb_id,
         skill_id=skill_id,
         timezone=timezone_str,
-        workspace_dir=workspace_dir,
+        workspace_dir=subdir,
     )
 
     tool_args = {
@@ -1880,7 +1929,7 @@ async def tool_executor_node(state: dict) -> dict:
                 return {"result": f"[{tname}] error: Python Executor MCP Server not configured", "endpoint": None}
             result = await execute_script_tool(
                 folder_name, script_path, func_name, args, repl_config,
-                workspace_id=state.get("workspace_id"),
+                subdir=state.get("subdir"),
                 user_id=state.get("user_id"),
             )
             if result.ok:
@@ -1939,9 +1988,9 @@ async def tool_executor_node(state: dict) -> dict:
             # Share the conversation workspace so chained skills can read
             # files produced by an earlier skill's tool call.
             call_args = dict(args)
-            ws_id = state.get("workspace_id")
+            ws_id = state.get("subdir")
             if ws_id:
-                call_args["workspace_id"] = ws_id
+                call_args["subdir"] = ws_id
             # Propagate the user's local timezone to the REPL sandbox so that
             # code using datetime.now()/time.strftime stamps files with the
             # user's local time instead of the container's default (UTC).

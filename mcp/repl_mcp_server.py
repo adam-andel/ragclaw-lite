@@ -219,47 +219,30 @@ def _acquire_slot(timeout: int = 5) -> bool:
     return _exec_semaphore.acquire(timeout=timeout)
 
 
-def _make_workdir(workspace_id: str | None = None, acct=None) -> str:
+def _make_workdir(subdir: str | None = None, acct=None) -> str:
     """Resolve a workdir for an execution call.
 
-    The workdir is always confined to the caller's sandbox root
-    ``_allow_dir/user_<name>/`` (``_ws_safe`` rejects traversal, so a caller
-    can never escape their own directory).
+    The workdir is **always** the caller's sandbox root
+    ``_allow_dir/user_u<uid>/`` — there is NO per-subdirectory real isolation.
+    ``subdir`` is accepted for API compatibility (the backend passes the user's
+    selected working sub-directory through) but is intentionally NOT resolved
+    into a real nested path; the LLM is told (via the backend system prompt) to
+    address files with a ``subdir/`` path prefix or ``chdir`` itself. This keeps
+    code execution, the ``[[file:...]]`` reference resolver, and the workspace
+    file APIs on a single, consistent root, while preserving per-user isolation.
 
-    Behaviour:
-      * ``workspace_id`` empty → the user's **root** directory
-        (``user_<name>/``). This is the default "workspace" the user manages
-        through the UI; REPL tool outputs land here and persist.
-      * ``workspace_id`` set → a user-chosen **sub-directory** (nested paths
-        like ``myproject/data`` are allowed). Invalid/traversing values fall
-        back to the root instead of erroring.
-
-    In all cases the directory is created and chowned to the account (mode 700)
-    so one user's code can neither read nor be read by others' directories.
+    The sandbox root is created and chowned to the account (mode 770) so one
+    user's code can neither read nor be read by another user's directory.
     """
     if acct is not None and _allow_dir:
-        base = os.path.join(_allow_dir, "user_" + acct["name"])
+        base = os.path.join(_allow_dir, f"user_u{int(acct['uid'])}")
         _ensure_dir_owned(base, acct, 0o770)
-        if workspace_id:
-            target = _ws_safe(base, workspace_id)
-            if target is None:
-                target = base  # fall back to root on any unsafe input
-            _ensure_dir_owned(target, acct, 0o770)
-            return target
-        # No workspace_id → use the user's root directory directly.
         return base
 
-    # Non-isolated fallback (no per-account chroot): still confine via _ws_safe.
+    # Non-isolated fallback (no per-account chroot): confine to _allow_dir root.
     if _allow_dir:
-        root = _allow_dir
-        if workspace_id:
-            target = _ws_safe(root, workspace_id)
-            if target is None:
-                target = root
-        else:
-            target = root
-        os.makedirs(target, exist_ok=True)
-        return target
+        os.makedirs(_allow_dir, exist_ok=True)
+        return _allow_dir
     return tempfile.mkdtemp(prefix="repl_")
 
 
@@ -395,8 +378,19 @@ def _workspace_root(uid: int) -> str:
     if not _allow_dir:
         raise ValueError("sandbox not configured")
     root = os.path.realpath(os.path.join(_allow_dir, f"user_u{int(uid)}"))
-    _ensure_dir_owned(root, {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}, 0o770)
+    _ensure_dir_owned(root, _make_acct(uid), 0o770)
     return root
+
+
+def _make_acct(uid) -> dict:
+    """Build the per-user sandbox account dict from a UID.
+
+    Centralizes the ``name = f"u{uid}"`` convention so every caller (execute,
+    workspace, file APIs) resolves the same account shape. Change this single
+    point if a human-readable username ever needs to be derived from the UID.
+    """
+    uid = int(uid)
+    return {"uid": uid, "gid": uid, "name": f"u{uid}"}
 
 
 def _ws_safe(root: str, rel: str) -> str | None:
@@ -1559,7 +1553,7 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
     channel.
     """
     def execute(code: str, timeout: int = DEFAULT_TIMEOUT,
-                workspace_id: str | None = None, user: str | None = None,
+                subdir: str | None = None, user: str | None = None,
                 uid: int | None = None, tz: str | None = None) -> tuple[str, list[dict]]:
         # Stash the caller's timezone (thread-local) so the language-specific
         # run_fn can inject it into the child environment (TZ var). run_fn is a
@@ -1585,10 +1579,10 @@ def _executor_template(lang: str, prescreen_fn, run_fn):
         # the time we reach here, so no fallback mapping is needed.
         acct = None
         if user and uid is not None:
-            acct = {"uid": uid, "gid": uid, "name": f"u{uid}"}
+            acct = _make_acct(uid)
 
         try:
-            workdir = _make_workdir(workspace_id, acct)
+            workdir = _make_workdir(subdir, acct)
             before = _snapshot_files(workdir)  # snapshot BEFORE running code
             result = run_fn(code, workdir, timeout, acct)
             result = result[:MAX_OUTPUT]
@@ -1642,12 +1636,13 @@ def _build_tools() -> list[dict]:
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "Complete Python code"},
-                "workspace_id": {
+                "subdir": {
                     "type": "string",
-                    "description": "Optional: user-selected working subdirectory (relative path, nested paths like myproject/data allowed; "
-                                   "the backend locks it inside that user's own workspace root, so other users' files cannot be accessed). "
-                                   "When omitted, the user's workspace root is used. "
-                                   "Calls sharing the same workspace_id share the same working directory, so you can generate a file and then process it within one conversation.",
+                    "description": "Optional: user-selected working subdirectory (relative path, nested paths like myproject/data allowed). "
+                                   "NOTE: the runtime does NOT auto-change into this subdirectory — the sandbox root remains the working directory. "
+                                   "Use a '{subdir}/' path prefix or call os.chdir('{subdir}') in your code to target it. "
+                                   "Per-user isolation is always enforced at the sandbox-root level, so other users' files cannot be accessed regardless. "
+                                   "Calls sharing the same subdir operate on the same sandbox root, so you can generate a file and then process it within one conversation.",
                 },
                 "timezone": {
                     "type": "string",
@@ -1827,7 +1822,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
             code = arguments.get("code", "")
-            workspace_id = arguments.get("workspace_id")
+            subdir = arguments.get("subdir")
             # Caller-supplied IANA timezone (e.g. Asia/Shanghai). Validated inside
             # execute()/_validate_tz(); invalid values are ignored (UTC default).
             caller_tz = arguments.get("timezone")
@@ -1863,7 +1858,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             executor = _EXECUTORS.get(tool_name)
             if executor and code:
                 uid = auth_info["uid"] if auth_info else None
-                text, generated = executor(code, workspace_id=workspace_id, user=user, uid=uid, tz=caller_tz)
+                text, generated = executor(code, subdir=subdir, user=user, uid=uid, tz=caller_tz)
                 result = {"content": [{"type": "text", "text": text}]}
                 if generated:
                     result["structuredContent"] = {"files": generated}
@@ -2069,7 +2064,7 @@ class MCPHandler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length)) if length else {}
         action = body.get("action")
         root = _workspace_root(uid)
-        acct = {"uid": int(uid), "gid": int(uid), "name": f"u{int(uid)}"}
+        acct = _make_acct(uid)
 
         def _validate_rel(rel):
             rel = (rel or "").strip("/")
