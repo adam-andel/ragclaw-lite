@@ -101,7 +101,7 @@ async def _rebuild_kb_bm25(db: AsyncSession, kb_id: str):
 
 @router.post("", response_model=KBResponse, status_code=201)
 async def create_kb(
-    data: KBCreate, current_user: User = Depends(get_current_staff),
+    data: KBCreate, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     kb = KnowledgeBase(
@@ -164,7 +164,7 @@ async def get_kb(
 @router.patch("/{kb_id}", response_model=KBResponse)
 async def update_kb(
     kb_id: str, data: KBUpdate,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Rename knowledge base or update description."""
@@ -197,7 +197,7 @@ async def update_kb(
 
 @router.delete("/{kb_id}")
 async def delete_kb(
-    kb_id: str, current_user: User = Depends(get_current_staff),
+    kb_id: str, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
@@ -245,7 +245,7 @@ async def list_kb_documents(
 @router.post("/{kb_id}/documents", response_model=DocKBLinkResponse)
 async def add_documents_to_kb(
     kb_id: str, body: DocKBLinkRequest,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Select existing documents to add to this knowledge base.
@@ -323,7 +323,7 @@ async def add_documents_to_kb(
 @router.delete("/{kb_id}/documents/{doc_id}")
 async def remove_document_from_kb(
     kb_id: str, doc_id: str,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Remove a document from this knowledge base (document itself is NOT deleted)."""
@@ -358,7 +358,7 @@ async def remove_document_from_kb(
 @router.post("/{kb_id}/documents/batch", response_model=DocKBLinkResponse)
 async def batch_add_documents_to_kb(
     kb_id: str, body: DocKBLinkRequest,
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Batch add documents to KB (same as single but with explicit batch name)."""
@@ -367,9 +367,14 @@ async def batch_add_documents_to_kb(
 # ===== Sharing (admin only) =====
 
 @router.get("/{kb_id}/users", response_model=list[UserResponse])
-async def list_kb_users(kb_id: str, current_user: User = Depends(get_current_staff),
+async def list_kb_users(kb_id: str, current_user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
-    """List users who have access to this KB (admin only)."""
+    """List users who have access to this KB (KB owner only)."""
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(404, "知识库不存在")
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+        raise HTTPException(403, "只能查看自己创建的知识库")
     result = await db.execute(
         select(User).join(KBUserAccess).where(KBUserAccess.kb_id == kb_id)
     )
@@ -378,12 +383,14 @@ async def list_kb_users(kb_id: str, current_user: User = Depends(get_current_sta
 
 @router.post("/{kb_id}/users/{user_id}")
 async def add_kb_user(kb_id: str, user_id: str,
-                      current_user: User = Depends(get_current_staff),
+                      current_user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    """Grant a user access to this KB (admin only)."""
+    """Grant a user access to this KB (KB owner only)."""
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(404, "知识库不存在")
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+        raise HTTPException(403, "只能管理自己创建的知识库")
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "用户不存在")
@@ -402,9 +409,14 @@ async def add_kb_user(kb_id: str, user_id: str,
 
 @router.delete("/{kb_id}/users/{user_id}")
 async def remove_kb_user(kb_id: str, user_id: str,
-                         current_user: User = Depends(get_current_staff),
+                         current_user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
-    """Revoke a user's access to this KB (admin only)."""
+    """Revoke a user's access to this KB (KB owner only)."""
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(404, "知识库不存在")
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+        raise HTTPException(403, "只能管理自己创建的知识库")
     result = await db.execute(
         select(KBUserAccess).where(
             and_(KBUserAccess.kb_id == kb_id, KBUserAccess.user_id == user_id)

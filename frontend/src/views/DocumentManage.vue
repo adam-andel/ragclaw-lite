@@ -1131,7 +1131,7 @@ async function loadSupportedTypes() {
             </NButton>
             <NTooltip trigger="hover">
               <template #trigger>
-                <NButton v-if="auth.isStaff" size="small" @click="openShare(selectedKb.id); blurActive()">
+                <NButton size="small" @click="openShare(selectedKb.id); blurActive()">
                   <template #icon><NIcon size="14"><People /></NIcon></template>
                   {{ t('documents.shareUsers') }}
                 </NButton>

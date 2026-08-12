@@ -49,13 +49,15 @@ const menuOptions = computed<MenuOption[]>(() => {
     return [
       { label: () => chatLabel(), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
       workspaceItem,
+      { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
+      { label: t('nav.cron'), key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
     ]
   }
   return [
     { label: () => chatLabel(), key: '/chat', icon: () => h(NIcon, null, { default: () => h(Chatbubbles) }) },
     workspaceItem,
-    { label: t('nav.cron'), key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
     { label: t('nav.documents'), key: '/documents', icon: () => h(NIcon, null, { default: () => h(DocumentText) }) },
+    { label: t('nav.cron'), key: '/cron-jobs', icon: () => h(NIcon, null, { default: () => h(Time) }) },
     ...(auth.isAdmin ? [
       { label: t('nav.skills'), key: '/skills', icon: () => h(NIcon, null, { default: () => h(Bulb) }) },
       { label: t('nav.mcp'), key: '/mcp', icon: () => h(NIcon, null, { default: () => h(Flash) }) },

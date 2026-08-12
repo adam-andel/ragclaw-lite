@@ -105,7 +105,7 @@ async def _load_doc_for_read(
 async def upload_document(
     file: UploadFile = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
@@ -147,7 +147,7 @@ async def upload_document(
 async def upload_documents_batch(
     files: list[UploadFile] = File(...),
     kb_id: str | None = Query(None),
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
@@ -495,7 +495,7 @@ async def list_documents_by_kb(
 
 @router.post("/{doc_id}/process")
 async def trigger_process_document(
-    doc_id: str, current_user: User = Depends(get_current_staff),
+    doc_id: str, current_user: User = Depends(get_current_user),
     _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
@@ -503,6 +503,8 @@ async def trigger_process_document(
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(404, "文档不存在")
+    if current_user.role.value != "admin" and doc.owner_id != current_user.id:
+        raise HTTPException(403, "只能处理自己上传的文档")
     if doc.status not in (DocStatus.PENDING, DocStatus.UPLOADED, DocStatus.FAILED):
         raise HTTPException(400, f"文档状态为 {_status_str(doc)}，无需处理")
 
@@ -514,7 +516,7 @@ async def trigger_process_document(
 
 @router.post("/process-all")
 async def trigger_process_all(
-    current_user: User = Depends(get_current_staff),
+    current_user: User = Depends(get_current_user),
     _: None = Depends(serialize_writes),
 ):
     """Process all pending documents."""

@@ -114,7 +114,7 @@ router.beforeEach(async (to, _from, next) => {
     next('/chat')
   } else if (to.meta.staff && !auth.isStaff) {
     next('/chat')
-  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications' && !to.path.startsWith('/workspace')) {
+  } else if (!auth.isStaff && to.path !== '/chat' && !to.path.startsWith('/chat') && to.path !== '/login' && to.path !== '/profile' && to.path !== '/notifications' && !to.path.startsWith('/workspace') && !to.path.startsWith('/documents') && !to.path.startsWith('/cron-jobs')) {
     next('/chat')
   } else if (to.meta.guest && auth.isLoggedIn) {
     next('/chat')
