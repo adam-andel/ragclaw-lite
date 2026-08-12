@@ -834,6 +834,10 @@ async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = Non
 
     parsed = parse_skill_md(skill_md_content)
     system_prompt = parsed["body"] or config_manager.system_prompt_capabilities
+    # Teach the LLM where this skill's folder lives inside the sandbox (REPL_SKILLS_DIR)
+    # and that it is read-only. Appended to every active skill's system prompt so the
+    # model can open skill files via run_python and knows writes are not persisted.
+    system_prompt = system_prompt + "\n\n" + _t("skill_sandbox_note", config_manager.prompt_language)
     mcp_server_names = parsed.get("mcp_servers", [])
 
     script_tools = discover_tools(folder_name)
@@ -854,7 +858,8 @@ async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = Non
             "type": "function",
             "function": {
                 "name": "read_skill_resource",
-                "description": f"Read a resource file from the skill folder. Available files:\n{path_list}{more}",
+                "description": f"Read a resource file from the skill folder. Available files:\n{path_list}{more}\n\n"
+                              + _t("skill_resource_tool_note", config_manager.prompt_language),
                 "parameters": {
                     "type": "object",
                     "properties": {

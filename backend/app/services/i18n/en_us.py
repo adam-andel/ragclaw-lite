@@ -209,4 +209,23 @@ MESSAGES = {
         "rejected and no changes were made. Inform the user that the memory exceeds "
         "the length limit, and advise them to edit it themselves on the Profile page."
     ),
+
+    # Injected into an active skill's system prompt so the LLM knows where the skill
+    # folder lives inside the sandbox (REPL_SKILLS_DIR) and that it is read-only.
+    # No placeholders — the actual path is read from the env var at runtime.
+    "skill_sandbox_note": (
+        "## Skill resources in the sandbox\n"
+        "This skill's files are exposed READ-ONLY inside your sandbox at the path held in the "
+        "environment variable `REPL_SKILLS_DIR` (equivalently `<sandbox_root>/.ragclaw/skills/<skill_name>`). "
+        "You may read any file there directly with run_python's open(), or call the read_skill_resource tool. "
+        "The skill folder is READ-ONLY: if you write into it, the write is redirected to a sandbox-local "
+        "shadow copy and is NOT saved back to the shared store, so never rely on edits to skill files persisting."
+    ),
+
+    # Concise variant appended to the read_skill_resource tool description. No placeholders.
+    "skill_resource_tool_note": (
+        "The skill folder is also mounted read-only at REPL_SKILLS_DIR (= `<sandbox_root>/.ragclaw/skills/<skill_name>`); "
+        "you can open files from there with run_python too. Writes there are redirected to a sandbox-local "
+        "shadow copy and are NOT saved back to the shared store."
+    ),
 }
