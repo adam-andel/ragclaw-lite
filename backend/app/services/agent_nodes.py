@@ -15,6 +15,7 @@ from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, get_skill_by_name,
+    is_skill_effectively_enabled,
     read_skill_md, parse_skill_md,
     get_skill_resource, list_resource_paths,
 )
@@ -532,6 +533,9 @@ async def skill_router_node(state: dict) -> dict:
             skills = (await db.execute(
                 select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
             )).scalars().all()
+        # Routing gate: drop candidates whose shared enable-symlink is missing
+        # (disabled since the last DB sync) so the LLM never routes to them.
+        skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
         active_skill = await _route_to_best_skill(query, tenant_id, user_id, skills=skills)
         logger.info("Router: auto-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
         # Fallback: keyword-based routing for file/code generation intent. This
@@ -539,6 +543,14 @@ async def skill_router_node(state: dict) -> dict:
         if not active_skill:
             active_skill = _route_by_keywords(query, skills)
             logger.info("Router: keyword-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
+
+    # Routing gate (defense in depth): the shared enable-symlink is the source of
+    # truth. Drop a skill the router selected if its symlink is gone (disabled
+    # after the last DB sync), even when its is_active cache is still True.
+    if active_skill and not is_skill_effectively_enabled(active_skill.get("folder_name", "")):
+        logger.info("Router: dropping skill=%s — FS enable-symlink absent (disabled)",
+                    active_skill.get("name"))
+        active_skill = None
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
@@ -565,6 +577,8 @@ async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict |
             skills = (await db.execute(
                 select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
             )).scalars().all()
+    # Routing gate: never route to a skill whose enable-symlink is missing.
+    skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
     if not skills:
         return None
     skill_list = "\n".join(f"{i+1}. {s.name}: {s.description or '(no description)'}" for i, s in enumerate(skills))
@@ -940,6 +954,15 @@ async def skill_loader_node(state: dict) -> dict:
         # operate on files / run code without routing through a skill.
         return {"available_tools": meta_tools}
 
+    # Routing gate (defense in depth): never inject a disabled skill's body/tools
+    # even if it slipped past the router. is_skill_effectively_enabled falls back
+    # to is_active when the shared volume is unmounted, so this only drops skills
+    # that are genuinely disabled in the mounted state.
+    if not is_skill_effectively_enabled(active_skill.get("folder_name", "")):
+        logger.warning("skill_loader_node: active skill '%s' is FS-disabled; skipping skill load",
+                       active_skill.get("name"))
+        return {"available_tools": meta_tools}
+
     folder_name = active_skill.get("folder_name")
     if not folder_name:
         return {"available_tools": meta_tools}
@@ -1022,6 +1045,9 @@ async def skill_switcher_node(state: dict) -> dict:
                 skills = (await db.execute(
                     select(Skill).where(Skill.is_active == True)  # noqa: E712
                 )).scalars().all()
+            # Routing gate: only surface skills whose shared enable-symlink is
+            # present, so a freshly-disabled skill leaves the catalogue immediately.
+            skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
             skill_list = "\n".join(f"- {s.name}: {s.description or '(no description)'}" for s in skills) or "(no skills available)"
             result = f"Available skills:\n{skill_list}"
             return _skill_control_return(tc, result, stack, state)
@@ -1070,7 +1096,7 @@ async def skill_switcher_node(state: dict) -> dict:
                     },
                 }
             skill = await get_skill_by_name(db, name, tenant_id)
-            if not skill or not skill.is_active:
+            if not skill or not skill.is_active or not is_skill_effectively_enabled(skill.folder_name):
                 result = f"use_skill: no available skill named '{name}' (call list_skills to see what's available)."
                 _emit(state, "skill_switch_fail", result, skill=name)
                 return _skill_control_return(tc, result, stack, state)

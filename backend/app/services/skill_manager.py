@@ -76,6 +76,23 @@ def is_skill_enabled_fs(folder_name: str) -> bool:
     return os.path.lexists(get_enable_link_path(folder_name))
 
 
+def is_skill_effectively_enabled(folder_name: str) -> bool:
+    """Routing-gate truth for "is this skill enabled right now".
+
+    The enable-symlink on the shared volume is the source of truth, so a skill
+    disabled since the last ``sync_skills_to_db`` (which only maintains the DB
+    ``is_active`` cache) is dropped immediately.
+
+    The one exception: if the shared enable directory itself is absent, the
+    shared-skills volume is not mounted (legacy mode / mount outage). We must
+    NOT silently disable *every* skill based on a missing directory, so we
+    fall back to trusting the caller's ``is_active`` cache in that case.
+    """
+    if not settings.skills_enable_dir.exists():
+        return True
+    return is_skill_enabled_fs(folder_name)
+
+
 def enable_skill_fs(folder_name: str) -> None:
     """Create the shared enable-symlink for a skill (idempotent)."""
     link = get_enable_link_path(folder_name)
