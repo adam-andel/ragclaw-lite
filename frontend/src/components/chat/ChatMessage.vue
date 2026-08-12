@@ -29,7 +29,7 @@ const emit = defineEmits<{
 }>()
 
 function editQuery() {
-  emit('editQuery', message.content)
+  emit('editQuery', props.message.content)
 }
 
 const auth = useAuthStore()

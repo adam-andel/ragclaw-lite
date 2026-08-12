@@ -1588,8 +1588,9 @@ function editQueryToInput(content: string) {
     inputText.value = content
   }
   nextTick(() => {
-    const el = inputRef.value?.textareaElRef?.value || inputRef.value?.inputElRef?.value
-    el?.focus()
+    // NInput exposes a public `focus()` method (component instance), which is
+    // version-stable and always callable, unlike reaching into textareaElRef.
+    inputRef.value?.focus()
   })
 }
 
