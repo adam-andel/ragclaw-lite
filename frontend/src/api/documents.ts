@@ -74,6 +74,9 @@ export const downloadDocument = (id: string) =>
 
 export const deleteDocument = (id: string) => client.delete(`/documents/${id}`)
 
+export const deleteDocumentsBatch = (ids: string[]) =>
+  client.delete('/documents/batch', { data: { doc_ids: ids } })
+
 // ─── Supported types (drives upload accept attribute dynamically) ───
 
 export const getSupportedTypes = () =>

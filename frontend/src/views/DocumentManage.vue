@@ -15,7 +15,7 @@ import AppPagination from '@/components/common/AppPagination.vue'
 import AppCard from '@/components/common/AppCard.vue'
 import {
   uploadDocument, listAllDocuments,
-  getDocumentStatus, getDocumentChunks, deleteDocument,
+  getDocumentStatus, getDocumentChunks, deleteDocument, deleteDocumentsBatch,
   listKnowledgeBases, createKnowledgeBase, getSupportedTypes, downloadDocument,
   updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB, removeDocumentFromKB,
 } from '@/api/documents'
@@ -56,6 +56,17 @@ const filterStatus = ref<string>('all')
 const filterType = ref<string>('all')
 const filterKbId = ref<string | null>(null)
 const showKbFilter = ref(false)
+
+// Batch selection / deletion
+const checkedRowKeys = ref<string[]>([])
+const batchDeleting = ref(false)
+const deletingIds = ref<Set<string>>(new Set())
+function toggleCheck(id: string) {
+  const i = checkedRowKeys.value.indexOf(id)
+  if (i >= 0) checkedRowKeys.value.splice(i, 1)
+  else checkedRowKeys.value.push(id)
+}
+function clearChecked() { checkedRowKeys.value = [] }
 
 const filterKbName = computed(() => {
   const kb = allKbs.value.find(k => k.id === filterKbId.value)
@@ -736,14 +747,47 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
+// Optimistic single delete: update UI first, roll back on backend failure.
+// Backend purges vectors / BM25 / DB row asynchronously after this returns.
 async function handleDelete(id: string) {
+  const backup = docs.value
+  const backupTotal = total.value
+  const before = docs.value.length
+  docs.value = docs.value.filter(d => d.id !== id)
+  total.value -= 1
   try {
     await deleteDocument(id)
-    docs.value = docs.value.filter(d => d.id !== id)
-    total.value -= 1
     message.success(t('documents.docDeleted'))
   } catch (e: any) {
+    docs.value = backup
+    total.value = backupTotal
     message.error(t('documents.docDeleteFailed') + (e?.response?.data?.detail || e.message))
+  }
+  if (before !== docs.value.length) clearChecked()
+}
+
+async function handleDeleteChecked() {
+  const ids = checkedRowKeys.value
+  if (!ids.length || batchDeleting.value) return
+  batchDeleting.value = true
+  const backup = docs.value
+  const backupTotal = total.value
+  const before = docs.value.length
+  deletingIds.value = new Set(ids)
+  // Optimistic: drop all selected docs from the current page immediately
+  docs.value = docs.value.filter(d => !ids.includes(d.id))
+  total.value -= ids.length
+  try {
+    await deleteDocumentsBatch(ids)
+    message.success(t('documents.batchDeleted', { count: ids.length }))
+  } catch (e: any) {
+    docs.value = backup
+    total.value = backupTotal
+    message.error(t('documents.batchDeleteFailed') + (e?.response?.data?.detail || e.message))
+  } finally {
+    batchDeleting.value = false
+    deletingIds.value = new Set()
+    clearChecked()
   }
 }
 
@@ -1129,6 +1173,24 @@ async function loadSupportedTypes() {
       <NSelect v-model:value="filterStatus" :options="statusOptions" :placeholder="t('common.status')" size="small" style="width:120px" @update:value="onSearch" />
       <NSelect v-model:value="filterType" :options="typeOptions" :placeholder="t('common.type')" size="small" style="width:120px" @update:value="onSearch" />
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
+      <NPopconfirm
+        :disabled="checkedRowKeys.length === 0"
+        @positive-click="handleDeleteChecked"
+      >
+        <template #trigger>
+          <NButton
+            size="small"
+            type="error"
+            secondary
+            :disabled="checkedRowKeys.length === 0"
+            :loading="batchDeleting"
+          >
+            <template #icon><NIcon><Trash /></NIcon></template>
+            {{ t('documents.deleteSelected', { count: checkedRowKeys.length }) }}
+          </NButton>
+        </template>
+        {{ t('documents.confirmBatchDelete', { count: checkedRowKeys.length }) }}
+      </NPopconfirm>
     </div>
 
     <!-- Doc List -->
@@ -1139,6 +1201,7 @@ async function loadSupportedTypes() {
           v-for="doc in docs"
           :key="doc.id"
           class="dm-card"
+          :class="{ 'dm-card--checked': checkedRowKeys.includes(doc.id) }"
           role="button"
           tabindex="0"
           @click="openDetail(doc)"
@@ -1163,6 +1226,12 @@ async function loadSupportedTypes() {
               </template>
               {{ t('documents.confirmUnlinkDoc', { kb: filterKbName }) }}
             </NPopconfirm>
+            <NCheckbox
+              class="dm-card-check"
+              :checked="checkedRowKeys.includes(doc.id)"
+              @update:checked="() => toggleCheck(doc.id)"
+              @click.stop
+            />
           </div>
           <div class="doc-card-meta">
             <span>{{ t('documents.linkedKbs', { count: doc.kb_ids.length }) }}</span>
@@ -1653,6 +1722,21 @@ async function loadSupportedTypes() {
   filter: brightness(0.85);
 }
 .dm-card:hover .doc-unlink-btn { opacity: 1; }
+
+/* Per-card selection checkbox (sits at the end of the card header) */
+.dm-card { position: relative; }
+.dm-card-check {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.dm-card--checked {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #3b82f6;
+}
+:global(html.dark) .dm-card--checked {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 1px #60a5fa;
+}
 .doc-card-title-wrap {
   flex: 1;
   min-width: 0;

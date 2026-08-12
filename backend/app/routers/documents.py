@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, serialize_writes
+from app.database import get_db, async_session, serialize_writes
 from app.config import settings
 from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.kb_access import KBUserAccess
@@ -388,7 +388,63 @@ async def get_document_kbs(
     await _load_doc_for_read(doc_id, current_user, db)
     return await _get_doc_kb_ids(doc_id, db)
 
-# ---- Delete document (cleans up vectors across all linked KBs) ----
+# ---- Delete documents (cleans up vectors across all linked KBs) ----
+#
+# Deletion is fire-and-forget: the API authorizes synchronously and then
+# returns immediately while a background task purges the vectors, BM25 index
+# entries and the DB row. This keeps the UI snappy; the client may optimistically
+# remove the document from its list as soon as the request succeeds.
+
+async def _purge_document(doc_id: str) -> None:
+    """Background cleanup: vectors + BM25 + DB row. Runs in its own session."""
+    from app.services.vector_store import vector_store
+    from app.services.bm25_index import bm25_index
+
+    try:
+        async with async_session() as db:
+            doc = (await db.execute(select(Document).where(Document.id == doc_id))).scalar_one_or_none()
+            if not doc:
+                return
+            kb_links = (await db.execute(
+                select(KBDocument).where(KBDocument.doc_id == doc_id)
+            )).scalars().all()
+            for link in kb_links:
+                vector_store.delete_by_doc(link.kb_id, doc_id)
+                try:
+                    bm25_index.remove_doc(link.kb_id, doc_id)
+                except Exception:
+                    pass
+            # Note: uploaded file cleanup is done by a periodic maintenance task
+            await db.delete(doc)
+            await db.commit()
+    except Exception as exc:  # never crash the event loop on purge failure
+        print(f"[documents] purge failed for {doc_id}: {exc}")
+
+
+# NOTE: register "/batch" BEFORE "/{doc_id}" so FastAPI matches the static path
+# instead of treating "batch" as a doc_id path parameter.
+@router.delete("/batch")
+async def delete_documents_batch(
+    payload: dict, current_user: User = Depends(get_current_user),
+    _: None = Depends(serialize_writes),
+    db: AsyncSession = Depends(get_db),
+):
+    doc_ids = payload.get("doc_ids") or []
+    if not isinstance(doc_ids, list) or not doc_ids:
+        raise HTTPException(400, "EMPTY_DOC_IDS")
+
+    result = await db.execute(select(Document).where(Document.id.in_(doc_ids)))
+    owned = result.scalars().all()
+    if not owned:
+        raise HTTPException(404, "NO_DOCUMENTS_FOUND")
+
+    for doc in owned:
+        if current_user.role.value not in ("admin", "moderator") and doc.owner_id != current_user.id:
+            raise HTTPException(403, "FORBIDDEN_DOC_OWNER")
+        asyncio.create_task(_purge_document(doc.id))
+
+    return {"status": "deleting", "count": len(owned)}
+
 
 @router.delete("/{doc_id}")
 async def delete_document(
@@ -396,9 +452,6 @@ async def delete_document(
     _: None = Depends(serialize_writes),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.services.vector_store import vector_store
-    from app.services.bm25_index import bm25_index
-
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
@@ -406,20 +459,8 @@ async def delete_document(
     if current_user.role.value not in ("admin", "moderator") and doc.owner_id != current_user.id:
         raise HTTPException(403, "无权删除该文档")
 
-    kb_links = (await db.execute(
-        select(KBDocument).where(KBDocument.doc_id == doc_id)
-    )).scalars().all()
-    for link in kb_links:
-        vector_store.delete_by_doc(link.kb_id, doc_id)
-        try:
-            bm25_index.remove_doc(link.kb_id, doc_id)
-        except Exception:
-            pass
-
-    # Note: uploaded file cleanup is done by a periodic maintenance task
-    await db.delete(doc)
-    await db.commit()
-    return {"status": "deleted"}
+    asyncio.create_task(_purge_document(doc_id))
+    return {"status": "deleting"}
 
 
 # ---- Legacy: list documents by KB (backward compat) ----
