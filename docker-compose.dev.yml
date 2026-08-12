@@ -61,6 +61,9 @@ services:
       # precedence over the pip-installed copy in site-packages, so the mounted
       # source is what actually runs. No :cached needed — we're on ext4.
       - ./backend:/app/backend
+      # Shared skills volume (Phase 7): backend writes store/* + enable/* here.
+      # Mounted rw (the backend is the writer); mcp-repl mounts it ro.
+      - ragclaw_skills:/ragclaw_skills
     # The DEV image bakes the resolved lock at /opt/backend-requirements.lock (outside
     # this bind-mount). This dev entrypoint copies it onto /app/backend/requirements.lock
     # at startup, writing through the bind-mount to the HOST ./backend so the lock can
@@ -105,6 +108,12 @@ services:
       dockerfile: Dockerfile.dev
     volumes:
       - ./mcp:/app
+      # Shared skills volume, READ-ONLY (Phase 7). The per-user REPL sandbox
+      # reads skill files through a symlink chain resolving back into this
+      # volume; writes are redirected to a sandbox-local shadow copy by the
+      # server, never persisted. ro is the hard safety net. PYTHONDONTWRITEBYTECODE=1
+      # is inherited from the base mcp-repl environment (and baked into the image).
+      - ragclaw_skills:/ragclaw_skills:ro
     # The DEV image baked the resolved lock at /opt/mcp-requirements.lock (outside
     # this bind-mount). Copy it onto /app/requirements.lock at startup, writing
     # through the bind-mount to HOST ./mcp so the lock can be committed — mirroring
