@@ -15,10 +15,12 @@ from app.services.config_manager import config_manager
 from app.services.cache import answer_cache
 from app.services.skill_manager import (
     get_skill_by_id, get_skill_by_folder, get_skill_by_name,
+    is_skill_effectively_enabled,
     read_skill_md, parse_skill_md,
     get_skill_resource, list_resource_paths,
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
+from app.services.skill_sandbox_link import ensure_user_skill_link
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
@@ -531,6 +533,9 @@ async def skill_router_node(state: dict) -> dict:
             skills = (await db.execute(
                 select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
             )).scalars().all()
+        # Routing gate: drop candidates whose shared enable-symlink is missing
+        # (disabled since the last DB sync) so the LLM never routes to them.
+        skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
         active_skill = await _route_to_best_skill(query, tenant_id, user_id, skills=skills)
         logger.info("Router: auto-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
         # Fallback: keyword-based routing for file/code generation intent. This
@@ -538,6 +543,14 @@ async def skill_router_node(state: dict) -> dict:
         if not active_skill:
             active_skill = _route_by_keywords(query, skills)
             logger.info("Router: keyword-routed to skill=%s", active_skill.get('name') if active_skill else 'NONE')
+
+    # Routing gate (defense in depth): the shared enable-symlink is the source of
+    # truth. Drop a skill the router selected if its symlink is gone (disabled
+    # after the last DB sync), even when its is_active cache is still True.
+    if active_skill and not is_skill_effectively_enabled(active_skill.get("folder_name", "")):
+        logger.info("Router: dropping skill=%s — FS enable-symlink absent (disabled)",
+                    active_skill.get("name"))
+        active_skill = None
 
     # Layer 1 output: only id/name/description/folder_name — no system_prompt, no tools
     return {"active_skill": active_skill, "available_tools": [],
@@ -564,6 +577,8 @@ async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict |
             skills = (await db.execute(
                 select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
             )).scalars().all()
+    # Routing gate: never route to a skill whose enable-symlink is missing.
+    skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
     if not skills:
         return None
     skill_list = "\n".join(f"{i+1}. {s.name}: {s.description or '(no description)'}" for i, s in enumerate(skills))
@@ -793,13 +808,25 @@ async def _build_all_meta_tools() -> list[dict]:
     return _build_meta_skill_tools() + python_tools
 
 
-async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]:
+async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = None) -> tuple[str, list[dict]]:
     """Load a skill's SKILL.md body + tools.
 
     Shared by the initial skill_loader_node and Route D chaining (skill_switcher_node).
     Returns (system_prompt, tools) where tools already include the
     read_skill_resource tool when the skill has reference/data files.
+
+    Before reading the skill's files, lazily ask mcp-repl to materialise this
+    user's per-sandbox symlink to the skill's resources (POST /skills/link). This
+    is the only write the Backend triggers for skill exposure, and only for the
+    single skill actually in use — best-effort, failures are ignored so the
+    skill body still loads from the shared store.
     """
+    if user_id:
+        try:
+            await ensure_user_skill_link(user_id, folder_name)
+        except Exception as e:  # noqa: BLE001 - must never break the graph
+            logger.warning("_load_skill_body_and_tools: skill link skipped: %s", e)
+
     skill_md_content = read_skill_md(folder_name)
     if not skill_md_content:
         logger.warning("_load_skill_body_and_tools: SKILL.md not found for folder=%s", folder_name)
@@ -807,6 +834,10 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
 
     parsed = parse_skill_md(skill_md_content)
     system_prompt = parsed["body"] or config_manager.system_prompt_capabilities
+    # Teach the LLM where this skill's folder lives inside the sandbox (REPL_SKILLS_DIR)
+    # and that it is read-only. Appended to every active skill's system prompt so the
+    # model can open skill files via run_python and knows writes are not persisted.
+    system_prompt = system_prompt + "\n\n" + _t("skill_sandbox_note", config_manager.prompt_language)
     mcp_server_names = parsed.get("mcp_servers", [])
 
     script_tools = discover_tools(folder_name)
@@ -827,7 +858,8 @@ async def _load_skill_body_and_tools(folder_name: str) -> tuple[str, list[dict]]
             "type": "function",
             "function": {
                 "name": "read_skill_resource",
-                "description": f"Read a resource file from the skill folder. Available files:\n{path_list}{more}",
+                "description": f"Read a resource file from the skill folder. Available files:\n{path_list}{more}\n\n"
+                              + _t("skill_resource_tool_note", config_manager.prompt_language),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -927,11 +959,20 @@ async def skill_loader_node(state: dict) -> dict:
         # operate on files / run code without routing through a skill.
         return {"available_tools": meta_tools}
 
+    # Routing gate (defense in depth): never inject a disabled skill's body/tools
+    # even if it slipped past the router. is_skill_effectively_enabled falls back
+    # to is_active when the shared volume is unmounted, so this only drops skills
+    # that are genuinely disabled in the mounted state.
+    if not is_skill_effectively_enabled(active_skill.get("folder_name", "")):
+        logger.warning("skill_loader_node: active skill '%s' is FS-disabled; skipping skill load",
+                       active_skill.get("name"))
+        return {"available_tools": meta_tools}
+
     folder_name = active_skill.get("folder_name")
     if not folder_name:
         return {"available_tools": meta_tools}
 
-    system_prompt, all_tools = await _load_skill_body_and_tools(folder_name)
+    system_prompt, all_tools = await _load_skill_body_and_tools(folder_name, state.get("user_id"))
     updated_skill = {**active_skill, "system_prompt": system_prompt, "source": "primary"}
 
     # Always-available meta tools for orchestration + native execution (Route D)
@@ -1009,6 +1050,9 @@ async def skill_switcher_node(state: dict) -> dict:
                 skills = (await db.execute(
                     select(Skill).where(Skill.is_active == True)  # noqa: E712
                 )).scalars().all()
+            # Routing gate: only surface skills whose shared enable-symlink is
+            # present, so a freshly-disabled skill leaves the catalogue immediately.
+            skills = [s for s in skills if is_skill_effectively_enabled(s.folder_name)]
             skill_list = "\n".join(f"- {s.name}: {s.description or '(no description)'}" for s in skills) or "(no skills available)"
             result = f"Available skills:\n{skill_list}"
             return _skill_control_return(tc, result, stack, state)
@@ -1057,7 +1101,7 @@ async def skill_switcher_node(state: dict) -> dict:
                     },
                 }
             skill = await get_skill_by_name(db, name, tenant_id)
-            if not skill or not skill.is_active:
+            if not skill or not skill.is_active or not is_skill_effectively_enabled(skill.folder_name):
                 result = f"use_skill: no available skill named '{name}' (call list_skills to see what's available)."
                 _emit(state, "skill_switch_fail", result, skill=name)
                 return _skill_control_return(tc, result, stack, state)
@@ -1066,7 +1110,7 @@ async def skill_switcher_node(state: dict) -> dict:
                 _emit(state, "skill_switch_fail", result, skill=skill.name)
                 return _skill_control_return(tc, result, stack, state)
 
-            system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name)
+            system_prompt, new_tools = await _load_skill_body_and_tools(skill.folder_name, state.get("user_id"))
             new_skill = {
                 "id": skill.id,
                 "name": skill.name,

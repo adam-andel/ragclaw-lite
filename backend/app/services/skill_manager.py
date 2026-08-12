@@ -1,8 +1,11 @@
 """Skill filesystem manager - scan/create/delete/sync folder-based skills.
 
-The filesystem (data/skills/{folder_name}/SKILL.md) is the source of truth for
-content (name, description, mcp_servers, body). The DB skills table is a cache
-for fast routing, including the UI-managed is_active flag.
+The canonical skill store lives on the shared skills volume at
+<shared>/store/{folder_name}/SKILL.md and is the source of truth for content
+(name, description, mcp_servers, body). Whether a skill is *enabled* is tracked
+by the presence of a symlink at <shared>/enable/{folder_name} -> ../store/{folder_name}
+(see enable/disable helpers below). The DB skills table is a cache for fast
+routing, including the is_active flag which mirrors that enable-symlink state.
 
 SKILL.md format:
     ---
@@ -16,6 +19,7 @@ SKILL.md format:
 """
 
 import hashlib
+import os
 import re
 import shutil
 from pathlib import Path
@@ -54,6 +58,166 @@ def get_skill_dir(folder_name: str) -> Path:
 def get_skill_md_path(folder_name: str) -> Path:
     """Return the absolute path to a skill's SKILL.md."""
     return get_skill_dir(folder_name) / "SKILL.md"
+
+
+# ---- Shared-volume enable/disable (symlink set under skills_enable_dir) ----
+#
+# Source of truth for "is this skill enabled" is the presence of a symlink at
+#   <shared>/enable/<folder>  ->  ../store/<folder>
+# rather than a DB flag. The DB is_active column (sync_skills_to_db) is kept as
+# a faithful cache of this so routing/filtering stay consistent without an
+# extra FS read on every request. Disabling a skill = removing the symlink;
+# enabling = re-creating it. Both are atomic and idempotent.
+
+def get_enable_link_path(folder_name: str) -> Path:
+    """Absolute path of the shared enable-symlink for a skill."""
+    return settings.skills_enable_dir / folder_name
+
+
+def is_skill_enabled_fs(folder_name: str) -> bool:
+    """True if the skill's enable-symlink exists (FS source of truth)."""
+    return os.path.lexists(get_enable_link_path(folder_name))
+
+
+def is_skill_effectively_enabled(folder_name: str) -> bool:
+    """Routing-gate truth for "is this skill enabled right now".
+
+    The enable-symlink on the shared volume is the source of truth, so a skill
+    disabled since the last ``sync_skills_to_db`` (which only maintains the DB
+    ``is_active`` cache) is dropped immediately.
+
+    The one exception: if the shared enable directory itself is absent, the
+    shared-skills volume is not mounted (legacy mode / mount outage). We must
+    NOT silently disable *every* skill based on a missing directory, so we
+    fall back to trusting the caller's ``is_active`` cache in that case.
+    """
+    if not settings.skills_enable_dir.exists():
+        return True
+    return is_skill_enabled_fs(folder_name)
+
+
+def enable_skill_fs(folder_name: str) -> None:
+    """Create the shared enable-symlink for a skill (idempotent)."""
+    link = get_enable_link_path(folder_name)
+    if os.path.lexists(link):
+        return
+    link.parent.mkdir(parents=True, exist_ok=True)
+    # Relative target resolves within the same shared volume:
+    #   enable/<folder> -> ../store/<folder>
+    os.symlink(os.path.join("..", "store", folder_name), link)
+
+
+def disable_skill_fs(folder_name: str) -> None:
+    """Remove the shared enable-symlink for a skill (no-op if absent)."""
+    link = get_enable_link_path(folder_name)
+    if os.path.lexists(link):
+        link.unlink()
+
+
+def _ensure_world_readable(path: Path) -> None:
+    """Recursively chmod a skill path so the per-user REPL sandbox (which runs
+    as a *different* UID than the backend) can read the shared-volume files.
+    Directories -> 0o755, files -> 0o644. We only ever operate on store/*, never
+    on the enable/* symlinks, so no symlink-mode weirdness.
+    """
+    if not path.exists():
+        return
+    if path.is_dir():
+        for root, dirs, files in os.walk(path):
+            for d in dirs:
+                try:
+                    os.chmod(os.path.join(root, d), 0o755)
+                except OSError:
+                    pass
+            for f in files:
+                try:
+                    os.chmod(os.path.join(root, f), 0o644)
+                except OSError:
+                    pass
+        try:
+            os.chmod(path, 0o755)
+        except OSError:
+            pass
+    else:
+        try:
+            os.chmod(path, 0o644)
+        except OSError:
+            pass
+
+
+def publish_skill(folder_name: str) -> None:
+    """Mark a skill enabled and make its store files world-readable.
+
+    Use after CREATE / UPLOAD so the skill is routable and the per-user REPL
+    sandbox (a different UID) can read its files.
+    """
+    _ensure_world_readable(get_skill_dir(folder_name))
+    enable_skill_fs(folder_name)
+
+
+def refresh_skill_readable(folder_name: str) -> None:
+    """Re-apply world-readable chmod without touching enable state.
+
+    Use after REUPLOAD / EDIT / resource writes: the skill's enabled state must
+    be preserved, only the new file permissions need fixing for the sandbox UID.
+    """
+    _ensure_world_readable(get_skill_dir(folder_name))
+
+
+# ---- Legacy layout migration (data/skills/* -> shared store/*) ----
+#
+# Before the shared-volume design, skills lived directly under data/skills/ and
+# EVERY folder there was implicitly enabled (no enable-symlink concept). This
+# migration moves those folders into the canonical store/ and re-enables them so
+# existing deployments keep working without manual intervention.
+#
+# Copy-only by default: the legacy folder is NOT removed, so no skill is lost if
+# the shared skills volume is not yet mounted (Phase 7) and the container
+# restarts between migration and mount — the legacy copy simply re-supplies the
+# store on the next boot. Pass remove_source=True only AFTER the volume is
+# confirmed mounted and persistent, to drop the dead duplicate.
+
+def migrate_legacy_skills(remove_source: bool = False) -> dict:
+    """One-time, idempotent migration from the legacy data/skills/* layout.
+
+    Returns {"migrated": N, "skipped": M, "enabled": K} for logging.
+
+    - A legacy folder already present in store/ is skipped (and, when
+      remove_source, its legacy twin is dropped to avoid a duplicate source).
+    - A legacy folder missing from store/ is copied into store/, made
+      world-readable, and enabled (enable-symlink created) to preserve the old
+      "implicitly enabled" behaviour.
+    - Folders without a SKILL.md are left untouched (not skills).
+    - Any single failure is logged and skipped; the rest still migrate.
+    """
+    legacy_root = settings.data_dir / "skills"
+    if not legacy_root.exists():
+        return {"migrated": 0, "skipped": 0, "enabled": 0}
+
+    migrated = skipped = enabled = 0
+    for entry in sorted(legacy_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "SKILL.md").exists():
+            continue  # not a skill folder; leave it alone
+        dest = settings.skills_dir / entry.name
+        if dest.exists():
+            skipped += 1
+            if remove_source:
+                shutil.rmtree(entry, ignore_errors=True)
+            continue
+        try:
+            shutil.copytree(entry, dest)
+            _ensure_world_readable(dest)
+            # Preserve legacy "every folder is enabled" semantics.
+            enable_skill_fs(entry.name)
+            enabled += 1
+            migrated += 1
+            if remove_source:
+                shutil.rmtree(entry, ignore_errors=True)
+        except Exception as e:  # best-effort — never let one bad skill abort boot
+            print(f"[skill_manager] migrate_legacy_skills: failed on {entry.name}: {e}")
+    return {"migrated": migrated, "skipped": skipped, "enabled": enabled}
 
 
 # ---- Folder name sanitization ----
@@ -153,7 +317,7 @@ def build_skill_md(
 # ---- Filesystem operations ----
 
 def scan_skills_dir() -> list[dict]:
-    """Scan data/skills/ and return list of skill info dicts."""
+    """Scan the canonical store/ (shared skills volume) and return skill info dicts."""
     skills = []
     if not settings.skills_dir.exists():
         return skills
@@ -173,6 +337,7 @@ def scan_skills_dir() -> list[dict]:
                 "description": parsed["description"],
                 "mcp_servers": parsed["mcp_servers"],
                 "body": parsed["body"],
+                "enabled": is_skill_enabled_fs(entry.name),
             })
         except Exception as e:
             print(f"[skill_manager] Error parsing {skill_md}: {e}")
@@ -204,6 +369,7 @@ def create_skill_folder(
     skill_dir.mkdir(parents=True)
     content = build_skill_md(name, description, mcp_servers, body)
     get_skill_md_path(folder_name).write_text(content, encoding="utf-8")
+    publish_skill(folder_name)  # enable + world-readable for the sandbox UID
     return folder_name
 
 
@@ -234,6 +400,10 @@ def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> 
         else:
             target.write_text(content, encoding="utf-8")
 
+    # Re-upload replaces files but must NOT change the enabled state; only fix
+    # permissions so the (different-UID) sandbox can read them.
+    refresh_skill_readable(folder_name)
+
 
 
 def update_skill_md(folder_name: str, content: str) -> None:
@@ -242,6 +412,7 @@ def update_skill_md(folder_name: str, content: str) -> None:
     if not path.exists():
         raise ValueError(f"Skill '{folder_name}' SKILL.md not found")
     path.write_text(content, encoding="utf-8")
+    refresh_skill_readable(folder_name)  # fix perms on the rewritten file
 
 
 def delete_skill_folder(folder_name: str) -> None:
@@ -249,6 +420,10 @@ def delete_skill_folder(folder_name: str) -> None:
     skill_dir = get_skill_dir(folder_name)
     if skill_dir.exists():
         shutil.rmtree(skill_dir)
+    # Drop the enable-symlink too so a deleted skill can never stay routable.
+    link = get_enable_link_path(folder_name)
+    if os.path.lexists(link):
+        link.unlink()
 
 
 # ---- Resource file management ----
@@ -304,6 +479,7 @@ def save_resource_file(folder_name: str, subdir: str, filename: str, content: by
         raise ValueError(f"Invalid file path: {filename}")
 
     target.write_bytes(content)
+    refresh_skill_readable(folder_name)  # new file must be readable by the sandbox UID
     return f"{subdir}/{filename}"
 
 
@@ -406,12 +582,14 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
 
     for fs_skill in fs_skills:
         folder = fs_skill["folder_name"]
+        # Source of truth for enabled state is the enable-symlink on disk.
+        fs_enabled = is_skill_enabled_fs(folder)
         if folder not in db_skills:
             new_skill = Skill(
                 folder_name=folder,
                 name=fs_skill["name"],
                 description=(fs_skill["description"] or "")[:250],
-                is_active=True,
+                is_active=fs_enabled,
             )
             session.add(new_skill)
             added += 1
@@ -424,6 +602,10 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
             new_desc = (fs_skill["description"] or "")[:250]
             if db_skill.description != new_desc:
                 db_skill.description = new_desc
+                changed = True
+            # Keep is_active as a faithful cache of the enable-symlink state.
+            if db_skill.is_active != fs_enabled:
+                db_skill.is_active = fs_enabled
                 changed = True
             if changed:
                 updated += 1

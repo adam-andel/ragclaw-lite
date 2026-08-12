@@ -28,6 +28,7 @@ class SkillResponse(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    enabled: bool = False  # FS truth: enable-symlink present on the shared skills volume
     created_at: datetime
     updated_at: datetime
     # Parsed from SKILL.md

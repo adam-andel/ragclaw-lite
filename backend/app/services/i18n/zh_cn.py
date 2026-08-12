@@ -171,4 +171,20 @@ MESSAGES = {
         "用户记忆过长，无法保存。本次写入已被拒绝，未做任何修改。"
         "请告知用户：记忆超出长度限制，并建议用户自行前往「个人资料」页修改。"
     ),
+
+    # 注入到激活 skill 的 system prompt，告知 LLM skill 文件夹在沙盒内的位置（REPL_SKILLS_DIR）及其只读性质。无占位符。
+    "skill_sandbox_note": (
+        "## 沙盒中的 skill 资源\n"
+        "本 skill 的文件以只读方式挂载在你的沙盒内，路径位于环境变量 `REPL_SKILLS_DIR`"
+        "（等价于 `<sandbox_root>/.ragclaw/skills/<skill_name>`）。你可以用 run_python 的 open() "
+        "直接读取其中任意文件，或调用 read_skill_resource 工具。该 skill 文件夹为只读："
+        "若你向其内写入，写入会被重定向到沙盒本地影子副本，不会写回共享存储，"
+        "因此不要指望对 skill 文件的修改会持久保留。"
+    ),
+
+    # 附在 read_skill_resource 工具描述后的精简版。无占位符。
+    "skill_resource_tool_note": (
+        "该 skill 文件夹也以只读方式挂载在 REPL_SKILLS_DIR（即 `<sandbox_root>/.ragclaw/skills/<skill_name>`），"
+        "你也可以用 run_python 从那里打开文件。对其的写入会被重定向到沙盒本地影子副本，不会写回共享存储。"
+    ),
 }

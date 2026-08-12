@@ -25,6 +25,8 @@ from app.services.skill_manager import (
     list_resource_files, save_resource_file, delete_resource_file,
     scan_skills_dir, sanitize_folder_name, build_skill_md, sync_skills_to_db,
     get_skill_by_id,
+    is_skill_enabled_fs, enable_skill_fs, disable_skill_fs,
+    publish_skill, refresh_skill_readable,
 )
 from app.services.skill_script_loader import clear_cache as clear_script_cache
 
@@ -46,6 +48,7 @@ def _skill_to_response(skill: Skill, include_content: bool = False) -> SkillResp
     return SkillResponse(
         id=skill.id, tenant_id=skill.tenant_id, folder_name=skill.folder_name,
         name=skill.name, description=skill.description, is_active=skill.is_active,
+        enabled=is_skill_enabled_fs(skill.folder_name),
         created_at=skill.created_at, updated_at=skill.updated_at,
         mcp_servers=mcp_servers, skill_md_content=skill_md_content,
     )
@@ -191,6 +194,7 @@ async def upload_folder(
     skill_md_content = read_skill_md(folder_name)
     parsed = parse_skill_md(skill_md_content)
 
+    publish_skill(folder_name)  # enable + world-readable for the sandbox UID
     skill = Skill(
         tenant_id=current_user.tenant_id,
         folder_name=folder_name,
@@ -270,6 +274,7 @@ async def upload_zip(
     skill_md_content = read_skill_md(folder_name)
     parsed = parse_skill_md(skill_md_content)
 
+    publish_skill(folder_name)  # enable + world-readable for the sandbox UID
     skill = Skill(
         tenant_id=current_user.tenant_id,
         folder_name=folder_name,
@@ -409,15 +414,26 @@ async def toggle_skill(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Toggle the UI-managed is_active flag in DB."""
+    """Toggle a skill's enabled state.
+
+    The enable-symlink on the shared skills volume is the source of truth
+    (exists = enabled). The DB is_active flag is kept as a faithful cache so
+    routing/filtering stay in sync without an extra FS read per request.
+    """
     skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "Skill not found")
 
-    skill.is_active = not skill.is_active
+    if is_skill_enabled_fs(skill.folder_name):
+        disable_skill_fs(skill.folder_name)
+        skill.is_active = False
+    else:
+        enable_skill_fs(skill.folder_name)
+        skill.is_active = True
     skill.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(skill)
+    clear_script_cache(skill.folder_name)
     return _skill_to_response(skill, include_content=True)
 
 
