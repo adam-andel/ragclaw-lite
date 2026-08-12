@@ -58,6 +58,7 @@ from app.schemas.chat import (
     ConversationDetail,
     ConversationMessagesPage,
     ConversationSummaryState,
+    ConversationRenameRequest,
     PendingLimitResponse,
     SummaryUpdateRequest,
     SummarySegmentDeleteRequest,
@@ -1799,6 +1800,25 @@ async def get_conversation(
         summary_archived_count=getattr(conv, "summary_archived_count", 0) or 0,
         min_compact_tok=segment_thresholds(config_manager.context_window)[0],
     )
+
+
+@router.patch("/conversations/{conv_id}", response_model=ConversationResponse)
+async def rename_conversation(
+    conv_id: str,
+    payload: ConversationRenameRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rename a conversation (title only). Empty title is rejected."""
+    new_title = payload.title.strip()
+    if not new_title:
+        raise HTTPException(400, "TITLE_EMPTY")
+    conv = await _load_owned_conversation(conv_id, current_user, db)
+    conv.title = new_title
+    conv.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(conv)
+    return conv
 
 
 @router.get("/conversations/{conv_id}/messages", response_model=ConversationMessagesPage)

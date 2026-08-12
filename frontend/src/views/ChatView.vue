@@ -12,7 +12,7 @@ import KbPickCard from '@/components/kb/KbPickCard.vue'
 import AppCard from '@/components/common/AppCard.vue'
 import { Send, StopCircle, Chatbubbles, List, Add, ChevronDown, Sparkles, Search, Close, FolderOpen, Folder, Create, DocumentText, CloudUploadOutline, Eye, Trash } from '@vicons/ionicons5'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
-import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, deleteConversation, compactConversation, deleteSummarySegment, putPinInstruction } from '@/api/chat'
+import { streamChat, getConversation, getConversationMessages, getConversationStatus, getPendingLimit, listConversations, deleteConversation, compactConversation, deleteSummarySegment, putPinInstruction, renameConversation } from '@/api/chat'
 import type { ConversationSummaryState } from '@/api/chat'
 import { listWorkspace, mkdirWorkspace, uploadWorkspace, fileToBase64 } from '@/api/workspace'
 import type { WorkspaceEntry } from '@/api/workspace'
@@ -580,6 +580,64 @@ const pagedConversations = computed(() => {
 })
 const convTotalPages = computed(() => Math.max(1, Math.ceil(conversations.value.length / convPageSize)))
 watch(showMoreConv, (v) => { if (v) { convPage.value = 1; loadConversations() } })
+
+// ── Inline rename of a conversation from the history (all-conversations) modal ──
+const editingConvId = ref<string | null>(null)
+const editingTitle = ref('')
+const renamingId = ref<string | null>(null)
+const renameInputRef = ref<any>(null)
+
+function startRename(c: any) {
+  editingConvId.value = c.id
+  editingTitle.value = c.title
+  nextTick(() => {
+    // NInput's component instance may not expose a public focus() in this
+    // naive-ui version; focus the rendered native <input>/<textarea> instead.
+    const el: any = renameInputRef.value
+    const native = el?.textareaElRef?.value || el?.inputElRef?.value || el?.$el?.querySelector('input, textarea')
+    native?.focus()
+  })
+}
+
+function onRenameKeydown(e: KeyboardEvent, c: any) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    saveRename(c)
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelRename()
+  }
+  // Other keys (e.g. Ctrl+A select-all, copy, paste) keep native behavior.
+}
+
+function cancelRename() {
+  editingConvId.value = null
+  editingTitle.value = ''
+}
+
+async function saveRename(c: any) {
+  if (editingConvId.value !== c.id) return
+  const newTitle = editingTitle.value.trim()
+  editingConvId.value = null
+  if (!newTitle || newTitle === c.title) {
+    editingTitle.value = ''
+    return
+  }
+  const targetId = c.id
+  // optimistic update
+  const conv = conversations.value.find((x: any) => x.id === targetId)
+  const oldTitle = conv?.title
+  if (conv) conv.title = newTitle
+  renamingId.value = targetId
+  try {
+    await renameConversation(targetId, newTitle)
+  } catch {
+    if (conv) conv.title = oldTitle
+  } finally {
+    renamingId.value = null
+    editingTitle.value = ''
+  }
+}
 
 // ── History questions modal: user questions of the current conversation ──
 // Backend paginates by "round" (one Q&A = one round = 1 user + 1 assistant message),
@@ -1867,7 +1925,21 @@ function handleKeydown(e: KeyboardEvent) {
         >
           <div class="conv-row-avatar">💬</div>
           <div class="conv-row-body">
-            <div class="conv-row-title">{{ c.title || t('chat.untitledConversation') }}</div>
+            <div class="conv-row-title">
+              <NInput
+                v-if="editingConvId === c.id"
+                ref="renameInputRef"
+                v-model:value="editingTitle"
+                size="small"
+                :placeholder="t('chat.conversationTitle')"
+                @click.stop
+                @keydown="onRenameKeydown($event, c)"
+                @blur="saveRename(c)"
+              />
+              <template v-else>
+                <span class="conv-row-title-text">{{ c.title || t('chat.untitledConversation') }}</span>
+              </template>
+            </div>
             <div class="conv-row-meta">
               <span>{{ new Intl.DateTimeFormat(currentLocale, { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).format(new Date(c.updated_at)) }}</span>
               <span v-if="c.message_count" class="conv-row-count">{{ t('chat.messageCount', { count: c.message_count }) }}</span>
@@ -1878,19 +1950,32 @@ function handleKeydown(e: KeyboardEvent) {
                so an un-stopped click/Enter would navigate before (or instead of) deleting.
                .prevent on keydown also suppresses the native button click Enter/Space
                would otherwise generate, keeping it to exactly one invocation. -->
-          <NButton
-            class="conv-row-delete"
-            size="tiny" quaternary circle
-            :title="t('chat.deleteConversation')"
-            :aria-label="t('chat.deleteConversation')"
-            :loading="deletingConvId === c.id"
-            :disabled="!!deletingConvId"
-            @click.stop="confirmDeleteConv(c)"
-            @keydown.enter.stop.prevent="confirmDeleteConv(c)"
-            @keydown.space.stop.prevent="confirmDeleteConv(c)"
-          >
-            <template #icon><NIcon size="15"><Trash /></NIcon></template>
-          </NButton>
+          <div class="conv-row-actions">
+            <NButton
+              class="conv-row-rename"
+              size="tiny" quaternary circle
+              :title="t('chat.renameConversation')"
+              :aria-label="t('chat.renameConversation')"
+              @click.stop="startRename(c)"
+              @keydown.enter.stop.prevent="startRename(c)"
+              @keydown.space.stop.prevent="startRename(c)"
+            >
+              <template #icon><NIcon size="15"><Create /></NIcon></template>
+            </NButton>
+            <NButton
+              class="conv-row-delete"
+              size="tiny" quaternary circle
+              :title="t('chat.deleteConversation')"
+              :aria-label="t('chat.deleteConversation')"
+              :loading="deletingConvId === c.id"
+              :disabled="!!deletingConvId"
+              @click.stop="confirmDeleteConv(c)"
+              @keydown.enter.stop.prevent="confirmDeleteConv(c)"
+              @keydown.space.stop.prevent="confirmDeleteConv(c)"
+            >
+              <template #icon><NIcon size="15"><Trash /></NIcon></template>
+            </NButton>
+          </div>
         </div>
       </div>
       <AppPagination
@@ -2487,6 +2572,15 @@ function handleKeydown(e: KeyboardEvent) {
   flex: 1;
   min-width: 0;
 }
+/* Actions container holds the rename + delete buttons, vertically centered on
+   the right edge of the row so they sit on the same line as each other. */
+.conv-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: center;
+  flex-shrink: 0;
+}
 /* Delete affordance in the "all conversations" modal. Dimmed rather than hidden:
    fully invisible until hover is undiscoverable and unreachable by keyboard. */
 .conv-row-delete {
@@ -2504,13 +2598,34 @@ function handleKeydown(e: KeyboardEvent) {
   color: var(--color-danger);
 }
 .conv-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 400;
   color: var(--color-text);
   overflow: hidden;
+  margin-bottom: 6px;
+}
+.conv-row-title-text {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 6px;
+}
+/* Inline rename affordance: dimmed until the row (or the button itself) is
+   hovered/focused, matching the delete affordance's discoverability rules. */
+.conv-row-rename {
+  flex-shrink: 0;
+  opacity: .35;
+  transition: opacity .15s ease, color .15s ease;
+}
+.conv-row:hover .conv-row-rename,
+.conv-row-rename:focus-visible {
+  opacity: 1;
+}
+.conv-row-rename:hover {
+  opacity: 1;
+  color: var(--color-primary);
 }
 .conv-row-meta {
   display: flex;

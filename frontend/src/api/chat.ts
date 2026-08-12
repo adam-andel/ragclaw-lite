@@ -153,6 +153,17 @@ export const deleteConversation = async (id: string): Promise<ConversationDelete
 }
 
 // ── Persistent context (compressed summary + folding cursor) ──
+// Rename a conversation (title only). Empty title is rejected by the backend.
+export const renameConversation = async (id: string, title: string): Promise<Conversation> => {
+  const r = handleResponse(
+    await authFetch(`/api/conversations/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }),
+  )
+  return (await r.json()) as Conversation
+}
 export interface ConversationSummaryState {
   conversation_id: string
   summary_text: string

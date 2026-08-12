@@ -128,6 +128,12 @@ class SummaryUpdateRequest(BaseModel):
     summary_text: str = Field(default="")
 
 
+class ConversationRenameRequest(BaseModel):
+    """Rename a conversation: only the title is editable."""
+
+    title: str = Field(default="", max_length=500)
+
+
 class SummarySegmentDeleteRequest(BaseModel):
     """Delete one fold segment from the compressed summary by content match.
 

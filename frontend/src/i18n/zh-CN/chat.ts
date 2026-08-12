@@ -37,6 +37,8 @@ export default {
   next: '下一个',
   closeSearch: '关闭查找',
   allConversations: '所有对话',
+  renameConversation: '重命名对话',
+  conversationTitle: '对话标题',
   deleteConversation: '删除对话',
   deleteConvConfirmTitle: '确认删除该对话？',
   deleteConvConfirmBody: '将删除「{title}」的全部消息、执行过程记录、压缩摘要和归档记忆。此操作不可撤销。',

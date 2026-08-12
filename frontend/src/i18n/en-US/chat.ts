@@ -37,6 +37,8 @@ export default {
   next: 'Next',
   closeSearch: 'Close search',
   allConversations: 'All conversations',
+  renameConversation: 'Rename conversation',
+  conversationTitle: 'Conversation title',
   deleteConversation: 'Delete conversation',
   deleteConvConfirmTitle: 'Delete this conversation?',
   deleteConvConfirmBody: 'This removes every message, agent trace, compressed summary and archived memory of "{title}". This action cannot be undone.',
