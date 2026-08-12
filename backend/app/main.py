@@ -271,6 +271,20 @@ async def lifespan(app: FastAPI):
         print("Meta python tools (Python Executor) loaded at startup")
     except Exception as e:
         print(f"Meta python tools init warning: {e}")
+    # One-time migration: legacy data/skills/* -> shared store/* (preserves
+    # enabled state). Copy-only by default so nothing is lost if the shared
+    # skills volume is not yet mounted; runs idempotently each boot.
+    try:
+        from app.services.skill_manager import migrate_legacy_skills
+        _mig = migrate_legacy_skills()
+        if _mig["migrated"] or _mig["skipped"]:
+            print(
+                f"Skill migration (legacy data/skills -> store): "
+                f"+{_mig['migrated']} migrated, {_mig['skipped']} already present, "
+                f"{_mig['enabled']} enabled"
+            )
+    except Exception as e:
+        print(f"Skill migration warning: {e}")
     # Sync skill filesystem to DB index
     try:
         from app.services.skill_manager import sync_skills_to_db
