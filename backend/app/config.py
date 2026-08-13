@@ -65,12 +65,15 @@ class Settings(BaseSettings):
     retrieval_rrf_k: int = 60
     retrieval_similarity_threshold: float = 0.5
 
-    # --- LLM (non-sensitive defaults; api_key configured via web UI, not .env) ---
+    # --- LLM ---
+    # llm_api_key / llm_context_window default to .env (LLM_API_KEY / LLM_CONTEXT_WINDOW);
+    # if the admin sets them in the Settings UI, the stored value overrides the .env default.
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 4096
+    llm_context_window: int = 192000
 
     # --- Cache ---
     cache_enabled: bool = True

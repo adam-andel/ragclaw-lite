@@ -1,9 +1,10 @@
 """Runtime configuration manager — DB for non-sensitive settings + AES-256-GCM encrypted file for API keys.
 
-Admin manages ALL runtime settings through the web UI. API keys (LLM / embedding) have NO .env or
-mounted-secret default source — they are entered exclusively via the Settings page and encrypted
-into config.enc. On first boot (no config.enc) the keys are simply empty until the admin fills
-them in through the UI.
+Admin manages ALL runtime settings through the web UI. The LLM API key (and the LLM context-window
+cap) may be seeded from ``.env`` (LLM_API_KEY / LLM_CONTEXT_WINDOW); if the admin sets them in the
+Settings UI, the stored value is encrypted into config.enc and overrides the ``.env`` default.
+On first boot (no config.enc) the key defaults to the ``.env`` value (empty if unset) until the
+admin changes it through the UI.
 """
 
 import hashlib
@@ -552,11 +553,12 @@ class ConfigManager:
     async def init(self):
         """Called once at startup. Loads API keys from encrypted file and non-sensitive settings from DB.
 
-        API keys have NO .env or mounted-secret default source. On first boot (no config.enc)
-        they are simply empty and MUST be entered through the Settings page UI. A present
-        config.enc is decrypted with the mounted ragclaw_config_key; if that fails the system
-        logs a clear FATAL and runs with EMPTY keys (admin re-enters via UI) — it never
-        silently falls back to a default.
+        The LLM API key may be seeded from ``.env`` (LLM_API_KEY) as a default; if the admin
+        sets it in the Settings page UI, the stored value is encrypted into config.enc and
+        overrides the ``.env`` default. On first boot (no config.enc) the key defaults to the
+        ``.env`` value (empty if unset). A present config.enc is decrypted with the mounted
+        ragclaw_config_key; if that fails the system logs a clear FATAL and runs with EMPTY keys
+        (admin re-enters via UI) — it never silently falls back to a default.
         """
         legacy_file_existed = False
         with self._lock:
@@ -618,11 +620,11 @@ class ConfigManager:
         return {
             # LLM
             "llm_model": settings.llm_model,
-            "llm_api_key": "",
+            "llm_api_key": settings.llm_api_key,
             "llm_base_url": settings.llm_base_url,
             "llm_temperature": settings.llm_temperature,
             "llm_max_tokens": settings.llm_max_tokens,
-            "llm_context_window": 192000,  # max context window (tokens) for the configured model
+            "llm_context_window": settings.llm_context_window,  # max context window (tokens) for the configured model
             "llm_concurrency": 3,
             # max agent tool-decision rounds per run (applies to all chats + cron)
             "agent_round_quota": 20,
@@ -1055,9 +1057,12 @@ class ConfigManager:
             c["is_configured"] = bool(self._get("llm_api_key"))
             c["is_reachable"] = self._llm_reachable
             c["is_valid_llm_config"] = self.is_valid_llm_config
-            # API keys are always sourced from the Settings UI (encrypted into
-            # config.enc); there is no .env / mounted-secret default path.
-            c["api_key_source"] = "stored"
+            # api_key comes from the Settings UI (encrypted into config.enc) when the
+            # admin has overridden it; otherwise it falls back to the .env default.
+            c["api_key_source"] = (
+                "stored" if c.get("llm_api_key") != settings.llm_api_key or not settings.llm_api_key
+                else "env"
+            )
             return c
 
     def validate_compression_budget(self) -> list[dict]:
