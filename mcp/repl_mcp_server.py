@@ -402,19 +402,67 @@ def _make_acct(uid) -> dict:
     return {"uid": uid, "gid": uid, "name": f"u{uid}"}
 
 
-def _ws_safe(root: str, rel: str) -> str | None:
+# Skill store is mounted read-only into the sandbox. The agent reaches it via
+# symlinks under .ragclaw/skills, but the *real* files live in this volume,
+# which users must never mutate through the workspace UI (it is shared across
+# all users and holds backend-managed skill state). Paths that resolve into a
+# read-only volume are viewable/downloaded for read ops but rejected for writes.
+_READONLY_VOLUMES = ("/ragclaw_skills",)
+# Logical subpaths *inside* the workspace sandbox that the workspace UI must
+# treat as read-only. `.ragclaw/skills` is the per-user view onto the shared,
+# backend-managed skill store: it physically lives in the writable sandbox (so
+# it does NOT escape into _READONLY_VOLUMES), but users may only browse/download
+# it — never create folders, upload, rename, move, or delete anything under it.
+_READONLY_SUBPATHS = (".ragclaw/skills",)
+# Sentinel returned by _ws_safe(allow_write=True) when a path resolves into a
+# read-only volume (or under a protected subpath), so callers can return a clear
+# "read-only" error instead of a generic "invalid path".
+WS_READONLY = "__ws_readonly__"
+
+
+def _rel_in_protected(rel: str) -> bool:
+    """True if ``rel`` (sandbox-relative) lies within a protected read-only subpath."""
+    rel = (rel or "").strip("/")
+    if not rel:
+        return False
+    for sp in _READONLY_SUBPATHS:
+        sp = sp.strip("/")
+        if rel == sp or rel.startswith(sp + "/"):
+            return True
+    return False
+
+
+def _ws_safe(root: str, rel: str, allow_write: bool = False) -> str | None:
     """Resolve a relative path strictly inside ``root``; ``None`` if it escapes.
 
-    Rejects ``..`` components and absolute paths, and uses ``realpath``
-    so symlink escapes are caught (same guard as the /files/ handler).
-    An empty ``rel`` resolves to ``root`` itself.
+    Rejects ``..`` components and absolute paths, and uses ``realpath`` so
+    symlink escapes are caught (same guard as the /files/ handler).
+
+    ``allow_write=False`` (default; read ops: LIST/download) additionally
+    permits a path whose real target lies inside a trusted *read-only* volume
+    (e.g. ``/ragclaw_skills``): the files are reachable for viewing/downloading
+    but must never be mutated. ``allow_write=True`` (write ops: mkdir/upload/
+    rename/move/delete) returns :data:`WS_READONLY` for any path that resolves
+    into a read-only volume, so the caller can reject the write cleanly without
+    depending on the volume being mounted read-only at the FS level.
     """
     if rel:
         rel = rel.strip("/")
         if not rel or ".." in rel.split("/"):
             return None
     target = os.path.realpath(os.path.join(root, rel)) if rel else root
+    # Logical read-only subpaths (inside the sandbox but user-must-not-mutate):
+    # e.g. `.ragclaw/skills`. Reads resolve normally; writes return WS_READONLY
+    # so the caller rejects them with "skill store is read-only".
+    if allow_write and _rel_in_protected(rel):
+        return WS_READONLY
     if target != root and not target.startswith(root + os.sep):
+        # Outside the sandbox root: allowed only into a read-only volume, and
+        # only for read ops.
+        if any(target == v or target.startswith(v + os.sep) for v in _READONLY_VOLUMES):
+            if allow_write:
+                return WS_READONLY
+            return target
         return None
     return target
 
@@ -2221,9 +2269,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             if rel is None:
                 self._json_response(400, {"error": "invalid name"})
                 return
-            target = _ws_safe(root, rel)
-            if target is None:
-                self._json_response(400, {"error": "invalid path"})
+            target = _ws_safe(root, rel, allow_write=True)
+            if self._ws_deny_write(target, "invalid path"):
                 return
             if os.path.exists(target):
                 self._json_response(409, {"error": "already exists"})
@@ -2237,9 +2284,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             if rel is None:
                 self._json_response(400, {"error": "invalid name"})
                 return
-            target = _ws_safe(root, rel)
-            if target is None:
-                self._json_response(400, {"error": "invalid path"})
+            target = _ws_safe(root, rel, allow_write=True)
+            if self._ws_deny_write(target, "invalid path"):
                 return
             try:
                 data = base64.b64decode(body.get("content") or "")
@@ -2275,15 +2321,19 @@ class MCPHandler(BaseHTTPRequestHandler):
                     or new_name in (".", ".."):
                 self._json_response(400, {"error": "invalid path or name"})
                 return
-            src = _ws_safe(root, path)
-            if src is None or not os.path.exists(src):
+            src = _ws_safe(root, path, allow_write=True)
+            if self._ws_deny_write(src, "invalid path"):
+                return
+            if not os.path.exists(src):
                 self._json_response(404, {"error": "no such path"})
                 return
             new_rel = f"{os.path.dirname(path)}/{new_name}" if os.path.dirname(path) \
                 else new_name
-            dst = _ws_safe(root, new_rel)
-            if dst is None or os.path.exists(dst):
-                self._json_response(409, {"error": "target exists or invalid"})
+            dst = _ws_safe(root, new_rel, allow_write=True)
+            if self._ws_deny_write(dst, "invalid path"):
+                return
+            if os.path.exists(dst):
+                self._json_response(409, {"error": "target exists"})
                 return
             os.rename(src, dst)
             _chown(dst)
@@ -2307,11 +2357,13 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if dest_rel is None:
                     self._json_response(400, {"error": "invalid destination"})
                     return
-                dest_dir = _ws_safe(root, dest_rel)
+                dest_dir = _ws_safe(root, dest_rel, allow_write=True)
+                if self._ws_deny_write(dest_dir, "invalid path"):
+                    return
             else:
                 dest_rel = ""
                 dest_dir = root
-            if dest_dir is None or not os.path.isdir(dest_dir):
+            if not os.path.isdir(dest_dir):
                 self._json_response(400, {"error": "destination is not a directory"})
                 return
             dest_real = os.path.realpath(dest_dir)
@@ -2322,15 +2374,16 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if rel is None:
                     self._json_response(400, {"error": f"invalid path: {p}"})
                     return
-                src = _ws_safe(root, rel)
-                if src is None or not os.path.exists(src):
+                src = _ws_safe(root, rel, allow_write=True)
+                if self._ws_deny_write(src, "invalid path"):
+                    return
+                if not os.path.exists(src):
                     self._json_response(404, {"error": f"no such path: {p}"})
                     return
                 name = os.path.basename(rel)
                 new_rel = f"{dest_rel}/{name}" if dest_rel else name
-                dst = _ws_safe(root, new_rel)
-                if dst is None:
-                    self._json_response(400, {"error": f"invalid target for: {p}"})
+                dst = _ws_safe(root, new_rel, allow_write=True)
+                if self._ws_deny_write(dst, "invalid path"):
                     return
                 src_real = os.path.realpath(src)
                 # Reject moving a directory into itself or one of its own subdirs.
@@ -2377,8 +2430,10 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(400, {"error": "cannot delete root"})
             return
         root = _workspace_root(uid)
-        target = _ws_safe(root, rel)
-        if target is None or not os.path.exists(target):
+        target = _ws_safe(root, rel, allow_write=True)
+        if self._ws_deny_write(target, "invalid path"):
+            return
+        if not os.path.exists(target):
             self.send_error(404)
             return
         try:
@@ -2390,6 +2445,22 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": f"delete failed: {e}"})
             return
         self._json_response(200, {"deleted": rel or "."})
+
+    def _ws_deny_write(self, target: str | None, msg: str) -> bool:
+        """Return True (and send the response) if a write must be denied.
+
+        Wraps the two rejection cases from ``_ws_safe`` for write ops:
+          - ``WS_READONLY`` -> 400 "skill store is read-only"
+          - ``None`` (escaped the sandbox) -> 400 with the caller's ``msg``
+        Callers ``return`` immediately when this returns True.
+        """
+        if target == WS_READONLY:
+            self._json_response(400, {"error": "skill store is read-only"})
+            return True
+        if target is None:
+            self._json_response(400, {"error": msg})
+            return True
+        return False
 
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))
