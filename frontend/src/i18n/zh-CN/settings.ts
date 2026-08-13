@@ -132,6 +132,8 @@ export default {
     placeholder: '请输入 API Key（首次录入）',
   },
   modelName: '模型名称',
+  temperature: '温度',
+  maxTokens: '最大 Tokens',
   tip: {
     temperature: '控制 LLM 输出的随机性与创造性。范围 0~1。0 = 最确定，每次回答一致；1 = 最随机。RAG 场景建议 0.1~0.5，让 LLM 严格遵循检索文档，减少自由发挥。注意：该值仅影响「最终回答」的文风，工具调用（Function Calling）环节已在代码中固定为低温，不受此项影响。',
     maxTokens: 'LLM 单次输出的最大 token 数（≈ 中文字数 × 1.5~2）。设太小回答会被截断，设太大浪费额度。RAG 场景 1024~4096 通常足够，该值同时限制最终回答长度。',
@@ -143,7 +145,7 @@ export default {
     archiveHigh: 'L0（最近摘要窗口）占「持久预算」的比例达到此值时触发归档：更老的 fold 段写入向量记忆（按需召回），最近一段保留为内联摘要。持久预算 = 上下文窗口扣除输出预留、系统提示词、工具定义、检索与记忆槽位后，留给「未摘要历史 + L0」的部分，因此该比例不是占整个窗口。默认 40%。',
   },
   maxConcurrency: '最大并发数',
-  cacheTtl: '缓存有效期',
+  cacheTtl: '答案缓存有效期',
   contextWindow: '上下文窗口上限',
   agentRoundQuota: '工具调用轮次配额',
   archiveHigh: '归档触发阈值（高）',

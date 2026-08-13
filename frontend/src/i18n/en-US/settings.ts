@@ -132,6 +132,8 @@ export default {
     placeholder: 'Enter API Key (first time)',
   },
   modelName: 'Model Name',
+  temperature: 'Temperature',
+  maxTokens: 'Max Tokens',
   tip: {
     temperature: 'Controls the randomness and creativity of LLM output. Range 0~1. 0 = most deterministic, consistent answers; 1 = most random. For RAG, 0.1~0.5 is recommended so the LLM strictly follows retrieved docs and reduces free-form generation. Note: this only affects the "final answer" wording; tool-calling (Function Calling) is hardcoded to a low temperature in code and is not affected by this setting.',
     maxTokens: 'Maximum tokens for a single LLM output (≈ Chinese chars × 1.5~2). Too small truncates the answer; too large wastes quota. For RAG, 1024~4096 is usually enough and also limits the final answer length.',
@@ -143,7 +145,7 @@ export default {
     archiveHigh: 'When the L0 (most-recent summary window) share of the PERSISTENT budget reaches this percent, archiving fires: older fold paragraphs are written to vector memory (recalled on demand) while the most recent paragraph stays inline. The persistent budget is what remains of the context window after the output reserve, system prompt, tool definitions and the retrieval / memory slots — so this percentage is not a share of the whole window. Default 40%.',
   },
   maxConcurrency: 'Max Concurrency',
-  cacheTtl: 'Cache TTL',
+  cacheTtl: 'Answer Cache TTL',
   contextWindow: 'Context Window',
   agentRoundQuota: 'Tool-call Round Quota',
   archiveHigh: 'Archive Trigger Threshold (High)',

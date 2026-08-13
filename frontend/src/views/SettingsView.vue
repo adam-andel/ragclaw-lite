@@ -1029,7 +1029,7 @@ async function handleTest() {
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                Temperature
+                {{ t('settings.temperature') }}
                 <NTooltip trigger="hover" :width="280">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
@@ -1038,14 +1038,14 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_temperature" :min="0" :max="1" :step="0.05" @update:value="clearTest(); scheduleSave('Temperature')" />
+            <NInputNumber v-model:value="config.llm_temperature" :min="0" :max="1" :step="0.05" @update:value="clearTest(); scheduleSave(t('settings.temperature'))" />
           </NFormItem>
 
           <!-- Max Tokens -->
           <NFormItem>
             <template #label>
               <span class="label-with-help">
-                Max Tokens
+                {{ t('settings.maxTokens') }}
                 <NTooltip trigger="hover" :width="280">
                   <template #trigger>
                     <NIcon :component="HelpCircle" size="14" class="help-icon" />
@@ -1054,23 +1054,7 @@ async function handleTest() {
                 </NTooltip>
               </span>
             </template>
-            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest(); scheduleSave('Max Tokens')" />
-          </NFormItem>
-
-          <!-- LLM Concurrency -->
-          <NFormItem>
-            <template #label>
-              <span class="label-with-help">
-                {{ t('settings.maxConcurrency') }}
-                <NTooltip trigger="hover" :width="300">
-                  <template #trigger>
-                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
-                  </template>
-                  <span>{{ t('settings.tip.maxConcurrency') }}</span>
-                </NTooltip>
-              </span>
-            </template>
-            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest(); scheduleSave(t('settings.maxConcurrency'))" />
+            <NInputNumber v-model:value="config.llm_max_tokens" :min="128" :max="131072" :step="256" @update:value="clearTest(); scheduleSave(t('settings.maxTokens'))" />
           </NFormItem>
 
           <!-- Context Window -->
@@ -1087,6 +1071,22 @@ async function handleTest() {
               </span>
             </template>
             <NInputNumber v-model:value="config.llm_context_window" :min="1" :max="10000000" :step="1000" @update:value="clearTest(); scheduleSave(t('settings.contextWindow'))" />
+          </NFormItem>
+
+          <!-- LLM Concurrency -->
+          <NFormItem>
+            <template #label>
+              <span class="label-with-help">
+                {{ t('settings.maxConcurrency') }}
+                <NTooltip trigger="hover" :width="300">
+                  <template #trigger>
+                    <NIcon :component="HelpCircle" size="14" class="help-icon" />
+                  </template>
+                  <span>{{ t('settings.tip.maxConcurrency') }}</span>
+                </NTooltip>
+              </span>
+            </template>
+            <NInputNumber v-model:value="config.llm_concurrency" :min="1" :max="50" :step="1" @update:value="clearTest(); scheduleSave(t('settings.maxConcurrency'))" />
           </NFormItem>
 
           <!-- Cache TTL -->
@@ -1160,6 +1160,7 @@ async function handleTest() {
               </span>
             </template>
             <NInputNumber v-model:value="config.summary_archive_high_pct" :min="1" :max="100" :step="1" @update:value="clearTest(); scheduleSave(t('settings.archiveHigh'))" />
+            <span class="muted" style="margin-left:8px;font-size:12px">%</span>
           </NFormItem>
 
         </section>
