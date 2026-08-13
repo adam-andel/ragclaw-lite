@@ -165,7 +165,7 @@ onMounted(async () => {
     // so router.replace() would remount CronJobsView and wipe the just-opened modal.
     // history.replaceState updates the URL without re-navigating, keeping the modal open.
     if (route.query.job || route.query.logs) {
-      window.history.replaceState(window.history.state, '', '/cron-jobs')
+      window.history.replaceState(window.history.state ?? {}, '', '/cron-jobs')
     }
   }
 })

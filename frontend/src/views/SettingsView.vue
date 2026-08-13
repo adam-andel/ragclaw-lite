@@ -700,7 +700,7 @@ function scrollTo(id: string) {
   }
   el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   activeSection.value = id
-  history.replaceState(null, '', `#${id}`)
+  history.replaceState(history.state ?? {}, '', `#${id}`)
   scrollTimer = window.setTimeout(() => {
     isManualScrolling.value = false
   }, 800)

@@ -39,9 +39,10 @@ async def execute_and_record_cron_job(cron_job_id: str) -> dict:
     status: if the job is already RUNNING or COMPLETED the call is rejected
     with a descriptive result instead of creating a duplicate CronJobRun.
 
-    The subgraph itself calls record_cron_result_tool to update
-    CronJob.last_result.  This function additionally creates a CronJobRun
-    audit log and manages next_run_at / status transitions.
+    The subgraph returns its final answer as plain text; this function
+    persists that text into both CronJobRun.output (execution audit log) and
+    CronJob.last_result (latest result).  It also manages next_run_at and
+    status transitions.
     """
     lock = await _get_job_lock(cron_job_id)
 
@@ -107,7 +108,8 @@ async def _execute_and_record_locked(cron_job_id: str) -> dict:
             job.last_result = output
             run.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-            # Refresh job because the subgraph updated last_result via tool.
+            # Refresh job because the subgraph may have updated it via tool calls
+            # (e.g. when running through providers without native function calling).
             await db.refresh(job)
             job.run_count += 1
             job.last_run_at = run.finished_at
