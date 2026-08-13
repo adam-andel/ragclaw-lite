@@ -2136,16 +2136,23 @@ class MCPHandler(BaseHTTPRequestHandler):
                     if term_lower not in name.lower():
                         continue
                     full = os.path.join(dirpath, name)
-                    if not (os.path.isdir(full) or os.path.isfile(full)):
+                    try:
+                        is_dir = os.path.isdir(full)
+                        if not (is_dir or os.path.isfile(full)):
+                            continue
+                        size = None if is_dir else os.path.getsize(full)
+                        mtime = os.path.getmtime(full)
+                    except OSError:
+                        # Dangling symlink / unstatable entry: skip rather than
+                        # 500 the whole search.
                         continue
-                    is_dir = os.path.isdir(full)
                     rel_path = os.path.relpath(full, root)
                     entries.append({
                         "name": name,
                         "type": "dir" if is_dir else "file",
                         "rel_path": rel_path,
-                        "size": None if is_dir else os.path.getsize(full),
-                        "mtime": os.path.getmtime(full),
+                        "size": size,
+                        "mtime": mtime,
                         "download_url": f"/workspace/{rel_path}" if not is_dir else None,
                     })
                     if len(entries) >= cap:
@@ -2157,14 +2164,21 @@ class MCPHandler(BaseHTTPRequestHandler):
         entries = []
         for name in sorted(os.listdir(target)):
             full = os.path.join(target, name)
-            is_dir = os.path.isdir(full)
+            try:
+                is_dir = os.path.isdir(full)
+                # getsize/getmtime follow symlinks and raise FileNotFoundError
+                # on a dangling link; never let one bad entry 500 the whole dir.
+                size = None if is_dir else os.path.getsize(full)
+                mtime = os.path.getmtime(full)
+            except OSError:
+                is_dir, size, mtime = False, None, 0.0
             rel_path = f"{rel}/{name}" if rel else name
             entries.append({
                 "name": name,
                 "type": "dir" if is_dir else "file",
                 "rel_path": rel_path,
-                "size": None if is_dir else os.path.getsize(full),
-                "mtime": os.path.getmtime(full),
+                "size": size,
+                "mtime": mtime,
                 "download_url": f"/workspace/{rel_path}" if not is_dir else None,
             })
         self._json_response(200, {"path": rel, "entries": entries})
