@@ -172,13 +172,23 @@ MESSAGES = {
         "请告知用户：记忆超出长度限制，并建议用户自行前往「个人资料」页修改。"
     ),
 
-    # 注入到激活 skill 的 system prompt，告知 LLM skill 文件夹在沙盒内的位置（REPL_SKILLS_DIR）及其只读性质。无占位符。
+    # 注入到激活 skill 的 system prompt，告知 LLM skill 根目录在沙盒内的固定位置（REPL_SKILLS_DIR/<name>）
+    # 及其只读性质。本 note 不穷举占位符写法，而是教 LLM 一条原则：本 skill 的根目录恒为
+    # $REPL_SKILLS_DIR/<name>，scripts/ 等子目录都在其下；示例里无论怎样书写本 skill 路径都按此映射。
+    # （作者侧的 {baseDir} 由 agent_nodes 在加载 body 时展开为 $REPL_SKILLS_DIR/<folder>，LLM 见到的是已展开形式。）
     "skill_sandbox_note": (
         "## 沙盒中的 skill 资源\n"
-        "本 skill 的文件以只读方式挂载在你的沙盒内，路径位于环境变量 `REPL_SKILLS_DIR`"
-        "（等价于 `<sandbox_root>/.ragclaw/skills/<skill_name>`）。你可以用 run_python 的 open() "
-        "直接读取其中任意文件，或调用 read_skill_resource 工具。该 skill 文件夹为只读："
-        "若你向其内写入，写入会被重定向到沙盒本地影子副本，不会写回共享存储，"
+        "本 skill 的根目录恒定位于 `$REPL_SKILLS_DIR/<skill_name>`（`<skill_name>` 即本 skill 的文件夹名，"
+        "`REPL_SKILLS_DIR` 是沙盒内环境变量的根）。其中的 `scripts/` 子目录（以及其它任意文件）都位于该根目录之下，"
+        "例如一个脚本的完整路径是 `$REPL_SKILLS_DIR/<skill_name>/scripts/<脚本名>`。\n"
+        "示例里无论用什么形式指代本 skill 的路径，都按下面规则映射到沙盒真实路径：\n"
+        "- 若示例已直接写出 `$REPL_SKILLS_DIR`（例如占位符 `{baseDir}` 被自动展开后的样子）：直接照抄命令即可，无需拼路径。\n"
+        "- 若示例用了指代本 skill 根目录的占位名（例如 `<skill_dir>`）：把该占位名整体替换为 `$REPL_SKILLS_DIR/<skill_name>`。\n"
+        "- 若示例只写了相对路径（例如 `scripts/foo.py`，没有根目录前缀）：在其前面补上 `$REPL_SKILLS_DIR/<skill_name>/`，"
+        "得到 `$REPL_SKILLS_DIR/<skill_name>/scripts/foo.py`。\n"
+        "- 若示例根本不涉及路径（例如本 skill 不含脚本、只调用工具）：则无需关心此路径。\n"
+        "你可以用 run_python 的 open() 直接读取其中任意文件，或调用 read_skill_resource 工具。"
+        "该 skill 文件夹为只读：若你向其内写入，写入会被重定向到沙盒本地影子副本，不会写回共享存储，"
         "因此不要指望对 skill 文件的修改会持久保留。"
     ),
 

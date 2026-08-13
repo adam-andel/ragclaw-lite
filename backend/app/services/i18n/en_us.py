@@ -210,13 +210,26 @@ MESSAGES = {
         "the length limit, and advise them to edit it themselves on the Profile page."
     ),
 
-    # Injected into an active skill's system prompt so the LLM knows where the skill
-    # folder lives inside the sandbox (REPL_SKILLS_DIR) and that it is read-only.
-    # No placeholders — the actual path is read from the env var at runtime.
+    # Injected into an active skill's system prompt so the LLM knows where the skill root lives inside
+    # the sandbox (REPL_SKILLS_DIR/<name>) and that it is read-only. This note does NOT enumerate placeholder
+    # spellings; it teaches one principle: this skill's root is always $REPL_SKILLS_DIR/<name>, with scripts/
+    # and other files under it, so any example path referring to this skill maps to that root.
+    # (The author-side {baseDir} is expanded by agent_nodes at skill-body load time into $REPL_SKILLS_DIR/<folder>,
+    # so the LLM sees the already-expanded form.)
     "skill_sandbox_note": (
         "## Skill resources in the sandbox\n"
-        "This skill's files are exposed READ-ONLY inside your sandbox at the path held in the "
-        "environment variable `REPL_SKILLS_DIR` (equivalently `<sandbox_root>/.ragclaw/skills/<skill_name>`). "
+        "This skill's root directory is always `$REPL_SKILLS_DIR/<skill_name>` (`<skill_name>` is this skill's "
+        "folder name; `REPL_SKILLS_DIR` is a sandbox env var). Its `scripts/` subdir and any other file live "
+        "UNDER that root — e.g. a script's full path is `$REPL_SKILLS_DIR/<skill_name>/scripts/<script>`.\n"
+        "Whatever form the examples use to refer to this skill's path, map it to the real sandbox path:\n"
+        "- If the example already shows `$REPL_SKILLS_DIR` (e.g. the expanded form of a `{baseDir}` placeholder): "
+        "just copy the commands verbatim — no path construction needed.\n"
+        "- If the example uses a placeholder naming this skill's root (e.g. `<skill_dir>`): replace that placeholder "
+        "wholesale with `$REPL_SKILLS_DIR/<skill_name>`.\n"
+        "- If the example uses a bare relative path (e.g. `scripts/foo.py`, no root prefix): prepend "
+        "`$REPL_SKILLS_DIR/<skill_name>/`, giving `$REPL_SKILLS_DIR/<skill_name>/scripts/foo.py`.\n"
+        "- If the example references no path at all (e.g. this skill has no scripts and only calls tools): you don't "
+        "need to care about this path.\n"
         "You may read any file there directly with run_python's open(), or call the read_skill_resource tool. "
         "The skill folder is READ-ONLY: if you write into it, the write is redirected to a sandbox-local "
         "shadow copy and is NOT saved back to the shared store, so never rely on edits to skill files persisting."

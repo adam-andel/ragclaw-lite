@@ -833,6 +833,9 @@ async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = Non
         return config_manager.system_prompt_capabilities, []
 
     parsed = parse_skill_md(skill_md_content)
+    # No source-side path-template expansion here: skill authors use arbitrary names for the
+    # skill root (e.g. {baseDir}, <skill_dir>, plain scripts/...). The LLM maps any of them to
+    # $REPL_SKILLS_DIR/<folder_name> via the principle stated in skill_sandbox_note.
     system_prompt = parsed["body"] or config_manager.system_prompt_capabilities
     # Teach the LLM where this skill's folder lives inside the sandbox (REPL_SKILLS_DIR)
     # and that it is read-only. Appended to every active skill's system prompt so the
