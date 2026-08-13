@@ -126,10 +126,6 @@ export default {
   },
   llmTitle: 'LLM 配置',
   llmDesc: '配置大语言模型的供应商、API 密钥与推理参数。修改后立即生效，无需重启。',
-  providerLabel: 'LLM 提供商',
-  providerQwen: 'Qwen (通义千问)',
-  providerOllama: 'Ollama (本地)',
-  providerCustom: '自定义',
   apiKey: {
     currentEnv: '当前: {key}（来自 .env 文件，留空不修改）',
     current: '当前: {key}（留空不修改）',

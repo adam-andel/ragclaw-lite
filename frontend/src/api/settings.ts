@@ -1,7 +1,6 @@
 import client from './client'
 
 export interface LLMConfig {
-  llm_provider: string
   llm_model: string
   llm_api_key: string         // masked, or empty if not configured
   llm_base_url: string
@@ -23,7 +22,6 @@ export interface LLMConfig {
 }
 
 export interface LLMConfigUpdate {
-  llm_provider?: string
   llm_model?: string
   llm_api_key?: string
   llm_base_url?: string

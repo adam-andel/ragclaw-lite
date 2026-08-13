@@ -20,7 +20,6 @@ logger = logging.getLogger("ragclaw.config")
 
 
 class LLMConfigUpdate(BaseModel):
-    llm_provider: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
     llm_base_url: str | None = None

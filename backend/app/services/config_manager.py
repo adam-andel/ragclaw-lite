@@ -617,7 +617,6 @@ class ConfigManager:
     def _build_defaults(self) -> dict:
         return {
             # LLM
-            "llm_provider": settings.llm_provider,
             "llm_model": settings.llm_model,
             "llm_api_key": "",
             "llm_base_url": settings.llm_base_url,
@@ -945,30 +944,15 @@ class ConfigManager:
             return self._get("embedding_model")
 
     @property
-    def llm_provider(self) -> str:
-        with self._lock:
-            return self._get("llm_provider")
-
-    @property
     def platform(self) -> str:
         """Normalized platform key for provider-specific adaptations.
 
-        Explicit ``llm_provider`` value wins; falls back to inferring from the
-        ``llm_base_url`` domain. Returns one of:
+        Inferred from the ``llm_base_url`` domain. Returns one of:
         ``openai`` | ``anthropic`` | ``qwen`` (Aliyun Bailian) | ``tencent``
         (TokenHub) | ``ollama``.
         """
         with self._lock:
-            raw = (self._config.get("llm_provider") or "openai").lower()
             base = (self._config.get("llm_base_url") or "").lower()
-        explicit = {
-            "anthropic": "anthropic", "claude": "anthropic",
-            "qwen": "qwen", "alibaba": "qwen", "dashscope": "qwen",
-            "tencent": "tencent", "tokenhub": "tencent", "hunyuan": "tencent",
-            "openai": "openai", "ollama": "ollama",
-        }
-        if raw in explicit:
-            return explicit[raw]
         if "anthropic" in base:
             return "anthropic"
         if "dashscope" in base or "aliyun" in base or "qwen" in base:

@@ -66,7 +66,6 @@ class Settings(BaseSettings):
     retrieval_similarity_threshold: float = 0.5
 
     # --- LLM (non-sensitive defaults; api_key configured via web UI, not .env) ---
-    llm_provider: str = "openai"       # openai | anthropic | qwen | tencent | ollama (falls back to base_url domain if unspecified)
     llm_model: str = "gpt-4o-mini"
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"

@@ -126,10 +126,6 @@ export default {
   },
   llmTitle: 'LLM Configuration',
   llmDesc: 'Configure the LLM provider, API key, and inference parameters. Changes take effect immediately, no restart needed.',
-  providerLabel: 'LLM Provider',
-  providerQwen: 'Qwen (Alibaba)',
-  providerOllama: 'Ollama (Local)',
-  providerCustom: 'Custom',
   apiKey: {
     currentEnv: 'Current: {key} (from .env file, leave blank to keep)',
     current: 'Current: {key} (leave blank to keep)',

@@ -31,20 +31,6 @@ function onPluginRefresh() {
   pluginSectionRef.value?.refresh()
 }
 
-const providerOptions = computed(() => [
-  { label: 'OpenAI', value: 'openai' },
-  { label: t('settings.providerQwen'), value: 'qwen' },
-  { label: t('settings.providerOllama'), value: 'ollama' },
-  { label: t('settings.providerCustom'), value: 'custom' },
-])
-
-const urlDefaults: Record<string, string> = {
-  openai: 'https://api.openai.com/v1',
-  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  ollama: 'http://localhost:11434/v1',
-  custom: '',
-}
-
 const sections = [
   { id: 'llm', label: 'settings.nav.llm' },
   { id: 'embedding-model', label: 'settings.nav.embeddingModel' },
@@ -63,7 +49,7 @@ const networkModeOptions = computed(() => [
 ])
 
 const config = ref<LLMConfig>({
-  llm_provider: 'openai', llm_model: '', llm_api_key: '',
+  llm_model: '', llm_api_key: '',
   llm_base_url: '', llm_temperature: 0.3,   llm_max_tokens: 4096,
   llm_context_window: 192000,
   llm_concurrency: 3,
@@ -666,15 +652,6 @@ onUnmounted(() => {
 
 function clearTest() { testResult.value = null }
 
-function onProviderChange(val: string) {
-  // Auto-fill default base_url when switching providers
-  const defaultUrl = urlDefaults[val] ?? ''
-  if (defaultUrl && (!config.value.llm_base_url || Object.values(urlDefaults).includes(config.value.llm_base_url))) {
-    config.value.llm_base_url = defaultUrl
-  }
-  scheduleSave(t('settings.providerLabel'))
-}
-
 // Effective prompt language: 'system' follows the global UI locale (zh-CN -> zh, en-US -> en).
 const effectivePromptLang = computed<'zh' | 'en'>(() => {
   const v = config.value.prompt_language
@@ -800,7 +777,6 @@ async function doSave() {
   const changed = [...pendingLabels]
   pendingLabels.clear()
   const payload: Record<string, any> = {
-    llm_provider: config.value.llm_provider,
     llm_model: config.value.llm_model,
     llm_base_url: config.value.llm_base_url,
     llm_temperature: config.value.llm_temperature,
@@ -1020,15 +996,6 @@ async function handleTest() {
               </div>
             </NSpace>
           </div>
-          <!-- Provider -->
-          <NFormItem :label="t('settings.providerLabel')">
-            <NSelect
-              v-model:value="config.llm_provider"
-              :options="providerOptions"
-              @update:value="onProviderChange"
-            />
-          </NFormItem>
-
           <!-- API Key -->
           <NFormItem label="API Key" :required="!config.is_configured">
             <NInput

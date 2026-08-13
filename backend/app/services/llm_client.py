@@ -5,8 +5,8 @@ Provider-aware prompt-caching support:
   - Tencent TokenHub: ``prompt_cache_key`` (body) + ``X-Session-ID`` (header)
   - OpenAI / Ollama: no extra params (OpenAI auto-caches prefixes)
 
-The active platform is resolved via ``config_manager.platform`` (explicit
-``llm_provider`` value, falling back to the ``llm_base_url`` domain).
+The active platform is resolved via ``config_manager.platform`` from the
+``llm_base_url`` domain.
 """
 
 import json
