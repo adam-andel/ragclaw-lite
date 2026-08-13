@@ -20,6 +20,7 @@ export default {
   nextRun: '下次执行',
   runNow: '立即执行',
   description: '描述',
+  cronExpr: '执行时间',
   timezone: '时区',
   unlimited: '无限',
   taskContent: '任务内容',

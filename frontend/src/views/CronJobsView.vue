@@ -459,7 +459,7 @@ function isPaused(job: CronJob) {
           <NTag :type="statusType(detailJob.status)" size="tiny" :bordered="false">{{ statusLabel(detailJob.status) }}</NTag>
         </NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.description')">{{ detailJob.description || '—' }}</NDescriptionsItem>
-        <NDescriptionsItem label="Crontab">{{ formatCron(detailJob.cron_expr) }}</NDescriptionsItem>
+        <NDescriptionsItem :label="t('cron.cronExpr')">{{ formatCron(detailJob.cron_expr) }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.timezone')">{{ detailJob.timezone }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.maxRuns')">{{ detailJob.max_runs ?? t('cron.unlimited') }}</NDescriptionsItem>
         <NDescriptionsItem :label="t('cron.runCount')">{{ detailJob.run_count }}</NDescriptionsItem>

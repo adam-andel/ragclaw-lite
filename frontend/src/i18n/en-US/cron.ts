@@ -20,6 +20,7 @@ export default {
   nextRun: 'Next Run',
   runNow: 'Run Now',
   description: 'Description',
+  cronExpr: 'Execution Time',
   timezone: 'Timezone',
   unlimited: 'Unlimited',
   taskContent: 'Task Content',
