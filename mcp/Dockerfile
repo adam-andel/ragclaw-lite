@@ -36,6 +36,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     apt-get install -y --no-install-recommends \
         nodejs \
         npm \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies into a shared site from the PINNED lockfile.
