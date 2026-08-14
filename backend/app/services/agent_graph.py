@@ -93,6 +93,25 @@ def sandbox_network_rule(execution: bool = False) -> str:
     )
 
 
+def build_cron_rule() -> str:
+    """Assemble the always-on Scheduled Task Rule (creation path).
+
+    Single source of truth shared by the generation system prompt
+    (``build_generation_messages``) and the pre-LLM token floor
+    (``conversation_summary._build_floor``) so the estimated prefix length matches
+    the real one. The body comes from i18n (``cron_scheduled_task_rule``); the
+    trailing no-fallback rule and the live egress policy are appended here.
+    """
+    return (
+        "\n\n"
+        + _t("cron_scheduled_task_rule", config_manager.prompt_language)
+        + "\n\n"
+        + _t("cron_no_fallback_rule", config_manager.prompt_language)
+        + "\n\n"
+        + sandbox_network_rule()
+    )
+
+
 def _build_graph() -> StateGraph:
     """Construct the RAGClaw agent state graph.
 
@@ -280,24 +299,9 @@ class RagclawAgentGraph:
         # tool_results is still needed below by _assemble (RAG sentinel guard).
         tool_results = state.get("tool_results", [])
 
-        cron_rule = (
-            "\n\n"
-            # Single source of truth: the Scheduled Task Rule body lives in the i18n
-            # module (cron_scheduled_task_rule) so it is NOT duplicated in
-            # conversation_summary._build_floor. The trailing no-fallback rule and the
-            # live egress policy are appended at creation time.
-            + _t("cron_scheduled_task_rule", config_manager.prompt_language)
-            + "\n\n"
-            # A scheduled task runs unattended: a script that silently falls back to
-            # placeholder data would report success forever while emitting garbage.
-            # Both rules below are also appended at execution time (cron_graph), so
-            # the constraint holds whether the code is written now or at run time.
-            + _t("cron_no_fallback_rule", config_manager.prompt_language)
-            + "\n\n"
-            # Surface the live egress policy at CREATION time so the model can refuse
-            # an impossible task up front instead of improvising a fake one at runtime.
-            + sandbox_network_rule()
-        ) if include_cron_rule else ""
+        # Always-on Scheduled Task Rule (creation path). Shared with the pre-LLM
+        # token floor via agent_graph.build_cron_rule so the two stay identical.
+        cron_rule = build_cron_rule() if include_cron_rule else ""
 
         # file_answer_rule: constant suffix appended every turn so the model never
         # re-pastes a generated file's source code. The heading lives inside the

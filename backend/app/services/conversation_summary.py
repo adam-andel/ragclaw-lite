@@ -207,21 +207,11 @@ def _empty_context_request_tokens(
     """
     # system① -- always-on constants. Lazy import: agent_graph imports THIS module
     # at top level, so a top-level import of agent_graph here would be circular;
-    # by call time agent_graph is fully loaded.
-    from app.services.agent_graph import sandbox_network_rule
+    # by call time agent_graph is fully loaded. The Scheduled Task Rule is shared
+    # with the generation path via agent_graph.build_cron_rule so the two stay identical.
+    from app.services.agent_graph import build_cron_rule
 
-    cron_rule = (
-        "\n\n"
-        # Same Scheduled Task Rule body as the creation path in
-        # agent_graph.build_generation_messages. Fetched from the i18n module so the
-        # pre-LLM token floor matches the real system prefix length without a duplicated
-        # copy. The trailing no-fallback rule + live egress policy are appended here too.
-        + _t("cron_scheduled_task_rule", config_manager.prompt_language)
-        + "\n\n"
-        + _t("cron_no_fallback_rule", config_manager.prompt_language)
-        + "\n\n"
-        + sandbox_network_rule()
-    ) if include_cron_rule else ""
+    cron_rule = build_cron_rule() if include_cron_rule else ""
     const_prefix = (
         cron_rule
         + "\n\n" + _t("file_answer_rule", config_manager.prompt_language)
