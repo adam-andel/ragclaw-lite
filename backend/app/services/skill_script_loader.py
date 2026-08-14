@@ -192,39 +192,30 @@ def _parse_script_file(script_path: Path, skill_dir: Path) -> list[dict]:
 def discover_tools(folder_name: str) -> list[dict]:
     """Discover script tools from a skill's scripts/ directory.
 
-    Scans scripts/*.py, AST-parses each, extracts public functions as
-    OpenAI function-calling tool definitions. Results cached by file mtime.
+    DISABLED BY CONVENTION — always returns [].
 
-    Returns list of tool definition dicts with _source="script" metadata.
+    ragclaw must NOT read third-party skill script source (scripts/*.py) to
+    auto-expose internal functions as function-calling tools. How a skill's
+    scripts are used is governed entirely by the skill's own SKILL.md: the LLM
+    reads SKILL.md / runtime.conf and invokes the documented CLI via the
+    run_shell / run_python tools.
+
+    Auto-AST-parsing script internals (e.g. a CLI's ``cmd_*`` handlers) is wrong
+    on two counts:
+      1. It violates the industry convention — skill authors never ship skills
+         expecting the host to introspect their source; SKILL.md is the contract.
+      2. It wastes tokens proportional to script size (a 20KB script costs the
+         same to ignore as a 20-line one once we stop reading it).
+
+    Returning [] guarantees no script-internal function is ever exposed to the
+    LLM, so it can only follow the SKILL.md contract. The rest of this module
+    (build_execution_code / execute_script_tool) is intentionally left in place
+    but is now unreachable through discovery; if a skill ever needs host-side
+    script execution, it must be wired explicitly — never by reading skill source.
+
+    Returns an empty list (no script tools).
     """
-    skill_dir = get_skill_dir(folder_name)
-    scripts_dir = skill_dir / "scripts"
-
-    if not scripts_dir.exists():
-        return []
-
-    # Compute combined mtime of all .py files for cache key
-    py_files = sorted(scripts_dir.rglob("*.py"))
-    if not py_files:
-        return []
-
-    combined_mtime = sum(f.stat().st_mtime for f in py_files)
-
-    # Check cache
-    cached = _cache.get(folder_name)
-    if cached and cached["mtime"] == combined_mtime:
-        return cached["tools"]
-
-    # Parse all script files
-    all_tools = []
-    for py_file in py_files:
-        tools = _parse_script_file(py_file, skill_dir)
-        all_tools.extend(tools)
-
-    # Update cache
-    _cache[folder_name] = {"mtime": combined_mtime, "tools": all_tools}
-    logger.info("Discovered %d script tools from %s/scripts/", len(all_tools), folder_name)
-    return all_tools
+    return []
 
 
 def clear_cache(folder_name: str | None = None) -> None:
