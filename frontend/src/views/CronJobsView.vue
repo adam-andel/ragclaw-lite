@@ -22,6 +22,7 @@ import type { CronJob, CronJobCreatePayload, CronJobRun } from '@/types'
 import { parseUtcTs } from '@/utils/datetime'
 import { backendErrorMessage } from '@/utils/backendError'
 import { useCronDescribe } from '@/composables/useCronDescribe'
+import MarkdownIt from 'markdown-it'
 
 const message = useMessage()
 const { t } = useI18n()
@@ -79,6 +80,23 @@ const runsPerPage = 10
 const pagedRuns = computed(() =>
   runs.value.slice((runsPage.value - 1) * runsPerPage, runsPage.value * runsPerPage),
 )
+
+// Render cron run logs as markdown so code blocks get scrollable styling
+// instead of one big unstyled <pre>. Collapsed by default (expand on demand).
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const expandedRuns = ref<Set<string>>(new Set())
+function isRunExpanded(id: string): boolean {
+  return expandedRuns.value.has(id)
+}
+function toggleRunExpanded(id: string) {
+  const next = new Set(expandedRuns.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedRuns.value = next
+}
+function renderRunOutput(output: string): string {
+  return md.render(output || '')
+}
 const runningId = ref('')
 
 // ── Button style constants (consistent with SkillsView / DocumentManage) ──
@@ -496,7 +514,30 @@ function isPaused(job: CronJob) {
                   <NTag :type="run.status === 'executed' ? 'success' : 'error'">{{ run.status }}</NTag>
                   <span class="run-time">{{ formatTime(run.started_at) }}</span>
                 </div>
-                <pre v-if="run.output" class="run-output">{{ run.output }}</pre>
+                <div v-if="run.output" class="run-output-wrap">
+                  <div
+                    class="run-output markdown-body"
+                    :class="{ collapsed: !isRunExpanded(run.id) }"
+                    v-html="renderRunOutput(run.output)"
+                    @click="!isRunExpanded(run.id) && toggleRunExpanded(run.id)"
+                  ></div>
+                  <div class="run-toggle-row">
+                    <NButton
+                      v-if="!isRunExpanded(run.id)"
+                      size="tiny"
+                      quaternary
+                      class="run-toggle"
+                      @click="toggleRunExpanded(run.id)"
+                    >{{ t('cron.expand') }}</NButton>
+                    <NButton
+                      v-else
+                      size="tiny"
+                      quaternary
+                      class="run-toggle"
+                      @click="toggleRunExpanded(run.id)"
+                    >{{ t('cron.collapse') }}</NButton>
+                  </div>
+                </div>
                 <div v-if="run.error" class="run-error">{{ t('cron.errorPrefix') }}{{ run.error }}</div>
               </div>
             </div>
@@ -680,14 +721,59 @@ html.dark .cj-card-desc {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
-.run-output {
+.run-output-wrap {
   background: var(--color-surface);
+  border-radius: var(--radius);
+}
+.run-output {
   padding: 12px;
   border-radius: var(--radius);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--text-sm);
+  max-height: 240px;
+  overflow-y: auto;
+  transition: max-height 0.2s ease;
+}
+.run-output.collapsed {
+  max-height: 120px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent 100%);
+}
+.run-output :deep(pre) {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  margin: 8px 0;
+}
+.run-output :deep(code) {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88em;
+}
+.run-output :deep(pre code) {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
+.run-output :deep(p) {
+  margin: 6px 0;
+}
+.run-output :deep(ul),
+.run-output :deep(ol) {
+  padding-left: 1.5em;
+  margin: 6px 0;
+}
+.run-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 .run-error {
   color: var(--color-error);

@@ -33,6 +33,8 @@ export default {
   pause: 'Pause',
   confirmDelete: 'Delete this scheduled task?',
   noRunRecords: 'No execution records yet',
+  expand: 'Expand',
+  collapse: 'Collapse',
   errorPrefix: 'Error: ',
 
   // ── Create / edit form ──

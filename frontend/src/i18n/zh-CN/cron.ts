@@ -33,6 +33,8 @@ export default {
   pause: '暂停',
   confirmDelete: '确定删除该定时任务？',
   noRunRecords: '暂无执行记录',
+  expand: '展开',
+  collapse: '收起',
   errorPrefix: '错误：',
 
   // ── Create / edit form ──
