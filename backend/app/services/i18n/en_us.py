@@ -259,5 +259,9 @@ MESSAGES = {
         "The current date is **{date}** (timezone {tz}). For any relative-time phrasing ('today', 'this week', "
         "'this month', 'this year'), always anchor to this date — do not use a year from your training data, and "
         "do not guess or fabricate a year."
+"\n"
+"Note the distinction between the **current date** above and a search result's **publish date**: each result carries its own "
+"publication time, which is the date that article or page was actually published - they are not the same. When you cite a "
+"result, label its publication date accurately; never write a result's publish date as 'today', and never treat the current date as a result's publish date."
     ),
 }
