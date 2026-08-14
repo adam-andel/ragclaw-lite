@@ -510,7 +510,7 @@ async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, st
 
     secret = config_manager.repl_auth_secret
     if not secret:
-        return None, "REPL 认证未配置"
+        return None, "REPL_AUTH_NOT_CONFIGURED"
     base = settings.mcp_repl_internal_url.rstrip("/")
     url = f"{base}/workspace/{path.lstrip('/')}"
     headers = {"X-Repl-Auth": secret, "X-Repl-Uid": str(uid)}
@@ -521,25 +521,25 @@ async def _read_workspace_file_text(uid: int, path: str) -> tuple[str | None, st
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(url, headers=headers)
     except httpx.ConnectError:
-        return None, "MCP REPL 服务不可用"
+        return None, "MCP_REPL_UNAVAILABLE"
     except Exception as e:  # noqa: BLE001 - surface uniformly
-        return None, f"读取失败: {e}"
+        return None, f"READ_FAILED: {e}"
 
     if resp.status_code == 404:
-        return None, "文件不存在"
+        return None, "FILE_NOT_FOUND"
     if resp.status_code != 200:
-        return None, f"MCP 错误 {resp.status_code}"
+        return None, f"MCP_ERROR_{resp.status_code}"
 
     try:
         text = resp.content.decode("utf-8")
     except UnicodeDecodeError:
-        return None, "文件为二进制，无法作为文本插入"
+        return None, "FILE_IS_BINARY"
 
     if _looks_binary(text):
-        return None, "文件为二进制，无法作为文本插入"
+        return None, "FILE_IS_BINARY"
 
     if len(text) > _MAX_FILE_CHARS:
-        text = text[:_MAX_FILE_CHARS] + f"\n... (内容已截断，原文 {len(text)} 字符)"
+        text = text[:_MAX_FILE_CHARS] + f"\n... (content truncated, original length {len(text)} chars)"
     return text, None
 
 
@@ -555,7 +555,7 @@ async def _expand_file_refs(
       - binary / high-density (one long unbroken line) → top appendix (note);
       - else if ``len ≤ _INLINE_MAX_CHARS`` AND cumulative in-place content
         ``≤ _INLINE_BUDGET_CHARS`` → in place, next to the reference;
-      - otherwise → top appendix, referenced from the question as ``文档N``.
+      - otherwise → top appendix, referenced from the question as ``DocN``.
 
     Unreadable files fall back to a short inline note rather than aborting.
     """
@@ -575,7 +575,7 @@ async def _expand_file_refs(
     raw: dict[str, tuple[str | None, str | None]] = {}
     for path in unique:
         if uid is None:
-            raw[path] = (None, "用户沙箱未初始化")
+            raw[path] = (None, "USER_SANDBOX_NOT_INITIALIZED")
         else:
             raw[path] = await _read_workspace_file_text(uid, path)
 
@@ -593,7 +593,7 @@ async def _expand_file_refs(
 
         # 1) Read failure --------------------------------------------------
         if err or content is None:
-            if err and "二进制" in err:
+            if err and "BINARY" in err:
                 # Binary: quarantine to the appendix with a clean note instead
                 # of inlining mojibake next to the user's question.
                 label_counter += 1
@@ -601,21 +601,21 @@ async def _expand_file_refs(
                 summary["prepend"] += 1
                 appendices.append(
                     (label_counter, path,
-                     f"文档{label_counter} [{path}]:\n(该文件疑似二进制，无法以文本形式读取)\n")
+                     f"Doc{label_counter} [{path}]:\n(this file appears to be binary and cannot be read as text)\n")
                 )
-                resolution[path] = f"文档{label_counter}"
+                resolution[path] = f"Doc{label_counter}"
                 continue
-            resolution[path] = f"[文件 {path} 读取失败：{err or '读取失败'}]"
+            resolution[path] = f"[File {path} read failed: {err or 'READ_FAILED'}]"
             summary["failed"] += 1
-            errors.append(f"{path}: {err or '读取失败'}")
+            errors.append(f"{path}: {err or 'READ_FAILED'}")
             continue
 
         # 2) Cumulative guardrail ------------------------------------------
         if total + len(content) > _MAX_TOTAL_CHARS:
             resolution[path] = (
-                f"[文件 {path} 已跳过：累计内容超出 {_MAX_TOTAL_CHARS} 字符上限]"
+                f"[File {path} skipped: cumulative content exceeds {_MAX_TOTAL_CHARS} char limit]"
             )
-            errors.append(f"{path}: 累计超出字符上限")
+            errors.append(f"{path}: cumulative char limit exceeded")
             continue
 
         # 3) Classify placement -------------------------------------------
@@ -628,7 +628,7 @@ async def _expand_file_refs(
 
         if fits_inline:
             resolution[path] = (
-                f"\n=== 文件内容: {path} ===\n{content}\n=== 文件内容结束: {path} ===\n"
+                f"\n=== File content: {path} ===\n{content}\n=== End of file content: {path} ===\n"
             )
             inline_used += len(content)
             total += len(content)
@@ -638,9 +638,9 @@ async def _expand_file_refs(
             label_of[path] = label_counter
             summary["prepend"] += 1
             appendices.append(
-                (label_counter, path, f"文档{label_counter} [{path}]:\n{content}\n")
+                (label_counter, path, f"Doc{label_counter} [{path}]:\n{content}\n")
             )
-            resolution[path] = f"文档{label_counter}"
+            resolution[path] = f"Doc{label_counter}"
             total += len(content)
 
     def _sub(m: re.Match) -> str:
@@ -828,9 +828,9 @@ async def _abort_run(conv_id: str) -> bool:
 # run, any residual 400 from the provider is overwhelmingly a context overflow;
 # this lets us swap the raw provider error text for a clean localized code.
 #
-# These are deliberately phrases, never bare words. "exceed"/"超出" on their own
-# also appear in quota and rate-limit errors, and mislabelling those as "your
-# question is too long" sends the user chasing the wrong problem.
+# These are deliberately phrases, never bare words. The English "exceed" (and its
+# Chinese equivalent) also appear in quota and rate-limit errors, and mislabelling
+# those as "your question is too long" sends the user chasing the wrong problem.
 _CONTEXT_OVERFLOW_HINTS = (
     "maximum context length",
     "max context length",
@@ -965,7 +965,7 @@ async def chat_stream(
             raise HTTPException(404, "Conversation not found")
         # Verify ownership: cannot continue someone else's conversation
         if conv.user_id and conv.user_id != current_user.id:
-            raise HTTPException(403, "不能在其他用户的对话中发言")
+            raise HTTPException(403, "CANNOT_REPLY_IN_OTHER_USERS_CONVERSATION")
     else:
         title = request.query[:50] + ("..." if len(request.query) > 50 else "")
         conv = Conversation(
@@ -1033,7 +1033,7 @@ async def chat_stream(
     # must carry a non-empty query.
     is_resume = request.resume_action in ("continue", "stop")
     if not is_resume and not request.query:
-        raise HTTPException(status_code=422, detail="query 不能为空")
+        raise HTTPException(status_code=422, detail="QUERY_REQUIRED")
 
     # Build conversation history. A conversation's messages only ever GROW by
     # append, never mutate, so we serve them from the per-conversation cache: the
@@ -1767,7 +1767,7 @@ async def get_conversation(
         raise HTTPException(404, "Conversation not found")
     # Verify ownership
     if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
 
     messages_list = []
     if include_messages:
@@ -1839,7 +1839,7 @@ async def get_conversation_messages(
     if not conv:
         raise HTTPException(404, "Conversation not found")
     if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
 
     total_result = await db.execute(
         select(func.count()).select_from(Message).where(Message.conversation_id == conv_id)
@@ -1904,7 +1904,7 @@ async def get_pending_limit(
     if not conv:
         raise HTTPException(404, "Conversation not found")
     if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
 
     pending = await _load_pending_state(db, conv_id)
     if not pending:
@@ -1978,7 +1978,7 @@ async def _load_owned_conversation(conv_id: str, current_user: User, db: AsyncSe
     if not conv:
         raise HTTPException(404, "Conversation not found")
     if conv.user_id and conv.user_id != current_user.id and current_user.role.value != "admin":
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
     return conv
 
 

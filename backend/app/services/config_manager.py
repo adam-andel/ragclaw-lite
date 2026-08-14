@@ -403,26 +403,26 @@ def _validate_cert_key(cert_pem: str, key_pem: str) -> dict:
     try:
         cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
     except Exception as e:
-        raise ValueError(f"证书解析失败: {e}")
+        raise ValueError(f"CERT_PARSE_FAILED: {e}")
     try:
         key = load_pem_private_key(key_pem.encode("utf-8"), password=None)
     except TypeError:
-        raise ValueError("私钥受密码保护，请提供未加密的 PEM 私钥")
+        raise ValueError("PRIVATE_KEY_ENCRYPTED: provide an unencrypted PEM private key")
     except Exception as e:
-        raise ValueError(f"私钥解析失败: {e}")
+        raise ValueError(f"PRIVATE_KEY_PARSE_FAILED: {e}")
     try:
         key_pub = key.public_key().public_bytes(
             Encoding.DER, PublicFormat.SubjectPublicKeyInfo
         )
     except Exception:
-        raise ValueError("不支持的私钥格式（需未加密的 PEM 私钥）")
+        raise ValueError("UNSUPPORTED_PRIVATE_KEY_FORMAT: need an unencrypted PEM private key")
     if (
         cert.public_key().public_bytes(
             Encoding.DER, PublicFormat.SubjectPublicKeyInfo
         )
         != key_pub
     ):
-        raise ValueError("证书与私钥不匹配")
+        raise ValueError("CERT_KEY_MISMATCH")
     subject = cert.subject.rfc4514_string()
     try:
         not_after = cert.not_valid_after_utc

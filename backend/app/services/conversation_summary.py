@@ -473,7 +473,7 @@ def plan_segment(rounds: list[Round], cursor: int, min_tok: int, max_tok: int):
       - crossing ``max_tok`` with ``acc >= min_tok`` -> emit (don't merge the round
         that would exceed it);
       - a single round exceeding ``max_tok`` while ``acc < min_tok`` -> merge it and
-        split it at execution time (plan §3 "超长轮的单元切分"); the segment is then
+        split it at execution time (plan §3 "splitting over-long rounds into units"); the segment is then
         necessarily >= MAX so it emits;
       - accumulating to ``>= max_tok`` -> emit;
       - tail drained (``exhausted``) with ``acc >= min_tok`` -> emit (best-effort

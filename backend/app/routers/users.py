@@ -153,7 +153,7 @@ async def create_user(
     if created is None:
         raise HTTPException(
             503,
-            f"USER_UID_POOL_EXHAUSTED: 无法为新建用户分配沙盒隔离 UID：UID 池可能已耗尽，请扩大 REPL_UID_RANGE_MAX。",
+            f"USER_UID_POOL_EXHAUSTED: could not allocate an isolated sandbox UID for the new user; the UID pool may be exhausted, please enlarge REPL_UID_RANGE_MAX.",
         )
     return UserResponse.model_validate(created)
 
@@ -238,8 +238,8 @@ async def delete_user(
             logger.warning("repl_dir_cleanup_failed user=%s uid=%s err=%s", user_id, repl_uid, e)
             raise HTTPException(
                 502,
-                f"USER_SANDBOX_CLEANUP_FAILED: 无法清理用户 {user_id} 的沙盒目录（mcp-repl 可能不可用），用户未删除。"
-                f"请排查 mcp-repl 服务后重试。原始错误: {e}",
+                f"USER_SANDBOX_CLEANUP_FAILED: could not clean up user {user_id}'s sandbox directory (mcp-repl may be unavailable); user was not deleted."
+                f"Please investigate the mcp-repl service and retry. Original error: {e}",
             )
 
     await db.delete(user)

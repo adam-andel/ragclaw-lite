@@ -56,10 +56,10 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="INVALID_CREDENTIALS")
 
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="USER_DISABLED")
 
     token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
     raw_refresh = issue_raw_refresh_token()
@@ -249,11 +249,11 @@ async def upload_avatar(
 ):
     """Upload a custom avatar image (max 1MB, image types only)."""
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="请上传图片文件")
+        raise HTTPException(status_code=400, detail="AVATAR_MUST_BE_IMAGE")
 
     contents = await file.read()
     if len(contents) > MAX_AVATAR_SIZE:
-        raise HTTPException(status_code=400, detail=f"图片大小不能超过 {MAX_AVATAR_SIZE // 1024 // 1024}MB")
+        raise HTTPException(status_code=400, detail=f"AVATAR_TOO_LARGE_MAX_MB_{MAX_AVATAR_SIZE // 1024 // 1024}")
 
     # Delete old avatar file if exists
     if current_user.avatar_url:

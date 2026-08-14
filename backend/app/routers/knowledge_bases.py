@@ -154,10 +154,10 @@ async def get_kb(
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     kb = result.scalar_one_or_none()
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
         if not await _user_has_kb_access(current_user.id, kb_id, db):
-            raise HTTPException(403, "无权访问")
+            raise HTTPException(403, "ACCESS_DENIED")
     return await _kb_to_response(kb, db)
 
 
@@ -171,9 +171,9 @@ async def update_kb(
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     kb = result.scalar_one_or_none()
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能修改自己创建的知识库")
+        raise HTTPException(403, "ONLY_OWNER_CAN_MODIFY")
 
     warnings: list[dict] = []
     if data.name is not None:
@@ -203,9 +203,9 @@ async def delete_kb(
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     kb = result.scalar_one_or_none()
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能删除自己创建的知识库")
+        raise HTTPException(403, "ONLY_OWNER_CAN_DELETE")
 
     vector_store.delete_collection(kb_id)
     await db.delete(kb)
@@ -223,11 +223,11 @@ async def list_kb_documents(
     from app.routers.documents import _model_to_response, _get_doc_kb_ids
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     # gid: admin / KB owner / KB members may list (mirrors get_kb idiom)
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
         if not await _user_has_kb_access(current_user.id, kb_id, db):
-            raise HTTPException(403, "无权访问")
+            raise HTTPException(403, "ACCESS_DENIED")
 
     result = await db.execute(
         select(KBDocument).where(KBDocument.kb_id == kb_id).order_by(KBDocument.added_at.desc())
@@ -256,9 +256,9 @@ async def add_documents_to_kb(
 
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能修改自己的知识库")
+        raise HTTPException(403, "ONLY_OWNER_KB")
 
     added = 0
     skipped = 0
@@ -329,9 +329,9 @@ async def remove_document_from_kb(
     """Remove a document from this knowledge base (document itself is NOT deleted)."""
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能修改自己的知识库")
+        raise HTTPException(403, "ONLY_OWNER_KB")
 
     result = await db.execute(
         select(KBDocument).where(
@@ -340,7 +340,7 @@ async def remove_document_from_kb(
     )
     link = result.scalar_one_or_none()
     if not link:
-        raise HTTPException(404, "文档不在该知识库中")
+        raise HTTPException(404, "DOC_NOT_IN_KB")
 
     from app.services.vector_store import vector_store
     from app.services.bm25_index import bm25_index
@@ -372,9 +372,9 @@ async def list_kb_users(kb_id: str, current_user: User = Depends(get_current_use
     """List users who have access to this KB (KB owner only)."""
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能查看自己创建的知识库")
+        raise HTTPException(403, "ONLY_OWNER_CAN_VIEW")
     result = await db.execute(
         select(User).join(KBUserAccess).where(KBUserAccess.kb_id == kb_id)
     )
@@ -388,19 +388,19 @@ async def add_kb_user(kb_id: str, user_id: str,
     """Grant a user access to this KB (KB owner only)."""
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能管理自己创建的知识库")
+        raise HTTPException(403, "ONLY_OWNER_CAN_MANAGE")
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(404, "用户不存在")
+        raise HTTPException(404, "USER_NOT_FOUND")
     existing = await db.execute(
         select(KBUserAccess).where(
             and_(KBUserAccess.kb_id == kb_id, KBUserAccess.user_id == user_id)
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(400, "该用户已有访问权限")
+        raise HTTPException(400, "USER_ALREADY_HAS_ACCESS")
     access = KBUserAccess(id=_gen_id(), kb_id=kb_id, user_id=user_id)
     db.add(access)
     await db.commit()
@@ -414,9 +414,9 @@ async def remove_kb_user(kb_id: str, user_id: str,
     """Revoke a user's access to this KB (KB owner only)."""
     kb = await db.get(KnowledgeBase, kb_id)
     if not kb:
-        raise HTTPException(404, "知识库不存在")
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
     if current_user.role.value != "admin" and kb.owner_id != current_user.id:
-        raise HTTPException(403, "只能管理自己创建的知识库")
+        raise HTTPException(403, "ONLY_OWNER_CAN_MANAGE")
     result = await db.execute(
         select(KBUserAccess).where(
             and_(KBUserAccess.kb_id == kb_id, KBUserAccess.user_id == user_id)
@@ -424,7 +424,7 @@ async def remove_kb_user(kb_id: str, user_id: str,
     )
     access = result.scalar_one_or_none()
     if not access:
-        raise HTTPException(404, "该用户没有访问权限")
+        raise HTTPException(404, "USER_HAS_NO_ACCESS")
     await db.delete(access)
     await db.commit()
     return {"status": "revoked"}

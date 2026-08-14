@@ -175,20 +175,20 @@ async def get_current_user(
 ) -> User:
     """Dependency: extract and validate the current user from Bearer token."""
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供认证令牌")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MISSING_AUTH_TOKEN")
 
     payload = decode_token(credentials.credentials)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效或已过期")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="INVALID_OR_EXPIRED_TOKEN")
 
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="INVALID_TOKEN")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已禁用")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="USER_NOT_FOUND_OR_DISABLED")
 
     return user
 
@@ -198,7 +198,7 @@ async def get_current_admin(
 ) -> User:
     """Dependency: require admin role."""
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ADMIN_REQUIRED")
     return current_user
 
 
@@ -207,7 +207,7 @@ async def get_current_staff(
 ) -> User:
     """Dependency: require admin or moderator."""
     if current_user.role not in (UserRole.ADMIN, UserRole.MODERATOR):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="STAFF_REQUIRED")
     return current_user
 
 

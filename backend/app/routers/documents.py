@@ -76,7 +76,7 @@ async def _load_doc_for_read(
         select(Document).where(Document.id == doc_id)
     )).scalar_one_or_none()
     if not doc:
-        raise HTTPException(404, "文档不存在")
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
 
     if current_user.role.value == "admin":
         return doc
@@ -96,7 +96,7 @@ async def _load_doc_for_read(
     if shared is not None:
         return doc
 
-    raise HTTPException(403, "无权访问该文档")
+    raise HTTPException(403, "DOCUMENT_ACCESS_DENIED")
 
 
 # ---- Upload (single file, no KB binding) ----
@@ -112,7 +112,7 @@ async def upload_document(
     filename = file.filename or "unknown"
     ext = Path(filename).suffix.lower().lstrip(".")
     if ext not in parser_service.supported_types():
-        raise HTTPException(400, f"不支持的文件类型: .{ext}")
+        raise HTTPException(400, f"UNSUPPORTED_FILE_TYPE: .{ext}")
 
     doc_id = _gen_id()
     saved_path = settings.upload_dir / f"{doc_id}_{Path(filename).name}"
@@ -152,9 +152,9 @@ async def upload_documents_batch(
     db: AsyncSession = Depends(get_db),
 ):
     if not files:
-        raise HTTPException(400, "请选择至少一个文件")
+        raise HTTPException(400, "AT_LEAST_ONE_FILE_REQUIRED")
     if len(files) > 20:
-        raise HTTPException(400, "单次最多上传 20 个文件")
+        raise HTTPException(400, "MAX_20_FILES_PER_UPLOAD")
 
     results = []
     for file in files:
@@ -163,7 +163,7 @@ async def upload_documents_batch(
         if ext not in parser_service.supported_types():
             results.append(DocumentResponse(
                 id="", filename=filename, file_type=ext, file_size=0,
-                status="skipped", progress=0, error_message=f"不支持的类型: .{ext}",
+                status="skipped", progress=0, error_message=f"UNSUPPORTED_TYPE: .{ext}",
                 chunk_count=0, kb_ids=[], kb_id=None,
                 created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
                 owner_id=None,
@@ -299,7 +299,7 @@ async def download_document(
     doc = await _load_doc_for_read(doc_id, current_user, db)
     path = Path(doc.file_path)
     if not path.exists():
-        raise HTTPException(404, "文件不存在或已被清理")
+        raise HTTPException(404, "FILE_NOT_FOUND_OR_PURGED")
     return FileResponse(
         path=path,
         filename=doc.filename,
@@ -374,7 +374,7 @@ async def get_document_chunk(
     )
     chunk = result.scalar_one_or_none()
     if not chunk:
-        raise HTTPException(404, "分块不存在")
+        raise HTTPException(404, "CHUNK_NOT_FOUND")
     return chunk
 
 
@@ -455,9 +455,9 @@ async def delete_document(
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        raise HTTPException(404, "文档不存在")
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
     if current_user.role.value not in ("admin", "moderator") and doc.owner_id != current_user.id:
-        raise HTTPException(403, "无权删除该文档")
+        raise HTTPException(403, "DOCUMENT_DELETE_DENIED")
 
     asyncio.create_task(_purge_document(doc_id))
     return {"status": "deleting"}
@@ -479,7 +479,7 @@ async def list_documents_by_kb(
             ).limit(1)
         )).first()
         if member is None:
-            raise HTTPException(403, "无权访问该知识库")
+            raise HTTPException(403, "KB_ACCESS_DENIED")
     result = await db.execute(
         select(KBDocument).where(KBDocument.kb_id == kb_id).order_by(KBDocument.added_at.desc())
     )
@@ -502,11 +502,11 @@ async def trigger_process_document(
     """Trigger async processing for a single pending document."""
     doc = await db.get(Document, doc_id)
     if not doc:
-        raise HTTPException(404, "文档不存在")
+        raise HTTPException(404, "DOCUMENT_NOT_FOUND")
     if current_user.role.value != "admin" and doc.owner_id != current_user.id:
-        raise HTTPException(403, "只能处理自己上传的文档")
+        raise HTTPException(403, "ONLY_OWN_UPLOADED_DOC")
     if doc.status not in (DocStatus.PENDING, DocStatus.UPLOADED, DocStatus.FAILED):
-        raise HTTPException(400, f"文档状态为 {_status_str(doc)}，无需处理")
+        raise HTTPException(400, f"DOC_STATUS_{_status_str(doc).upper()}_NO_ACTION_NEEDED")
 
     from app.services.doc_processor import process_document
     import asyncio
