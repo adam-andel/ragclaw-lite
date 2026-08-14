@@ -17,8 +17,8 @@ class PptxParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="pptx",
-            display_name="PowerPoint 演示文稿",
-            description="解析 .pptx 文件，按幻灯片分块，提取标题与正文文本",
+            display_name="parser.pptx.name",
+            description="parser.pptx.desc",
             category="office",
             extensions=["pptx"],
         )
@@ -34,7 +34,7 @@ class PptxParser(BaseParser):
             content = "\n".join(body_parts) if body_parts else title or ""
             sections.append(ParsedSection(
                 level=1,
-                heading=title or f"第 {idx + 1} 页",
+                heading=title or f"Slide {idx + 1}",
                 content=content,
                 page=idx + 1,
             ))

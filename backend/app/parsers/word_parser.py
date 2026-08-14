@@ -21,8 +21,8 @@ class WordParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="word",
-            display_name="Word 文档",
-            description="解析 .docx 文件，按标题样式分块，提取表格内容",
+            display_name="parser.word.name",
+            description="parser.word.desc",
             category="office",
             extensions=["docx"],
         )

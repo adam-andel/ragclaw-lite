@@ -18,8 +18,8 @@ class MarkdownParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="markdown",
-            display_name="Markdown",
-            description="解析 Markdown 文件，按 # 标题层级分块，清理格式标记",
+            display_name="parser.markdown.name",
+            description="parser.markdown.desc",
             category="text",
             extensions=["md", "markdown"],
         )

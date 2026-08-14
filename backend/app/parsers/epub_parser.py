@@ -17,8 +17,8 @@ class EpubParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="epub",
-            display_name="EPUB 电子书",
-            description="解析 .epub 文件，按章节分块，提取标题与正文",
+            display_name="parser.epub.name",
+            description="parser.epub.desc",
             category="ebook",
             extensions=["epub"],
         )
@@ -41,7 +41,7 @@ class EpubParser(BaseParser):
 
             heading, body_text = self._extract_html(html_content)
             if not heading:
-                heading = f"第 {chapter_idx} 章"
+                heading = f"Chapter {chapter_idx}"
             if not body_text.strip():
                 continue
 

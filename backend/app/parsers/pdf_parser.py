@@ -17,8 +17,8 @@ class PDFParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="pdf",
-            display_name="PDF 文档",
-            description="解析 PDF 文件，按页提取文本，依据字体大小检测标题层级",
+            display_name="parser.pdf.name",
+            description="parser.pdf.desc",
             category="office",
             extensions=["pdf"],
         )
