@@ -107,13 +107,29 @@ _SKILLS_ENABLE = os.path.join(_SKILLS_BASE, "enable")
 # ═══════════════════════════════════════════════════════════
 # OS resource limits (shared across languages)
 # ═══════════════════════════════════════════════════════════
-def _set_limits():
-    """preexec_fn (Linux): RLIMIT_AS / RLIMIT_CPU / RLIMIT_NPROC on child process."""
+def _set_limits(is_node: bool = False):
+    """preexec_fn (Linux): RLIMIT_AS / RLIMIT_CPU / RLIMIT_NPROC on child process.
+
+    For Node.js we must NOT use RLIMIT_AS: V8 reserves a large contiguous
+    virtual address space up front (pointer-compression cage / CodeRange) that
+    easily exceeds a 512 MB RLIMIT_AS, so node aborts at startup with
+    "Fatal process OOM in Failed to reserve virtual memory for CodeRange". We
+    instead bound node with RLIMIT_DATA (data-segment limit, which does not
+    count V8's mmap reservations) and rely on the JS runner's
+    --max-old-space-size to cap the actual JS heap.
+    """
     if os.name == 'nt':
         return
     import resource as _rlim
     mem_bytes = _max_memory_mb * 1024 * 1024
-    _rlim.setrlimit(_rlim.RLIMIT_AS, (mem_bytes, mem_bytes))
+    if is_node:
+        # RLIMIT_DATA caps heap/BSS; V8's heap is mmap-based so this is only a
+        # soft backstop. The real JS-heap bound is --max-old-space-size (set by
+        # the JS runner). Using DATA (not AS) lets node reserve its virtual
+        # address space and actually start.
+        _rlim.setrlimit(_rlim.RLIMIT_DATA, (mem_bytes, mem_bytes))
+    else:
+        _rlim.setrlimit(_rlim.RLIMIT_AS, (mem_bytes, mem_bytes))
     cpu_secs = DEFAULT_TIMEOUT + 10
     _rlim.setrlimit(_rlim.RLIMIT_CPU, (cpu_secs, cpu_secs))
     _rlim.setrlimit(_rlim.RLIMIT_NPROC, (_max_nproc, _max_nproc))
@@ -467,16 +483,22 @@ def _ws_safe(root: str, rel: str, allow_write: bool = False) -> str | None:
     return target
 
 
-def _build_preexec(acct):
+def _build_preexec(acct, is_node: bool = False):
     """preexec_fn: apply rlimits, then drop to the target account's UID/GID.
 
-    If dropping privileges fails we _exit(1) so the child never runs as root.
+    ``is_node`` selects the Node.js-friendly limit set (RLIMIT_DATA instead of
+    RLIMIT_AS) so the JS runner can actually start. If dropping privileges fails
+    we _exit(1) so the child never runs as root.
     """
-    if acct is None or os.name == 'nt':
-        return _set_limits if os.name != 'nt' else None
+    if os.name == 'nt':
+        return None
+    if acct is None:
+        def _limits_only():
+            _set_limits(is_node=is_node)
+        return _limits_only
 
     def _fn():
-        _set_limits()
+        _set_limits(is_node=is_node)
         try:
             os.setgid(acct["gid"])
             os.setgroups([])
@@ -1072,7 +1094,7 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
             capture_output=True, text=True, timeout=timeout,
             cwd=workdir, env=env,
             creationflags=_subprocess_flags(),
-            preexec_fn=_build_preexec(acct),
+            preexec_fn=_build_preexec(acct, is_node=True),
         )
 
         parts = [proc.stdout.strip()] if proc.stdout.strip() else []
@@ -1528,7 +1550,11 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
         # workdir here would make wsroot == sandbox and silently disable that.
         # Falls back to workdir so the shim still converges escaped writes.
         env["REPL_ALLOW_DIR"] = _allow_dir or workdir
-        env["NODE_OPTIONS"] = "--no-warnings"
+        # Bound V8's JS heap to the sandbox memory limit. Combined with the
+        # RLIMIT_DATA (not RLIMIT_AS) set by _set_limits for node, this replaces
+        # the old RLIMIT_AS that aborted node at startup. Heap overflow fails
+        # gracefully inside V8 instead of tripping a kernel OOM kill.
+        env["NODE_OPTIONS"] = f"--no-warnings --max-old-space-size={_max_memory_mb}"
         _inject_skills_dir(env, acct)
         if acct is not None:
             env["HOME"] = workdir
