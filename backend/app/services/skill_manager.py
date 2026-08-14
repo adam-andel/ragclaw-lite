@@ -19,10 +19,14 @@ SKILL.md format:
 """
 
 import hashlib
+import logging
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import yaml
 from sqlalchemy import select
@@ -105,6 +109,9 @@ def enable_skill_fs(folder_name: str) -> None:
     # Relative target resolves within the same shared volume:
     #   enable/<folder> -> ../store/<folder>
     os.symlink(os.path.join("..", "store", folder_name), link)
+    # Run the skill's optional init hook (e.g. materialise runtime.conf) so the
+    # agent can skip Platform Detection. No-op / non-fatal if absent or failing.
+    run_skill_init_script(folder_name)
 
 
 def disable_skill_fs(folder_name: str) -> None:
@@ -112,6 +119,65 @@ def disable_skill_fs(folder_name: str) -> None:
     link = get_enable_link_path(folder_name)
     if os.path.lexists(link):
         link.unlink()
+
+
+# ---- Generic skill self-initialization hook ----
+#
+# Any skill folder MAY ship an OPTIONAL `ragclaw_skill_init.sh`. When present, the
+# backend executes it at skill *enable* (enable_skill_fs) and at every
+# *re-upload / replace* (replace_skill_folder). This is the unified trigger point
+# for per-skill setup work, so skill-specific logic (e.g. anysearch materialising
+# runtime.conf from runtime.conf.example to skip the agent's Platform Detection)
+# lives in the skill itself instead of being hardcoded in the backend.
+#
+# Contract:
+#   - Runs with cwd = the skill folder (so ${BASH_SOURCE}-relative paths resolve).
+#   - Must be idempotent and side-effect-light; never raise on failure.
+#   - The backend re-applies world-readable chmod afterwards so the
+#     (different-UID) REPL sandbox can read any artifacts the script writes.
+#   - Trust boundary: this is skill-authored code executed at an authorized
+#     enable/replace action -- the same trust level as running the skill in REPL.
+
+_SKILL_INIT_SCRIPT = "ragclaw_skill_init.sh"
+
+
+def run_skill_init_script(folder_name: str) -> bool:
+    """Execute <skill_dir>/ragclaw_skill_init.sh if it exists.
+
+    Returns True if the script was found and exited 0. No-op (False) when the
+    skill ships no init script. Failures are logged and swallowed -- the skill
+    must still function without init (the agent keeps Platform Detection etc.).
+    """
+    skill_dir = get_skill_dir(folder_name)
+    script = skill_dir / _SKILL_INIT_SCRIPT
+    if not script.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            ["bash", str(script)],
+            cwd=str(skill_dir),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("ragclaw_skill_init.sh timed out for %s", folder_name)
+        return False
+    except OSError as e:
+        logger.warning("ragclaw_skill_init.sh could not launch for %s: %s", folder_name, e)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "ragclaw_skill_init.sh failed for %s (rc=%d): %s",
+            folder_name,
+            result.returncode,
+            (result.stderr or result.stdout or "")[:500],
+        )
+        return False
+    # Re-apply world-readable perms so the (different-UID) sandbox can read any
+    # artifacts the script produced.
+    _ensure_world_readable(get_skill_dir(folder_name))
+    return True
 
 
 def _ensure_world_readable(path: Path) -> None:
@@ -402,6 +468,7 @@ def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> 
 
     # Re-upload replaces files but must NOT change the enabled state; only fix
     # permissions so the (different-UID) sandbox can read them.
+    run_skill_init_script(folder_name)  # re-run init hook from possibly-new scripts/example
     refresh_skill_readable(folder_name)
 
 

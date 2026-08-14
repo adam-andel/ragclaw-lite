@@ -107,13 +107,29 @@ _SKILLS_ENABLE = os.path.join(_SKILLS_BASE, "enable")
 # ═══════════════════════════════════════════════════════════
 # OS resource limits (shared across languages)
 # ═══════════════════════════════════════════════════════════
-def _set_limits():
-    """preexec_fn (Linux): RLIMIT_AS / RLIMIT_CPU / RLIMIT_NPROC on child process."""
+def _set_limits(is_node: bool = False):
+    """preexec_fn (Linux): RLIMIT_AS / RLIMIT_CPU / RLIMIT_NPROC on child process.
+
+    For Node.js we must NOT use RLIMIT_AS: V8 reserves a large contiguous
+    virtual address space up front (pointer-compression cage / CodeRange) that
+    easily exceeds a 512 MB RLIMIT_AS, so node aborts at startup with
+    "Fatal process OOM in Failed to reserve virtual memory for CodeRange". We
+    instead bound node with RLIMIT_DATA (data-segment limit, which does not
+    count V8's mmap reservations) and rely on the JS runner's
+    --max-old-space-size to cap the actual JS heap.
+    """
     if os.name == 'nt':
         return
     import resource as _rlim
     mem_bytes = _max_memory_mb * 1024 * 1024
-    _rlim.setrlimit(_rlim.RLIMIT_AS, (mem_bytes, mem_bytes))
+    if is_node:
+        # RLIMIT_DATA caps heap/BSS; V8's heap is mmap-based so this is only a
+        # soft backstop. The real JS-heap bound is --max-old-space-size (set by
+        # the JS runner). Using DATA (not AS) lets node reserve its virtual
+        # address space and actually start.
+        _rlim.setrlimit(_rlim.RLIMIT_DATA, (mem_bytes, mem_bytes))
+    else:
+        _rlim.setrlimit(_rlim.RLIMIT_AS, (mem_bytes, mem_bytes))
     cpu_secs = DEFAULT_TIMEOUT + 10
     _rlim.setrlimit(_rlim.RLIMIT_CPU, (cpu_secs, cpu_secs))
     _rlim.setrlimit(_rlim.RLIMIT_NPROC, (_max_nproc, _max_nproc))
@@ -402,33 +418,87 @@ def _make_acct(uid) -> dict:
     return {"uid": uid, "gid": uid, "name": f"u{uid}"}
 
 
-def _ws_safe(root: str, rel: str) -> str | None:
+# Skill store is mounted read-only into the sandbox. The agent reaches it via
+# symlinks under .ragclaw/skills, but the *real* files live in this volume,
+# which users must never mutate through the workspace UI (it is shared across
+# all users and holds backend-managed skill state). Paths that resolve into a
+# read-only volume are viewable/downloaded for read ops but rejected for writes.
+_READONLY_VOLUMES = ("/ragclaw_skills",)
+# Logical subpaths *inside* the workspace sandbox that the workspace UI must
+# treat as read-only. `.ragclaw/skills` is the per-user view onto the shared,
+# backend-managed skill store: it physically lives in the writable sandbox (so
+# it does NOT escape into _READONLY_VOLUMES), but users may only browse/download
+# it — never create folders, upload, rename, move, or delete anything under it.
+_READONLY_SUBPATHS = (".ragclaw/skills",)
+# Sentinel returned by _ws_safe(allow_write=True) when a path resolves into a
+# read-only volume (or under a protected subpath), so callers can return a clear
+# "read-only" error instead of a generic "invalid path".
+WS_READONLY = "__ws_readonly__"
+
+
+def _rel_in_protected(rel: str) -> bool:
+    """True if ``rel`` (sandbox-relative) lies within a protected read-only subpath."""
+    rel = (rel or "").strip("/")
+    if not rel:
+        return False
+    for sp in _READONLY_SUBPATHS:
+        sp = sp.strip("/")
+        if rel == sp or rel.startswith(sp + "/"):
+            return True
+    return False
+
+
+def _ws_safe(root: str, rel: str, allow_write: bool = False) -> str | None:
     """Resolve a relative path strictly inside ``root``; ``None`` if it escapes.
 
-    Rejects ``..`` components and absolute paths, and uses ``realpath``
-    so symlink escapes are caught (same guard as the /files/ handler).
-    An empty ``rel`` resolves to ``root`` itself.
+    Rejects ``..`` components and absolute paths, and uses ``realpath`` so
+    symlink escapes are caught (same guard as the /files/ handler).
+
+    ``allow_write=False`` (default; read ops: LIST/download) additionally
+    permits a path whose real target lies inside a trusted *read-only* volume
+    (e.g. ``/ragclaw_skills``): the files are reachable for viewing/downloading
+    but must never be mutated. ``allow_write=True`` (write ops: mkdir/upload/
+    rename/move/delete) returns :data:`WS_READONLY` for any path that resolves
+    into a read-only volume, so the caller can reject the write cleanly without
+    depending on the volume being mounted read-only at the FS level.
     """
     if rel:
         rel = rel.strip("/")
         if not rel or ".." in rel.split("/"):
             return None
     target = os.path.realpath(os.path.join(root, rel)) if rel else root
+    # Logical read-only subpaths (inside the sandbox but user-must-not-mutate):
+    # e.g. `.ragclaw/skills`. Reads resolve normally; writes return WS_READONLY
+    # so the caller rejects them with "skill store is read-only".
+    if allow_write and _rel_in_protected(rel):
+        return WS_READONLY
     if target != root and not target.startswith(root + os.sep):
+        # Outside the sandbox root: allowed only into a read-only volume, and
+        # only for read ops.
+        if any(target == v or target.startswith(v + os.sep) for v in _READONLY_VOLUMES):
+            if allow_write:
+                return WS_READONLY
+            return target
         return None
     return target
 
 
-def _build_preexec(acct):
+def _build_preexec(acct, is_node: bool = False):
     """preexec_fn: apply rlimits, then drop to the target account's UID/GID.
 
-    If dropping privileges fails we _exit(1) so the child never runs as root.
+    ``is_node`` selects the Node.js-friendly limit set (RLIMIT_DATA instead of
+    RLIMIT_AS) so the JS runner can actually start. If dropping privileges fails
+    we _exit(1) so the child never runs as root.
     """
-    if acct is None or os.name == 'nt':
-        return _set_limits if os.name != 'nt' else None
+    if os.name == 'nt':
+        return None
+    if acct is None:
+        def _limits_only():
+            _set_limits(is_node=is_node)
+        return _limits_only
 
     def _fn():
-        _set_limits()
+        _set_limits(is_node=is_node)
         try:
             os.setgid(acct["gid"])
             os.setgroups([])
@@ -1024,7 +1094,7 @@ def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
             capture_output=True, text=True, timeout=timeout,
             cwd=workdir, env=env,
             creationflags=_subprocess_flags(),
-            preexec_fn=_build_preexec(acct),
+            preexec_fn=_build_preexec(acct, is_node=True),
         )
 
         parts = [proc.stdout.strip()] if proc.stdout.strip() else []
@@ -1480,7 +1550,11 @@ def _run_javascript(code: str, workdir: str, timeout: int, acct=None) -> str:
         # workdir here would make wsroot == sandbox and silently disable that.
         # Falls back to workdir so the shim still converges escaped writes.
         env["REPL_ALLOW_DIR"] = _allow_dir or workdir
-        env["NODE_OPTIONS"] = "--no-warnings"
+        # Bound V8's JS heap to the sandbox memory limit. Combined with the
+        # RLIMIT_DATA (not RLIMIT_AS) set by _set_limits for node, this replaces
+        # the old RLIMIT_AS that aborted node at startup. Heap overflow fails
+        # gracefully inside V8 instead of tripping a kernel OOM kill.
+        env["NODE_OPTIONS"] = f"--no-warnings --max-old-space-size={_max_memory_mb}"
         _inject_skills_dir(env, acct)
         if acct is not None:
             env["HOME"] = workdir
@@ -2136,16 +2210,23 @@ class MCPHandler(BaseHTTPRequestHandler):
                     if term_lower not in name.lower():
                         continue
                     full = os.path.join(dirpath, name)
-                    if not (os.path.isdir(full) or os.path.isfile(full)):
+                    try:
+                        is_dir = os.path.isdir(full)
+                        if not (is_dir or os.path.isfile(full)):
+                            continue
+                        size = None if is_dir else os.path.getsize(full)
+                        mtime = os.path.getmtime(full)
+                    except OSError:
+                        # Dangling symlink / unstatable entry: skip rather than
+                        # 500 the whole search.
                         continue
-                    is_dir = os.path.isdir(full)
                     rel_path = os.path.relpath(full, root)
                     entries.append({
                         "name": name,
                         "type": "dir" if is_dir else "file",
                         "rel_path": rel_path,
-                        "size": None if is_dir else os.path.getsize(full),
-                        "mtime": os.path.getmtime(full),
+                        "size": size,
+                        "mtime": mtime,
                         "download_url": f"/workspace/{rel_path}" if not is_dir else None,
                     })
                     if len(entries) >= cap:
@@ -2157,14 +2238,21 @@ class MCPHandler(BaseHTTPRequestHandler):
         entries = []
         for name in sorted(os.listdir(target)):
             full = os.path.join(target, name)
-            is_dir = os.path.isdir(full)
+            try:
+                is_dir = os.path.isdir(full)
+                # getsize/getmtime follow symlinks and raise FileNotFoundError
+                # on a dangling link; never let one bad entry 500 the whole dir.
+                size = None if is_dir else os.path.getsize(full)
+                mtime = os.path.getmtime(full)
+            except OSError:
+                is_dir, size, mtime = False, None, 0.0
             rel_path = f"{rel}/{name}" if rel else name
             entries.append({
                 "name": name,
                 "type": "dir" if is_dir else "file",
                 "rel_path": rel_path,
-                "size": None if is_dir else os.path.getsize(full),
-                "mtime": os.path.getmtime(full),
+                "size": size,
+                "mtime": mtime,
                 "download_url": f"/workspace/{rel_path}" if not is_dir else None,
             })
         self._json_response(200, {"path": rel, "entries": entries})
@@ -2207,9 +2295,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             if rel is None:
                 self._json_response(400, {"error": "invalid name"})
                 return
-            target = _ws_safe(root, rel)
-            if target is None:
-                self._json_response(400, {"error": "invalid path"})
+            target = _ws_safe(root, rel, allow_write=True)
+            if self._ws_deny_write(target, "invalid path"):
                 return
             if os.path.exists(target):
                 self._json_response(409, {"error": "already exists"})
@@ -2223,9 +2310,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             if rel is None:
                 self._json_response(400, {"error": "invalid name"})
                 return
-            target = _ws_safe(root, rel)
-            if target is None:
-                self._json_response(400, {"error": "invalid path"})
+            target = _ws_safe(root, rel, allow_write=True)
+            if self._ws_deny_write(target, "invalid path"):
                 return
             try:
                 data = base64.b64decode(body.get("content") or "")
@@ -2261,15 +2347,19 @@ class MCPHandler(BaseHTTPRequestHandler):
                     or new_name in (".", ".."):
                 self._json_response(400, {"error": "invalid path or name"})
                 return
-            src = _ws_safe(root, path)
-            if src is None or not os.path.exists(src):
+            src = _ws_safe(root, path, allow_write=True)
+            if self._ws_deny_write(src, "invalid path"):
+                return
+            if not os.path.exists(src):
                 self._json_response(404, {"error": "no such path"})
                 return
             new_rel = f"{os.path.dirname(path)}/{new_name}" if os.path.dirname(path) \
                 else new_name
-            dst = _ws_safe(root, new_rel)
-            if dst is None or os.path.exists(dst):
-                self._json_response(409, {"error": "target exists or invalid"})
+            dst = _ws_safe(root, new_rel, allow_write=True)
+            if self._ws_deny_write(dst, "invalid path"):
+                return
+            if os.path.exists(dst):
+                self._json_response(409, {"error": "target exists"})
                 return
             os.rename(src, dst)
             _chown(dst)
@@ -2293,11 +2383,13 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if dest_rel is None:
                     self._json_response(400, {"error": "invalid destination"})
                     return
-                dest_dir = _ws_safe(root, dest_rel)
+                dest_dir = _ws_safe(root, dest_rel, allow_write=True)
+                if self._ws_deny_write(dest_dir, "invalid path"):
+                    return
             else:
                 dest_rel = ""
                 dest_dir = root
-            if dest_dir is None or not os.path.isdir(dest_dir):
+            if not os.path.isdir(dest_dir):
                 self._json_response(400, {"error": "destination is not a directory"})
                 return
             dest_real = os.path.realpath(dest_dir)
@@ -2308,15 +2400,16 @@ class MCPHandler(BaseHTTPRequestHandler):
                 if rel is None:
                     self._json_response(400, {"error": f"invalid path: {p}"})
                     return
-                src = _ws_safe(root, rel)
-                if src is None or not os.path.exists(src):
+                src = _ws_safe(root, rel, allow_write=True)
+                if self._ws_deny_write(src, "invalid path"):
+                    return
+                if not os.path.exists(src):
                     self._json_response(404, {"error": f"no such path: {p}"})
                     return
                 name = os.path.basename(rel)
                 new_rel = f"{dest_rel}/{name}" if dest_rel else name
-                dst = _ws_safe(root, new_rel)
-                if dst is None:
-                    self._json_response(400, {"error": f"invalid target for: {p}"})
+                dst = _ws_safe(root, new_rel, allow_write=True)
+                if self._ws_deny_write(dst, "invalid path"):
                     return
                 src_real = os.path.realpath(src)
                 # Reject moving a directory into itself or one of its own subdirs.
@@ -2363,8 +2456,10 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(400, {"error": "cannot delete root"})
             return
         root = _workspace_root(uid)
-        target = _ws_safe(root, rel)
-        if target is None or not os.path.exists(target):
+        target = _ws_safe(root, rel, allow_write=True)
+        if self._ws_deny_write(target, "invalid path"):
+            return
+        if not os.path.exists(target):
             self.send_error(404)
             return
         try:
@@ -2376,6 +2471,22 @@ class MCPHandler(BaseHTTPRequestHandler):
             self._json_response(500, {"error": f"delete failed: {e}"})
             return
         self._json_response(200, {"deleted": rel or "."})
+
+    def _ws_deny_write(self, target: str | None, msg: str) -> bool:
+        """Return True (and send the response) if a write must be denied.
+
+        Wraps the two rejection cases from ``_ws_safe`` for write ops:
+          - ``WS_READONLY`` -> 400 "skill store is read-only"
+          - ``None`` (escaped the sandbox) -> 400 with the caller's ``msg``
+        Callers ``return`` immediately when this returns True.
+        """
+        if target == WS_READONLY:
+            self._json_response(400, {"error": "skill store is read-only"})
+            return True
+        if target is None:
+            self._json_response(400, {"error": msg})
+            return True
+        return False
 
     def do_PUT(self):
         length = int(self.headers.get("Content-Length", 0))

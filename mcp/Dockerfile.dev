@@ -43,6 +43,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     apt-get install -y --no-install-recommends \
         nodejs \
         npm \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps from the FLOATING requirements.txt (dev intent source). Freeze the

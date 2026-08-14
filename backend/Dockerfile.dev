@@ -76,6 +76,29 @@ RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
         ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}} \
         --extra-index-url ${TORCH_INDEX}
 
+# ── Layer 3b: Pre-bake tiktoken BPE so startup never blocks on a flaky egress ──
+# tiktoken downloads cl100k_base.tiktoken (~1.7MB) on first use. Over an unstable
+# egress proxy this intermittently breaks mid-transfer (IncompleteRead) and crashes
+# app startup (the import is at module level in chunker.py / token_count.py). Bake it
+# into a read-only image cache and point TIKTOKEN_CACHE_DIR at it so startup reads
+# locally. Retried because the upstream blob download itself is flaky; a hard failure
+# here fails the build loudly instead of shipping a silently-broken image.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+RUN mkdir -p "$TIKTOKEN_CACHE_DIR" && \
+    python3 - <<'PY'
+import sys, time
+for attempt in range(1, 6):
+    try:
+        import tiktoken
+        tiktoken.get_encoding("cl100k_base")
+        break
+    except Exception as e:
+        if attempt == 5:
+            print(f"[tiktoken] prebake failed after 5 attempts: {e!r}", file=sys.stderr)
+            raise
+        time.sleep(2)
+PY
+
 # ── Layer 4: Regenerate the lockfile from the freshly-resolved dev install ──
 # pip freeze snapshots the exact RESOLVED versions of every third-party package.
 # Bake to /opt/backend-requirements.lock — OUTSIDE /app/backend so the dev
