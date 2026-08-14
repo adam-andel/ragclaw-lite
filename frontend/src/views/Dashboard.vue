@@ -20,7 +20,7 @@ onMounted(async () => {
 })
 
 function formatTokens(cost: number) {
-  if (cost < 1) return `¥${(cost * 100).toFixed(1)}分`
+  if (cost < 1) return `¥${(cost * 100).toFixed(1)} cents`
   return `¥${cost.toFixed(2)}`
 }
 </script>

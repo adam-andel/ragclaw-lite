@@ -53,7 +53,7 @@ export function renderStreamingHtml(raw: string): string {
     // Complete block — collapsed by default
     html +=
       `<details class="think-block">` +
-      `<summary>💭 思考过程</summary>` +
+      `<summary>💭 Thinking</summary>` +
       `<div class="think-content">${escapeHtml(remaining.slice(0, endIdx))}</div>` +
       `</details>`
     remaining = remaining.slice(endIdx + '</think>'.length)

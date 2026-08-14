@@ -250,7 +250,7 @@ export const useNotificationStore = defineStore('notifications', () => {
   // pause happened, for a conversation the user is NOT currently viewing.
   // `markUnread` is the single entry point that produces every such red dot
   // (the sidebar Chat label, the history-button dot in ChatView, and the
-  // per-conversation "有未读消息" badge). We watch `lastUnreadEvent`, which
+  // per-conversation "unread message" badge). We watch `lastUnreadEvent`, which
   // increments its seq on EVERY markUnread call — including repeat marks on the
   // SAME conversation — so each red-dot appearance fires a notification. This
   // fixes the case where a 2nd round-limit suspension on the same conversation

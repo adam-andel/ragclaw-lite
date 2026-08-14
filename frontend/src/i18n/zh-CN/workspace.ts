@@ -90,6 +90,8 @@ export default {
   fileExists: '已存在同名条目',
   uploadHint: '点击或拖拽文件到此处上传',
   back: '返回上级',
+  searchTruncated: '匹配结果超过上限，未能全部展示',
+  itemCount: '{count} 项',
   errors: {
     load: '加载目录失败',
     create: '创建失败',

@@ -951,7 +951,7 @@ const supportedFormatsHint = computed(() => {
   const labels = Array.from(new Set(
     supportedExts.value.map(ext => getFileTypeConfig(ext).label)
   ))
-  return t('documents.supportedFormats', { formats: labels.join('、') })
+  return t('documents.supportedFormats', { formats: labels.join(', ') })
 })
 
 const statusOptions = [
