@@ -61,6 +61,24 @@ MESSAGES = {
         "变成不可读的代码，并掩盖你写好的总结。"
     ),
 
+    # Always-on Scheduled Task Rule body (creation path). Appended to the system
+    # prompt in agent_graph.build_generation_messages AND reproduced verbatim in
+    # conversation_summary._build_floor (so the pre-LLM token floor matches the real
+    # prefix length). Both call sites fetch it via _t("cron_scheduled_task_rule", ...)
+    # — this is the single source of truth; the trailing cron_no_fallback_rule and
+    # sandbox_network_rule are appended separately at the call sites. No placeholders.
+    "cron_scheduled_task_rule": (
+        "## 定时任务规则\n\n"
+        "如果用户想创建周期性或一次性的定时任务（例如「每天早上9点」「每周一」「每小时」），"
+        "不要自己回答任务内容。系统会通过 create_cron 工具为你创建该任务——请调用该工具，"
+        "并传入任务的 name、cron_expr 与 task_content。常用 cron_expr 示例：\n"
+        '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
+        '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
+        '- "只执行一次，今晚8点" → cron_expr "0 20 * * *"，max_runs 1\n'
+        "一旦定时任务已创建（对话中出现了 create_cron 的工具结果），你的最终回答只能是"
+        "一句自然语言确认——绝不要输出任务 JSON、绝不要发出 [TOOL_CALL]、也绝不要用代码块包裹任何内容。"
+    ),
+
     # Appended to the Scheduled Task Rule at creation time. Forbids the model from
     # writing scripts that silently substitute placeholder data when a real external
     # fetch fails. No placeholders.

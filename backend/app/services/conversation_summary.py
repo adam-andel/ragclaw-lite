@@ -211,21 +211,13 @@ def _empty_context_request_tokens(
     from app.services.agent_graph import sandbox_network_rule
 
     cron_rule = (
-        "\n\n## Scheduled Task Rule\n\n"
-        "If the user wants to create a recurring or one-time scheduled task "
-        "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer the task "
-        "content yourself. The system creates the scheduled task for you via the "
-        "create_cron tool — call that tool with the task's name, cron_expr, and "
-        "task_content. Useful cron_expr examples:\n"
-        '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
-        '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
-        '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
-        "Once the scheduled task has been created (a create_cron tool result is "
-        "present in the conversation), your final answer must be a plain-language "
-        "confirmation ONLY — never output the task as JSON, never emit [TOOL_CALL], "
-        "and never wrap anything in code fences.\n\n"
-        # Authoritative source for this header text: agent_graph.build_generation_messages
-        # (cron_rule). Keep the two in sync if the rule wording changes.
+        "\n\n"
+        # Same Scheduled Task Rule body as the creation path in
+        # agent_graph.build_generation_messages. Fetched from the i18n module so the
+        # pre-LLM token floor matches the real system prefix length without a duplicated
+        # copy. The trailing no-fallback rule + live egress policy are appended here too.
+        + _t("cron_scheduled_task_rule", config_manager.prompt_language)
+        + "\n\n"
         + _t("cron_no_fallback_rule", config_manager.prompt_language)
         + "\n\n"
         + sandbox_network_rule()

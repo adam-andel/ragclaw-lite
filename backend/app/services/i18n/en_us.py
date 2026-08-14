@@ -76,6 +76,28 @@ MESSAGES = {
         "fence turns the rest of your answer into unreadable code and hides the summary you wrote."
     ),
 
+    # Always-on Scheduled Task Rule body (creation path). Appended to the system
+    # prompt in agent_graph.build_generation_messages AND reproduced verbatim in
+    # conversation_summary._build_floor (so the pre-LLM token floor matches the real
+    # prefix length). Both call sites fetch it via _t("cron_scheduled_task_rule", ...)
+    # — this is the single source of truth; the trailing cron_no_fallback_rule and
+    # sandbox_network_rule are appended separately at the call sites. No placeholders.
+    "cron_scheduled_task_rule": (
+        "## Scheduled Task Rule\n\n"
+        "If the user wants to create a recurring or one-time scheduled task "
+        "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer the task "
+        "content yourself. The system creates the scheduled task for you via the "
+        "create_cron tool — call that tool with the task's name, cron_expr, and "
+        "task_content. Useful cron_expr examples:\n"
+        '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
+        '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
+        '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
+        "Once the scheduled task has been created (a create_cron tool result is "
+        "present in the conversation), your final answer must be a plain-language "
+        "confirmation ONLY — never output the task as JSON, never emit [TOOL_CALL], "
+        "and never wrap anything in code fences."
+    ),
+
     # Appended to the Scheduled Task Rule at creation time. Forbids the model from
     # writing scripts that silently substitute placeholder data when a real external
     # fetch fails. No placeholders.
