@@ -41,6 +41,31 @@ AGENT_MAX_TOKENS_HARD_CAP = 32768
 AGENT_MAX_TOKENS_SAFETY_MARGIN = 256
 
 
+# ── Current-date note for the system prompt ──
+def _current_date_note(tz_str: str | None) -> str:
+    """Render a 'current date' note in the user's timezone for the system prompt.
+
+    The LLM must anchor relative-time requests ('today', 'this year') to the real
+    current date instead of guessing a year from training data. Computed in the
+    user's IANA timezone (state['timezone']) with a UTC fallback.
+    """
+    tz_name = tz_str or "UTC"
+    try:
+        from datetime import datetime as _dt
+        import pytz as _pytz
+        now = _dt.now(_pytz.timezone(tz_name))
+    except Exception:
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc)
+        tz_name = "UTC"
+    return _t(
+        "current_date_note",
+        config_manager.prompt_language,
+        date=now.strftime("%Y-%m-%d"),
+        tz=tz_name,
+    )
+
+
 def _compute_agent_max_tokens(messages: list[dict]) -> int:
     """Output cap (tokens) for a single Agent tool-decision response.
 
@@ -1465,6 +1490,9 @@ async def tool_decision_node(state: dict) -> dict:
             task_background += f"\n\n## Pinned Instructions\n{pin}"
         if ws_context:
             task_background += "\n\n" + ws_context
+        # Anchor relative-time requests ('today'/'this year') to the real current
+        # date in the user's timezone, so the LLM doesn't hardcode a training-year.
+        task_background += "\n\n" + _current_date_note(state.get("timezone"))
         msgs = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## Task Background (reference only)\n" + task_background},

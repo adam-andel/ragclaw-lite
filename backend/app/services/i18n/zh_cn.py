@@ -187,6 +187,7 @@ MESSAGES = {
         "- 若示例只写了相对路径（例如 `scripts/foo.py`，没有根目录前缀）：在其前面补上 `$REPL_SKILLS_DIR/<skill_name>/`，"
         "得到 `$REPL_SKILLS_DIR/<skill_name>/scripts/foo.py`。\n"
         "- 若示例根本不涉及路径（例如本 skill 不含脚本、只调用工具）：则无需关心此路径。\n"
+        "- 切勿把 `$REPL_SKILLS_DIR` 替换成任何字面量路径（例如 `/app/.ragclaw/skills/...` 在沙盒中并不存在，会导致「文件找不到」）。始终通过 `$REPL_SKILLS_DIR` 变量引用本 skill；若确实需要绝对路径，用 `echo $REPL_SKILLS_DIR` 或 `os.environ['REPL_SKILLS_DIR']` 获取。\n"
         "你可以用 run_python 的 open() 直接读取其中任意文件，或调用 read_skill_resource 工具。"
         "该 skill 文件夹为只读：若你向其内写入，写入会被重定向到沙盒本地影子副本，不会写回共享存储，"
         "因此不要指望对 skill 文件的修改会持久保留。"
@@ -194,7 +195,18 @@ MESSAGES = {
 
     # 附在 read_skill_resource 工具描述后的精简版。无占位符。
     "skill_resource_tool_note": (
-        "该 skill 文件夹也以只读方式挂载在 REPL_SKILLS_DIR（即 `<sandbox_root>/.ragclaw/skills/<skill_name>`），"
-        "你也可以用 run_python 从那里打开文件。对其的写入会被重定向到沙盒本地影子副本，不会写回共享存储。"
+        "该 skill 文件夹以只读方式挂载在沙盒环境变量 `REPL_SKILLS_DIR` 所指向的目录下。"
+        "`REPL_SKILLS_DIR` 是「包含所有 skill 文件夹的根目录」（即本 skill 的完整路径是 `$REPL_SKILLS_DIR/<skill_name>`），它**不包含** skill 名。"
+        "调用脚本时请始终使用 `$REPL_SKILLS_DIR/<skill_name>/scripts/<脚本名>` 这种写法；"
+        "**不要**把 `<sandbox_root>`/`<skill_name>` 替换成字面量（例如 `/app/.ragclaw/skills/...` 并不存在，会报「文件找不到」）。"
+        "若确实需要绝对路径，用 `echo $REPL_SKILLS_DIR` 或 `os.environ['REPL_SKILLS_DIR']` 获取；"
+        "用 run_python 从那里打开文件也可。对其的写入会被重定向到沙盒本地影子副本，不会写回共享存储。"
+    ),
+
+    # 注入到 system 提示，约束 LLM 使用「注入的当前日期」而非硬编码训练数据里的年份。
+    "current_date_note": (
+        "## 当前日期\n"
+        "当前日期是 **{date}**（时区 {tz}）。凡是涉及「今天 / 本周 / 本月 / 今年」等相对时间表述时，"
+        "一律以这个日期为准，不要使用训练数据里的年份，也不要猜测或臆造年份。"
     ),
 }

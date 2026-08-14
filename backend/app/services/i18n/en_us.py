@@ -230,6 +230,10 @@ MESSAGES = {
         "`$REPL_SKILLS_DIR/<skill_name>/`, giving `$REPL_SKILLS_DIR/<skill_name>/scripts/foo.py`.\n"
         "- If the example references no path at all (e.g. this skill has no scripts and only calls tools): you don't "
         "need to care about this path.\n"
+        "- Never replace `$REPL_SKILLS_DIR` with a literal path (e.g. `/app/.ragclaw/skills/...` does not exist in "
+        "the sandbox and will fail with 'file not found'). Always reference this skill via the `$REPL_SKILLS_DIR` "
+        "variable; if you genuinely need an absolute path, get it with `echo $REPL_SKILLS_DIR` or "
+        "`os.environ['REPL_SKILLS_DIR']`.\n"
         "You may read any file there directly with run_python's open(), or call the read_skill_resource tool. "
         "The skill folder is READ-ONLY: if you write into it, the write is redirected to a sandbox-local "
         "shadow copy and is NOT saved back to the shared store, so never rely on edits to skill files persisting."
@@ -237,8 +241,23 @@ MESSAGES = {
 
     # Concise variant appended to the read_skill_resource tool description. No placeholders.
     "skill_resource_tool_note": (
-        "The skill folder is also mounted read-only at REPL_SKILLS_DIR (= `<sandbox_root>/.ragclaw/skills/<skill_name>`); "
-        "you can open files from there with run_python too. Writes there are redirected to a sandbox-local "
-        "shadow copy and are NOT saved back to the shared store."
+        "The skill folder is mounted read-only under the sandbox env var `REPL_SKILLS_DIR`. "
+        "`REPL_SKILLS_DIR` is the ROOT directory that CONTAINS each skill's folder (so this skill's full path is "
+        "`$REPL_SKILLS_DIR/<skill_name>`) — it does NOT include the skill name. "
+        "When invoking scripts, ALWAYS use the form `$REPL_SKILLS_DIR/<skill_name>/scripts/<script>`; "
+        "never substitute `<sandbox_root>`/`<skill_name>` with a literal (e.g. `/app/.ragclaw/skills/...` does not "
+        "exist and will fail with 'file not found'). If you truly need an absolute path, obtain it with "
+        "`echo $REPL_SKILLS_DIR` or `os.environ['REPL_SKILLS_DIR']`; you can also open files from there with "
+        "run_python. Writes there are redirected to a sandbox-local shadow copy and are NOT saved back to the "
+        "shared store."
+    ),
+
+    # Injected into the system prompt to constrain the LLM to use the injected current date
+    # instead of hardcoding a year from its training data.
+    "current_date_note": (
+        "## Current date\n"
+        "The current date is **{date}** (timezone {tz}). For any relative-time phrasing ('today', 'this week', "
+        "'this month', 'this year'), always anchor to this date — do not use a year from your training data, and "
+        "do not guess or fabricate a year."
     ),
 }
