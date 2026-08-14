@@ -74,8 +74,20 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/setup", response_model=SetupStatusResponse)
 async def setup_status(db: AsyncSession = Depends(get_db)):
-    """Public: report whether the system still needs its first admin (no users)."""
-    total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    """Public: report whether the system still needs its first admin (no users).
+
+    Safe against the startup race where the request lands before init_db() has
+    created the users table yet (e.g. right after a dev reload). Rather than
+    500 on "no such table", we treat an unreadable user store as "not set up" --
+    strictly safe: setup mode never destroys data and the first admin
+    registration will itself trigger table creation.
+    """
+    try:
+        total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    except Exception:
+        # Most likely sqlalchemy.exc.OperationalError: no such table: users
+        # during early startup. Fail safe to setup mode.
+        total = 0
     return SetupStatusResponse(needs_setup=total == 0)
 
 
