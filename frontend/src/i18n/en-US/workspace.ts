@@ -90,6 +90,8 @@ export default {
   fileExists: 'An entry with this name already exists',
   uploadHint: 'Click or drag a file here to upload',
   back: 'Go up',
+  searchTruncated: 'Too many matches to display all results',
+  itemCount: '{count} items',
   errors: {
     load: 'Failed to load folder',
     create: 'Creation failed',

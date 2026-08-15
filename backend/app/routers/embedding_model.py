@@ -121,14 +121,14 @@ def _embedding_conflict(target: str) -> dict:
 def _conflict_detail(target: str, info: dict) -> dict:
     """Build the 409 response body for a switch/check conflict."""
     if info["dim_conflict"]:
-        reason = f"向量维度不兼容（现有 {info['existing_dim']} 维，目标 {info['new_dim']} 维）"
+        reason = f"VECTOR_DIM_MISMATCH (existing {info['existing_dim']}d, target {info['new_dim']}d)"
     elif info["source_conflict"]:
         reason = (
-            f"向量来源不兼容（现有 {info['stored_model']}/{info['stored_backend']} "
-            f"→ 目标 {target}/{embedder_service.BACKEND}）"
+            f"VECTOR_SOURCE_MISMATCH (existing {info['stored_model']}/{info['stored_backend']} "
+            f"-> target {target}/{embedder_service.BACKEND})"
         )
     else:
-        reason = "向量不兼容"
+        reason = "VECTOR_INCOMPATIBLE"
     return {
         "conflict": True,
         "existing_dim": info["existing_dim"],
@@ -140,7 +140,7 @@ def _conflict_detail(target: str, info: dict) -> dict:
         "vector_count": info["total"],
         "dim_conflict": info["dim_conflict"],
         "source_conflict": info["source_conflict"],
-        "message": reason + "，切换将清除全部向量索引，需重新上传/重建知识库。",
+        "message": reason + ": switching will clear all vector indexes; re-upload/rebuild the knowledge base.",
     }
 
 

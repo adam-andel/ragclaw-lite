@@ -143,7 +143,7 @@ class EmbeddingModelManager:
             name = model_name or settings.embedding_model
             self._status = _Status.DOWNLOADING
             self._progress = 0.0
-            self._message = f"开始下载 {name} …"
+            self._message = f"Starting download of {name} ..."
             self._error = ""
             self._model = name
             # Bump the generation so any still-finishing previous thread (e.g.
@@ -170,7 +170,7 @@ class EmbeddingModelManager:
                 return False
             self._status = _Status.PAUSED
             self._paused = True
-            self._message = f"已暂停：{self._model}（已下载部分保留）"
+            self._message = f"Paused: {self._model} (partial download kept)"
         return True
 
     def resume_download(self) -> bool:
@@ -181,7 +181,7 @@ class EmbeddingModelManager:
                 return False
             self._status = _Status.DOWNLOADING
             self._paused = False
-            self._message = f"继续下载 {self._model} …"
+            self._message = f"Resuming download of {self._model} ..."
         with self._pause_cond:
             self._pause_cond.notify_all()
         return True
@@ -198,7 +198,7 @@ class EmbeddingModelManager:
             self._epoch += 1            # supersede the in-flight thread
             self._status = _Status.CANCELLED
             self._progress = 0.0
-            self._message = f"正在取消 {self._model} …"
+            self._message = f"Cancelling {self._model} ..."
         # Wake the worker in case it is blocked on the pause gate.
         with self._pause_cond:
             self._pause_cond.notify_all()
@@ -484,9 +484,9 @@ class EmbeddingModelManager:
             from app.services.embedder import embedder_service
             embedder_service._ensure_model()
         except Exception as e:  # pragma: no cover - best effort
-            warmup_msg = f"（预热跳过：{e}）"
+            warmup_msg = f" (warmup skipped: {e})"
         self._set(status=_Status.COMPLETED, progress=100.0,
-                  message=f"{model_name} 下载完成{warmup_msg}")
+                  message=f"{model_name} download complete{warmup_msg}")
 
     def _after_cancel(self, model_name: str) -> None:
         """Settle to the CANCELLED terminal state. The partial cache is wiped so a
@@ -495,7 +495,7 @@ class EmbeddingModelManager:
         self._remove_cache(model_name)
         self._forget_installed(model_name)
         self._set(status=_Status.CANCELLED,
-                  message=f"{model_name} 下载已取消（已删除未完成的下载）",
+                  message=f"{model_name} download cancelled (unfinished download deleted)",
                   progress=0.0)
 
     def _download_via_snapshot(self, model_name: str, cache_dir: str, epoch: int) -> None:
@@ -517,7 +517,7 @@ class EmbeddingModelManager:
             if self._check_abort(model_name, epoch):
                 return
             self._set_endpoint(endpoint)
-            self._set(message=f"正在从{label}下载 {model_name} …")
+            self._set(message=f"Downloading {model_name} from {label} ...")
             try:
                 self._download_via_snapshot(model_name, cache_dir, epoch)
                 self._record_success(model_name)
@@ -529,15 +529,15 @@ class EmbeddingModelManager:
                 last_err = e
                 continue
         self._set(status=_Status.FAILED, error=str(last_err),
-                  message=f"所有源下载失败：{last_err}")
+                  message=f"All sources failed: {last_err}")
 
     def _download_worker(self, model_name: str, epoch: int) -> None:
         cache_dir = str(self._hf_home())
         prev = os.environ.get("HF_ENDPOINT")
         # Official source first, then the domestic mirror as a fallback.
         attempts = [
-            ("官方源", ""),
-            ("国内镜像 (hf-mirror.com)", "https://hf-mirror.com"),
+            ("official", ""),
+            ("mirror (hf-mirror.com)", "https://hf-mirror.com"),
         ]
         try:
             files = self._list_repo_files(model_name)
@@ -568,7 +568,7 @@ class EmbeddingModelManager:
                     if self._check_abort(model_name, epoch):
                         return
                     self._set_endpoint(endpoint)
-                    self._set(message=f"正在从{label}下载 {fname}（{idx}/{total_files}）")
+                    self._set(message=f"Downloading {fname} from {label} ({idx}/{total_files})")
                     # When total size is unknown we can't poll a real %, so fall
                     # back to an index-based floor (bar jumps at each file). With
                     # known sizes, disk polling drives the real %, so we must NOT
@@ -600,7 +600,7 @@ class EmbeddingModelManager:
                         continue
                 if not downloaded:
                     self._set(status=_Status.FAILED, error=str(last_err),
-                              message=f"{fname} 下载失败：{last_err}")
+                              message=f"{fname} download failed: {last_err}")
                     return
                 done_bytes += fsize
                 # With unknown sizes, mark this file done via the index floor.
@@ -613,7 +613,7 @@ class EmbeddingModelManager:
             self._after_cancel(model_name)
         except Exception as e:  # noqa: BLE001
             self._set(status=_Status.FAILED, error=str(e),
-                      message=f"下载失败：{e}")
+                      message=f"Download failed: {e}")
         finally:
             self._cancel_event.clear()
             with self._lock:

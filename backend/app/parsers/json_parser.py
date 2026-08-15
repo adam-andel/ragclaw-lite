@@ -23,8 +23,8 @@ class JsonParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="json",
-            display_name="JSON",
-            description="解析 JSON 文件，按顶层 key 或数组段分块",
+            display_name="parser.json.name",
+            description="parser.json.desc",
             category="data",
             extensions=["json"],
         )
@@ -34,7 +34,7 @@ class JsonParser(BaseParser):
         try:
             data = json.loads(text)
         except json.JSONDecodeError as e:
-            raise ValueError(f"JSON 解析失败: {e}") from e
+            raise ValueError(f"JSON_PARSE_FAILED: {e}") from e
 
         sections: list[ParsedSection] = []
 
@@ -52,7 +52,7 @@ class JsonParser(BaseParser):
                 content = json.dumps(batch, ensure_ascii=False, indent=2)
                 sections.append(ParsedSection(
                     level=1,
-                    heading=f"{file_path.stem} - 第 {i // self._ITEMS_PER_SECTION + 1} 段",
+                    heading=f"{file_path.stem} - Section {i // self._ITEMS_PER_SECTION + 1}",
                     content=content,
                 ))
         else:

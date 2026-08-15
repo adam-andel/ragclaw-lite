@@ -112,8 +112,8 @@ async def _json_proxy(method: str, url: str, *, headers: dict,
 @router.get("/list")
 async def list_dir(
     user: User = Depends(get_current_user),
-    path: str = Query("", description="相对路径（在用户沙箱根目录内）"),
-    search: str = Query("", description="按文件名递归搜索（在当前路径范围内，不区分大小写）"),
+    path: str = Query("", description="Relative path (inside the user's sandbox root)"),
+    search: str = Query("", description="Recursive filename search (case-insensitive, within the current path)"),
 ):
     """List a directory inside the user's sandbox root."""
     uid = await _repl_uid_or_403(user)
@@ -138,7 +138,7 @@ async def create_or_update(
 @router.delete("")
 async def delete_path(
     user: User = Depends(get_current_user),
-    path: str = Query(..., description="要删除的文件或目录的相对路径"),
+    path: str = Query(..., description="Relative path of the file or directory to delete"),
 ):
     """Delete a file or directory (recursive) inside the user's sandbox root."""
     uid = await _repl_uid_or_403(user)
@@ -149,7 +149,7 @@ async def delete_path(
 @router.get("/download")
 async def download(
     user: User = Depends(get_current_user),
-    path: str = Query(..., description="要下载的文件的相对路径"),
+    path: str = Query(..., description="Relative path of the file to download"),
 ):
     """Stream a file from the user's sandbox root back to the client."""
     import httpx

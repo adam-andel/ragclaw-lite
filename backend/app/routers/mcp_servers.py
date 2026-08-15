@@ -205,7 +205,7 @@ async def test_server(
         raise HTTPException(404, "MCP_SERVER_NOT_FOUND")
 
     if server.transport_type != "http":
-        return {"ok": True, "message": "stdio 传输暂不支持自动测试，请手动验证", "tools": []}
+        return {"ok": True, "message": "STDIO_TRANSPORT_NO_AUTO_TEST", "tools": []}
 
     if not server.endpoint:
         raise HTTPException(400, "MCP_SERVER_HTTP_NO_ENDPOINT")
@@ -228,10 +228,10 @@ async def test_server(
             tools = body.get("result", {}).get("tools", [])
             return {
                 "ok": True,
-                "message": f"连接成功，发现 {len(tools)} 个工具",
+                "message": f"MCP_CONNECT_OK_TOOLS_{len(tools)}",
                 "tools": [{"name": t.get("name", "?"), "description": t.get("description", "")[:200]} for t in tools],
             }
     except httpx.ConnectError as e:
-        return {"ok": False, "error": f"连接失败: {str(e)}"}
+        return {"ok": False, "error": f"MCP_CONNECT_FAILED: {str(e)}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}

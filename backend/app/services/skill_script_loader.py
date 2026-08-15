@@ -145,7 +145,7 @@ def _parse_function(func_node: ast.FunctionDef, script_rel_path: str) -> dict | 
     # Use first line of docstring as description, fallback to function name
     desc_first_line = docstring.split("\n")[0].strip() if docstring else ""
     if not desc_first_line:
-        desc_first_line = f"脚本工具: {func_node.name}"
+        desc_first_line = f"Script tool: {func_node.name}"
 
     return {
         "type": "function",
@@ -260,10 +260,10 @@ def get_script_content(folder_name: str, script_rel_path: str) -> str:
 
     # Security: prevent path traversal
     if not str(script_path).startswith(str(skill_dir.resolve())):
-        raise ValueError(f"非法脚本路径: {script_rel_path}")
+        raise ValueError(f"ILLEGAL_SCRIPT_PATH: {script_rel_path}")
 
     if not script_path.exists():
-        raise FileNotFoundError(f"脚本文件不存在: {script_rel_path}")
+        raise FileNotFoundError(f"SCRIPT_FILE_NOT_FOUND: {script_rel_path}")
 
     return script_path.read_text(encoding="utf-8")
 
@@ -320,4 +320,4 @@ async def execute_script_tool(
         return ToolResult(tool_name=func_name, ok=False, error=str(e))
     except Exception as e:
         logger.error("Script execution error: %s", e, exc_info=True)
-        return ToolResult(tool_name=func_name, ok=False, error=f"脚本执行异常: {e}")
+        return ToolResult(tool_name=func_name, ok=False, error=f"SCRIPT_EXECUTION_ERROR: {e}")

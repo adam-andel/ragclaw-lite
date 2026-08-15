@@ -22,8 +22,8 @@ class NotebookParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="notebook",
-            display_name="Jupyter Notebook",
-            description="解析 .ipynb 文件，按 cell 分块，包含 markdown/code/output",
+            display_name="parser.notebook.name",
+            description="parser.notebook.desc",
             category="notebook",
             extensions=["ipynb"],
         )

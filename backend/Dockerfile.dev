@@ -114,4 +114,9 @@ COPY backend/ backend/
 ENV PYTHONPATH=/app/backend
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ── Hard constraint: SINGLE uvicorn worker (--workers 1) ──
+# Same reasoning as the prod Dockerfile (see there). The dev entrypoint in
+# docker-compose.dev.yml runs uvicorn with --reload, which ALSO forces a single
+# worker — but we pin --workers 1 here too so a direct `docker run` of this
+# image can never accidentally fork multiple workers.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

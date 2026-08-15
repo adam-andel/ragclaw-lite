@@ -24,8 +24,8 @@ class EmailParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="email",
-            display_name="邮件 (EML)",
-            description="解析 .eml 邮件文件，提取主题、正文与附件名清单",
+            display_name="parser.email.name",
+            description="parser.email.desc",
             category="email",
             extensions=["eml"],
         )
@@ -52,8 +52,8 @@ class EmailParser(BaseParser):
 
         sections: list[ParsedSection] = []
         # Header section
-        header_lines = [f"主题: {subject}", f"发件人: {from_}",
-                       f"收件人: {to_}", f"日期: {date_}"]
+        header_lines = [f"Subject: {subject}", f"From: {from_}",
+                       f"To: {to_}", f"Date: {date_}"]
         sections.append(ParsedSection(
             level=0, heading=title, content="\n".join(header_lines),
         ))
@@ -61,12 +61,12 @@ class EmailParser(BaseParser):
         body_content = body_text or html_text or ""
         if body_content.strip():
             sections.append(ParsedSection(
-                level=1, heading="正文", content=body_content,
+                level=1, heading="Body", content=body_content,
             ))
         # Attachments section
         if attachment_names:
             sections.append(ParsedSection(
-                level=1, heading="附件清单",
+                level=1, heading="Attachments",
                 content="\n".join(f"- {n}" for n in attachment_names),
             ))
 

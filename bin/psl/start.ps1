@@ -12,6 +12,12 @@
 # Build sources (registry / apt / pypi) are passed EXPLICITLY via parameters and
 # forwarded verbatim as --build-arg. No reachability probing is performed — this
 # mirrors bin/sh/start.sh. Set them only when you want a mirror.
+#
+# NOTE: bin/sh provides an additional watch_mcp.sh (and integrates a hot-reload
+# watcher into start.sh). That watcher is DEV-mode only - it restarts the mcp-repl
+# container on source changes. Windows / psl never runs dev mode (container mode
+# only, as stated above), so there is deliberately NO bin/psl/watch_mcp.ps1. The
+# two directories are mirror sources for everything EXCEPT this dev-only script.
 
 param(
     [string]$Action = "start",

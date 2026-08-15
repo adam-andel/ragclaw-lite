@@ -23,8 +23,8 @@ class CsvParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="csv",
-            display_name="CSV 表格",
-            description="解析 CSV 文件，按行分块，自动识别表头",
+            display_name="parser.csv.name",
+            description="parser.csv.desc",
             category="data",
             extensions=["csv"],
         )
@@ -52,7 +52,7 @@ class CsvParser(BaseParser):
                 lines = ["\t".join(r) for r in batch]
             sections.append(ParsedSection(
                 level=1,
-                heading=f"{file_path.stem} - 第 {i // self._ROWS_PER_SECTION + 1} 段",
+                heading=f"{file_path.stem} - Section {i // self._ROWS_PER_SECTION + 1}",
                 content="\n".join(lines),
             ))
 

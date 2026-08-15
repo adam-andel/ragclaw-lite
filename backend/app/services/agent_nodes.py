@@ -409,7 +409,7 @@ def _strip_tool_call_noise(content: str) -> str:
     `[TOOL_CALL] ... [/TOOL_CALL]` block (or a `--code "..."` shell-style fragment)
     into the content field. That text must never leak into the visible chat or the
     tool-execution history, so we remove it here. Any clean preamble the model
-    added (e.g. "好的，我来生成文件") is preserved.
+    added (e.g. an acknowledgment like "sure, generating the file") is preserved.
     """
     if not content:
         return content
@@ -610,7 +610,7 @@ async def _route_to_best_skill(query, tenant_id, user_id, skills=None) -> dict |
     try:
         raw = (await llm_client.chat(messages=[{"role": "user", "content": prompt}], temperature=0, max_tokens=50)).strip()
         # The router now returns a 1-based skill NUMBER (or 0 for none). Parse the
-        # first integer so trailing text like "1." / "编号 1" still matches.
+        # first integer so trailing text like "1." / "no. 1" still matches.
         m = _re.search(r"\d+", raw)
         if m:
             idx = int(m.group(0))
@@ -635,7 +635,7 @@ def _route_by_keywords(query: str, skills: list) -> dict | None:
 
     Used when the LLM name-match router (``_route_to_best_skill``) returns
     nothing. Picks the candidate skill whose name/description best signals
-    file/document handling, so "生成文件mydoc.txt" maps to e.g. Document
+    file/document handling, so "generate mydoc.txt" maps to e.g. Document
     Manager without relying on exact-name matching.
     """
     if not skills or not query:
@@ -790,7 +790,7 @@ def _build_meta_skill_tools() -> list[dict]:
 
 # Module-level cache of Python Executor meta tools (always-available native tools).
 # Populated at startup (lifespan) via _refresh_meta_python_tools and used as a
-# fallback here when startup missed it. These are the "元工具" the Python
+# fallback here when startup missed it. These are the "meta tools" the Python
 # Executor (e.g. run_python) exposes — native file/code execution for claw.
 _META_PYTHON_TOOLS: list[dict] = []
 
@@ -1707,7 +1707,7 @@ async def tool_decision_node(state: dict) -> dict:
                 content = await llm_client.chat(messages=_with_tool_desc(messages), temperature=0.1, max_tokens=_compute_agent_max_tokens(messages))
             logger.info("Tool decision: fallback content_preview=%.200s", content[:200])
 
-        # Surface the model's raw reasoning ("thinking"/planning, e.g. "我来…")
+        # Surface the model's raw reasoning ("thinking"/planning, e.g. "I will…")
         # as a separate agent_step so it appears in the processing timeline and is
         # persisted to the agent_steps table — never mixed into the final answer.
         # Emitted verbatim (NOT stripped) per requirement.
@@ -1791,7 +1791,7 @@ async def tool_decision_node(state: dict) -> dict:
             # ── Deterministic loop guard ──
             # The model is unreliable at self-terminating: after a successful
             # append/write it often re-issues the SAME tool call, producing an
-            # infinite loop that only pauses at the round quota (the "继续"
+            # infinite loop that only pauses at the round quota (the "continue"
             # button then recharges it). We enforce termination deterministically:
             # if the chosen call is identical to a recent round AND that round
             # succeeded, stop and let the graph emit the final answer.

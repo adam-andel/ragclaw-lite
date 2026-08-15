@@ -60,7 +60,7 @@ export const downloadZip = async (paths: string[], root = 'workspace') => {
   if (head.startsWith('__RAGCLAW_ZIP_ERROR__')) {
     const text = await blob.text()
     const msg = text.replace(/^__RAGCLAW_ZIP_ERROR__/, '').trim()
-    throw new Error(msg || '打包下载失败')
+    throw new Error(msg || 'Pack download failed')
   }
   triggerDownload(blob, `${root}.zip`)
 }

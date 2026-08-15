@@ -56,10 +56,10 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(data.password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="INVALID_CREDENTIALS")
 
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="USER_DISABLED")
 
     token = create_access_token(user.id, user.username, user.role.value, user.tenant_id)
     raw_refresh = issue_raw_refresh_token()
@@ -74,8 +74,20 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/setup", response_model=SetupStatusResponse)
 async def setup_status(db: AsyncSession = Depends(get_db)):
-    """Public: report whether the system still needs its first admin (no users)."""
-    total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    """Public: report whether the system still needs its first admin (no users).
+
+    Safe against the startup race where the request lands before init_db() has
+    created the users table yet (e.g. right after a dev reload). Rather than
+    500 on "no such table", we treat an unreadable user store as "not set up" --
+    strictly safe: setup mode never destroys data and the first admin
+    registration will itself trigger table creation.
+    """
+    try:
+        total = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
+    except Exception:
+        # Most likely sqlalchemy.exc.OperationalError: no such table: users
+        # during early startup. Fail safe to setup mode.
+        total = 0
     return SetupStatusResponse(needs_setup=total == 0)
 
 
@@ -165,7 +177,7 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
         email=data.email,
         role=UserRole.ADMIN,
         is_active=True,
-        tenant_id=data.tenant_id or str(uuid.uuid4()),
+        tenant_id=data.tenant_id or settings.default_tenant_id,
         repl_uid=settings.repl_uid_range_min,  # reserved bootstrap admin UID
     )
     db.add(user)
@@ -237,11 +249,11 @@ async def upload_avatar(
 ):
     """Upload a custom avatar image (max 1MB, image types only)."""
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="请上传图片文件")
+        raise HTTPException(status_code=400, detail="AVATAR_MUST_BE_IMAGE")
 
     contents = await file.read()
     if len(contents) > MAX_AVATAR_SIZE:
-        raise HTTPException(status_code=400, detail=f"图片大小不能超过 {MAX_AVATAR_SIZE // 1024 // 1024}MB")
+        raise HTTPException(status_code=400, detail=f"AVATAR_TOO_LARGE_MAX_MB_{MAX_AVATAR_SIZE // 1024 // 1024}")
 
     # Delete old avatar file if exists
     if current_user.avatar_url:

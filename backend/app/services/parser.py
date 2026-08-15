@@ -65,7 +65,7 @@ class ParserService:
             if parser.can_handle(file_type):
                 if parser.plugin_meta().name in self._disabled_names:
                     raise ValueError(
-                        f"插件已禁用: {parser.plugin_meta().display_name}"
+                        f"PLUGIN_DISABLED: {parser.plugin_meta().name}"
                     )
                 return parser.safe_parse(file_path)
 

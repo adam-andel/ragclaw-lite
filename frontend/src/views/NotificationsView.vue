@@ -180,7 +180,7 @@ function resetFilters() {
   load()
 }
 
-// 页数据变少导致当前页越界时自动收敛。
+// Auto-clamp the current page when fewer items shrink the total page count past the bound.
 watch(() => notificationStore.total, (total) => {
   const totalPages = Math.max(1, Math.ceil(total / size.value))
   if (page.value > totalPages) page.value = totalPages
