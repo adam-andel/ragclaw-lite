@@ -285,6 +285,19 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         print(f"Skill migration warning: {e}")
+    # Seed preset (factory-default) skills baked into the image. Idempotent:
+    # copies into store/ + enables only when absent, so user edits persist.
+    try:
+        from app.services.skill_manager import seed_preset_skills
+        _seed = seed_preset_skills()
+        if _seed["seeded"] or _seed["skipped"]:
+            print(
+                f"Skill preset seeding (skill_seed_dir -> store): "
+                f"+{_seed['seeded']} seeded, {_seed['skipped']} already present, "
+                f"{_seed['enabled']} enabled"
+            )
+    except Exception as e:
+        print(f"Skill preset seeding warning: {e}")
     # Sync skill filesystem to DB index
     try:
         from app.services.skill_manager import sync_skills_to_db

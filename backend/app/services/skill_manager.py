@@ -286,6 +286,56 @@ def migrate_legacy_skills(remove_source: bool = False) -> dict:
     return {"migrated": migrated, "skipped": skipped, "enabled": enabled}
 
 
+# ---- Preset skill seeding (image/volume-baked factory defaults) ----
+#
+# Unlike migrate_legacy_skills (which reads the legacy data/skills/* layout that
+# the shared-volume design replaced), seed_preset_skills ships factory-default
+# skills baked into the image at settings.skill_seed_dir (e.g.
+# backend/skill_seeds/skills). They auto-install on first boot. Copy-only and
+# idempotent: store/<folder> already present => skipped, so a user's later
+# re-upload / edit / delete of that skill is preserved across restarts. If the
+# shared skills volume is wiped, the skill re-seeds from the baked preset.
+# Best-effort: one bad preset never aborts boot.
+
+def seed_preset_skills(seed_root: Path | None = None) -> dict:
+    """Idempotently copy preset skills from settings.skill_seed_dir into store/.
+
+    Returns {"seeded": N, "skipped": M, "enabled": K} for logging.
+
+    Mirrors migrate_legacy_skills (copy-only + enable_skill_fs) but the source is
+    the read-only preset directory, not the legacy data/skills layout. Each
+    preset folder MUST contain a SKILL.md. enable_skill_fs creates the
+    enable-symlink AND runs the skill's ragclaw_skill_init.sh adapter (which
+    materialises runtime.conf etc.), exactly as for a manually added skill.
+    """
+    if seed_root is None:
+        seed_root = settings.skill_seed_dir
+    seed_root = Path(seed_root)
+    if not seed_root.exists():
+        return {"seeded": 0, "skipped": 0, "enabled": 0}
+
+    seeded = skipped = enabled = 0
+    for entry in sorted(seed_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "SKILL.md").exists():
+            continue  # not a skill folder; leave it alone
+        dest = settings.skills_dir / entry.name
+        if dest.exists():
+            skipped += 1
+            continue
+        try:
+            shutil.copytree(entry, dest)
+            _ensure_world_readable(dest)
+            # Create enable-symlink + run the skill's init adapter (runtime.conf...).
+            enable_skill_fs(entry.name)
+            enabled += 1
+            seeded += 1
+        except Exception as e:  # best-effort — never let one bad preset abort boot
+            print(f"[skill_manager] seed_preset_skills: failed on {entry.name}: {e}")
+    return {"seeded": seeded, "skipped": skipped, "enabled": enabled}
+
+
 # ---- Folder name sanitization ----
 
 _FOLDER_NAME_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_\-]*$')

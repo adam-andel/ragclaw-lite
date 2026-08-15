@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     def skills_enable_dir(self) -> Path:
         return self.shared_skills_dir / "enable"
 
+    # --- Preset skill seeds (factory defaults baked into the image) ---
+    # Read-only directory of preset skills (each a <folder>/ with SKILL.md) that
+    # auto-install on first boot via seed_preset_skills(). Defaults to
+    # <backend>/skill_seeds/skills (this file lives at <backend>/app/config.py,
+    # so parent.parent == <backend>), which COPY backend/ backend/ bakes into the
+    # image and the dev bind-mount exposes without a rebuild. Override with env
+    # RAGCLAW_SKILL_SEED_DIR to point at a local checkout.
+    skill_seed_dir: Path = Field(
+        default=Path(__file__).resolve().parent.parent / "skill_seeds" / "skills",
+        validation_alias="RAGCLAW_SKILL_SEED_DIR",
+    )
+
     # --- Database ---
     # SQLAlchemy async database URL. Defaults to the local SQLite file so the
     # project still runs with a one-command `docker compose up` and no external
