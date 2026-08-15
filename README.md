@@ -47,6 +47,8 @@ In one line: **RAG "knows" (retrieval-augmented on your knowledge base); Claw "d
 
 Two ways to run: **Production** (code baked into the image), **Development** (Docker hot-reload, recommended for daily dev). A pure-local (no-Docker) mode is not supported yet.
 
+> **⚠️ Single-worker hard constraint.** The backend runs uvicorn with exactly **one worker** (`--workers 1`, pinned in the Dockerfile; dev uses `--reload`, which also forces one). RAGClaw relies on process-local singletons — the LLM concurrency semaphore, the in-memory BM25 index, the answer cache, and the per-process Chroma client — that must **not** be forked across multiple workers. Never override the command with `--workers N`. To scale, run more containers (horizontal), not more workers per container (vertical).
+
 ### Method 1 — Production (code baked into the image)
 
 ```bash

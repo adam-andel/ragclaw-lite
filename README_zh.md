@@ -47,6 +47,8 @@ RAGClaw 是一个**智能体（Agent）平台**，而不是单纯的问答机器
 
 提供两种运行方式：**生产部署**（代码打包进镜像）、**开发模式**（Docker 热重载，推荐日常开发）。暂不支持纯本地（不依赖 Docker）模式。
 
+> **⚠️ 单 worker 硬约束。** 后端以**且仅以 1 个** uvicorn worker 运行（`--workers 1`，已在 Dockerfile 中锁死；开发模式使用 `--reload`，同样强制单 worker）。RAGClaw 依赖若干**进程内单例**——LLM 并发信号量、内存中的 BM25 索引、答案缓存，以及每进程独立的 Chroma 客户端——它们**绝不可**被 fork 到多个 worker 中。切勿用 `--workers N` 覆盖启动命令。要扩容，请增加容器数量（横向），而非增加单容器内的 worker 数（纵向）。
+
 ### Method 1 — Production (code baked into the image) / 方式一：生产部署
 
 ```bash

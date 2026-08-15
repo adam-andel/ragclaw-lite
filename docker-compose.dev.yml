@@ -69,6 +69,10 @@ services:
     # at startup, writing through the bind-mount to the HOST ./backend so the lock can
     # be committed — mirroring frontend/docker-entrypoint.dev.sh. Then it launches
     # uvicorn with --reload (same as the prod CMD, just hot-reloading).
+    # NOTE: --reload (and the prod --workers 1) both force a SINGLE worker — RAGClaw
+    # depends on process-local singletons (LLM semaphore, BM25 index, answer cache,
+    # per-process Chroma client) that must NOT be forked. Never switch this to
+    # --workers N or add --workers alongside --reload.
     entrypoint: ["sh", "-c", "cp /opt/backend-requirements.lock /app/backend/requirements.lock 2>/dev/null; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend"]
     # Reports healthy only once uvicorn is actually listening on :8000 and the
     # app (incl. DB tables via lifespan) is up. frontend-dev waits on this so it
