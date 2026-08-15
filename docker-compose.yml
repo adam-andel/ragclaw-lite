@@ -133,6 +133,11 @@ services:
       # source on the shared store (polluting it / risking cross-UID chmod). The
       # mcp Dockerfile also sets this, but pinning it here is defense-in-depth.
       - PYTHONDONTWRITEBYTECODE=1
+      # Persistent container env var: the sandbox child reads skills from the
+      # backend-managed enable/ set via $REPL_SKILLS_DIR. Replaces the old
+      # per-user skills symlink tree (removed). _inject_skills_dir falls back to
+      # this same default if the var is somehow absent.
+      - REPL_SKILLS_DIR=/ragclaw_skills/enable
       # ── Per-user UID isolation (Backend-signed identity) ──
       # Auth + isolation are ALWAYS on (no single-account fallback). The REPL
       # identity HMAC secret is owned by the Backend (auto-generated on first

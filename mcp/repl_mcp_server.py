@@ -97,10 +97,12 @@ _isolation_enabled: bool = True        # per-user UID isolation (invariant)
 
 # Shared skills volume (mounted rw by the Backend, ro by this server).
 # ``enable/`` holds one per-skill symlink (created by the Backend) that gates
-# which skills are available; ``store/`` holds the real skill files. The
-# Backend lazily asks this server to materialise a per-user symlink
-# ``<sandbox>/.ragclaw/skills/<name>`` -> ``enable/<name>`` (POST /skills/link)
-# so LLM code executing inside the sandbox can read a skill's resources.
+# which skills are available; ``store/`` holds the real skill files. The agent
+# reaches the shared skill set through the ``REPL_SKILLS_DIR`` environment
+# variable (a *persistent container env var* defined in docker-compose for this
+# service, default ``/ragclaw_skills/enable``) -- no per-user symlink tree is
+# materialised anymore. LLM code reads a skill's resources at
+# ``$REPL_SKILLS_DIR/<name>``.
 _SKILLS_BASE = os.environ.get("RAGCLAW_SKILLS_DIR", "/ragclaw_skills")
 _SKILLS_ENABLE = os.path.join(_SKILLS_BASE, "enable")
 
@@ -425,12 +427,12 @@ def _make_acct(uid) -> dict:
 # read-only volume are viewable/downloaded for read ops but rejected for writes.
 _READONLY_VOLUMES = ("/ragclaw_skills",)
 # Logical subpaths *inside* the workspace sandbox that the workspace UI must
-# treat as read-only. `.ragclaw/skills` is the per-user view onto the shared,
-# backend-managed skill store: it physically lives in the writable sandbox (so
-# it does NOT escape into _READONLY_VOLUMES), but users may only browse/download
-# it — never create folders, upload, rename, move, or delete anything under it.
-_READONLY_SUBPATHS = (".ragclaw/skills",)
-# Sentinel returned by _ws_safe(allow_write=True) when a path resolves into a
+# treat as read-only. The old per-user ``.ragclaw`` view was removed
+# (skills are now exposed via the ``REPL_SKILLS_DIR`` container env var pointing
+# at the shared ``enable/`` set); nothing inside the sandbox needs this guard
+# anymore, so the set is empty. The shared store is still protected by
+# ``_READONLY_VOLUMES`` (FS-level read-only mount) above.
+_READONLY_SUBPATHS = ()# Sentinel returned by _ws_safe(allow_write=True) when a path resolves into a
 # read-only volume (or under a protected subpath), so callers can return a clear
 # "read-only" error instead of a generic "invalid path".
 WS_READONLY = "__ws_readonly__"
@@ -467,9 +469,10 @@ def _ws_safe(root: str, rel: str, allow_write: bool = False) -> str | None:
         if not rel or ".." in rel.split("/"):
             return None
     target = os.path.realpath(os.path.join(root, rel)) if rel else root
-    # Logical read-only subpaths (inside the sandbox but user-must-not-mutate):
-    # e.g. `.ragclaw/skills`. Reads resolve normally; writes return WS_READONLY
-    # so the caller rejects them with "skill store is read-only".
+    # Logical read-only subpaths inside the sandbox (e.g. the old ``.ragclaw``
+    # view) are now empty -- skills are exposed via the REPL_SKILLS_DIR container
+    # env var instead. _rel_in_protected therefore never matches, but the guard
+    # stays in case a future subpath needs the same treatment.
     if allow_write and _rel_in_protected(rel):
         return WS_READONLY
     if target != root and not target.startswith(root + os.sep):
@@ -481,6 +484,7 @@ def _ws_safe(root: str, rel: str, allow_write: bool = False) -> str | None:
             return target
         return None
     return target
+
 
 
 def _build_preexec(acct, is_node: bool = False):
@@ -507,6 +511,7 @@ def _build_preexec(acct, is_node: bool = False):
             os._exit(1)
 
     return _fn
+
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1040,25 +1045,20 @@ _tz_time.gmtime = _tz_local_gmtime
 '''
 
 
-def _inject_skills_dir(env: dict, acct) -> None:
-    """Expose the user's per-user skill-symlink root to the sandbox child.
+def _inject_skills_dir(env: dict, acct=None) -> None:
+    """Expose the shared skill directory to the sandbox child.
 
-    Points ``REPL_SKILLS_DIR`` at ``<sandbox>/.ragclaw/skills`` so LLM code can
-    read a skill's resources (SKILL.md, scripts, data) via a stable absolute
-    path. The symlinks there are materialised lazily by the Backend
-    (POST /skills/link); if none exist yet the directory may be absent — that is
-    harmless, the variable simply points at a (currently empty / not-yet-created)
-    location. Best-effort: only when a sandbox root is known.
+    ``REPL_SKILLS_DIR`` is now a *persistent container environment variable*
+    (defined in docker-compose for this mcp-repl service, default
+    ``/ragclaw_skills/enable``). It points at the shared, backend-managed
+    ``enable/`` set -- the same place the old per-user ``.ragclaw`` symlinks
+    resolved to -- so LLM code keeps a stable absolute path
+    (``$REPL_SKILLS_DIR/<skill_name>``) without any per-user symlink tree.
+
+    We honor the container value when present and fall back to the canonical
+    default otherwise, so the variable is always defined for the child.
     """
-    if not _allow_dir or not acct:
-        return
-    try:
-        uid = int(acct.get("uid")) if isinstance(acct, dict) else int(acct)
-    except (TypeError, ValueError):
-        return
-    sandbox_root = os.path.join(_allow_dir, f"user_u{uid}")
-    env["REPL_SKILLS_DIR"] = os.path.join(sandbox_root, ".ragclaw", "skills")
-
+    env["REPL_SKILLS_DIR"] = os.environ.get("REPL_SKILLS_DIR", "/ragclaw_skills/enable")
 
 def _run_python(code: str, workdir: str, timeout: int, acct=None) -> str:
     """Execute Python code in isolated subprocess (preserved from original)."""
@@ -1917,12 +1917,6 @@ class MCPHandler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001 - never drop the connection
                 self._json_response(500, {"error": f"workspace error: {e}"})
             return
-        if self.path == "/skills/link":
-            try:
-                self._handle_skill_link(length)
-            except Exception as e:  # noqa: BLE001 - never drop the connection
-                self._json_response(500, {"error": f"skill link error: {e}"})
-            return
         body = json.loads(self.rfile.read(length)) if length else {}
         method = body.get("method", "")
         req_id = body.get("id", 0)
@@ -2044,80 +2038,6 @@ class MCPHandler(BaseHTTPRequestHandler):
             # Idempotent: nothing to remove is not an error.
             self._json_response(200, {"deleted": None, "note": "no such dir"})
 
-    def _handle_skill_link(self, length: int):
-        """Trusted internal: lazily materialise ONE per-user skill symlink.
-
-        POST /skills/link  headers: X-Repl-Auth, X-Repl-Uid  body: {"name": <folder>}
-        Creates (on first use) ``<sandbox>/.ragclaw/skills/<name>`` ->
-        ``/ragclaw_skills/enable/<name>`` so LLM code inside the user's sandbox
-        can read that skill's resources. Only the single named skill is touched —
-        there is NO per-user full sync, keeping write pressure to O(used skills).
-
-        Idempotent: an existing link that still resolves is left alone; a dangling
-        link (skill since disabled / moved) is recreated. A missing or disabled
-        enable source returns 404 and cleans any stale per-user link.
-        """
-        uid, err = self._workspace_auth()
-        if err:
-            self._json_response(403, err)
-            return
-        try:
-            body = json.loads(self.rfile.read(length)) if length else {}
-        except Exception:
-            body = {}
-        name = (body.get("name") or "").strip()
-        if not name or "/" in name or "\0" in name or name in (".", ".."):
-            self._json_response(400, {"error": "invalid name"})
-            return
-
-        if not os.path.lexists(_SKILLS_ENABLE):
-            self._json_response(503, {"error": "skills volume not mounted"})
-            return
-        enable_link = os.path.join(_SKILLS_ENABLE, name)
-        if not os.path.lexists(enable_link):
-            # Skill disabled or unknown — drop any stale per-user link, refuse.
-            self._clean_dangling_user_link(uid, name)
-            self._json_response(404, {"error": "skill not enabled", "name": name})
-            return
-
-        # Build the per-user symlink root (root-owned, traversable by the uid).
-        sandbox_root = os.path.realpath(os.path.join(_allow_dir, f"user_u{uid}"))
-        rag = os.path.join(sandbox_root, ".ragclaw")
-        rag_skills = os.path.join(rag, "skills")
-        os.makedirs(rag_skills, exist_ok=True)
-        try:
-            os.chmod(rag, 0o755)
-            os.chmod(rag_skills, 0o755)
-        except OSError:
-            pass
-
-        user_link = os.path.join(rag_skills, name)
-        if os.path.lexists(user_link):
-            if os.path.exists(user_link):
-                # Already resolves to a live enable source — nothing to do.
-                self._json_response(200, {"ok": True, "link": user_link,
-                                          "target": enable_link, "note": "exists"})
-                return
-            # Dangling (enable source changed/moved): recreate against current.
-            try:
-                os.unlink(user_link)
-            except OSError:
-                pass
-        try:
-            os.symlink(enable_link, user_link)
-        except FileExistsError:
-            pass
-        self._json_response(200, {"ok": True, "link": user_link, "target": enable_link})
-
-    def _clean_dangling_user_link(self, uid: int, name: str):
-        """Best-effort removal of a per-user skill symlink that no longer resolves."""
-        try:
-            sandbox_root = os.path.realpath(os.path.join(_allow_dir, f"user_u{uid}"))
-            user_link = os.path.join(sandbox_root, ".ragclaw", "skills", name)
-            if os.path.lexists(user_link):
-                os.unlink(user_link)
-        except OSError:
-            pass
 
     def _json_response(self, code: int, obj: dict):
         self.send_response(code)
