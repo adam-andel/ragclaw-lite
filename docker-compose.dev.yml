@@ -55,6 +55,14 @@ services:
       # Dev: emit ragclaw.* INFO logs (tool decisions, LLM calls) to docker logs.
       # Production (base compose) omits this -> defaults to WARNING, so INFO is suppressed.
       - RAGCLAW_ENV=development
+      # ── Verbose LLM request-body dump (opt-in, dev only) ──
+      # The chat_with_tools FULL request body (embeds the whole SKILL.md text, ~100KB/call)
+      # is logged at DEBUG by default and stays out of docker logs. To temporarily see the
+      # full body for one debugging session, add the line below and `restart ragclaw-lite`:
+      #     - RAGCLAW_LLM_DUMP_BODY=1
+      # Then remove it (or comment it out) and `restart ragclaw-lite` again to go back to silent.
+      # NOTE: setting RAGCLAW_ENV=debug is NOT enough — main.py re-applies setup_logging() on
+      # every request and pins ragclaw.llm back to INFO, so the DEBUG body only shows via this flag.
     volumes:
       # Overlay the host source on top of the image's /app/backend.
       # PYTHONPATH=/app/backend (set in backend/Dockerfile.dev) points here and takes

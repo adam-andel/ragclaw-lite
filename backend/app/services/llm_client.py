@@ -11,6 +11,7 @@ The active platform is resolved via ``config_manager.platform`` from the
 
 import json
 import logging
+import os
 from typing import AsyncGenerator
 
 import httpx
@@ -363,11 +364,18 @@ class LLMClient:
 
         url = f"{self.base_url}/chat/completions"
 
-        # ── Debug logging: print FULL request body for TokenHub compatibility diagnosis ──
+        # ── Request logging ──
+        # Summary line is always INFO (cheap; lets you count LLM calls and watch tool counts).
         logger.info("chat_with_tools request: model=%s platform=%s tool_choice=%s tools_count=%d messages=%d",
                     self.model, platform, tool_choice, len(tools), len(messages))
-        logger.info("chat_with_tools FULL request body: %s",
-                    json.dumps(body, ensure_ascii=False))
+        # Full request body is verbose (embeds the entire SKILL.md text, ~100KB+ per call).
+        # Dump it only when RAGCLAW_LLM_DUMP_BODY is set; otherwise keep at DEBUG so it
+        # stays out of normal docker logs.
+        full_body = json.dumps(body, ensure_ascii=False)
+        if os.environ.get("RAGCLAW_LLM_DUMP_BODY"):
+            logger.info("chat_with_tools FULL request body: %s", full_body)
+        else:
+            logger.debug("chat_with_tools FULL request body: %s", full_body)
 
         try:
             response = await self._client.post(
