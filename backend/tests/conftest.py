@@ -33,6 +33,14 @@ import app.services.auth as _auth_mod
 _auth_mod.hash_password = _test_hash_password
 _auth_mod.verify_password = _test_verify_password
 
+# JWT secret shim: under the test HTTP client (httpx.ASGITransport) the FastAPI
+# lifespan never runs, so ConfigManager stays half-initialized — its async
+# init() (which seeds jwt_secret) is never awaited and auth.get_jwt_secret() would
+# raise "JWT secret is empty". Monkeypatch the function directly (token sign/verify
+# route through it) so every test uses a fixed, in-memory test secret for the
+# session, independent of ConfigManager's internal state.
+_auth_mod.get_jwt_secret = lambda: "TEST_JWT_SECRET_0000000000000000000000"
+
 def create_access_token(user_id, username, role, tenant_id):
     return _auth_mod.create_access_token(user_id, username, role, tenant_id)
 
