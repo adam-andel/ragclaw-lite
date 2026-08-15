@@ -25,6 +25,9 @@ data/*
 data/uploads/*
 !data/uploads/.gitkeep
 
+# Preset skill seeds: only ignore generated runtime.conf (SKILL.md/scripts/adapter are tracked)
+backend/skill_seeds/**/runtime.conf
+
 # Environment
 .env
 
