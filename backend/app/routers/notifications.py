@@ -102,9 +102,9 @@ async def mark_notification_read(
     """Mark a single notification as read."""
     notification = await db.get(Notification, notification_id)
     if not notification:
-        raise HTTPException(404, "通知不存在")
+        raise HTTPException(404, "NOTIFICATION_NOT_FOUND")
     if notification.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
 
     notification.read = True
     notification.read_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -142,9 +142,9 @@ async def delete_notification(
     """Delete a single notification for the current user."""
     notification = await db.get(Notification, notification_id)
     if not notification:
-        raise HTTPException(404, "通知不存在")
+        raise HTTPException(404, "NOTIFICATION_NOT_FOUND")
     if notification.user_id != current_user.id:
-        raise HTTPException(403, "无权访问")
+        raise HTTPException(403, "ACCESS_DENIED")
     await db.delete(notification)
     await db.commit()
     return {"id": notification_id, "deleted": True}

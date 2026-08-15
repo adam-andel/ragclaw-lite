@@ -268,7 +268,7 @@ function getCitationContent(c: ChatMessage['citations'][number]) {
 // Intercept clicks on sandbox download links rendered inside the message body.
 // These links point at /api/workspace/download, which requires a Bearer token —
 // a plain <a> click does a top-level navigation that carries NO auth header and
-// the backend rejects it with "未提供认证令牌". So we prevent the navigation and
+// the backend rejects it with "No auth token provided". So we prevent the navigation and
 // instead perform an authenticated blob download, exactly like WorkspaceView does.
 function onContentClick(e: MouseEvent) {
   const a = (e.target as HTMLElement | null)?.closest('a')

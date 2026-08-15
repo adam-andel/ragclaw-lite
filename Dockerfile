@@ -116,4 +116,16 @@ USER ragclaw
 ENV PYTHONPATH=/app/backend
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# ── Hard constraint: SINGLE uvicorn worker (--workers 1) ──
+# RAGClaw relies on process-local singletons that MUST stay in ONE process:
+#   * the asyncio LLM concurrency semaphore (llm_semaphore.py)
+#   * the in-memory BM25 index (bm25_index.py)
+#   * the in-process answer cache + functools.lru_cache
+#   * Chroma PersistentClient opened per-process on the SAME disk path
+# Running >1 worker forks N independent copies of all of the above — the
+# semaphore would be N× too large, BM25/Chroma/cache would be fragmented and
+# never shared, silently defeating their purpose. There is intentionally NO
+# RAGCLAW_MAX_WORKERS knob: do NOT add --workers N here. Scale horizontally
+# (more containers) instead of vertically (more workers), which keeps the
+# singletons correct per instance.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -40,7 +40,7 @@ class CronJob(Base):
     kb_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     skill_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     workspace_dir: Mapped[str | None] = mapped_column(
-        String(512), nullable=True, comment="创建定时任务时对话中所选的工作目录（相对沙箱根路径）"
+        String(512), nullable=True, comment="Working directory chosen in the conversation when the cron job was created (relative to the sandbox root)"
     )
 
     status: Mapped[CronJobStatus] = mapped_column(

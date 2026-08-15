@@ -318,7 +318,7 @@ function startEmbeddingPolling() {
     if (s === 'completed' || s === 'failed' || s === 'cancelled') {
       stopEmbeddingPolling()
       if (s === 'completed') message.success(t('settings.embeddingModelMgmt.installedTip'))
-      else if (s === 'failed') message.error(t('settings.embeddingModelMgmt.statusFailed') + '：' + embeddingStatus.value.error)
+      else if (s === 'failed') message.error(t('settings.embeddingModelMgmt.statusFailed') + ': ' + embeddingStatus.value.error)
       // cancelled: handled by the cancel action's own toast
     }
   }, 2000)
@@ -439,7 +439,7 @@ async function doReindex(target: string) {
   // Seed the deletion-phase panel the instant the confirm modal closes. The
   // backend switch response is now fast (the model weights load lazily inside the
   // re-index worker, not in the request), but we seed optimistically so the
-  // "正在删除旧向量…" line shows with zero wait even on a slow network round-trip.
+  // The "deleting old vectors…" line shows with zero wait even on a slow network round-trip.
   reindexStatus.value = {
     status: 'running',
     phase: 'deleting',
@@ -711,7 +711,7 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 const saveState = ref<{ status: SaveStatus; label?: string; msg?: string }>({ status: 'idle' })
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 // Field names changed within the current debounce window; shown in the inline
-// status (e.g. "API Key 已保存"). A Set dedupes and collapses multiple edits.
+// status (e.g. "API Key saved"). A Set dedupes and collapses multiple edits.
 const pendingLabels = new Set<string>()
 
 // Non-blocking warnings returned by the backend config sanity check (window
@@ -729,7 +729,7 @@ function budgetWarningText(w: BudgetWarning): string {
 function scheduleSave(label?: unknown) {
   // Only accept string labels; control events may pass the event/value object.
   if (typeof label === 'string' && label) pendingLabels.add(label)
-  saveState.value = { status: 'saving', label: [...pendingLabels].join('、') }
+  saveState.value = { status: 'saving', label: [...pendingLabels].join(', ') }
   if (saveTimer) clearTimeout(saveTimer)
   // Debounce so rapid commits (e.g. tabbing through fields) collapse into one request.
   saveTimer = setTimeout(() => {
@@ -764,12 +764,12 @@ function saveErrorReason(e: any): string {
     const base = map[status] || t('settings.msg.saveFailedServer')
     // Append the raw server detail only for client-side (4xx) errors where it
     // usually explains the rejection; 5xx details are typically unhelpful traces.
-    if (businessDetail && status < 500) return `${base}（${detail}）`
+    if (businessDetail && status < 500) return `${base} (${detail})`
     return base
   }
   if (/timeout/i.test(detail)) return t('settings.msg.saveFailedTimeout')
   if (/network error/i.test(detail)) return t('settings.msg.saveFailedNetwork')
-  if (businessDetail) return `${t('settings.msg.saveFailedUnknown')}（${detail}）`
+  if (businessDetail) return `${t('settings.msg.saveFailedUnknown')} (${detail})`
   return t('settings.msg.saveFailedUnknown')
 }
 
@@ -816,11 +816,11 @@ async function doSave() {
     // Preserve the "sandbox needs restart" hint inline when not hot-pushed.
     saveState.value = {
       status: 'saved',
-      label: changed.join('、'),
+      label: changed.join(', '),
       msg: sres.mcp_pushed ? undefined : t('settings.msg.sandboxSavedRestart'),
     }
   } catch (e: any) {
-    saveState.value = { status: 'error', label: changed.join('、'), msg: saveErrorReason(e) }
+    saveState.value = { status: 'error', label: changed.join(', '), msg: saveErrorReason(e) }
   }
 }
 
@@ -921,7 +921,7 @@ async function handleTest() {
           <span class="save-status" :class="saveState.status">
             <template v-if="saveState.status === 'saving'"><template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saving') }}</template>
             <template v-else-if="saveState.status === 'saved'">
-              <NIcon :component="CheckmarkCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saved') }}<template v-if="saveState.msg">（{{ saveState.msg }}）</template>
+              <NIcon :component="CheckmarkCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saved') }}<template v-if="saveState.msg"> ({{ saveState.msg }})</template>
             </template>
             <template v-else-if="saveState.status === 'error'">
               <NIcon :component="AlertCircle" size="14" /> <template v-if="saveState.label">{{ saveState.label }}</template> {{ t('settings.msg.saveFailedPrefix') }}{{ saveState.msg }}
@@ -1342,7 +1342,7 @@ async function handleTest() {
 
           <NFormItem v-if="selectedFailed" :show-feedback="false">
             <NAlert type="error" :bordered="false">
-              <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.statusFailed') }}：{{ embeddingStatus.error }}</div>
+              <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.statusFailed') }}: {{ embeddingStatus.error }}</div>
             </NAlert>
           </NFormItem>
 
@@ -1352,7 +1352,7 @@ async function handleTest() {
               :bordered="false"
             >
               <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap">
-                <span style="white-space: nowrap">{{ t('settings.embeddingModelMgmt.reindexTitle') }}：{{ reindexPhaseLabel(reindexStatus.phase, reindexStatus.params) || reindexStatus.error }}</span>
+                <span style="white-space: nowrap">{{ t('settings.embeddingModelMgmt.reindexTitle') }}: {{ reindexPhaseLabel(reindexStatus.phase, reindexStatus.params) || reindexStatus.error }}</span>
                 <NProgress
                   type="line"
                   :percentage="reindexStatus.progress"
@@ -1371,7 +1371,7 @@ async function handleTest() {
             :bordered="false"
             style="margin-top: 8px"
           >
-            <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.conflictTitle') }}：{{ dimensionConflict }}</div>
+            <div style="font-size: 13px">{{ t('settings.embeddingModelMgmt.conflictTitle') }}: {{ dimensionConflict }}</div>
           </NAlert>
           
         </section>

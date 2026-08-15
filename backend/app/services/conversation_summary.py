@@ -207,29 +207,11 @@ def _empty_context_request_tokens(
     """
     # system① -- always-on constants. Lazy import: agent_graph imports THIS module
     # at top level, so a top-level import of agent_graph here would be circular;
-    # by call time agent_graph is fully loaded.
-    from app.services.agent_graph import sandbox_network_rule
+    # by call time agent_graph is fully loaded. The Scheduled Task Rule is shared
+    # with the generation path via agent_graph.build_cron_rule so the two stay identical.
+    from app.services.agent_graph import build_cron_rule
 
-    cron_rule = (
-        "\n\n## Scheduled Task Rule\n\n"
-        "If the user wants to create a recurring or one-time scheduled task "
-        "(e.g., 'every morning at 9', '每周一', '每小时'), do NOT answer the task "
-        "content yourself. The system creates the scheduled task for you via the "
-        "create_cron tool — call that tool with the task's name, cron_expr, and "
-        "task_content. Useful cron_expr examples:\n"
-        '- "每天早上9点总结昨日文档" → cron_expr "0 9 * * *"\n'
-        '- "每30分钟检查一次" → cron_expr "*/30 * * * *"\n'
-        '- "只执行一次，今晚8点" → cron_expr "0 20 * * *", max_runs 1\n'
-        "Once the scheduled task has been created (a create_cron tool result is "
-        "present in the conversation), your final answer must be a plain-language "
-        "confirmation ONLY — never output the task as JSON, never emit [TOOL_CALL], "
-        "and never wrap anything in code fences.\n\n"
-        # Authoritative source for this header text: agent_graph.build_generation_messages
-        # (cron_rule). Keep the two in sync if the rule wording changes.
-        + _t("cron_no_fallback_rule", config_manager.prompt_language)
-        + "\n\n"
-        + sandbox_network_rule()
-    ) if include_cron_rule else ""
+    cron_rule = build_cron_rule() if include_cron_rule else ""
     const_prefix = (
         cron_rule
         + "\n\n" + _t("file_answer_rule", config_manager.prompt_language)
@@ -473,7 +455,7 @@ def plan_segment(rounds: list[Round], cursor: int, min_tok: int, max_tok: int):
       - crossing ``max_tok`` with ``acc >= min_tok`` -> emit (don't merge the round
         that would exceed it);
       - a single round exceeding ``max_tok`` while ``acc < min_tok`` -> merge it and
-        split it at execution time (plan §3 "超长轮的单元切分"); the segment is then
+        split it at execution time (plan §3 "splitting over-long rounds into units"); the segment is then
         necessarily >= MAX so it emits;
       - accumulating to ``>= max_tok`` -> emit;
       - tail drained (``exhausted``) with ``acc >= min_tok`` -> emit (best-effort

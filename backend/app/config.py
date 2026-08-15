@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     repl_uid_range_max: int = 110000  # EXCLUSIVE upper bound
     repl_uid_alloc_retries: int = 10  # cap on random-allocation collision retries
 
+    # --- Tenant ---
+    # RAGClaw is deployed as a single private instance inside an organization.
+    # Tenancy here is NOT multi-tenant SaaS isolation — all users belong to ONE
+    # shared tenant so that resources like SKILLs are visible to every user.
+    # New users are assigned this fixed tenant id instead of a random one.
+    default_tenant_id: str = "ragclaw"
+
     # --- Conversation ---
 
 settings = Settings()

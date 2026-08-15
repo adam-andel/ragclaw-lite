@@ -259,7 +259,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
     """
     task = job.task_content or ""
     if not task.strip():
-        return "(任务内容为空，未执行)"
+        return "(task content empty, not executed)"
 
     # Imported lazily to avoid a circular import (agent_graph imports this module).
     from app.services.agent_graph import ragclaw_agent_graph, sandbox_network_rule
@@ -314,7 +314,7 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
         state = await ragclaw_agent_graph.run(initial_state)
     except Exception as e:
         logger.exception("Cron execution agent run failed: %s", e)
-        return f"(执行出错: {e})"
+        return f"(execution error: {e})"
 
     # Produce the final natural-language answer the same way the live chat does,
     # but without the cron-rule (the task must not be turned into a new cron job).
@@ -336,4 +336,4 @@ async def run_cron_execution_subgraph(job: CronJob) -> str:
 
     if state.get("final_answer"):
         return state["final_answer"]
-    return "(任务已执行，但无文本结果)"
+    return "(task executed, but produced no text result)"

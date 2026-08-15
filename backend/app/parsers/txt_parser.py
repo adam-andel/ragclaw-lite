@@ -15,8 +15,8 @@ class TxtParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="txt",
-            display_name="纯文本",
-            description="解析 .txt 文件，自动识别 UTF-8/GBK/GB2312/Latin-1 编码",
+            display_name="parser.txt.name",
+            description="parser.txt.desc",
             category="text",
             extensions=["txt"],
         )

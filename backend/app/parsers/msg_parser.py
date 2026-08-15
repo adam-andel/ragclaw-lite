@@ -17,8 +17,8 @@ class MsgParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="msg",
-            display_name="Outlook 邮件 (MSG)",
-            description="解析 Outlook .msg 文件，提取主题、发件人、正文与附件清单",
+            display_name="parser.msg.name",
+            description="parser.msg.desc",
             category="email",
             extensions=["msg"],
         )
@@ -51,8 +51,8 @@ class MsgParser(BaseParser):
         sections: list[ParsedSection] = []
         # Header section
         header_lines = [
-            f"主题: {subject}", f"发件人: {sender}",
-            f"收件人: {to}", f"抄送: {cc}", f"日期: {date_}",
+            f"Subject: {subject}", f"From: {sender}",
+            f"To: {to}", f"Cc: {cc}", f"Date: {date_}",
         ]
         sections.append(ParsedSection(
             level=0, heading=title, content="\n".join(header_lines),
@@ -60,12 +60,12 @@ class MsgParser(BaseParser):
         # Body section
         if body.strip():
             sections.append(ParsedSection(
-                level=1, heading="正文", content=body,
+                level=1, heading="Body", content=body,
             ))
         # Attachments section
         if attachment_names:
             sections.append(ParsedSection(
-                level=1, heading="附件清单",
+                level=1, heading="Attachments",
                 content="\n".join(f"- {n}" for n in attachment_names),
             ))
 

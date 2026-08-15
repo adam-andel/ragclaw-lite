@@ -330,7 +330,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAGClaw-Lite",
     version="0.5.0",
-    description="企业级 Agentic RAG 知识中台 · 精简版（多租户 · SKILL + MCP）",
+    description="Enterprise-grade Agentic RAG platform - Lite edition (multi-tenant, SKILL + MCP)",
     lifespan=lifespan,
 )
 

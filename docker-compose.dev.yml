@@ -77,7 +77,20 @@ services:
     # at startup, writing through the bind-mount to the HOST ./backend so the lock can
     # be committed — mirroring frontend/docker-entrypoint.dev.sh. Then it launches
     # uvicorn with --reload (same as the prod CMD, just hot-reloading).
+    # NOTE: --reload (and the prod --workers 1) both force a SINGLE worker — RAGClaw
+    # depends on process-local singletons (LLM semaphore, BM25 index, answer cache,
+    # per-process Chroma client) that must NOT be forked. Never switch this to
+    # --workers N or add --workers alongside --reload.
     entrypoint: ["sh", "-c", "cp /opt/backend-requirements.lock /app/backend/requirements.lock 2>/dev/null; exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend"]
+    # Reports healthy only once uvicorn is actually listening on :8000 and the
+    # app (incl. DB tables via lifespan) is up. frontend-dev waits on this so it
+    # never proxies /api requests into a not-yet-ready backend (ECONNREFUSED 500).
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 60s
 
   # ── REPL MCP Server (dev: bind-mount local source) ───────────────────────────
   # Built from the DEV image (mcp/Dockerfile.dev): installs FLOATING deps from
@@ -182,5 +195,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Wait until the backend healthcheck passes (uvicorn listening + app up),
+    # so the Vite /api proxy never hits a not-yet-ready backend (ECONNREFUSED 500
+    # on /api/auth/setup at page load).
     depends_on:
-      - ragclaw
+      ragclaw:
+        condition: service_healthy

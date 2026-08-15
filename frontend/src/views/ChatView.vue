@@ -309,7 +309,7 @@ function wsConfirmDir() {
 }
 
 const queuePosition = ref<number | null>(null)
-// Tracks the backend agent_step stage during streaming so the assistant bubble can show "检索中" vs "生成中".
+// Tracks the backend agent_step stage during streaming so the assistant bubble can show "Retrieving" vs "Generating".
 const assistantStage = ref<string | null>(null)
 // LLM context token count: total tokens of the latest request body (system prompt + history + RAG + memory + tools + question)
 const contextTokens = ref(0)

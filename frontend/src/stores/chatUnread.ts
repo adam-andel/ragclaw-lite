@@ -6,7 +6,7 @@ import { ref, computed } from 'vue'
  * looking at that conversation — so we can surface an "unread answer" hint:
  *  - a red dot on the chat history button (when the user is on another chat),
  *  - a red dot on the sidebar Chat label (when the user is on another page),
- *  - an "有未读消息" badge on the matching conversation in the history modal.
+ *  - an "unread message" badge on the matching conversation in the history modal.
  */
 export const useChatUnreadStore = defineStore('chatUnread', () => {
   // Conversation ids that have a generated-but-unread assistant answer.

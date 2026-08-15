@@ -4,6 +4,13 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-lite
+    # ── Single-worker hard constraint ──
+    # The backend runs uvicorn with EXACTLY ONE worker (pinned via --workers 1 in
+    # the Dockerfile CMD). RAGClaw depends on process-local singletons (LLM
+    # semaphore, in-memory BM25 index, answer cache, per-process Chroma
+    # PersistentClient) that must NOT be forked across multiple workers. Do NOT
+    # override the command here with --workers N. To scale, run more containers
+    # (horizontal), never more workers per container (vertical).
     # Backend port is NOT published to the host — all traffic is proxied
     # through the nginx service (see below). nginx reaches it on the internal
     # `ragclaw` network at ragclaw:8000.

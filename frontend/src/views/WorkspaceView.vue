@@ -32,7 +32,8 @@ const checkedRowKeys = ref<string[]>([])
 
 // ── Filename search (server-side, recursive within currentPath) ──
 const search = ref('')
-// 后端递归搜索命中超过上限时被截断（响应里 truncated 标记）。
+// The backend truncates recursive search hits past its limit (the `truncated`
+// flag in the response).
 const searchTruncated = ref(false)
 function onSearch() {
   page.value = 1
@@ -97,7 +98,8 @@ const sortedEntries = computed(() => {
   return [...list].sort(cmp)
 })
 
-// 排序选项（目录与文件一视同仁，不再把文件夹强制排前）。
+// Sort options (directories and files treated equally; folders are no longer
+// forced to the front).
 type SortKey = 'mtime-desc' | 'mtime-asc' | 'name-desc' | 'name-asc' | 'size-desc' | 'size-asc' | 'type-desc' | 'type-asc'
 const SORTERS: Record<SortKey, (a: WorkspaceEntry, b: WorkspaceEntry) => number> = {
   'mtime-desc': (a, b) => b.mtime - a.mtime,
@@ -121,7 +123,7 @@ const sortOptions = [
   { label: t('workspace.sort.typeAsc'), value: 'type-asc' },
 ]
 
-// ── 前端分页 ──
+// ── Front-end pagination ──
 const page = ref(1)
 const pageSize = ref(100)
 const total = computed(() => sortedEntries.value.length)
@@ -130,7 +132,8 @@ const pagedEntries = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return sortedEntries.value.slice(start, start + pageSize.value)
 })
-// 排序/筛选变化时回到第 1 页；数据变少导致当前页越界时自动收敛。
+// Return to page 1 when sort/filter changes; auto-clamp the current page when
+// fewer items shrink the total page count past the bound.
 watch([sortOrder, filterType], () => { page.value = 1 })
 watch(totalPages, (tp) => { if (page.value > tp) page.value = tp })
 
@@ -856,8 +859,8 @@ onMounted(load)
         :page-sizes="[20, 50, 100]"
         @update:page-size="page = 1"
       />
-      <span class="ws-pagination-info" v-if="searchTruncated">匹配结果超过上限，未能全部展示</span>
-      <span class="ws-pagination-info" v-else>共 {{ total }} 项</span>
+      <span class="ws-pagination-info" v-if="searchTruncated">{{ t('workspace.searchTruncated') }}</span>
+      <span class="ws-pagination-info" v-else>{{ t('workspace.itemCount', { count: total }) }}</span>
     </div>
 
     <!-- New folder -->

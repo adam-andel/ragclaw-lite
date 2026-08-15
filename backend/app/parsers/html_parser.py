@@ -24,8 +24,8 @@ class HtmlParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="html",
-            display_name="HTML 网页",
-            description="解析 HTML 文件，按标题标签分块，剔除脚本与样式",
+            display_name="parser.html.name",
+            description="parser.html.desc",
             category="web",
             extensions=["html", "htm"],
         )

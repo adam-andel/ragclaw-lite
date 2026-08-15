@@ -23,8 +23,8 @@ class ExcelParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="excel",
-            display_name="Excel 表格",
-            description="解析 .xlsx 文件，按工作表分块，提取表头与单元格文本",
+            display_name="parser.excel.name",
+            description="parser.excel.desc",
             category="office",
             extensions=["xlsx", "xls"],
         )

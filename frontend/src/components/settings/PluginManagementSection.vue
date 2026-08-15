@@ -113,7 +113,7 @@ defineExpose({ refresh: handleRefreshCache })
             <template #header>
               <div class="plugin-header">
                 <NSpace align="center" :size="8">
-                  <NText strong>{{ plugin.display_name }}</NText>
+                  <NText strong>{{ t('plugins.' + plugin.display_name) }}</NText>
                   <NTag size="tiny" :type="(categoryColors[plugin.category] || 'default') as any">
                     {{ categoryLabels[plugin.category] ? t(categoryLabels[plugin.category]) : plugin.category }}
                   </NTag>
@@ -128,7 +128,7 @@ defineExpose({ refresh: handleRefreshCache })
             </template>
 
             <div class="plugin-body">
-              <p class="plugin-desc">{{ plugin.description }}</p>
+              <p class="plugin-desc">{{ t('plugins.' + plugin.description) }}</p>
               <div class="plugin-exts">
                 <NText depth="3" style="font-size:12px">{{ t('plugins.supportFormats') }}</NText>
                 <NText code style="font-size:12px">{{ formatExts(plugin.extensions) }}</NText>

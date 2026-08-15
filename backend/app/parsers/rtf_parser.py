@@ -17,8 +17,8 @@ class RtfParser(BaseParser):
     def plugin_meta(cls) -> ParserPluginMeta:
         return ParserPluginMeta(
             name="rtf",
-            display_name="RTF 富文本",
-            description="解析 .rtf 文件，剥离控制字，按空行分段",
+            display_name="parser.rtf.name",
+            description="parser.rtf.desc",
             category="office",
             extensions=["rtf"],
         )

@@ -125,6 +125,76 @@ class Patch:
     apply: ApplyFn
 
 
+def _normalize_tenant_ids(conn: Connection) -> None:
+    """Fold every existing ``tenant_id`` into the shared single-tenant value.
+
+    Pre-launch convenience migration. Historically each new user was assigned a
+    random ``tenant_id``, which scoped every tenant-owned resource (skills, MCP
+    servers, KBs, documents, cron jobs, notifications) privately to that user
+    instead of shared across the org. RAGClaw is deployed as ONE private instance
+    where all users share a single tenant (``settings.default_tenant_id``). This
+    patch rewrites every mismatched row once so those resources become visible to
+    all users. Idempotent: only rows that differ are updated, so re-running is a
+    no-op on an already-normalized database.
+    """
+    from app.config import settings
+
+    default_tenant = settings.default_tenant_id
+    tenant_tables = (
+        "users",
+        "skills",
+        "mcp_servers",
+        "knowledge_bases",
+        "documents",
+        "cron_jobs",
+        "notifications",
+    )
+    for table in tenant_tables:
+        if not conn.dialect.has_table(conn, table):
+            continue
+        conn.exec_driver_sql(
+            f"UPDATE {table} SET tenant_id = :t "
+            f"WHERE tenant_id IS NOT NULL AND tenant_id <> :t",
+            {"t": default_tenant},
+        )
+
+
+def _tenant_normalized(insp: Inspector) -> bool:
+    """Return True when no tenant-owned row still needs normalization (skip)."""
+    from app.config import settings
+    from sqlalchemy import text
+
+    bind = insp.bind
+    if bind is None or not insp.has_table("users"):
+        return True
+    default_tenant = settings.default_tenant_id
+    tenant_tables = (
+        "users",
+        "skills",
+        "mcp_servers",
+        "knowledge_bases",
+        "documents",
+        "cron_jobs",
+        "notifications",
+    )
+    for table in tenant_tables:
+        if not insp.has_table(table):
+            continue
+        cols = {c["name"] for c in insp.get_columns(table)}
+        if "tenant_id" not in cols:
+            continue
+        row = bind.execute(
+            text(
+                f"SELECT 1 FROM {table} "
+                f"WHERE tenant_id IS NOT NULL AND tenant_id <> :t LIMIT 1"
+            ),
+            {"t": default_tenant},
+        ).first()
+        if row is not None:
+            return False
+    return True
+
+
 # ─── The patch list ───
 #
 # Append new patches at the END. Order matters only when one patch depends on
@@ -228,6 +298,16 @@ PATCHES: list[Patch] = [
         name="users.timezone",
         applied=lambda insp: has_column(insp, "users", "timezone"),
         apply=["ALTER TABLE users ADD COLUMN timezone TEXT"],
+    ),
+
+    # Pre-launch single-tenant data normalization. Fold every historically random
+    # tenant_id into the shared settings.default_tenant_id so tenant-owned
+    # resources (skills, MCP servers, KBs, ...) are visible to all users. Idempotent
+    # on data: applied() skips once no mismatched row remains.
+    Patch(
+        name="tenant.normalize_to_shared",
+        applied=_tenant_normalized,
+        apply=_normalize_tenant_ids,
     ),
 ]
 

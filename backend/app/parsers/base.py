@@ -77,5 +77,5 @@ class BaseParser(ABC):
             return self.parse(file_path)
         except Exception as e:
             raise ValueError(
-                f"{self.__class__.__name__} 解析失败: {e}"
+                f"{self.__class__.__name__} PARSER_PARSE_FAILED: {e}"
             ) from e
