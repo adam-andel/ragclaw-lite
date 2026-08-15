@@ -142,7 +142,23 @@ def disable_skill_fs(folder_name: str) -> None:
 _SKILL_INIT_SCRIPT = ".ragclaw/init.sh"
 
 
-def run_skill_init_script(folder_name: str) -> bool:
+def _skill_api_key_status(folder_name: str) -> str:
+    """Return 'set' if a secret-zero API KEY is configured for the skill.
+
+    Reads the encrypted config.enc skill_secrets namespace. Returns 'empty' when
+    unset or on any error (defense-in-depth: default to vanilla / no shim).
+    """
+    try:
+        from app.services.config_manager import config_manager
+        secrets = config_manager.get_config_safe().get("skill_secrets", {})
+        return "set" if secrets.get(folder_name) else "empty"
+    except Exception:
+        return "empty"
+
+
+def run_skill_init_script(
+    folder_name: str, api_key_status: str | None = None
+) -> bool:
     """Execute <skill_dir>/.ragclaw/init.sh if it exists.
 
     Returns True if the script was found and exited 0. No-op (False) when the
@@ -151,6 +167,16 @@ def run_skill_init_script(folder_name: str) -> bool:
     """
     skill_dir = get_skill_dir(folder_name)
     script = skill_dir / _SKILL_INIT_SCRIPT
+
+    # Secret-zero: tell the init hook whether an API KEY is configured for this
+    # skill so it can route through the injection-proxy shim (KEY never enters
+    # the sandbox). The status is sourced from config.enc's skill_secrets
+    # namespace when not passed explicitly (e.g. by a future PATCH endpoint).
+    if api_key_status is None:
+        api_key_status = _skill_api_key_status(folder_name)
+    env = os.environ.copy()
+    env["RAGCLAW_SKILL_API_KEY_STATUS"] = "set" if api_key_status == "set" else "empty"
+
     if not script.is_file():
         return False
     try:
@@ -160,6 +186,7 @@ def run_skill_init_script(folder_name: str) -> bool:
             capture_output=True,
             text=True,
             timeout=120,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         logger.warning(".ragclaw/init.sh timed out for %s", folder_name)

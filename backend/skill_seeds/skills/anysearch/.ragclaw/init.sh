@@ -16,15 +16,22 @@
 set -euo pipefail
 
 # This script lives in <skill>/.ragclaw/, so SKILL_DIR must step up one level to
-# reach the package root. Any ragclaw-owned artifacts we generate (e.g. shim.py /
-# adapter.json for secret-zero) stay under $SKILL_DIR/.ragclaw/, never in the
-# native tree.
+# reach the package root. Ragclaw-owned artifacts (shim.py / adapter.json for
+# secret-zero) live under $SKILL_DIR/.ragclaw/, never in the native tree.
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE="$SKILL_DIR/runtime.conf.example"
 OUT="$SKILL_DIR/runtime.conf"
 
+# Secret-zero: the backend tells us whether an API KEY is configured for this
+# skill via RAGCLAW_SKILL_API_KEY_STATUS (empty | set). When "set" AND the
+# ragclaw shim/adapter are present, the resolved command routes through the
+# injection proxy (KEY never enters the sandbox). Otherwise we fall back to the
+# native CLI (vanilla) — identical to the no-KEY behaviour.
+API_KEY_STATUS="${RAGCLAW_SKILL_API_KEY_STATUS:-empty}"
+folder="$(basename "$SKILL_DIR")"
+
 # ---------------------------------------------------------------------------
-# 1) Materialise runtime.conf from runtime.conf.example.
+# 0) Detect the native CLI and compute the resolved command.
 #
 # The <skill_dir> / <detected_command> placeholders are resolved to the
 # PER-USER, permission-correct sandbox path via $REPL_SKILLS_DIR — NOT the
@@ -34,63 +41,74 @@ OUT="$SKILL_DIR/runtime.conf"
 # store volume is mounted read-only in the REPL and must NOT be the execution
 # path. Keep $REPL_SKILLS_DIR literal here so it expands at run_shell time.
 # ---------------------------------------------------------------------------
+
+# Print the CLI script name to use, preferring <folder>_cli.<ext> then
+# *_cli.<ext> then the first matching file. Echoes empty string when none found.
+detect_cli() {
+    local ext="$1"
+    if [ -f "$SKILL_DIR/scripts/${folder}_cli.$ext" ]; then
+        echo "${folder}_cli.$ext"; return
+    fi
+    for f in "$SKILL_DIR"/scripts/*_cli."$ext"; do
+        [ -e "$f" ] || continue
+        echo "$(basename "$f")"; return
+    done
+    for f in "$SKILL_DIR"/scripts/*."$ext"; do
+        [ -e "$f" ] || continue
+        echo "$(basename "$f")"; return
+    done
+    echo ""
+}
+
+RUNTIME=""
+VANILLA_CMD=""
+
+py_name="$(detect_cli py)"
+if [ -n "$py_name" ]; then
+    RUNTIME="python"
+    VANILLA_CMD="python3 \$REPL_SKILLS_DIR/$folder/scripts/$py_name"
+fi
+
+if [ -z "$RUNTIME" ]; then
+    js_name="$(detect_cli js)"
+    if [ -n "$js_name" ]; then
+        RUNTIME="node"
+        VANILLA_CMD="node \$REPL_SKILLS_DIR/$folder/scripts/$js_name"
+    fi
+fi
+
+if [ -z "$RUNTIME" ]; then
+    sh_name="$(detect_cli sh)"
+    if [ -n "$sh_name" ]; then
+        RUNTIME="bash"
+        VANILLA_CMD="bash \$REPL_SKILLS_DIR/$folder/scripts/$sh_name"
+    fi
+fi
+
+# Resolved command: route through the secret-zero shim when a KEY is configured
+# and the ragclaw adapter files exist; otherwise use the native CLI (vanilla).
+RESOLVED_CMD="$VANILLA_CMD"
+if [ "$API_KEY_STATUS" = "set" ] \
+   && [ -f "$SKILL_DIR/.ragclaw/shim.py" ] \
+   && [ -f "$SKILL_DIR/.ragclaw/adapter.json" ]; then
+    RESOLVED_CMD="python3 \$REPL_SKILLS_DIR/$folder/.ragclaw/shim.py"
+elif [ "$API_KEY_STATUS" = "set" ]; then
+    echo "[.ragclaw/init] WARN: api_key set but .ragclaw/shim.py or adapter.json missing; falling back to native CLI"
+fi
+
+# ---------------------------------------------------------------------------
+# 1) Materialise runtime.conf from runtime.conf.example (if present).
+# ---------------------------------------------------------------------------
 if [ ! -f "$EXAMPLE" ]; then
     echo "[.ragclaw/init] no runtime.conf.example; skipping runtime.conf"
+elif [ -z "$RUNTIME" ]; then
+    echo "[.ragclaw/init] no CLI script found under scripts/; skipping runtime.conf"
 else
-    folder="$(basename "$SKILL_DIR")"
-
-    # Print the CLI script name to use, preferring <folder>_cli.<ext> then
-    # *_cli.<ext> then the first matching file. Echoes empty string when none found.
-    detect_cli() {
-        local ext="$1"
-        if [ -f "$SKILL_DIR/scripts/${folder}_cli.$ext" ]; then
-            echo "${folder}_cli.$ext"; return
-        fi
-        for f in "$SKILL_DIR"/scripts/*_cli."$ext"; do
-            [ -e "$f" ] || continue
-            echo "$(basename "$f")"; return
-        done
-        for f in "$SKILL_DIR"/scripts/*."$ext"; do
-            [ -e "$f" ] || continue
-            echo "$(basename "$f")"; return
-        done
-        echo ""
-    }
-
-    RUNTIME=""
-    CMD=""
-
-    py_name="$(detect_cli py)"
-    if [ -n "$py_name" ]; then
-        RUNTIME="python"
-        CMD="python3 \$REPL_SKILLS_DIR/$folder/scripts/$py_name"
-    fi
-
-    if [ -z "$RUNTIME" ]; then
-        js_name="$(detect_cli js)"
-        if [ -n "$js_name" ]; then
-            RUNTIME="node"
-            CMD="node \$REPL_SKILLS_DIR/$folder/scripts/$js_name"
-        fi
-    fi
-
-    if [ -z "$RUNTIME" ]; then
-        sh_name="$(detect_cli sh)"
-        if [ -n "$sh_name" ]; then
-            RUNTIME="bash"
-            CMD="bash \$REPL_SKILLS_DIR/$folder/scripts/$sh_name"
-        fi
-    fi
-
-    if [ -z "$RUNTIME" ]; then
-        echo "[.ragclaw/init] no CLI script found under scripts/; skipping runtime.conf"
-    else
-        sed -e "s|<detected_runtime>|$RUNTIME|g" \
-            -e "s|<detected_command>|$CMD|g" \
-            "$EXAMPLE" > "$OUT"
-        chmod 644 "$OUT"
-        echo "[.ragclaw/init] wrote $OUT (Runtime=$RUNTIME, Command=$CMD)"
-    fi
+    sed -e "s|<detected_runtime>|$RUNTIME|g" \
+        -e "s|<detected_command>|$RESOLVED_CMD|g" \
+        "$EXAMPLE" > "$OUT"
+    chmod 644 "$OUT"
+    echo "[.ragclaw/init] wrote $OUT (Runtime=$RUNTIME, Command=$RESOLVED_CMD)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -165,8 +183,12 @@ When you present search results to the user, you MUST follow these hard rules:
 
 ## Resolved command (ragclaw pre-injected)
 
-Resolved command (use directly): python3 $REPL_SKILLS_DIR/anysearch/scripts/anysearch_cli.py
+Resolved command (use directly): RESOLVED_CMD_PLACEHOLDER
 RAGCLAW_EOF
+        # Substitute the resolved command (shim when KEY set, else native CLI)
+        # into the placeholder. $RESOLVED_CMD carries a literal $REPL_SKILLS_DIR
+        # that expands at REPL run_shell time.
+        sed -i "s|RESOLVED_CMD_PLACEHOLDER|$RESOLVED_CMD|g" "$SKILL_MD"
         chmod 644 "$SKILL_MD"
         echo "[.ragclaw/init] appended adapter block to $SKILL_MD"
     fi

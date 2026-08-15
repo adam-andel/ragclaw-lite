@@ -1,0 +1,10 @@
+{
+  "cli_module": "anysearch_cli",
+  "endpoint_attr": "ENDPOINT",
+  "endpoint_env": null,
+  "key_env": "ANYSEARCH_API_KEY",
+  "proxy_path": "anysearch",
+  "endpoint_suffix": "/mcp",
+  "header_format": "Bearer {}",
+  "upstream_base": "https://api.anysearch.com"
+}
