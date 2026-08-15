@@ -123,9 +123,10 @@ def test_world_readable_bits_allow_foreign_uid(shared_volume):
 
 
 def test_three_layer_chain_resolves(shared_volume):
-    """store/<s>/SKILL.md  +  enable/<s> -> ../store/<s>  +  per-user link
-    -> enable/<s>  must resolve end-to-end. Root reads its own creation here;
-    combined with the world-readable bits above, a foreign uid can too."""
+    """store/<s>/SKILL.md  +  enable/<s> -> ../store/<s>  must resolve
+    end-to-end. The sandbox child reaches skills via the REPL_SKILLS_DIR
+    container env var (the shared enable/ set); combined with the
+    world-readable bits above, a foreign uid can also read through enable/."""
     skill = settings.skills_dir / TEST_SKILL
     (skill / "scripts").mkdir(parents=True)
     body = "# test\nname: Verify\n"
@@ -133,16 +134,10 @@ def test_three_layer_chain_resolves(shared_volume):
     sm._ensure_world_readable(skill)
     sm.enable_skill_fs(TEST_SKILL)  # enable/<s> -> ../store/<s>
 
-    # per-user link as mcp-repl creates it: ABSOLUTE target across volumes.
-    home = shared_volume.parent / "sandbox_home"
-    home.mkdir()
-    link_dir = home / ".ragclaw" / "skills"
-    link_dir.mkdir(parents=True)
-    user_link = link_dir / TEST_SKILL
-    os.symlink(str(settings.skills_enable_dir / TEST_SKILL), str(user_link))
-
-    assert (user_link / "SKILL.md").is_file()
-    assert (user_link / "SKILL.md").read_text() == body
+    # The sandbox child now reaches skills via REPL_SKILLS_DIR=/ragclaw_skills/enable
+    # (a persistent container env var), not a per-user symlink tree.
+    assert (settings.skills_enable_dir / TEST_SKILL / "SKILL.md").is_file()
+    assert (settings.skills_enable_dir / TEST_SKILL / "SKILL.md").read_text() == body
 
 
 def test_import_skill_py_drops_no_pyc(shared_volume):
@@ -282,7 +277,11 @@ def test_live_volume_matrix():
     writable = _volume_writable(d)
     home = Path(tempfile.mkdtemp(prefix="verify_skills."))
     os.chmod(home, 0o755)  # let the simulated pool UID traverse into its home
-    link_dir = home / ".ragclaw" / "skills"
+    # The per-user `.ragclaw` symlink tree was removed from production; the
+    # sandbox child now reaches skills via REPL_SKILLS_DIR -> enable/. This live
+    # check still proves cross-UID readability of the shared enable/ set, using a
+    # neutral temp stand-in (no `.ragclaw`) for the link the old code created.
+    link_dir = home / "skills"
     link_dir.mkdir(parents=True)
 
     try:

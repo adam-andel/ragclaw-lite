@@ -20,7 +20,6 @@ from app.services.skill_manager import (
     get_skill_resource, list_resource_paths,
 )
 from app.services.skill_script_loader import discover_tools, execute_script_tool
-from app.services.skill_sandbox_link import ensure_user_skill_link
 from app.services.tool_registry import tool_registry
 from app.services.kb_service import get_kb_prompt
 from app.services.token_count import count_messages_tokens
@@ -39,6 +38,31 @@ logger.setLevel(logging.INFO)
 # small-context models. effective = min(32768, context_window - input - 256).
 AGENT_MAX_TOKENS_HARD_CAP = 32768
 AGENT_MAX_TOKENS_SAFETY_MARGIN = 256
+
+
+# ── Current-date note for the system prompt ──
+def _current_date_note(tz_str: str | None) -> str:
+    """Render a 'current date' note in the user's timezone for the system prompt.
+
+    The LLM must anchor relative-time requests ('today', 'this year') to the real
+    current date instead of guessing a year from training data. Computed in the
+    user's IANA timezone (state['timezone']) with a UTC fallback.
+    """
+    tz_name = tz_str or "UTC"
+    try:
+        from datetime import datetime as _dt
+        import pytz as _pytz
+        now = _dt.now(_pytz.timezone(tz_name))
+    except Exception:
+        from datetime import datetime as _dt, timezone as _tz
+        now = _dt.now(_tz.utc)
+        tz_name = "UTC"
+    return _t(
+        "current_date_note",
+        config_manager.prompt_language,
+        date=now.strftime("%Y-%m-%d"),
+        tz=tz_name,
+    )
 
 
 def _compute_agent_max_tokens(messages: list[dict]) -> int:
@@ -815,17 +839,12 @@ async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = Non
     Returns (system_prompt, tools) where tools already include the
     read_skill_resource tool when the skill has reference/data files.
 
-    Before reading the skill's files, lazily ask mcp-repl to materialise this
-    user's per-sandbox symlink to the skill's resources (POST /skills/link). This
-    is the only write the Backend triggers for skill exposure, and only for the
-    single skill actually in use — best-effort, failures are ignored so the
-    skill body still loads from the shared store.
+    Skills are exposed to the sandbox exclusively through the ``REPL_SKILLS_DIR``
+    container env var (set in docker-compose for mcp-repl, default
+    ``/ragclaw_skills/enable``), which points at the shared, backend-managed
+    ``enable/`` set. No per-user symlink is materialised anymore; the skill body
+    is always loaded from the shared store regardless.
     """
-    if user_id:
-        try:
-            await ensure_user_skill_link(user_id, folder_name)
-        except Exception as e:  # noqa: BLE001 - must never break the graph
-            logger.warning("_load_skill_body_and_tools: skill link skipped: %s", e)
 
     skill_md_content = read_skill_md(folder_name)
     if not skill_md_content:
@@ -1465,6 +1484,9 @@ async def tool_decision_node(state: dict) -> dict:
             task_background += f"\n\n## Pinned Instructions\n{pin}"
         if ws_context:
             task_background += "\n\n" + ws_context
+        # Anchor relative-time requests ('today'/'this year') to the real current
+        # date in the user's timezone, so the LLM doesn't hardcode a training-year.
+        task_background += "\n\n" + _current_date_note(state.get("timezone"))
         msgs = [
             {"role": "system", "content": tool_system},
             {"role": "system", "content": "## Task Background (reference only)\n" + task_background},

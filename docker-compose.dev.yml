@@ -115,6 +115,12 @@ services:
     build:
       context: ./mcp
       dockerfile: Dockerfile.dev
+    environment:
+      # Mirror base mcp-repl: sandbox child reads skills from the backend-managed
+      # enable/ set via $REPL_SKILLS_DIR (replaces the removed per-user skills
+      # symlink tree). Declared here so dev does not silently depend on the base
+      # file's environment merging in.
+      - REPL_SKILLS_DIR=/ragclaw_skills/enable
     volumes:
       - ./mcp:/app
       # Shared skills volume, READ-ONLY (Phase 7). The per-user REPL sandbox
