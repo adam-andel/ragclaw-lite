@@ -137,7 +137,7 @@ async def create_user(
                 display_name=data.display_name or data.username,
                 email=data.email,
                 role=target_role,
-                tenant_id=str(uuid.uuid4()),
+                tenant_id=settings.default_tenant_id,
                 repl_uid=cand,
             )
             db.add(user)

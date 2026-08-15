@@ -177,7 +177,7 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
         email=data.email,
         role=UserRole.ADMIN,
         is_active=True,
-        tenant_id=data.tenant_id or str(uuid.uuid4()),
+        tenant_id=data.tenant_id or settings.default_tenant_id,
         repl_uid=settings.repl_uid_range_min,  # reserved bootstrap admin UID
     )
     db.add(user)
