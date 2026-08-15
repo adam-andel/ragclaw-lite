@@ -1033,6 +1033,67 @@ def _skill_control_return(tc: dict, result: str, stack: list[dict], state: dict)
     }
 
 
+def _fuzzy_match_skill(name: str, skills: list) -> "Skill | None":
+    """Pick the single best-matching active skill for a (possibly misspelled) name.
+
+    Purely registry-driven — never special-cases any specific skill, so the
+    matching stays correct as skills are added/removed/renamed. Tiers (first hit
+    wins): 1) case-insensitive exact on name/folder_name; 2) unique substring
+    containment; 3) difflib edit-distance ratio >= 0.6, rejecting near-ties.
+    Returns None when no confident match exists.
+    """
+    if not skills:
+        return None
+    lowered = name.lower()
+    for s in skills:
+        if s.name.lower() == lowered or s.folder_name.lower() == lowered:
+            return s
+    contained = [s for s in skills if lowered in s.name.lower() or lowered in s.folder_name.lower()]
+    if len(contained) == 1:
+        return contained[0]
+    from difflib import SequenceMatcher
+
+    def _ratio(s: "Skill") -> float:
+        best = 0.0
+        for cand in (s.name, s.folder_name):
+            best = max(best, SequenceMatcher(None, lowered, cand.lower()).ratio())
+        return best
+    scored = sorted(((_ratio(s), s) for s in skills), key=lambda x: x[0], reverse=True)
+    best_ratio, best = scored[0]
+    if best_ratio < 0.6:
+        return None
+    if len(scored) > 1 and scored[1][0] >= best_ratio - 0.05:
+        return None  # ambiguous — refuse to guess
+    return best
+
+
+async def _build_skill_catalogue_prompt(tenant_id: str | None) -> str:
+    """Build a generic 'Available Skills' block from the live registry.
+
+    Surfaces each active skill's name + description (authored in its SKILL.md
+    frontmatter) so the decision LLM can route to a skill without first calling
+    list_skills. Capability-driven, NOT a per-skill keyword enumeration.
+    """
+    async with async_session() as db:
+        if tenant_id:
+            rows = (await db.execute(
+                select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+            )).scalars().all()
+        else:
+            rows = (await db.execute(
+                select(Skill).where(Skill.is_active == True)  # noqa: E712
+            )).scalars().all()
+    rows = [s for s in rows if is_skill_effectively_enabled(s.folder_name)]
+    if not rows:
+        return ""
+    lines = "\n".join(f"- {s.name}: {s.description or '(no description)'}" for s in rows)
+    return (
+        "## Available Skills\n"
+        "Load a skill with use_skill(\"<name>\") when the user's request matches its "
+        "capability. Available now:\n" + lines
+    )
+
+
 async def skill_switcher_node(state: dict) -> dict:
     """Route D — handle use_skill / done_skill / list_skills control calls.
 
@@ -1083,7 +1144,21 @@ async def skill_switcher_node(state: dict) -> dict:
         if fname == "done_skill":
             if len(stack) <= 1:
                 result = "done_skill: already at the top-level skill; there is no previous layer to return to."
-                return _skill_control_return(tc, result, stack, state)
+                # C-consistent: a control no-op (already at top level) must not consume
+                # a tool-round quota — only real work should. Keep the inline return so we
+                # don't inherit _skill_control_return's +1 (shared by list_skills / failed switches).
+                return {
+                    "active_skill": stack[-1] if stack else state.get("active_skill"),
+                    "skill_stack": stack,
+                    "tool_results": [result],
+                    "tool_messages": [{
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", "call_meta"),
+                        "name": fname,
+                        "content": result,
+                    }],
+                    "tool_round": state.get("tool_round", 0),
+                }
             stack = stack[:-1]
             prev = stack[-1]
             result = f"Returned to the previous skill layer: '{prev.get('name')}'. Its rules and tools are now active."
@@ -1098,7 +1173,7 @@ async def skill_switcher_node(state: dict) -> dict:
                     "name": fname,
                     "content": result,
                 }],
-                "tool_round": state.get("tool_round", 0) + 1,
+                "tool_round": state.get("tool_round", 0),
             }
 
         # ── use_skill ──
@@ -1123,10 +1198,25 @@ async def skill_switcher_node(state: dict) -> dict:
                     },
                 }
             skill = await get_skill_by_name(db, name, tenant_id)
+            corrected_from = None
             if not skill or not skill.is_active or not is_skill_effectively_enabled(skill.folder_name):
-                result = f"use_skill: no available skill named '{name}' (call list_skills to see what's available)."
-                _emit(state, "skill_switch_fail", result, skill=name)
-                return _skill_control_return(tc, result, stack, state)
+                # B: generic fuzzy fallback over the live registry (no per-skill logic).
+                # Lets "search" -> "anysearch" etc. without burning a list_skills round.
+                stmt = (
+                    select(Skill).where((Skill.tenant_id == tenant_id) & (Skill.is_active == True))  # noqa: E712
+                    if tenant_id else
+                    select(Skill).where(Skill.is_active == True)  # noqa: E712
+                )
+                all_skills = (await db.execute(stmt)).scalars().all()
+                all_skills = [s for s in all_skills if is_skill_effectively_enabled(s.folder_name)]
+                fuzzy = _fuzzy_match_skill(name, all_skills)
+                if fuzzy is not None:
+                    corrected_from = name
+                    skill = fuzzy
+                else:
+                    result = f"use_skill: no available skill named '{name}' (call list_skills to see what's available)."
+                    _emit(state, "skill_switch_fail", result, skill=name)
+                    return _skill_control_return(tc, result, stack, state)
             if skill.id in loaded:
                 result = f"use_skill: skill '{skill.name}' is already active in the stack; no need to load it again."
                 _emit(state, "skill_switch_fail", result, skill=skill.name)
@@ -1150,8 +1240,12 @@ async def skill_switcher_node(state: dict) -> dict:
             added_names = [t.get("function", {}).get("name") for t in added]
 
             stack = stack + [new_skill]
+            correction_note = (
+                f" (note: '{corrected_from}' not found — loaded closest match '{skill.name}')"
+                if corrected_from else ""
+            )
             result = (
-                f"Loaded skill '{skill.name}'. New tools added: {added_names or '(none)'}."
+                f"Loaded skill '{skill.name}'{correction_note}. New tools added: {added_names or '(none)'}."
                 "Its rules are now active — you can call its tools directly. When finished with this skill, call done_skill to return to the previous layer."
             )
             logger.info("Skill switcher: use_skill '%s' → stack depth=%d, added_tools=%d",
@@ -1174,7 +1268,10 @@ async def skill_switcher_node(state: dict) -> dict:
                     "name": fname,
                     "content": result,
                 }],
-                "tool_round": state.get("tool_round", 0) + 1,
+                # C: a successful skill load must NOT consume a tool-round quota,
+                # otherwise loading alone can trip 'max rounds reached' and force a
+                # user 'continue' re-entry. Real tools still increment the counter.
+                "tool_round": state.get("tool_round", 0),
             }
 
     # Unknown control tool — should not happen, but fail safe.
@@ -1429,6 +1526,10 @@ async def tool_decision_node(state: dict) -> dict:
     # returns early at the top when it is empty (so the LLM is never called in the
     # no-tools case, and cwd is irrelevant there anyway).
     ws_context = _build_working_dir_prompt(state)
+    # A: always surface the live skill catalogue in the decision context so the
+    # LLM can route via use_skill without first spending a list_skills round.
+    # Capability-driven (name+description from each SKILL.md), not keyword enumeration.
+    skill_catalogue = await _build_skill_catalogue_prompt(state.get("tenant_id"))
     tool_desc = "\n".join(
         f"- {t['function']['name']}: {t['function']['description']}"
         for t in available_tools
@@ -1493,6 +1594,8 @@ async def tool_decision_node(state: dict) -> dict:
         ]
         if skill_body.strip():
             msgs.append({"role": "system", "content": skill_body})
+        if skill_catalogue:
+            msgs.append({"role": "system", "content": skill_catalogue})
         if s:
             msgs.append({"role": "system", "content": "## Earlier conversation summary (compressed)\n" + s})
         if h:
