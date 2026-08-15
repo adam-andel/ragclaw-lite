@@ -195,6 +195,22 @@ async def lifespan(app: FastAPI):
             await _cfg_router.ensure_network_policy_retry_running()
     except Exception as e:
         print(f"[startup] push MCP config warning: {e}")
+
+    # Secret-zero: re-push every configured skill API KEY to the ragclaw-egress
+    # injection proxy. The proxy holds keys in memory only, so it must be
+    # re-populated after any restart. If the proxy is not yet reachable, start a
+    # self-healing retry loop that stops on the first success (no perpetual
+    # heartbeat); the next API KEY change re-triggers it if needed.
+    try:
+        from app.services import skill_secret as _skill_secret
+        pushed_secrets = await _skill_secret.ensure_skill_secrets_pushed()
+        if not pushed_secrets:
+            print("[startup] WARNING: could not push skill API keys to ragclaw-egress "
+                  "injection proxy — secret-zero routing may be inactive until reachable")
+            await _skill_secret.ensure_secret_retry_running()
+    except Exception as e:
+        print(f"[startup] skill-secret push warning: {e}")
+
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
     await llm_limiter.update_max(config_manager.concurrency)

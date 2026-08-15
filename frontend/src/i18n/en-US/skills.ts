@@ -46,6 +46,16 @@ export default {
   selectZipFile: 'Select ZIP File',
   confirmDeleteSkill: 'Delete this skill? Both the folder and the database record will be removed.',
 
+  // ── API KEY (secret-zero proxy injection) ──
+  apiKey: 'API KEY (proxy injection)',
+  apiKeyActive: 'Proxy injection enabled',
+  apiKeyVanilla: 'Not configured (vanilla)',
+  apiKeyPlaceholder: "Enter this skill's API KEY…",
+  apiKeySave: 'Save',
+  apiKeyClear: 'Clear',
+  apiKeySaved: 'API KEY saved — proxy injection enabled',
+  apiKeyCleared: 'API KEY cleared — back to vanilla',
+
   // ── Messages ──
   loadFailed: 'Failed to load',
   created: 'Skill created',

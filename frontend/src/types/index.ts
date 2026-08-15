@@ -206,6 +206,7 @@ export interface Skill {
   updated_at: string
   mcp_servers: string[]
   skill_md_content?: string | null
+  api_key_configured?: boolean
 }
 
 export interface SkillCreatePayload {
@@ -217,7 +218,10 @@ export interface SkillCreatePayload {
 }
 
 export interface SkillUpdatePayload {
-  content: string
+  content?: string
+  // Secret-zero API KEY. Set to enable proxy injection; empty string clears it.
+  // Omit to leave unchanged. The backend never echoes the key back.
+  api_key?: string
 }
 
 export interface SkillListResponse {

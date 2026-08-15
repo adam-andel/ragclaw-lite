@@ -29,6 +29,8 @@ from app.services.skill_manager import (
     publish_skill, refresh_skill_readable,
 )
 from app.services.skill_script_loader import clear_cache as clear_script_cache
+from app.services import config_manager
+from app.services import skill_secret as skill_secret_svc
 
 router = APIRouter(prefix="/api/skills", tags=["Skills"])
 
@@ -51,6 +53,7 @@ def _skill_to_response(skill: Skill, include_content: bool = False) -> SkillResp
         enabled=is_skill_enabled_fs(skill.folder_name),
         created_at=skill.created_at, updated_at=skill.updated_at,
         mcp_servers=mcp_servers, skill_md_content=skill_md_content,
+        api_key_configured=bool(config_manager.get_skill_api_key(skill.folder_name)),
     )
 
 
@@ -106,10 +109,15 @@ async def update_skill(skill_id: str, data: SkillUpdate, current_user=Depends(ge
     skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "Skill not found")
-    update_skill_md(skill.folder_name, data.content)
-    parsed = parse_skill_md(data.content)
-    skill.name = parsed["name"] or skill.name
-    skill.description = (parsed["description"] or "")[:250]
+    # SKILL.md content update remains optional (api_key-only PATCH leaves it untouched).
+    if data.content is not None:
+        update_skill_md(skill.folder_name, data.content)
+        parsed = parse_skill_md(data.content)
+        skill.name = parsed["name"] or skill.name
+        skill.description = (parsed["description"] or "")[:250]
+    # Secret-zero: configure or clear the skill's injection-proxy API KEY.
+    if data.api_key is not None:
+        await skill_secret_svc.set_skill_api_key(skill.folder_name, data.api_key)
     skill.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(skill)

@@ -15,8 +15,14 @@ import json
 import os
 import sys
 
-PROXY_HOST = os.environ.get("RAGCLAW_EGRESS_HOST", "ragclaw-egress")
-PROXY_PORT = os.environ.get("RAGCLAW_EGRESS_PORT", "9090")
+# The sandbox reaches the egress broker via REPL_EGRESS_HOST (the internal-network
+# IP, e.g. 172.30.0.2) — its own DNS points there and does NOT resolve Docker
+# service names like "ragclaw-egress". So prefer that env var when present, and
+# only fall back to the service name in non-sandbox / dev contexts.
+PROXY_HOST = os.environ.get("REPL_EGRESS_HOST") or os.environ.get(
+    "RAGCLAW_EGRESS_HOST", "ragclaw-egress"
+)
+PROXY_PORT = os.environ.get("RAGCLAW_EGRESS_SECRET_PORT", "9090")
 
 
 def main() -> int:

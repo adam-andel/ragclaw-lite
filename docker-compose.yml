@@ -230,6 +230,15 @@ services:
       # Real upstream resolvers the built-in DNS service forwards to. The broker
       # container has a public default route (via ragclaw), so these are reachable.
       - REPL_DNS_UPSTREAM=8.8.8.8,1.1.1.1
+      # Secret-zero injection proxy (Component A): co-located in this container.
+      # Binds the internal network only; not published to a host port. The backend
+      # pushes skill API keys here over PUT /secret (keys live in proxy memory only).
+      - SKILL_SECRET_PROXY_HOST=0.0.0.0
+      - SKILL_SECRET_PROXY_PORT=9090
+    # Run both the egress broker and the secret-zero injection proxy in one
+    # container. The injection proxy becomes PID 1 (exec) so signals/restart
+    # semantics stay sane; the egress broker runs alongside as a background child.
+    command: sh -c "python egress_proxy.py & exec python skill_secret_proxy.py"
     read_only: true
     tmpfs:
       - /tmp:size=64M,exec

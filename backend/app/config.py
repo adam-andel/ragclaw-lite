@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     # --- Download Proxy ---
     public_url: str = ""  # External URL for download links; empty = use relative URLs
     mcp_repl_internal_url: str = "http://mcp-repl:9200"  # Docker internal network URL for MCP REPL
+    # Internal-network URL of the secret-zero injection proxy running inside the
+    # ragclaw-egress container (see mcp/skill_secret_proxy.py). The backend pushes
+    # per-skill API keys here over PUT /secret; they are held in the proxy's
+    # memory only and never reach the REPL sandbox. Override with
+    # RAGCLAW_EGRESS_SECRET_URL if deployed on a different host/port.
+    ragclaw_egress_secret_url: str = "http://ragclaw-egress:9090"
 
     # --- REPL sandbox per-user isolation (shared HMAC secret with mcp/repl_mcp_server.py) ---
     # When set, every run_python/run_shell/run_javascript call is signed with the

@@ -35,7 +35,7 @@ from .i18n import t
 # Config keys that hold secrets. These are persisted only to the encrypted config.enc file,
 # never to the (plaintext) system_settings DB table, and are therefore excluded from the
 # non-sensitive defaults seeded into the DB. Single source of truth for what counts as secret.
-SECRET_CONFIG_KEYS = ("llm_api_key", "embedding_api_key")
+SECRET_CONFIG_KEYS = ("llm_api_key", "embedding_api_key", "skill_secrets")
 
 # ── Core agent system prompts ────────────────────────────────────────────────
 # Sourced from the backend i18n module (app.services.i18n) so the zh/en variants
@@ -373,6 +373,11 @@ class ConfigManager:
                     stored_emb = saved.get("embedding_api_key", "")
                     if stored_emb:
                         self._config["embedding_api_key"] = stored_emb
+                    # Secret-zero: restore the per-skill API KEY namespace (encrypted
+                    # alongside the LLM/embedding keys). Defaults to {} when absent.
+                    stored_secrets = saved.get("skill_secrets")
+                    if isinstance(stored_secrets, dict):
+                        self._config["skill_secrets"] = stored_secrets
                     legacy_file_existed = True
                     print("[ConfigManager] loaded encrypted config")
                 except ConfigKeyMismatch as e:
@@ -452,6 +457,11 @@ class ConfigManager:
             "repl_auth_secret": "",
             # JWT HS256 signing secret (auto-generated on first boot if absent)
             "jwt_secret": "",
+            # Secret-zero: per-skill API KEY namespace. Holds {folder_name: api_key}
+            # for skills that opt into injection-proxy KEY injection. Encrypted into
+            # config.enc (in SECRET_CONFIG_KEYS) — never persisted to the plaintext DB
+            # and never exposed over the API (masked in get_config_safe).
+            "skill_secrets": {},
         }
 
     def _build_non_sensitive_defaults(self) -> dict:
@@ -516,6 +526,9 @@ class ConfigManager:
         keys_only = {
             "llm_api_key": self._get("llm_api_key"),
             "embedding_api_key": self._get("embedding_api_key"),
+            # Secret-zero per-skill API KEY namespace. A non-dict (defensive) is
+            # normalised to {} so we never persist an unencrypted/garbled shape.
+            "skill_secrets": self._get("skill_secrets") or {},
         }
         plain = json.dumps(keys_only, ensure_ascii=False)
         self._config_file.write_bytes(_encrypt(plain))
@@ -792,6 +805,42 @@ class ConfigManager:
         with self._lock:
             return self._get("repl_auth_secret")
 
+    # ── Secret-zero per-skill API KEY namespace ──────────────────────────────
+    def get_skill_api_key(self, folder_name: str) -> str:
+        """Return the plaintext secret-zero API KEY for a skill (internal use only).
+
+        Returns "" when unset. This is the ONLY accessor that returns the real
+        value; get_config_safe() masks the whole namespace so it never reaches
+        the API layer or logs.
+        """
+        with self._lock:
+            secrets = self._config.get("skill_secrets") or {}
+            return secrets.get(folder_name, "") if isinstance(secrets, dict) else ""
+
+    def set_skill_api_key(self, folder_name: str, api_key: str | None) -> None:
+        """Merge/remove a skill's secret-zero API KEY in the in-memory config.
+
+        Empty/None clears the entry. The caller is responsible for persisting
+        (config_manager.update) and pushing to the egress injection proxy.
+        """
+        with self._lock:
+            secrets = dict(self._config.get("skill_secrets") or {})
+            if api_key:
+                secrets[folder_name] = api_key
+            else:
+                secrets.pop(folder_name, None)
+            self._config["skill_secrets"] = secrets
+
+    def get_skill_secrets_raw(self) -> dict:
+        """Return the raw secret-zero namespace (caller must keep it private).
+
+        Unlike get_config_safe() this does NOT mask the values — use only
+        internally (persistence, proxy push). Never return it to the API layer.
+        """
+        with self._lock:
+            secrets = self._config.get("skill_secrets")
+            return dict(secrets) if isinstance(secrets, dict) else {}
+
     @property
     def jwt_secret(self) -> str:
         """JWT HS256 signing secret (runtime value, source of truth).
@@ -845,6 +894,10 @@ class ConfigManager:
             # Mask the REPL auth secret in the general config payload; the
             # dedicated /api/config/repl-auth endpoint returns the real value.
             c["repl_auth_secret"] = _mask(c.get("repl_auth_secret", ""))
+            # Never expose per-skill secret-zero API keys over the API. The
+            # frontend learns only *whether* a key is configured, via the
+            # per-skill `api_key_configured` flag on the Skill response.
+            c["skill_secrets"] = {}
 
             c["is_configured"] = bool(self._get("llm_api_key"))
             c["is_reachable"] = self._llm_reachable

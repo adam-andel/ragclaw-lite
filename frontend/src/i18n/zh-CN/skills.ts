@@ -46,6 +46,16 @@ export default {
   selectZipFile: '选择 ZIP 文件',
   confirmDeleteSkill: '确认删除此技能？文件夹和DB记录都会被删除。',
 
+  // ── API KEY (secret-zero 代理注入) ──
+  apiKey: 'API KEY（代理注入）',
+  apiKeyActive: '已启用代理注入',
+  apiKeyVanilla: '未配置（原生模式）',
+  apiKeyPlaceholder: '填写该技能的 API KEY…',
+  apiKeySave: '保存',
+  apiKeyClear: '清除',
+  apiKeySaved: 'API KEY 已保存，代理注入已启用',
+  apiKeyCleared: 'API KEY 已清除，回退原生模式',
+
   // ── Messages ──
   loadFailed: '加载失败',
   created: '技能已创建',
