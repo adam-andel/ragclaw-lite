@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ def disable_skill_fs(folder_name: str) -> None:
 
 # ---- Generic skill self-initialization hook ----
 #
-# Any skill folder MAY ship an OPTIONAL `ragclaw_skill_init.sh`. When present, the
+# Any skill folder MAY ship an OPTIONAL `.ragclaw/init.sh`. When present, the
 # backend executes it at skill *enable* (enable_skill_fs) and at every
 # *re-upload / replace* (replace_skill_folder). This is the unified trigger point
 # for per-skill setup work, so skill-specific logic (e.g. anysearch materialising
@@ -138,11 +139,11 @@ def disable_skill_fs(folder_name: str) -> None:
 #   - Trust boundary: this is skill-authored code executed at an authorized
 #     enable/replace action -- the same trust level as running the skill in REPL.
 
-_SKILL_INIT_SCRIPT = "ragclaw_skill_init.sh"
+_SKILL_INIT_SCRIPT = ".ragclaw/init.sh"
 
 
 def run_skill_init_script(folder_name: str) -> bool:
-    """Execute <skill_dir>/ragclaw_skill_init.sh if it exists.
+    """Execute <skill_dir>/.ragclaw/init.sh if it exists.
 
     Returns True if the script was found and exited 0. No-op (False) when the
     skill ships no init script. Failures are logged and swallowed -- the skill
@@ -161,14 +162,14 @@ def run_skill_init_script(folder_name: str) -> bool:
             timeout=120,
         )
     except subprocess.TimeoutExpired:
-        logger.warning("ragclaw_skill_init.sh timed out for %s", folder_name)
+        logger.warning(".ragclaw/init.sh timed out for %s", folder_name)
         return False
     except OSError as e:
-        logger.warning("ragclaw_skill_init.sh could not launch for %s: %s", folder_name, e)
+        logger.warning(".ragclaw/init.sh could not launch for %s: %s", folder_name, e)
         return False
     if result.returncode != 0:
         logger.warning(
-            "ragclaw_skill_init.sh failed for %s (rc=%d): %s",
+            ".ragclaw/init.sh failed for %s (rc=%d): %s",
             folder_name,
             result.returncode,
             (result.stderr or result.stdout or "")[:500],
@@ -305,7 +306,7 @@ def seed_preset_skills(seed_root: Path | None = None) -> dict:
     Mirrors migrate_legacy_skills (copy-only + enable_skill_fs) but the source is
     the read-only preset directory, not the legacy data/skills layout. Each
     preset folder MUST contain a SKILL.md. enable_skill_fs creates the
-    enable-symlink AND runs the skill's ragclaw_skill_init.sh adapter (which
+    enable-symlink AND runs the skill's .ragclaw/init.sh adapter (which
     materialises runtime.conf etc.), exactly as for a manually added skill.
     """
     if seed_root is None:
@@ -500,6 +501,17 @@ def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> 
     if not skill_dir.exists():
         raise ValueError(f"Skill folder '{folder_name}' does not exist")
 
+    # Stash the ragclaw-owned .ragclaw/ dir so a re-upload does not wipe our
+    # init hook / secret-zero adapter. If the upload ships its own .ragclaw/
+    # (trusted), we keep the upload's version instead.
+    stash = None
+    ragclaw_dir = skill_dir / ".ragclaw"
+    if ragclaw_dir.is_dir() and not any(
+        k.startswith(".ragclaw/") for k in file_map
+    ):
+        stash = tempfile.mkdtemp(prefix="ragclaw_stash_")
+        shutil.copytree(ragclaw_dir, Path(stash) / ".ragclaw")
+
     for entry in skill_dir.iterdir():
         if entry.is_dir():
             shutil.rmtree(entry)
@@ -515,6 +527,12 @@ def replace_skill_folder(folder_name: str, file_map: dict[str, bytes | str]) -> 
             target.write_bytes(content)
         else:
             target.write_text(content, encoding="utf-8")
+
+    # Restore the stashed .ragclaw/ (keeps our init hook / adapter across the
+    # native upgrade), then re-run init to regenerate any derived artifacts.
+    if stash:
+        shutil.copytree(Path(stash) / ".ragclaw", ragclaw_dir, dirs_exist_ok=True)
+        shutil.rmtree(stash, ignore_errors=True)
 
     # Re-upload replaces files but must NOT change the enabled state; only fix
     # permissions so the (different-UID) sandbox can read them.

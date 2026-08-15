@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ragclaw_skill_init.sh — optional per-skill initialization hook (ragclaw adapter).
+# init.sh — optional per-skill initialization hook (ragclaw adapter).
 #
 # The backend executes this script ONCE whenever the skill is enabled
 # (enable_skill_fs) or re-uploaded / replaced (replace_skill_folder). It is the
@@ -15,7 +15,11 @@
 
 set -euo pipefail
 
-SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# This script lives in <skill>/.ragclaw/, so SKILL_DIR must step up one level to
+# reach the package root. Any ragclaw-owned artifacts we generate (e.g. shim.py /
+# adapter.json for secret-zero) stay under $SKILL_DIR/.ragclaw/, never in the
+# native tree.
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE="$SKILL_DIR/runtime.conf.example"
 OUT="$SKILL_DIR/runtime.conf"
 
@@ -31,7 +35,7 @@ OUT="$SKILL_DIR/runtime.conf"
 # path. Keep $REPL_SKILLS_DIR literal here so it expands at run_shell time.
 # ---------------------------------------------------------------------------
 if [ ! -f "$EXAMPLE" ]; then
-    echo "[ragclaw_skill_init] no runtime.conf.example; skipping runtime.conf"
+    echo "[.ragclaw/init] no runtime.conf.example; skipping runtime.conf"
 else
     folder="$(basename "$SKILL_DIR")"
 
@@ -79,13 +83,13 @@ else
     fi
 
     if [ -z "$RUNTIME" ]; then
-        echo "[ragclaw_skill_init] no CLI script found under scripts/; skipping runtime.conf"
+        echo "[.ragclaw/init] no CLI script found under scripts/; skipping runtime.conf"
     else
         sed -e "s|<detected_runtime>|$RUNTIME|g" \
             -e "s|<detected_command>|$CMD|g" \
             "$EXAMPLE" > "$OUT"
         chmod 644 "$OUT"
-        echo "[ragclaw_skill_init] wrote $OUT (Runtime=$RUNTIME, Command=$CMD)"
+        echo "[.ragclaw/init] wrote $OUT (Runtime=$RUNTIME, Command=$CMD)"
     fi
 fi
 
@@ -103,12 +107,12 @@ SENTINEL="ragclaw-adapter:anysearch"
 
 if [ -f "$SKILL_MD" ]; then
     if grep -q "$SENTINEL" "$SKILL_MD"; then
-        echo "[ragclaw_skill_init] SKILL.md adapter block already present; skipping"
+        echo "[.ragclaw/init] SKILL.md adapter block already present; skipping"
     else
         # Self-heal: remove a legacy manual edit of these sections (no sentinel).
         if grep -q "^## API Endpoint Contract" "$SKILL_MD"; then
             sed -i '/^## API Endpoint Contract/,$d' "$SKILL_MD"
-            echo "[ragclaw_skill_init] stripped legacy manual adapter sections from $SKILL_MD"
+            echo "[.ragclaw/init] stripped legacy manual adapter sections from $SKILL_MD"
         fi
         cat >> "$SKILL_MD" <<'RAGCLAW_EOF'
 
@@ -164,8 +168,8 @@ When you present search results to the user, you MUST follow these hard rules:
 Resolved command (use directly): python3 $REPL_SKILLS_DIR/anysearch/scripts/anysearch_cli.py
 RAGCLAW_EOF
         chmod 644 "$SKILL_MD"
-        echo "[ragclaw_skill_init] appended adapter block to $SKILL_MD"
+        echo "[.ragclaw/init] appended adapter block to $SKILL_MD"
     fi
 fi
 
-echo "[ragclaw_skill_init] done"
+echo "[.ragclaw/init] done"
