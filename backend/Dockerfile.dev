@@ -108,6 +108,18 @@ PY
 # can be committed for production to consume — mirroring frontend/docker-entrypoint.dev.sh.
 RUN pip freeze > /opt/backend-requirements.lock
 
+# ── Layer 4b: Dev-only test deps (pytest / pytest-asyncio) ──
+# Installed AFTER the freeze above so the committed requirements.lock stays
+# runtime-only (no pytest in the prod lock). The dev container can run its own
+# backend test suite offline (the egress sandbox has no outbound network at
+# runtime, so a runtime `pip install` cannot reach PyPI). Mirrors
+# mcp/Dockerfile.dev, which bakes requirements-dev.txt after its freeze. Uses the
+# SAME BuildKit pip cache (id=pip-cache) as Layer 3 so wheels are reused.
+COPY backend/requirements-dev.txt ./backend/
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+    pip install -r backend/requirements-dev.txt \
+        ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}}
+
 # ── Layer 5: Backend code (bind-mounted at runtime in dev) ──
 COPY backend/ backend/
 
