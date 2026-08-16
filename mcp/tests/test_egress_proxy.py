@@ -11,6 +11,9 @@ data/RAGClaw sandbox network security policy — egress proxy approach discussio
 
 The "internet" target is a tiny localhost HTTP server; the proxy is started
 on an ephemeral loopback port. No real external network is required.
+
+Run inside the mcp-repl dev container, where the server source (egress_proxy.py,
+repl_mcp_server.py) lives at /app — next to this tests/ dir.
 """
 
 import os
@@ -24,26 +27,19 @@ from pathlib import Path
 import pytest
 import httpx
 
-# ── Make the mcp package importable ──
-def _find_mcp() -> Path:
-    p = Path(__file__).resolve().parent
-    for _ in range(6):
-        if (p / "mcp" / "egress_proxy.py").exists():
-            return p / "mcp"
-        p = p.parent
-    raise RuntimeError("mcp directory not found")
-
-
-_MCP = _find_mcp()
-if str(_MCP) not in sys.path:
-    sys.path.insert(0, str(_MCP))
+# ── Make the mcp server source importable ──
+# In the mcp-repl dev container this file lives at /app/tests/ and the server
+# source (egress_proxy.py) is at /app, so the mcp root is the parent of tests/.
+_MCP_SRC = Path(__file__).resolve().parents[1]
+if str(_MCP_SRC) not in sys.path:
+    sys.path.insert(0, str(_MCP_SRC))
 
 import egress_proxy as ep  # noqa: E402
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _spawn_target_server():
     """Start a minimal HTTP server (stands in for 'the internet')."""
@@ -92,9 +88,9 @@ def _build_dns_query(name: str) -> bytes:
     return hdr + qname + struct.pack(">HH", 1, 1)
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def make_proxy():
@@ -124,9 +120,9 @@ def make_proxy():
             pass
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Policy primitives
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_host_allowed_modes():
     domains = {"localhost", "example.com"}
@@ -165,17 +161,18 @@ def test_dns_parse_compressed_returns_none():
 
 
 def test_capture_upstream_excludes_self(monkeypatch):
-    # The broker must never forward DNS to its own bind address (self-loop).
-    monkeypatch.setenv("REPL_DNS_UPSTREAM", "127.0.0.1,8.8.8.8,1.1.1.1")
+    # The broker never forwards DNS to its own bind address (EGRESS_HOST),
+    # whatever that resolves to in the deployment — not a hardcoded 127.0.0.1.
+    monkeypatch.setenv("REPL_DNS_UPSTREAM", f"127.0.0.1,{ep.EGRESS_HOST},8.8.8.8,1.1.1.1")
     up = ep._capture_upstream()
     ips = [ip for ip, _ in up]
-    assert "127.0.0.1" not in ips
+    assert ep.EGRESS_HOST not in ips
     assert "8.8.8.8" in ips
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Live proxy: CONNECT (HTTPS) enforcement
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_connect_allowlist_allowed(make_proxy):
     srv, tport = _spawn_target_server()
@@ -200,17 +197,18 @@ def test_connect_blocked(make_proxy):
     s.close()
 
 
-def test_connect_subdomain_blocked(make_proxy):
-    # Only example.com is allowed; a sibling domain must be refused.
+def test_connect_blocked_for_non_allowlisted(make_proxy):
+    # Only example.com is allowlisted (suffix match permits its subdomains); a
+    # host that is NOT a suffix of example.com must be refused.
     pport = make_proxy({"mode": "allowlist", "domains": ["example.com"], "methods": []})
-    s, first = _raw_connect(pport, "evil.example.com", 443)
+    s, first = _raw_connect(pport, "evil.net", 443)
     assert "403" in first, first
     s.close()
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Live proxy: HTTP forward enforcement
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_http_forward_allowed(make_proxy):
     srv, tport = _spawn_target_server()
@@ -242,9 +240,9 @@ def test_deny_blocks_everything(make_proxy):
         srv.shutdown()
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Live proxy: L7 method allowlist
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_method_allowlist(make_proxy):
     srv, tport = _spawn_target_server()
@@ -258,17 +256,20 @@ def test_method_allowlist(make_proxy):
         srv.shutdown()
 
 
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # repl_mcp_server: env injection + shell prescreen
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def test_sanitize_env_injects_proxy_in_allowlist(monkeypatch):
     import repl_mcp_server as rm
     monkeypatch.setattr(rm, "_network_mode", "allowlist")
     monkeypatch.setattr(rm, "_EGRESS_PORT", 1080)
     env = rm._sanitize_env()
-    assert env["HTTP_PROXY"] == "http://127.0.0.1:1080"
-    assert env["HTTPS_PROXY"] == "http://127.0.0.1:1080"
+    # Proxy must point at the configured egress broker host (REPL_EGRESS_HOST),
+    # which is 127.0.0.1 only in single-host dev; in a real deploy it is the
+    # broker's network IP. Assert against the live value, not a hardcoded one.
+    assert env["HTTP_PROXY"] == f"http://{rm._EGRESS_HOST}:{rm._EGRESS_PORT}"
+    assert env["HTTPS_PROXY"] == f"http://{rm._EGRESS_HOST}:{rm._EGRESS_PORT}"
     assert "localhost" in env["NO_PROXY"] and "mcp-repl" in env["NO_PROXY"]
 
 

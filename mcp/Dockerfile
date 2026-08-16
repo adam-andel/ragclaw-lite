@@ -45,8 +45,9 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 # "intent" source. Regenerate the lock after editing requirements.txt:
 #   pip install -r requirements.txt && pip freeze > requirements.lock
 # BuildKit cache mount (id=pip-cache) keeps pip's HTTP/wheel cache across builds
-# for faster rebuilds. The named id is shared with the main image's pip cache so
-# the same wheels are reused and no orphan mounts accumulate when REGISTRY drifts.
+# for faster rebuilds. The named id is shared with the dev image's pip cache
+# (Dockerfile.dev) so the same wheels are reused and no orphan mounts accumulate
+# when REGISTRY drifts.
 COPY requirements.lock .
 RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install -r requirements.lock ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}}

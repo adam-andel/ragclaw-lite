@@ -41,6 +41,20 @@ _auth_mod.verify_password = _test_verify_password
 # session, independent of ConfigManager's internal state.
 _auth_mod.get_jwt_secret = lambda: "TEST_JWT_SECRET_0000000000000000000000"
 
+# ConfigManager init shim: ConfigManager is an async-init singleton. Its real
+# population (self._defaults / self._config from _build_defaults(), plus the
+# validity cache) only happens inside the async init() awaited by the FastAPI
+# lifespan. Under httpx.ASGITransport the lifespan never fires, so _defaults
+# stays unset and any config read raises
+# AttributeError: 'ConfigManager' object has no attribute '_defaults'.
+# Populate the default config dicts directly (the first two steps init() does)
+# without init()'s DB/file/secret side effects, which is all the tests need.
+# auth.get_jwt_secret is monkeypatched above, so jwt_secret need not be generated.
+from app.services.config_manager import config_manager as _cm
+_cm._defaults = _cm._build_defaults()
+_cm._config = dict(_cm._defaults)
+_cm.refresh_valid_llm_config()
+
 def create_access_token(user_id, username, role, tenant_id):
     return _auth_mod.create_access_token(user_id, username, role, tenant_id)
 
@@ -64,6 +78,21 @@ def _isolate_data(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "upload_dir", uploads)
     monkeypatch.setattr(settings, "sqlite_path", sqlite_db)
     monkeypatch.setattr(settings, "chroma_path", chroma)
+
+    # Keep app.database's module-level engine pointed at the isolated DB.
+    # app.database.engine is created once at import time from settings.sqlite_path;
+    # under isolation that path is redirected to a temp file, but the cached engine
+    # still targets the real path. init_db() (used by tests that call it directly,
+    # e.g. test_chroma_async) would then create tables on the wrong database while
+    # async_session (a late-bound proxy) queries the temp one, surfacing as
+    # "no such table: mcp_servers". Rebind so both agree.
+    import app.database as _app_db
+    from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
+    _app_db.engine = _create_async_engine(
+        f"sqlite+aiosqlite:///{sqlite_db}",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
 
     # Reset ChromaDB singleton so it reconnects to the new temp path
     from app.services.vector_store import vector_store

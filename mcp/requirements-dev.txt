@@ -1,0 +1,11 @@
+# Dev/test dependencies for the REPL MCP server (mcp-repl container).
+#
+# The PROD image installs only requirements.txt (the pinned runtime). pytest is
+# a dev-only concern, so it lives here and is installed at runtime in the dev
+# container:
+#   docker exec -w /app ragclaw1-mcp-repl pip install -r /app/requirements-dev.txt
+# (Lost on container recreate, exactly like backend's requirements-dev.txt.)
+pytest>=8.0
+pytest-asyncio>=0.23.0
+# test_egress_proxy.py drives a live proxy with httpx; not a runtime dep.
+httpx>=0.27,<1.0

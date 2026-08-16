@@ -12,13 +12,12 @@ from pathlib import Path
 
 import pytest
 from jose import jwt
-from sqlalchemy import select
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.models.user import User
 from app.services.auth import (
-    SECRET_KEY, ALGORITHM, hash_password, create_access_token,
+    get_jwt_secret, ALGORITHM, hash_password, create_access_token,
 )
 
 # ---------------------------------------------------------------------------
@@ -99,7 +98,7 @@ class TestExpiredJWT:
             "role": "user",
             "exp": datetime.now(timezone.utc) - timedelta(hours=1),
         }
-        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
         r = await client.get("/api/kb", headers=_auth(token))
         assert r.status_code == 401
 
@@ -119,7 +118,7 @@ class TestTamperedJWT:
             "tenant_id": str(uuid.uuid4()),
             "exp": datetime.now(timezone.utc) + timedelta(hours=1),
         }
-        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
         r = await client.get("/api/kb", headers=_auth(token))
         assert r.status_code == 401
 
@@ -173,7 +172,7 @@ class TestMissingSubField:
             "role": "user",
             "exp": datetime.now(timezone.utc) + timedelta(hours=1),
         }
-        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(payload, get_jwt_secret(), algorithm=ALGORITHM)
         r = await client.get("/api/kb", headers=_auth(token))
         assert r.status_code == 401
 
@@ -212,22 +211,30 @@ class TestHealthNoAuth:
 class TestLoginBruteForce:
     @pytest.mark.asyncio
     async def test_wrong_password_no_user_leak(self, client, test_db):
-        """Wrong password → 401 without revealing if user exists."""
-        # Create a known user first so we know the username exists
+        """Existing user + wrong password -> 401 with the SAME generic code
+        returned for a non-existent user (no account-enumeration leak)."""
         from app.database import async_session
+        uid = str(uuid.uuid4())
+        tid = str(uuid.uuid4())
+        username = f"brute_{uid[:8]}"
         async with async_session() as db:
-            r2 = await db.execute(select(User).where(User.username == "admin_test"))
-            existing = r2.scalar_one_or_none()
-        if existing:
-            resp = await client.post("/api/auth/login", json={
-                "username": "admin_test",
-                "password": "definitely_wrong_password",
-            })
-            assert resp.status_code == 401
-            # Same generic message regardless of whether user exists
-            detail = resp.json().get("detail", "")
-            # Should be generic error, not distinguishing exist vs password
-            assert "用户名或密码错误" in detail
+            db.add(User(
+                id=uid, username=username,
+                hashed_password=hash_password("correct_password"),
+                display_name="Brute", role="user",
+                is_active=True, tenant_id=tid,
+            ))
+            await db.commit()
+
+        resp = await client.post("/api/auth/login", json={
+            "username": username,
+            "password": "definitely_wrong_password",
+        })
+        assert resp.status_code == 401
+        # Must match the code from test_nonexistent_user_no_leak so an
+        # attacker cannot tell "exists, bad pwd" apart from "no such user".
+        detail = resp.json().get("detail", "")
+        assert "INVALID_CREDENTIALS" in detail
 
     @pytest.mark.asyncio
     async def test_nonexistent_user_no_leak(self, client):
@@ -239,4 +246,4 @@ class TestLoginBruteForce:
         assert resp.status_code == 401
         detail = resp.json().get("detail", "")
         # Same generic error as wrong password — no info leakage
-        assert "用户名或密码错误" in detail
+        assert "INVALID_CREDENTIALS" in detail

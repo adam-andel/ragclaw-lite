@@ -49,11 +49,21 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 # Python deps from the FLOATING requirements.txt (dev intent source). Freeze the
 # resolved tree to /opt (OUTSIDE /app bind-mount) so the dev entrypoint can sync
 # it back to the host ./mcp/requirements.lock at startup. BuildKit cache mount
-# (id=mcp-pip-cache) keeps pip's wheel cache across dev rebuilds.
+# (id=pip-cache) keeps pip's wheel cache across dev rebuilds — shared with the
+# PROD image (Dockerfile) so wheels are reused across both build variants.
 COPY requirements.txt .
-RUN --mount=type=cache,id=mcp-pip-cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install -r requirements.txt ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}} && \
     pip freeze > /opt/mcp-requirements.lock
+
+# Dev-only test deps (pytest / pytest-asyncio / httpx). Installed at BUILD time so
+# the dev container can run its own test suite (mcp/tests/) OFFLINE — mcp-repl is
+# the egress sandbox itself and has no outbound network at runtime, so a runtime
+# `pip install` cannot reach PyPI. Installed AFTER the freeze above so the pinned
+# requirements.lock stays runtime-only (no pytest in the committed lock).
+COPY requirements-dev.txt .
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+    pip install -r requirements-dev.txt ${PYPI_MIRROR:+--index-url ${PYPI_MIRROR}}
 
 # Copy server code (kept minimal — no venv, no tests)
 COPY repl_mcp_server.py .
