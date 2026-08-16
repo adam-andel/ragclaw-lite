@@ -14,6 +14,7 @@ from app.database import get_db, async_session, serialize_writes
 from app.config import settings
 from app.models.document import Document, Chunk, DocStatus, KBDocument
 from app.models.kb_access import KBUserAccess
+from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 from app.schemas.document import (
     DocumentResponse, DocumentStatusResponse, ChunkResponse,
@@ -132,6 +133,16 @@ async def upload_document(
     await db.refresh(doc)
 
     if kb_id:
+        kb_result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+        )
+        kb = kb_result.scalar_one_or_none()
+        if not kb:
+            raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
+        if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+            from app.routers.knowledge_bases import _user_has_kb_access
+            if not await _user_has_kb_access(current_user.id, kb_id, db):
+                raise HTTPException(403, "ACCESS_DENIED")
         db.add(KBDocument(kb_id=kb_id, doc_id=doc.id))
 
     await db.commit()
@@ -186,6 +197,16 @@ async def upload_documents_batch(
         await db.refresh(doc)
 
         if kb_id:
+            kb_result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+            )
+            kb = kb_result.scalar_one_or_none()
+            if not kb:
+                raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
+            if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+                from app.routers.knowledge_bases import _user_has_kb_access
+                if not await _user_has_kb_access(current_user.id, kb_id, db):
+                    raise HTTPException(403, "ACCESS_DENIED")
             db.add(KBDocument(kb_id=kb_id, doc_id=doc.id))
             await db.flush()
 
