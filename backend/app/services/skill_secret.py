@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 
 from app.config import settings
-from app.services import config_manager
+from app.services.config_manager import config_manager
 from app.services.skill_manager import get_skill_dir, run_skill_init_script
 
 logger = logging.getLogger("ragclaw.skill_secret")

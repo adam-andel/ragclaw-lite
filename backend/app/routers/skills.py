@@ -29,7 +29,7 @@ from app.services.skill_manager import (
     publish_skill, refresh_skill_readable,
 )
 from app.services.skill_script_loader import clear_cache as clear_script_cache
-from app.services import config_manager
+from app.services.config_manager import config_manager
 from app.services import skill_secret as skill_secret_svc
 
 router = APIRouter(prefix="/api/skills", tags=["Skills"])
