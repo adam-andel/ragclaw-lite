@@ -8,7 +8,7 @@ Uses the default admin account for authentication.
 
 Usage:
   cd backend
-  python tests/test_agent_graph.py
+  python tests/integration/manual/agent_graph_smoke.py
 """
 
 import httpx
