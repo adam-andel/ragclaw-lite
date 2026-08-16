@@ -238,7 +238,11 @@ services:
     # Run both the egress broker and the secret-zero injection proxy in one
     # container. The injection proxy becomes PID 1 (exec) so signals/restart
     # semantics stay sane; the egress broker runs alongside as a background child.
-    command: sh -c "python egress_proxy.py & exec python skill_secret_proxy.py"
+    # NOTE: must be `entrypoint` (not `command`) — the image's Dockerfile.egress
+    # sets ENTRYPOINT ["python","egress_proxy.py"], so a `command:` here would be
+    # swallowed as an arg to egress_proxy.py and skill_secret_proxy.py would never
+    # start. A single `entrypoint: ["sh","-c",...]` overrides the image ENTRYPOINT.
+    entrypoint: ["sh","-c","python egress_proxy.py & exec python skill_secret_proxy.py"]
     read_only: true
     tmpfs:
       - /tmp:size=64M,exec
