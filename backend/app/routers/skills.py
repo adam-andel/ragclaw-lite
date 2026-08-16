@@ -219,6 +219,7 @@ async def upload_folder(
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     return _skill_to_response(skill, include_content=True)
 
@@ -299,6 +300,7 @@ async def upload_zip(
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     return _skill_to_response(skill, include_content=True)
 
@@ -338,6 +340,7 @@ async def reupload_folder(
 
     replace_skill_folder(skill.folder_name, file_map)
     clear_script_cache(skill.folder_name)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     skill_md_content = read_skill_md(skill.folder_name)
     parsed = parse_skill_md(skill_md_content)
@@ -388,8 +391,6 @@ async def reupload_zip(
     if len(top_dirs) != 1:
         raise HTTPException(400, "ZIP must contain a single top-level folder")
 
-    folder_name = sanitize_folder_name(top_dirs.pop())
-
     file_map = {}
     has_skill_md = False
     for name in names:
@@ -406,10 +407,11 @@ async def reupload_zip(
     if not has_skill_md:
         raise HTTPException(400, "ZIP must contain SKILL.md")
 
-    replace_skill_folder(folder_name, file_map)
+    replace_skill_folder(skill.folder_name, file_map)
     clear_script_cache(skill.folder_name)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
-    skill_md_content = read_skill_md(folder_name)
+    skill_md_content = read_skill_md(skill.folder_name)
     parsed = parse_skill_md(skill_md_content)
     skill.name = parsed["name"] or skill.name
     skill.description = (parsed["description"] or "")[:250]
