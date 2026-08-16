@@ -12,6 +12,11 @@ injects the KEY into upstream requests on behalf of the sandbox (see
 ``http://ragclaw-egress:9090/<proxy_path>/...`` endpoint — the KEY never
 traverses the sandbox.
 
+The upstream mapping (proxy_path -> upstream_base) is registered separately via
+``PUT /secret-config`` at skill init (see ``register_skill_upstream``), so the
+proxy can forward even before a KEY is configured — enabling anonymous upstream
+access for skills that allow it (e.g. anysearch).
+
 See ``data/docs/secret-zero-skill-apikey-design.md``.
 """
 
@@ -60,7 +65,11 @@ async def _put_secret(payload: dict) -> bool:
 
 
 async def _delete_secret(folder: str) -> bool:
-    """Best-effort DELETE /secret?folder=<folder>. Returns True on 2xx/404."""
+    """Best-effort DELETE /secret?folder=<folder>. Returns True on 2xx/404.
+
+    Clears only the KEY; the upstream mapping is intentionally kept so anonymous
+    forwarding (when no KEY is configured) remains possible.
+    """
     last_err = None
     for url in _SECRET_PROXY_URLS:
         try:
@@ -77,6 +86,48 @@ async def _delete_secret(folder: str) -> bool:
             logger.warning("delete secret at %s failed: %s", url, e)
     if last_err:
         logger.warning("all skill-secret delete targets unreachable: %s", last_err)
+    return False
+
+
+async def _put_secret_config(payload: dict) -> bool:
+    """Best-effort PUT /secret-config to the injection proxy. Returns True on 2xx."""
+    last_err = None
+    for url in _SECRET_PROXY_URLS:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.put(url.rstrip("/") + "/secret-config", json=payload)
+                if resp.status_code == 200:
+                    logger.info("registered skill upstream config at %s folder=%s",
+                                url, payload.get("folder"))
+                    return True
+                logger.warning("put secret-config to %s -> HTTP %d folder=%s",
+                               url, resp.status_code, payload.get("folder"))
+        except Exception as e:
+            last_err = e
+            logger.warning("put secret-config to %s failed: %s", url, e)
+    if last_err:
+        logger.warning("all skill-secret-config targets unreachable: %s", last_err)
+    return False
+
+
+async def _delete_secret_config(folder: str) -> bool:
+    """Best-effort DELETE /secret-config?folder=<folder>. Returns True on 2xx/404."""
+    last_err = None
+    for url in _SECRET_PROXY_URLS:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.delete(url.rstrip("/") + "/secret-config",
+                                           params={"folder": folder})
+                if resp.status_code in (200, 204, 404):
+                    logger.info("deleted skill upstream config at %s folder=%s", url, folder)
+                    return True
+                logger.warning("delete secret-config at %s -> HTTP %d folder=%s",
+                               url, resp.status_code, folder)
+        except Exception as e:
+            last_err = e
+            logger.warning("delete secret-config at %s failed: %s", url, e)
+    if last_err:
+        logger.warning("all skill-secret-config delete targets unreachable: %s", last_err)
     return False
 
 
@@ -118,16 +169,19 @@ async def push_skill_secret(folder: str) -> bool:
 async def set_skill_api_key(folder: str, api_key: str | None):
     """Configure (or clear, when empty/None) a skill's secret-zero API KEY.
 
-    Persists to config.enc, pushes/deletes the KEY in the egress injection proxy,
-    and re-runs the skill's init hook so the resolved command switches between the
-    shim (KEY present) and the native CLI (vanilla). Triggers init even when the
-    adapter is absent so the skill returns to a consistent state.
+    Persists to config.enc, ensures the upstream mapping is registered in the
+    egress injection proxy, pushes/deletes the KEY in that proxy, and re-runs the
+    skill's init hook (which always routes through the shim under always-shim).
+    Triggers init even when the adapter is absent so the skill returns to a
+    consistent state.
     """
     has_key = bool(api_key)
     config_manager.set_skill_api_key(folder, api_key if has_key else None)
     # Persist the merged namespace to encrypted config.enc. Use the RAW namespace —
     # get_config_safe() masks it to {} and would wipe every stored key.
     await config_manager.update({"skill_secrets": config_manager.get_skill_secrets_raw()})
+    # Ensure the upstream mapping exists in the proxy (idempotent, no KEY needed).
+    await register_skill_upstream(folder)
     if has_key:
         pushed = await push_skill_secret(folder)
         if not pushed:
@@ -135,9 +189,60 @@ async def set_skill_api_key(folder: str, api_key: str | None):
                            "(proxy unreachable; will self-heal)", folder)
     else:
         await _delete_secret(folder)
-    # Re-run init with the explicit status so the resolved command is correct even
-    # if no api_key PATCH reached the init hook previously.
-    run_skill_init_script(folder, api_key_status="set" if has_key else "empty")
+    # Re-run init so the resolved command / ragclaw doc is regenerated.
+    run_skill_init_script(folder)
+
+
+def iter_adapter_folders():
+    """Yield folder names of every skill that ships a ragclaw adapter.json."""
+    base = settings.skills_dir
+    if not base.is_dir():
+        return
+    for entry in base.iterdir():
+        if entry.is_dir() and (entry / ".ragclaw" / "adapter.json").is_file():
+            yield entry.name
+
+
+async def register_skill_upstream(folder: str) -> bool:
+    """Register a skill's proxy_path -> upstream mapping in the injection proxy.
+
+    Always safe to call: requires only the ragclaw-owned adapter.json and NO KEY,
+    so it can run at skill init / startup independently of whether the user has
+    configured a secret-zero API KEY. Decoupling the mapping from the KEY is what
+    lets always-shim forward anonymously when no KEY is set.
+    """
+    adapter = _adapter_for(folder)
+    if not adapter:
+        return False
+    payload = {
+        "folder": folder,
+        "proxy_path": adapter.get("proxy_path", folder),
+        "upstream_base": adapter.get("upstream_base", ""),
+        "header_format": adapter.get("header_format", "Bearer {}"),
+    }
+    return await _put_secret_config(payload)
+
+
+async def ensure_skill_upstreams_registered() -> bool:
+    """Startup helper: register every adapter-bearing skill's upstream mapping."""
+    folders = list(iter_adapter_folders())
+    if not folders:
+        return True
+    ok = True
+    for folder in folders:
+        if not await register_skill_upstream(folder):
+            ok = False
+    return ok
+
+
+async def delete_skill_secret_all(folder: str) -> None:
+    """Remove a skill's proxy state entirely (KEY + upstream mapping).
+
+    Called when a skill is deleted so the proxy does not keep a stale route.
+    Best-effort: failures are logged, never raised.
+    """
+    await _delete_secret(folder)          # clear KEY
+    await _delete_secret_config(folder)   # remove mapping
 
 
 # ── Self-healing (mirrors config.py REPL auth-secret retry) ───────────────────
@@ -156,6 +261,8 @@ async def ensure_skill_secrets_pushed(retries: int = 6, interval: float = 2.0) -
     if not secrets:
         _secret_push_pending = False
         return True
+    # Make sure upstream mappings exist before pushing keys.
+    await ensure_skill_upstreams_registered()
     ok = True
     for folder in secrets:
         if not await push_skill_secret(folder):
@@ -176,6 +283,7 @@ async def _secret_retry_loop(interval: float = 60.0):
             if not secrets:
                 _secret_push_pending = False
                 break
+            await ensure_skill_upstreams_registered()
             all_ok = True
             for folder in secrets:
                 if not await push_skill_secret(folder):

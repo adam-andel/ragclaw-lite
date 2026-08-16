@@ -139,6 +139,12 @@ async def delete_skill(
     # Delete folder
     delete_skill_folder(skill.folder_name)
     clear_script_cache(skill.folder_name)
+    # Best-effort: drop the skill's proxy state (KEY + upstream mapping) so the
+    # injection proxy does not keep a stale route after deletion.
+    try:
+        await skill_secret_svc.delete_skill_secret_all(skill.folder_name)
+    except Exception as e:  # never block deletion on proxy cleanup failure
+        print(f"[skills] warning: failed to clear proxy state for {skill.folder_name}: {e}")
 
     # Delete DB index
     await db.delete(skill)

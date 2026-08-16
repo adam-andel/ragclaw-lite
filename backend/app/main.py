@@ -203,6 +203,9 @@ async def lifespan(app: FastAPI):
     # heartbeat); the next API KEY change re-triggers it if needed.
     try:
         from app.services import skill_secret as _skill_secret
+        # Register every adapter-bearing skill's upstream mapping first (idempotent,
+        # no KEY required) so the proxy can forward even before/without a KEY.
+        await _skill_secret.ensure_skill_upstreams_registered()
         pushed_secrets = await _skill_secret.ensure_skill_secrets_pushed()
         if not pushed_secrets:
             print("[startup] WARNING: could not push skill API keys to ragclaw-egress "

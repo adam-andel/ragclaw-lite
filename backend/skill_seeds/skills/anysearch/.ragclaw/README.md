@@ -7,12 +7,17 @@ author or shipped inside the upstream zip — the backend manages it exclusively
 Files:
 
 - `init.sh`      — unified per-skill init hook, run on enable / re-upload
-                   (materialises `runtime.conf`, appends the SKILL.md adapter
-                   block).
+                   (materialises `runtime.conf` from `runtime.conf.example`). Never
+                   mutates the third-party `SKILL.md`.
 - `shim.py`      — (secret-zero) sandbox trigger that redirects the third-party
-                   CLI to the injected proxy; only emitted when an API KEY is set.
+                   CLI to the injected proxy. Always present; the proxy forwards
+                   anonymously when no KEY is configured.
 - `adapter.json` — (secret-zero) descriptor declaring the skill's endpoint / KEY
-                   env var; only emitted when an API KEY is set.
+                   env var / upstream base. Always present.
+- `SKILL.ragclaw.md` — committed statically (NOT generated at runtime);
+                   ragclaw-owned LLM guidance (resolved command + output rules).
+                   Surfaced as an extra context block by the loader; the native
+                   SKILL.md is untouched.
 - `README.md`    — this file.
 
 The native skill files (`SKILL.md`, `scripts/`, `runtime.conf.example`, ...) live
