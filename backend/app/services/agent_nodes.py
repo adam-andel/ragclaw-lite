@@ -1789,9 +1789,49 @@ async def tool_decision_node(state: dict) -> dict:
                         break
                     # Feed forward the latest (still-bad) output for the next attempt.
                     bad_output = heal_content or bad_output
-                if not tool_calls:
-                    logger.warning("Tool decision: self-heal exhausted %d attempts for '%s'",
-                                   SELF_HEAL_MAX_RETRIES, intended)
+                    if not tool_calls:
+                        logger.warning("Tool decision: self-heal exhausted %d attempts for '%s'",
+                                       SELF_HEAL_MAX_RETRIES, intended)
+
+        # ── Round-0 no-tool nudge (Plan A, generic / intent-agnostic) ──
+        # The LLM emitted non-empty text but NO tool call on the very first tool round
+        # (round 0, no prior results) AND a skill is active. This is the classic "it
+        # planned but never invoked a tool" failure (e.g. "I will query the sub-domains
+        # first" with no get_sub_domains call — incident 2026-08-16). Give it ONE
+        # corrective chance with tool_choice="auto" so it can re-read the function
+        # schemas and emit a real call. We do NOT guess the user's intent via keywords
+        # (that would violate the capability-driven routing contract); we only re-prompt.
+        # Gated on an active skill so pure chit-chat pays no extra LLM call.
+        if not tool_calls and content and tool_round == 0 and not prev_results and active:
+            logger.info("Tool decision: round-0 no-tool nudge (skill active) — retrying with auto")
+            nudge_messages = messages + [
+                {"role": "assistant", "content": content},
+                {"role": "user", "content": build_no_tool_nudge_prompt(config_manager.prompt_language)},
+            ]
+            try:
+                nudge_resp = await _chat_with_tools_resilient(
+                    nudge_messages, available_tools, "auto",
+                    temperature=0.0, max_tokens=_compute_agent_max_tokens(nudge_messages),
+                )
+            except Exception as nudge_err:
+                logger.warning("Tool decision: round-0 nudge failed (%s)", str(nudge_err)[:150])
+                nudge_resp = {}
+            nudge_tc = nudge_resp.get("tool_calls")
+            nudge_content = nudge_resp.get("content") or ""
+            if not nudge_tc and nudge_content:
+                nudge_tc = (_try_parse_tool_call(nudge_content, available_tools)
+                            or _try_extract_code_as_tool(nudge_content, available_tools))
+            if nudge_tc:
+                logger.info("Tool decision: round-0 nudge SUCCESS — recovered a tool call")
+                tool_calls = nudge_tc
+                content = ""
+            else:
+                # No tool call even after the nudge. Treat the new content (if any) as
+                # the real answer; Plan B's final-generation notice will keep the model
+                # from leaking tool-call code if a skill was active but no tool ran.
+                if nudge_content:
+                    content = nudge_content
+                logger.info("Tool decision: round-0 nudge produced no tool call; proceeding without tools")
 
         if tool_calls:
             # ── Deterministic loop guard ──

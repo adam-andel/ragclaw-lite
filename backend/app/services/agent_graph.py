@@ -390,6 +390,13 @@ class RagclawAgentGraph:
                     user_parts.append(f"## Reference Documents\n{rag}")
             if mem:
                 user_parts.append(f"## Conversation Memory (archived summary)\n{mem}")
+            # Plan B safety net (2026-08-16 incident): a skill was active but produced
+            # NO tool results. Without this, the model has no real source and would
+            # hallucinate tool-call code/commands into the final answer. Force an honest
+            # reply. Gated on (no tool results) AND (an active skill) so plain chit-chat
+            # / no-skill turns are untouched.
+            if not payload and active_skill:
+                user_parts.append(_t("no_tool_executed_notice", config_manager.prompt_language))
             user_parts.append(f"## Question\n{q}")
             msgs.append({"role": "user", "content": "\n\n".join(user_parts)})
             return msgs

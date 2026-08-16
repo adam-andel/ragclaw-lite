@@ -189,6 +189,29 @@ MESSAGES = {
         "answer minimal per the File-generation Answer Rule — do not append anything).\n"
         "- Write it in the same language as the user."
     ),
+
+    # Round-0 no-tool nudge prompt (Plan A, 2026-08-16 incident). No placeholders.
+    "no_tool_nudge": (
+        "Your previous reply contained some text but called NO tool. Re-decide:\n"
+        "- If this task REQUIRES a tool to complete (e.g. retrieving information, running "
+        "code, reading/writing files, invoking a skill), make the corresponding tool call "
+        "directly (in the tool's argument format).\n"
+        "- If this is just small talk, a greeting, or something you can answer DIRECTLY, "
+        "give the final answer directly — do not output any tool call.\n"
+        "Do not repeat the text you just wrote; act or answer now."
+    ),
+
+    # Final-generation safety-net notice (Plan B, 2026-08-16 incident). No placeholders.
+    "no_tool_executed_notice": (
+        "## WARNING: no tool was executed this turn\n"
+        "No tool ran successfully this turn (tool results are empty). You have NO real "
+        "source of retrieval, execution, or output.\n"
+        "If the user's request needs a tool to be answered, say honestly that the "
+        "retrieval/operation could not be executed this turn. NEVER invent tool-call code, "
+        "commands, or search results, and NEVER fabricate a 'I already executed' process. "
+        "If you intended to answer directly, output only the real answer content."
+    ),
+
     # Cron confirmation messages shown to the user (follows prompt_language).
     "cron_created_confirm": "Scheduled task '{name}' created. View it on the Scheduled Tasks page.",
     "cron_created_confirm_detail": "Scheduled task '{name}' created. Next run: {next_run} ({tz}). View it on the Scheduled Tasks page.",
