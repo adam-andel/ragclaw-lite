@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
   NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect, NAlert,
-  NEmpty, NSpin, NDescriptions, NDescriptionsItem,
+  NEmpty, NSpin, NDescriptions, NDescriptionsItem, NTooltip,
 } from 'naive-ui'
 import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search, FolderOpen, Archive, Key } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -520,17 +520,22 @@ onMounted(() => {
     <PageHeader :title="t('skills.title')" :icon="Bulb">
       <template #badge v-if="total > 0">{{ total }}</template>
       <template #actions>
-        <NButton size="small" @click="handleSync">
-          <template #icon><NIcon><Sync /></NIcon></template>
-          {{ t('skills.sync') }}
-        </NButton>
-        <NButton size="small" @click="openUploadModal()">
-          <template #icon><NIcon><CloudUpload /></NIcon></template>
-          {{ t('skills.upload') }}
-        </NButton>
-        <NButton size="small" type="primary" @click="openCreate">
+        <NTooltip trigger="hover">
+          <template #trigger>
+            <NButton size="small" @click="handleSync">
+              <template #icon><NIcon><Sync /></NIcon></template>
+              {{ t('skills.sync') }}
+            </NButton>
+          </template>
+          {{ t('skills.syncTooltip') }}
+        </NTooltip>
+        <NButton size="small" @click="openCreate">
           <template #icon><NIcon><Add /></NIcon></template>
           {{ t('skills.createOnline') }}
+        </NButton>
+        <NButton size="small" type="primary" @click="openUploadModal()">
+          <template #icon><NIcon><CloudUpload /></NIcon></template>
+          {{ t('skills.upload') }}
         </NButton>
       </template>
     </PageHeader>

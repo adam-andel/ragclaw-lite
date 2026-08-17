@@ -7,6 +7,7 @@ export default {
 
   // ── Header actions ──
   sync: 'Sync',
+  syncTooltip: 'Sync skills that were added manually on disk',
   upload: 'Upload',
   uploadFolder: 'Upload Folder',
   uploadZip: 'Upload ZIP',

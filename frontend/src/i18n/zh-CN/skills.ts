@@ -7,6 +7,7 @@ export default {
 
   // ── Header actions ──
   sync: '同步',
+  syncTooltip: '用于同步磁盘上手动添加的 skill',
   upload: '上传',
   uploadFolder: '上传文件夹',
   uploadZip: '上传ZIP',

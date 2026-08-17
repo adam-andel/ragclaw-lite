@@ -63,6 +63,7 @@ const modalAttrs = computed(() => {
     preset="card"
     :title="title"
     :style="modalStyle"
+    :auto-focus="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <slot />
