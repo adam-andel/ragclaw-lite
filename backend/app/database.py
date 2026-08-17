@@ -222,7 +222,7 @@ async def _seed_db():
         else:
             # (Re)assert the built-in flag on the existing row so the Python
             # Executor is always treated as a platform-managed server, even if
-            # the column was just added by a migration on an older database.
+            # the column was just added by a patch on an older database.
             # Use the per-dialect ON CONFLICT upsert so the same code path works
             # on both SQLite and Postgres.
             insert_stmt = (

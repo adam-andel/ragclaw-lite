@@ -54,6 +54,24 @@ For destructive or multi-step work, pass a callable instead of a SQL list::
 
 Note the inverted predicate for a drop: "applied" means "the desired end state is
 already true", so a drop patch is applied once the column is *gone*.
+
+Launch state (2026-08-17)
+-------------------------
+This project has never shipped, so there is **no pre-existing database** to
+upgrade. Every column the ORM models declare (conversations.summary_msg_seq,
+conversations.summary_archived_count, conversations.pinned_instruction,
+messages.seq, messages.content_token_count, users.timezone, ...) is already built
+by ``Base.metadata.create_all`` on a fresh install. The earlier "add column"
+patches that once carried an older schema forward have therefore been removed: on
+a never-shipped database they would only ever no-op, and keeping them would be
+dead machinery that future readers mistake for required upgrade steps.
+
+The only remaining patch is ``tenant.normalize_to_shared`` — a data-integrity
+guard rather than a schema change. It self-corrects any row whose ``tenant_id``
+drifted from ``settings.default_tenant_id`` (e.g. seeded during local dev/testing),
+and is a no-op the moment the data is already consistent. It stays because a
+fresh database can still receive stray tenant_ids via test fixtures, and we want
+the running instance to converge to the single-tenant posture automatically.
 """
 
 import logging
@@ -128,7 +146,7 @@ class Patch:
 def _normalize_tenant_ids(conn: Connection) -> None:
     """Fold every existing ``tenant_id`` into the shared single-tenant value.
 
-    Pre-launch convenience migration. Historically each new user was assigned a
+    Pre-launch convenience normalization. Historically each new user was assigned a
     random ``tenant_id``, which scoped every tenant-owned resource (skills, MCP
     servers, KBs, documents, cron jobs, notifications) privately to that user
     instead of shared across the org. RAGClaw is deployed as ONE private instance
@@ -199,62 +217,11 @@ def _tenant_normalized(insp: Inspector) -> bool:
 #
 # Append new patches at the END. Order matters only when one patch depends on
 # another's result (e.g. add a column, then backfill it). Never delete a patch.
-
-def _add_conversation_summary_columns(conn: Connection) -> None:
-    """Add the two conversation-compression columns introduced by the summary
-    cursor work.
-
-    ``summary_msg_seq`` carries a server-side default of 0 so existing rows and
-    fresh inserts both agree;     ``summary_archived_count`` defaults to 0 via the
-    Python model default, but a server default keeps it non-null on direct SQL
-    inserts too.
-    """
-    dialect = conn.dialect.name
-    if dialect == "sqlite":
-        conn.exec_driver_sql(
-            'ALTER TABLE conversations ADD COLUMN summary_msg_seq INTEGER NOT NULL DEFAULT 0'
-        )
-        conn.exec_driver_sql(
-            'ALTER TABLE conversations ADD COLUMN summary_archived_count INTEGER NOT NULL DEFAULT 0'
-        )
-    else:
-        # Postgres: ADD COLUMN with DEFAULT populates existing rows and sets the
-        # column default in one step.
-        conn.exec_driver_sql(
-            'ALTER TABLE conversations ADD COLUMN summary_msg_seq INTEGER NOT NULL DEFAULT 0'
-        )
-        conn.exec_driver_sql(
-            'ALTER TABLE conversations ADD COLUMN summary_archived_count INTEGER NOT NULL DEFAULT 0'
-        )
-
-
-def _add_message_seq_and_token_columns(conn: Connection) -> None:
-    """Add ``Message.seq`` and ``Message.content_token_count``.
-
-    Both are nullable in the ORM model. ``seq`` is assigned by the Python-side
-    ``_next_message_seq`` default at insert time, so existing rows keep NULL
-    (the seq cursor simply starts fresh for them) and new rows get a dense,
-    monotonic per-conversation value. ``content_token_count`` is a nullable
-    bookkeeping field written at insert time.
-    """
-    dialect = conn.dialect.name
-    if dialect == "sqlite":
-        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN seq INTEGER')
-        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN content_token_count INTEGER')
-    else:
-        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN seq INTEGER')
-        conn.exec_driver_sql('ALTER TABLE messages ADD COLUMN content_token_count INTEGER')
-
-
-def _add_conversation_pinned_instruction(conn: Connection) -> None:
-    """Add the per-conversation pinned instruction column.
-
-    Nullable TEXT. Existing rows keep NULL (no pin); the context assembler treats
-    an empty pin as a no-op. Reuses the same ALTER for both dialects -- SQLite and
-    Postgres both accept ``ADD COLUMN ... TEXT`` without a NOT NULL / default here.
-    """
-    conn.exec_driver_sql('ALTER TABLE conversations ADD COLUMN pinned_instruction TEXT')
-
+#
+# At launch this list intentionally holds only the tenant data-integrity guard.
+# See the module docstring ("Launch state") for why the old add-column patches
+# were dropped: with no pre-existing database, create_all already builds the
+# final schema, so those patches would only ever no-op.
 
 PATCHES: list[Patch] = [
     # Example — kept commented as a template for the next real patch.
@@ -265,45 +232,12 @@ PATCHES: list[Patch] = [
     #     apply=["ALTER TABLE users ADD COLUMN avatar_url TEXT"],
     # ),
 
-    # Conversation compression cursor (summary fold position + archived fold count).
-    Patch(
-        name="conversations.summary_msg_seq+summary_archived_count",
-        applied=lambda insp: (
-            has_column(insp, "conversations", "summary_msg_seq")
-            and has_column(insp, "conversations", "summary_archived_count")
-        ),
-        apply=_add_conversation_summary_columns,
-    ),
-
-    # Per-conversation message ordering key + per-message content token bookkeeping.
-    Patch(
-        name="messages.seq+content_token_count",
-        applied=lambda insp: (
-            has_column(insp, "messages", "seq")
-            and has_column(insp, "messages", "content_token_count")
-        ),
-        apply=_add_message_seq_and_token_columns,
-    ),
-
-    # Per-conversation pinned instruction (always-injected system prefix).
-    Patch(
-        name="conversations.pinned_instruction",
-        applied=lambda insp: has_column(insp, "conversations", "pinned_instruction"),
-        apply=_add_conversation_pinned_instruction,
-    ),
-
-    # Per-user IANA timezone (profile setting; drives locale-correct timestamps
-    # in code execution / scheduling instead of the sandbox's default UTC).
-    Patch(
-        name="users.timezone",
-        applied=lambda insp: has_column(insp, "users", "timezone"),
-        apply=["ALTER TABLE users ADD COLUMN timezone TEXT"],
-    ),
-
-    # Pre-launch single-tenant data normalization. Fold every historically random
-    # tenant_id into the shared settings.default_tenant_id so tenant-owned
-    # resources (skills, MCP servers, KBs, ...) are visible to all users. Idempotent
-    # on data: applied() skips once no mismatched row remains.
+    # Single-tenant data-integrity guard. Fold any row whose tenant_id drifted
+    # from settings.default_tenant_id (e.g. seeded during local dev/testing) back
+    # into the shared tenant so tenant-owned resources (skills, MCP servers, KBs,
+    # documents, cron jobs, notifications, users) are visible to all users.
+    # Idempotent on data: applied() skips once no mismatched row remains, so on a
+    # freshly-launched database this is a no-op.
     Patch(
         name="tenant.normalize_to_shared",
         applied=_tenant_normalized,
