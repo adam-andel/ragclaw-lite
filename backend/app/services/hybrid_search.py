@@ -1,8 +1,13 @@
 """Hybrid search combining vector + BM25 via Reciprocal Rank Fusion (RRF)."""
 
+import asyncio
+import logging
+
 from app.config import settings
 from app.services.vector_store import vector_store
 from app.services.bm25_index import bm25_index
+
+logger = logging.getLogger(__name__)
 
 
 class HybridSearchService:
@@ -135,6 +140,73 @@ class HybridSearchService:
         results.sort(key=lambda x: x["fusion_score"], reverse=True)
 
         return results[:final_top_k]
+
+    async def _run_hybrid_retrieval(
+        self,
+        kb_id: str,
+        query: str,
+        doc_ids: list[str] | None = None,
+        top_k: int | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Run concurrent vector + BM25 hybrid retrieval and render the result.
+
+        Mirrors the document path of ``parallel_retrieval_node``: vector + BM25
+        run concurrently via executor threads, fused with RRF, then rendered
+        into ``(rag_context, citations)``. Shared by the entry retrieval node
+        (Step 2 of the hybrid_search meta-tool plan) and the ``hybrid_search``
+        meta tool (Step 3).
+
+        Returns:
+            ``(rag_context, citations)`` — same shape as ``agent_nodes._build_context``.
+        """
+        loop = asyncio.get_running_loop()
+        # Overlap the slow vector path with the fast BM25 path (see
+        # parallel_retrieval_node for the latency rationale).
+        v_task = loop.run_in_executor(None, vector_store.search, kb_id, query, settings.retrieval_vector_top_k)
+        b_task = loop.run_in_executor(None, bm25_index.search, kb_id, query, settings.retrieval_bm25_top_k)
+        v_res, b_res = await asyncio.gather(v_task, b_task, return_exceptions=True)
+        # Vector search may fail (e.g. embedding model not installed) — degrade
+        # gracefully and rely on BM25 only instead of erroring the whole request.
+        if isinstance(v_res, Exception):
+            logger.warning("Vector search error: %s", v_res)
+            v_res = []
+        if isinstance(b_res, Exception):
+            logger.warning("BM25 search error: %s", b_res)
+            b_res = []
+        retrieved = self.fuse(v_res, b_res, final_top_k=top_k, doc_ids=doc_ids)
+        return _render_context(retrieved)
+
+
+def _render_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
+    """Render fused chunks into ``(rag_context, citations)``.
+
+    Verbatim port of ``agent_nodes._build_context``. Step 2 of the hybrid_search
+    meta-tool plan unifies the two by routing the entry retrieval node through
+    ``HybridSearchService._run_hybrid_retrieval`` and deleting the ``agent_nodes``
+    copy, so this becomes the single source of truth.
+    """
+    if not retrieved:
+        return "No relevant documents found", []
+    parts, citations = [], []
+    # Defense-in-depth: collapse display-identical sources so the UI never
+    # shows what looks like the same chunk twice (e.g. same doc_id + chunk_index
+    # + heading). Distinct sections survive because their headings differ.
+    seen_keys: set[tuple] = set()
+    for i, r in enumerate(retrieved):
+        doc_name = r.get("doc_name") or r.get("doc_id", "?")[:8]
+        heading = r.get("heading", "") or ""
+        page = r.get("page")
+        if page == 0:
+            page = None
+        key = (r.get("doc_id", ""), r.get("chunk_index", 0), heading)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        parts.append(f"[{i + 1}] {doc_name} {heading}\n{r['content']}")
+        citations.append({"doc_id": r.get("doc_id", ""), "doc_name": doc_name,
+                          "chunk_index": r.get("chunk_index", 0), "heading": heading,
+                          "page": page, "score": round(r.get("fusion_score", 0), 4)})
+    return "\n\n---\n\n".join(parts), citations
 
 
 # Singleton
