@@ -261,8 +261,6 @@ async def ensure_skill_secrets_pushed(retries: int = 6, interval: float = 2.0) -
     if not secrets:
         _secret_push_pending = False
         return True
-    # Make sure upstream mappings exist before pushing keys.
-    await ensure_skill_upstreams_registered()
     ok = True
     for folder in secrets:
         if not await push_skill_secret(folder):

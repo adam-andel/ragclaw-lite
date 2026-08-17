@@ -127,6 +127,7 @@ async def lifespan(app: FastAPI):
     # Re-apply RAGClaw logging now that uvicorn has installed its own config.
     # Fixes ragclaw.* INFO logs being silently dropped (P0 observability).
     setup_logging()
+    from app.services import skill_secret as _skill_secret
     import logging as _logging
     _logging.getLogger("ragclaw").info("RAGClaw logging initialized")
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -196,23 +197,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[startup] push MCP config warning: {e}")
 
-    # Secret-zero: re-push every configured skill API KEY to the ragclaw-egress
-    # injection proxy. The proxy holds keys in memory only, so it must be
-    # re-populated after any restart. If the proxy is not yet reachable, start a
-    # self-healing retry loop that stops on the first success (no perpetual
-    # heartbeat); the next API KEY change re-triggers it if needed.
-    try:
-        from app.services import skill_secret as _skill_secret
-        # Register every adapter-bearing skill's upstream mapping first (idempotent,
-        # no KEY required) so the proxy can forward even before/without a KEY.
-        await _skill_secret.ensure_skill_upstreams_registered()
-        pushed_secrets = await _skill_secret.ensure_skill_secrets_pushed()
-        if not pushed_secrets:
-            print("[startup] WARNING: could not push skill API keys to ragclaw-egress "
-                  "injection proxy — secret-zero routing may be inactive until reachable")
-            await _skill_secret.ensure_secret_retry_running()
-    except Exception as e:
-        print(f"[startup] skill-secret push warning: {e}")
 
     # Init LLM concurrency limiter from saved config
     from app.services.llm_semaphore import llm_limiter
@@ -290,20 +274,6 @@ async def lifespan(app: FastAPI):
         print("Meta python tools (Python Executor) loaded at startup")
     except Exception as e:
         print(f"Meta python tools init warning: {e}")
-    # One-time migration: legacy data/skills/* -> shared store/* (preserves
-    # enabled state). Copy-only by default so nothing is lost if the shared
-    # skills volume is not yet mounted; runs idempotently each boot.
-    try:
-        from app.services.skill_manager import migrate_legacy_skills
-        _mig = migrate_legacy_skills()
-        if _mig["migrated"] or _mig["skipped"]:
-            print(
-                f"Skill migration (legacy data/skills -> store): "
-                f"+{_mig['migrated']} migrated, {_mig['skipped']} already present, "
-                f"{_mig['enabled']} enabled"
-            )
-    except Exception as e:
-        print(f"Skill migration warning: {e}")
     # Seed preset (factory-default) skills baked into the image. Idempotent:
     # copies into store/ + enables only when absent, so user edits persist.
     try:
@@ -317,6 +287,21 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         print(f"Skill preset seeding warning: {e}")
+    # Secret-zero: re-register every adapter-bearing skill's upstream mapping and
+    # re-push configured API KEYs to the ragclaw-egress injection proxy. Skills are
+    # now guaranteed present in the shared store/ (after seed), so the proxy is
+    # fully re-populated even on a cold first boot. If the proxy is not yet
+    # reachable, a self-healing retry loop stops on first success (no perpetual
+    # heartbeat); the next API KEY change re-triggers it if needed.
+    try:
+        await _skill_secret.ensure_skill_upstreams_registered()
+        pushed_secrets = await _skill_secret.ensure_skill_secrets_pushed()
+        if not pushed_secrets:
+            print("[startup] WARNING: could not push skill API keys to ragclaw-egress "
+                  "injection proxy — secret-zero routing may be inactive until reachable")
+            await _skill_secret.ensure_secret_retry_running()
+    except Exception as e:
+        print(f"[startup] skill-secret push warning: {e}")
     # Sync skill filesystem to DB index
     try:
         from app.services.skill_manager import sync_skills_to_db
