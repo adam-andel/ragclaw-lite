@@ -16,18 +16,15 @@ class CacheEntry:
     timestamp: float = field(default_factory=time.time)
     hit_count: int = 0
 
-    @property
-    def is_expired(self) -> bool:
-        from app.services.config_manager import config_manager
-        return (time.time() - self.timestamp) > config_manager.cache_ttl_seconds
-
 
 class AnswerCache:
     """Thread-safe LRU cache mapping query → answer."""
 
     def __init__(self, max_size: int | None = None, ttl_seconds: int | None = None):
         self.max_size = max_size or settings.cache_max_size
-        self.ttl_seconds = ttl_seconds or settings.cache_ttl_seconds
+        # ttl_seconds=0 is a valid "expire immediately" value, so it must NOT be
+        # swallowed by a truthiness check (the previous `or` clause dropped it).
+        self.ttl_seconds = ttl_seconds if ttl_seconds is not None else settings.cache_ttl_seconds
         self._store: OrderedDict[str, CacheEntry] = OrderedDict()
         self._kb_index: dict[str, set[str]] = {}
         self._lock = Lock()
@@ -61,7 +58,7 @@ class AnswerCache:
                 self._miss_count += 1
                 return None
 
-            if entry.is_expired:
+            if (time.time() - entry.timestamp) > self.ttl_seconds:
                 del self._store[key]
                 self._remove_from_index(key)
                 self._miss_count += 1
