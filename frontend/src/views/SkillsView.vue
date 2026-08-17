@@ -4,16 +4,16 @@ import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
   NButton, NForm, NFormItem, NInput, NSwitch,
-  NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect,
-  NUpload, NEmpty, NSpin, NDescriptions, NDescriptionsItem,
+  NIcon, useMessage, NSpace, NPopconfirm, NTag, NText, NSelect, NAlert,
+  NEmpty, NSpin, NDescriptions, NDescriptionsItem,
 } from 'naive-ui'
-import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search, FolderOpen, Archive } from '@vicons/ionicons5'
+import { Add, Trash, Create, CloudUpload, Sync, Bulb, Ban, CheckmarkCircle, Search, FolderOpen, Archive, Key } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
 import {
   listSkills, createSkill, updateSkill, deleteSkill, getSkill,
-  uploadFolder, uploadZip, syncSkills, toggleSkill, reuploadFolder, reuploadZip,
+  uploadFolder, uploadZip, syncSkills, toggleSkill,
 } from '@/api/skills'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import AppCard from '@/components/common/AppCard.vue'
@@ -50,10 +50,6 @@ const showEditModal = ref(false)
 const editingSkill = ref<Skill | null>(null)
 const skillMdContent = ref('')
 
-// Re-upload state
-const reuploadFolderInput = ref<HTMLInputElement>()
-const reuploadSkillId = ref<string>('')
-
 // MCP servers for options
 const servers = ref<MCPServer[]>([])
 const serverOptions = ref<{ label: string; value: string }[]>([])
@@ -75,6 +71,9 @@ const apiKeySaving = ref(false)
 // Status badge: derived from the skill's server-computed flag. The key itself is
 // never sent back to the client — only whether one is configured.
 const apiKeyConfigured = computed(() => !!detailSkill.value?.api_key_configured)
+// API KEY modal — opened on top of the detail modal (overlay) so the user can
+// configure the proxy-injected key without losing the detail context.
+const showApiKeyModal = ref(false)
 
 // ── Load ──
 
@@ -196,15 +195,37 @@ async function clearApiKey() {
   }
 }
 
+function openApiKeyModal() {
+  if (!detailSkill.value) return
+  apiKeyInput.value = ''
+  showApiKeyModal.value = true
+}
+
 // ── Delete ──
 
 async function handleDelete(skill: Skill) {
+  // Optimistic removal: drop the card locally first so we never re-query
+  // with the current `search` text (NInput updates search on every keystroke,
+  // even before the user presses Enter). Replaying a stale/in-progress search
+  // on load() can filter out the remaining skills and blank the whole list.
+  const backup = skills.value
+  const backupTotal = total.value
+  skills.value = skills.value.filter(s => s.id !== skill.id)
+  total.value = Math.max(0, total.value - 1)
   try {
     await deleteSkill(skill.id)
     message.success(t('skills.deleted'))
     if (detailSkill.value?.id === skill.id) showDetail.value = false
-    await load()
+    // Edge case: we just emptied a non-first page. Step back one page and
+    // reload so pagination stays valid. Normal single-delete needs no reload.
+    if (skills.value.length === 0 && total.value > 0 && page.value > 1) {
+      page.value -= 1
+      await load()
+    }
   } catch (e: any) {
+    // Rollback on failure
+    skills.value = backup
+    total.value = backupTotal
     message.error(backendErrorMessage(e.message) || t('skills.deleteFailed'))
   }
 }
@@ -241,6 +262,7 @@ async function doFolderUpload(files: File[], paths: string[]) {
     await uploadFolder(files, paths)
     message.success(t('skills.folderUploadSuccess'))
     showUploadModal.value = false
+    reuploadTarget.value = null
     dragOver.value = false
     await load()
   } catch (e: any) {
@@ -255,6 +277,15 @@ async function doFolderUpload(files: File[], paths: string[]) {
 const dragOver = ref(false)
 const showUploadModal = ref(false)
 const uploadMode = ref<'folder' | 'zip'>('folder')
+// When set (a skill name), the upload modal behaves as a *re-upload* of that
+// skill: the modal title + a notice tell the user it replaces an existing skill
+// rather than adding a new one. When null, it's a plain new upload.
+const reuploadTarget = ref<string | null>(null)
+
+function openUploadModal(target?: string) {
+  reuploadTarget.value = target ?? null
+  showUploadModal.value = true
+}
 
 function onDragOver(e: DragEvent) {
   e.preventDefault()
@@ -412,66 +443,10 @@ async function handleZipUpload(options: any) {
     await uploadZip(file)
     message.success(t('skills.zipUploadSuccess'))
     showUploadModal.value = false
+    reuploadTarget.value = null
     await load()
   } catch (e: any) {
     message.error(backendErrorMessage(e.message) || t('skills.uploadFailed'))
-  } finally {
-    loading.value = false
-  }
-}
-
-// ── Re-upload ──
-
-function triggerReuploadFolder(skillId: string) {
-  reuploadSkillId.value = skillId
-  reuploadFolderInput.value?.click()
-}
-
-function handleReuploadFolderChange(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (!input.files || input.files.length === 0) return
-
-  const files = Array.from(input.files)
-  const paths = files.map(f => (f as any).webkitRelativePath || f.name)
-
-  const hasSkillMd = paths.some(p => p.toUpperCase().endsWith('SKILL.MD'))
-  if (!hasSkillMd) {
-    message.error(t('skills.folderMustContainSkillMd'))
-    input.value = ''
-    return
-  }
-
-  doReuploadFolder(files, paths)
-  input.value = ''
-}
-
-async function doReuploadFolder(files: File[], paths: string[]) {
-  if (!reuploadSkillId.value) return
-  loading.value = true
-  try {
-    await reuploadFolder(reuploadSkillId.value, files, paths)
-    message.success(t('skills.folderReuploaded'))
-    await load()
-  } catch (e: any) {
-    message.error(backendErrorMessage(e.message) || t('skills.reuploadFailed'))
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleReuploadZip(skillId: string, options: any) {
-  const file = options.file.file
-  if (!file.name.toLowerCase().endsWith('.zip')) {
-    message.error(t('skills.pleaseUploadZip'))
-    return
-  }
-  loading.value = true
-  try {
-    await reuploadZip(skillId, file)
-    message.success(t('skills.zipReuploaded'))
-    await load()
-  } catch (e: any) {
-    message.error(backendErrorMessage(e.message) || t('skills.reuploadFailed'))
   } finally {
     loading.value = false
   }
@@ -537,9 +512,6 @@ onMounted(() => {
   if (folderInput.value) {
     folderInput.value.setAttribute('webkitdirectory', '')
   }
-  if (reuploadFolderInput.value) {
-    reuploadFolderInput.value.setAttribute('webkitdirectory', '')
-  }
 })
 </script>
 
@@ -552,7 +524,7 @@ onMounted(() => {
           <template #icon><NIcon><Sync /></NIcon></template>
           {{ t('skills.sync') }}
         </NButton>
-        <NButton size="small" @click="showUploadModal = true">
+        <NButton size="small" @click="openUploadModal()">
           <template #icon><NIcon><CloudUpload /></NIcon></template>
           {{ t('skills.upload') }}
         </NButton>
@@ -564,8 +536,11 @@ onMounted(() => {
     </PageHeader>
 
     <!-- Upload Modal -->
-    <AppModal v-model:show="showUploadModal" :title="t('skills.uploadModalTitle')" size="detail">
+    <AppModal v-model:show="showUploadModal" :title="reuploadTarget ? t('skills.reuploadModalTitle', { name: reuploadTarget }) : t('skills.uploadModalTitle')" size="detail">
       <div class="sk-upload-modal">
+        <NAlert v-if="reuploadTarget" type="info" :show-icon="true" style="margin-bottom: 14px">
+          {{ t('skills.reuploadHint', { name: reuploadTarget }) }}
+        </NAlert>
         <!-- Mode toggle: switch the drop zone between folder and ZIP -->
         <div class="sk-upload-modes">
           <button
@@ -615,7 +590,6 @@ onMounted(() => {
 
     <!-- Hidden folder inputs -->
     <input ref="folderInput" type="file" style="display:none" @change="handleFolderChange" />
-    <input ref="reuploadFolderInput" type="file" style="display:none" @change="handleReuploadFolderChange" />
     <input ref="zipInput" type="file" accept=".zip" style="display:none" @change="handleZipChange" />
 
     <!-- Filters -->
@@ -767,35 +741,6 @@ onMounted(() => {
             </template>
             <span v-else class="sk-meta-muted">{{ t('skills.none') }}</span>
           </NDescriptionsItem>
-          <NDescriptionsItem :label="t('skills.apiKey')">
-            <NSpace vertical :size="8" style="width: 100%">
-              <NTag :type="apiKeyConfigured ? 'success' : 'default'" size="small" :bordered="false">
-                {{ apiKeyConfigured ? t('skills.apiKeyActive') : t('skills.apiKeyVanilla') }}
-              </NTag>
-              <NSpace :size="8">
-                <NInput
-                  v-model:value="apiKeyInput"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('skills.apiKeyPlaceholder')"
-                  style="width: 260px"
-                  :disabled="apiKeySaving"
-                />
-                <NButton
-                  size="small"
-                  type="primary"
-                  :loading="apiKeySaving"
-                  :disabled="!apiKeyInput"
-                  @click="saveApiKey"
-                >{{ t('skills.apiKeySave') }}</NButton>
-                <NButton
-                  size="small"
-                  :disabled="!apiKeyConfigured || apiKeySaving"
-                  @click="clearApiKey"
-                >{{ t('skills.apiKeyClear') }}</NButton>
-              </NSpace>
-            </NSpace>
-          </NDescriptionsItem>
           <NDescriptionsItem :label="t('common.status')">
             <NTag :type="detailSkill.is_active ? 'success' : 'default'" size="small">
               {{ detailSkill.is_active ? t('common.enabled') : t('common.disabled') }}
@@ -815,20 +760,14 @@ onMounted(() => {
             <template #icon><NIcon size="16"><Create /></NIcon></template>
             {{ t('common.edit') }}
           </NButton>
-          <NButton size="small" v-if="detailSkill" @click="triggerReuploadFolder(detailSkill.id)">
+          <NButton size="small" v-if="detailSkill" @click="openUploadModal(detailSkill?.name ?? undefined)">
             <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
             {{ t('skills.reupload') }}
           </NButton>
-          <NUpload
-            v-if="detailSkill"
-            :show-file-list="false"
-            :custom-request="(o: any) => handleReuploadZip(detailSkill!.id, o)"
-          >
-            <NButton size="small">
-              <template #icon><NIcon size="16"><CloudUpload /></NIcon></template>
-              {{ t('skills.reuploadZip') }}
-            </NButton>
-          </NUpload>
+          <NButton size="small" v-if="detailSkill" @click="openApiKeyModal()">
+            <template #icon><NIcon size="16"><Key /></NIcon></template>
+            {{ t('skills.apiKeyButton') }}
+          </NButton>
           <NButton size="small" v-if="detailSkill" @click="handleToggle(detailSkill)" :style="detailSkill.is_active
             ? { '--n-text-color': '#f59e0b', '--n-border': '1px solid #f59e0b', '--n-border-hover': '1px solid #d97706', '--n-border-pressed': '1px solid #d97706', '--n-text-color-hover': '#d97706', '--n-text-color-pressed': '#d97706' }
             : { '--n-text-color': '#22c55e', '--n-border': '1px solid #22c55e', '--n-border-hover': '1px solid #16a34a', '--n-border-pressed': '1px solid #16a34a', '--n-text-color-hover': '#16a34a', '--n-text-color-pressed': '#16a34a' }">
@@ -851,6 +790,49 @@ onMounted(() => {
           </NPopconfirm>
         </NSpace>
       </template>
+    </AppModal>
+
+    <!-- API KEY Modal (secret-zero proxy injection) — overlay on top of detail -->
+    <AppModal v-model:show="showApiKeyModal" :title="t('skills.apiKeyModalTitle')" size="detail">
+      <NAlert type="info" :show-icon="true" style="margin-bottom: 14px">
+        {{ t('skills.apiKeyModalHint') }}
+      </NAlert>
+      <NDescriptions
+        bordered
+        :column="1"
+        size="small"
+        label-placement="left"
+        label-style="width: 110px"
+      >
+        <NDescriptionsItem :label="t('skills.apiKeyConfigStatus')">
+          <NTag :type="apiKeyConfigured ? 'success' : 'default'" size="small" :bordered="false">
+            {{ apiKeyConfigured ? t('skills.apiKeyActive') : t('skills.apiKeyVanilla') }}
+          </NTag>
+        </NDescriptionsItem>
+      </NDescriptions>
+      <NSpace vertical :size="8" style="margin-top: 14px; width: 100%">
+        <NInput
+          v-model:value="apiKeyInput"
+          type="password"
+          show-password-on="click"
+          :placeholder="t('skills.apiKeyPlaceholder')"
+          :disabled="apiKeySaving"
+        />
+        <NSpace justify="end" :size="8">
+          <NButton
+            size="small"
+            :disabled="!apiKeyConfigured || apiKeySaving"
+            @click="clearApiKey"
+          >{{ t('skills.apiKeyClear') }}</NButton>
+          <NButton
+            size="small"
+            type="primary"
+            :loading="apiKeySaving"
+            :disabled="!apiKeyInput"
+            @click="saveApiKey"
+          >{{ t('skills.apiKeySave') }}</NButton>
+        </NSpace>
+      </NSpace>
     </AppModal>
 
   </div>

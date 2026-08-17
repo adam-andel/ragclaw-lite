@@ -11,6 +11,8 @@ export default {
   uploadFolder: '上传文件夹',
   uploadZip: '上传ZIP',
   uploadModalTitle: '上传技能',
+  reuploadModalTitle: '为 {name} 重新上传',
+  reuploadHint: '将替换「{name}」现有的技能内容',
   createOnline: '在线创建',
 
   // ── 上传弹窗（自适应拖拽区） ──
@@ -47,7 +49,10 @@ export default {
   confirmDeleteSkill: '确认删除此技能？文件夹和DB记录都会被删除。',
 
   // ── API KEY (secret-zero 代理注入) ──
-  apiKey: 'API KEY（代理注入）',
+  apiKeyButton: 'API KEY',
+  apiKeyModalTitle: 'API KEY 配置',
+  apiKeyModalHint: '该 API KEY 将通过代理注入到技能运行环境（代理注入模式）。密钥仅安全存储，不会回显。',
+  apiKeyConfigStatus: '状态',
   apiKeyActive: '已启用代理注入',
   apiKeyVanilla: '未配置（原生模式）',
   apiKeyPlaceholder: '填写该技能的 API KEY…',
