@@ -2130,6 +2130,14 @@ async def tool_executor_node(state: dict) -> dict:
         label = _TOOL_LABELS.get(tname, tname)
         _emit(state, "tool", f"Running tool: {label}", tool=tname)
 
+        # ── Command-level logging (REPL tools) ──
+        # The RESULT line below only logs the truncated *output*. This logs the
+        # exact command/code the REPL tool executed, so we can see e.g. the real
+        # search query anysearch's shim was invoked with (previously hidden).
+        if tname in ("run_shell", "run_python", "run_javascript"):
+            logger.warning(">>> tool_executor CMD: tool=%s args=%.1000s <<<",
+                           tname, json.dumps(args, ensure_ascii=False))
+
         tool_def = tool_lookup.get(tname, {})
         tool_source = tool_def.get("_source", "mcp")
 
