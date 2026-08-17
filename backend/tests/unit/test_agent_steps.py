@@ -32,14 +32,32 @@ from app.services.agent_nodes import (
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
+class _FakeResult:
+    """Stand-in for the SQLAlchemy Result returned by ``session.execute``.
+
+    The nodes under test only ever call ``.scalars().all()`` (e.g. the
+    ``use_skill`` fuzzy-fallback registry scan at agent_nodes.py:1216), so an
+    empty list is the correct behaviour for an isolated unit test.
+    """
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
 class _FakeSession:
-    """Minimal async context-manager standing in for async_session()."""
+    """Minimal async context-manager + DB session standing in for async_session()."""
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *exc):
         return False
+
+    async def execute(self, *args, **kwargs):
+        return _FakeResult()
 
 
 class _FakeSkill:
@@ -68,8 +86,15 @@ def patch_globals(monkeypatch):
     # DB session (entered by skill_switcher even on non-DB paths)
     monkeypatch.setattr(nodes, "async_session", _FakeSession)
 
+    # FS-disabled routing gate: the dev container mounts the shared skills
+    # volume but the test skills have no enable-symlink, so
+    # is_skill_effectively_enabled() returns False and the nodes skip loading.
+    # Isolate this unit test from that environment-dependent gate (it is
+    # exercised by integration paths, not here).
+    monkeypatch.setattr(nodes, "is_skill_effectively_enabled", lambda folder_name: True)
+
     # Skill body loading — return a dummy prompt + empty tool list
-    async def fake_load(folder_name):
+    async def fake_load(folder_name, user_id=None):
         return ("SYS_PROMPT", [])
 
     monkeypatch.setattr(nodes, "_load_skill_body_and_tools", fake_load)

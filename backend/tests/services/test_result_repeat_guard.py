@@ -7,6 +7,7 @@ produced instead of looping until the round quota.
 """
 
 import pytest
+from unittest.mock import AsyncMock
 
 from app.services import agent_nodes as an
 
@@ -30,6 +31,7 @@ def _state_with_results(results, tool_calls=None):
         })
     return {
         "query": "what is the current working directory",
+        "kb_id": "kb-123",
         "final_answer": "",
         "cache_hit": False,
         "citations": [],
@@ -69,6 +71,13 @@ async def test_result_repeat_forces_stop(monkeypatch):
 
     monkeypatch.setattr(an, "_chat_with_tools_resilient", fake_tools)
 
+    # tool_decision_node assembles KB + skill-catalogue prompts via the DB; this
+    # test only exercises the result-level repeat guard, so stub those lookups
+    # (the isolated test DB has no tables). get_kb_prompt is tolerant, but
+    # _build_skill_catalogue_prompt queries the skills table unguarded.
+    monkeypatch.setattr(an, "get_kb_prompt", AsyncMock(return_value=""))
+    monkeypatch.setattr(an, "_build_skill_catalogue_prompt", AsyncMock(return_value=""))
+
     state = _state_with_results(
         ["/app/workspace/user_u10000/test_gen_file"] * 3,
         tool_calls=new_call,
@@ -89,6 +98,13 @@ async def test_distinct_results_allow_continue(monkeypatch):
         return {"tool_calls": new_call, "content": ""}
 
     monkeypatch.setattr(an, "_chat_with_tools_resilient", fake_tools)
+
+    # tool_decision_node assembles KB + skill-catalogue prompts via the DB; this
+    # test only exercises the result-level repeat guard, so stub those lookups
+    # (the isolated test DB has no tables). get_kb_prompt is tolerant, but
+    # _build_skill_catalogue_prompt queries the skills table unguarded.
+    monkeypatch.setattr(an, "get_kb_prompt", AsyncMock(return_value=""))
+    monkeypatch.setattr(an, "_build_skill_catalogue_prompt", AsyncMock(return_value=""))
 
     # 3 distinct results → not a repeat.
     state = _state_with_results(

@@ -309,6 +309,7 @@ def _pending_stub() -> dict:
         "skill_switch_quota": 0,
         "tool_round_quota": 0,
         "workspace_id": "",
+        "subdir": "",
         "active_skill": None,
         "available_tools": [],
         "rag_context": "",
