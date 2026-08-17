@@ -11,6 +11,8 @@ export default {
   uploadFolder: 'Upload Folder',
   uploadZip: 'Upload ZIP',
   uploadModalTitle: 'Upload Skill',
+  reuploadModalTitle: 'Re-upload for {name}',
+  reuploadHint: 'This will replace the existing content of “{name}”.',
   createOnline: 'New Skill',
 
   // ── Upload modal (adaptive drag & drop) ──
@@ -47,7 +49,10 @@ export default {
   confirmDeleteSkill: 'Delete this skill? Both the folder and the database record will be removed.',
 
   // ── API KEY (secret-zero proxy injection) ──
-  apiKey: 'API KEY (proxy injection)',
+  apiKeyButton: 'API KEY',
+  apiKeyModalTitle: 'API KEY Configuration',
+  apiKeyModalHint: 'This API KEY is injected into the skill runtime via the proxy (proxy-injection mode). The key is stored securely and never echoed back.',
+  apiKeyConfigStatus: 'Status',
   apiKeyActive: 'Proxy injection enabled',
   apiKeyVanilla: 'Not configured (vanilla)',
   apiKeyPlaceholder: "Enter this skill's API KEY…",
