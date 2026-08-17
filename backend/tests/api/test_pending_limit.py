@@ -138,6 +138,6 @@ async def test_pending_cleared_on_delete(client, user_token, test_kb):
     async with _db.async_session() as db:
         await _save_pending_state(db, cid, str(uuid.uuid4()), _sample_snapshot())
     res = await client.delete(f"/api/conversations/{cid}", headers=_auth(user_token))
-    assert res.status_code == 200
+    assert res.status_code == 202
     res2 = await client.get(f"/api/conversations/{cid}/pending", headers=_auth(user_token))
     assert res2.status_code == 404  # conversation gone

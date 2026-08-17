@@ -1775,6 +1775,7 @@ async def get_conversation(
             select(Message)
             .where(Message.conversation_id == conv_id)
             .order_by(Message.seq.asc())
+            .options(selectinload(Message.agent_steps))
         )
         messages_list = msg_result.scalars().all()
         total_messages = len(messages_list)

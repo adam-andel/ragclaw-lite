@@ -149,7 +149,7 @@ class TestPathTraversalUpload:
             headers=_auth(admin_token))
         assert r.status_code == 200
         doc = r.json()
-        assert doc["status"] in ("completed", "parsing", "uploaded", "failed")
+        assert doc["status"] in ("pending", "uploaded", "parsing", "completed", "failed")
 
 
 # ===========================================================================

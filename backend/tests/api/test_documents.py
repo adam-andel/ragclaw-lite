@@ -3,6 +3,7 @@
 import pytest
 import uuid
 import time
+import asyncio
 
 
 @pytest.mark.asyncio
@@ -168,7 +169,7 @@ async def test_delete_document(client, admin_token, test_kb):
         "Authorization": f"Bearer {admin_token}",
     })
     assert res.status_code == 200
-    assert res.json()["status"] == "deleted"
+    assert res.json()["status"] == "deleting"
 
 
 @pytest.mark.asyncio
@@ -182,15 +183,21 @@ async def test_document_lifecycle(client, admin_token, test_kb):
     assert upload_res.status_code == 200
     doc = upload_res.json()
 
-    # Status should be "completed" (or "failed" if something went wrong — unlikely with md)
-    assert doc["status"] in ("completed", "failed"), f"unexpected status: {doc['status']}"
-    if doc["status"] == "completed":
-        assert doc["chunk_count"] > 0
+    # Upload is async: the immediate response is "pending" (queued); processing
+    # runs in the background via asyncio.create_task(process_document).
+    assert doc["status"] in ("pending", "uploaded", "parsing", "completed", "failed"), \
+        f"unexpected status: {doc['status']}"
 
-    # Verify chunks exist
-    chunks_res = await client.get(f"/api/documents/{doc['id']}/chunks", headers={
-        "Authorization": f"Bearer {admin_token}",
-    })
-    assert chunks_res.status_code == 200
-    if doc["status"] == "completed":
-        assert len(chunks_res.json()) > 0
+    # Poll the chunks endpoint until the doc is indexed (async processing).
+    chunks_items = []
+    for _ in range(40):
+        chunks_res = await client.get(f"/api/documents/{doc['id']}/chunks", headers={
+            "Authorization": f"Bearer {admin_token}",
+        })
+        if chunks_res.status_code == 200:
+            cbody = chunks_res.json()
+            chunks_items = cbody.get("items", []) if isinstance(cbody, dict) else cbody
+            if chunks_items:
+                break
+        await asyncio.sleep(0.5)
+    assert len(chunks_items) > 0, "document was never chunked after async processing"
