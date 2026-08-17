@@ -241,7 +241,7 @@ def refresh_skill_readable(folder_name: str) -> None:
 #
 # seed_preset_skills ships factory-default
 # skills baked into the image at settings.skill_seed_dir (e.g.
-# backend/skill_seeds/skills). They auto-install on first boot. Copy-only and
+# backend/seeds/skills). They auto-install on first boot. Copy-only and
 # idempotent: store/<folder> already present => skipped, so a user's later
 # re-upload / edit / delete of that skill is preserved across restarts. If the
 # shared skills volume is wiped, the skill re-seeds from the baked preset.
