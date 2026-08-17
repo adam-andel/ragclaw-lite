@@ -421,6 +421,32 @@ async def _clear_pending_state(session, conv_id: str) -> None:
         await session.commit()
 
 
+async def _finalize_completed_turn(db, conv_id: str, cleared_pending, keep_id: str | None) -> None:
+    """Discard a prior round's stale suspension after a turn completes.
+
+    Call this on every turn that ends with a real answer or a manual stop (i.e.
+    anything EXCEPT a ``need_user_input`` pause, which intentionally leaves a
+    fresh snapshot behind). Two cleanups stop a later page refresh from
+    resurrecting a stale "continue/stop" bubble for a round the user has already
+    moved past:
+      1. Delete the persisted pending-limit snapshot (it belongs to the prior round).
+      2. Mark any leftover ``status=None`` suspension placeholder rows resolved.
+    The message just finalized (``keep_id``) is never touched. ``cleared_pending``
+    is the snapshot captured at resume-start (or when a new question supersedes a
+    suspension); when it is None there is nothing to delete, but dangling
+    placeholder rows are still resolved.
+    """
+    if cleared_pending is not None:
+        try:
+            await _clear_pending_state(db, conv_id)
+        except Exception:
+            logger.warning("Failed to clear pending state for %s", conv_id)
+    try:
+        await _resolve_suspension_messages(conv_id, keep_id=keep_id)
+    except Exception:
+        logger.warning("Failed to resolve suspension messages for %s", conv_id)
+
+
 # ── File reference expansion ──
 # The frontend inserts workspace file references into the user query as
 # `[[file:rel_path]]`. On send we resolve each reference against the user's
@@ -1214,6 +1240,7 @@ async def chat_stream(
                                 "summary_msg_seq": cursor,
                                 "total_messages": total_msgs,
                             })
+                            await _finalize_completed_turn(db, conv_id, cleared_pending, assistant_msg.id)
                             return
 
                     # ── 1a-bis. Reject doomed requests before any heavy processing ──
@@ -1348,13 +1375,13 @@ async def chat_stream(
                         emit_usage_fn=emit_context_usage,
                     )
 
-               # ── 1c. User manually stops: do not replay tools, do not generate an answer.
+                # ── 1c. User manually stops: do not replay tools, do not generate an answer.
                 #        A stop is a termination of the current (suspended) turn, NOT a new
                 #        assistant message — so we must NOT persist the suspension code into
                 #        the ``messages`` table (that would echo back as a fake answer on the
-                #        next turn). The frontend overlays a localized termination notice on
-                #        the existing suspension bubble via done.stopped, and the durable
-                #        pending state remains so the user can still "continue" after a stop.
+                #        next turn). It also discards the durable suspension snapshot (via
+                #        _finalize_completed_turn below) so a later page refresh does not
+                #        resurrect a stale "continue/stop" bubble.
                 if resume_mode == "stop":
                     cursor, total_msgs = await _read_context_cursor(conv_id)
                     enqueue("done", {
@@ -1368,6 +1395,7 @@ async def chat_stream(
                         "summary_msg_seq": cursor,
                         "total_messages": total_msgs,
                     })
+                    await _finalize_completed_turn(db, conv_id, cleared_pending, keep_id=None)
                     return
 
                # ── 2. Run the graph ───
@@ -1397,6 +1425,12 @@ async def chat_stream(
                         snap = _snapshot_state(state)
                         snap["pending_msg_id"] = bubble_id
                         await _save_pending_state(db, conv_id, bubble_id, snap)
+                        # A fresh suspension snapshot now owns this conversation. Drop the
+                        # stale resume-start copy so a crash later in THIS same turn (e.g. in
+                        # _cleanup_orphan_messages below) cannot clobber the new snapshot with
+                        # the old one via the except handler's re-store logic.
+                        cleared_pending = None
+                        cleared_pending_msg_id = None
                         enqueue("need_user_input", {
                             "message": state["pending_limit"]["message"],
                             "conv_id": conv_id,
@@ -1434,6 +1468,7 @@ async def chat_stream(
                             "summary_msg_seq": cursor,
                             "total_messages": total_msgs,
                         })
+                        await _finalize_completed_turn(db, conv_id, cleared_pending, assistant_msg.id)
                         return
 
                     # ── 3. Stream LLM generation ──
@@ -1597,18 +1632,11 @@ async def chat_stream(
                     # Run finished successfully without requesting a new suspension:
                     # drop any leftover pending-limit snapshot from a previous round so
                     # a page refresh does not resurrect a stale "continue/stop" bubble.
-                    if cleared_pending is not None:
-                        try:
-                            await _clear_pending_state(db, conv_id)
-                        except Exception:
-                            pass
-                    # Any suspension placeholder rows left dangling from earlier rounds
-                    # (status=None) are now inert -- mark them resolved so they stop
-                    # being mistaken for an active "continue/stop" bubble on reload.
-                    try:
-                        await _resolve_suspension_messages(conv_id, keep_id=assistant_msg.id)
-                    except Exception:
-                        pass
+                    # Drop any leftover pending-limit snapshot from a previous round and
+                    # mark dangling suspension placeholder rows resolved, so a page refresh
+                    # does not resurrect a stale "continue/stop" bubble for a round the user
+                    # has already moved past.
+                    await _finalize_completed_turn(db, conv_id, cleared_pending, assistant_msg.id)
 
             except asyncio.CancelledError:
                 # Client disconnected or cancelled the queue request.
