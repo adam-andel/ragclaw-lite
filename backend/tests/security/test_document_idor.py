@@ -364,7 +364,7 @@ class TestEndpointPayloads:
             f"/api/documents/{shared['doc_id']}/chunks/99999", headers=shared["headers"]
         )
         assert r2.status_code == 404
-        assert "分块不存在" in r2.text
+        assert "CHUNK_NOT_FOUND" in r2.text
 
     async def test_p6_kbs_returns_linked_ids(self, client, shared):
         r = await client.get(

@@ -171,7 +171,7 @@ class TestConflictDetail:
         assert detail["new_model"] == SMALL_EN
         assert detail["new_backend"] == embedder_service.BACKEND
         assert detail["existing_model"] == SMALL_ZH
-        assert "来源" in detail["message"]
+        assert "VECTOR_SOURCE_MISMATCH" in detail["message"]
 
     def test_detail_dim_conflict(self, monkeypatch):
         info = {
@@ -181,7 +181,7 @@ class TestConflictDetail:
         }
         detail = _conflict_detail(LARGE_ZH, info)
         assert detail["dim_conflict"] is True
-        assert "维度" in detail["message"]
+        assert "VECTOR_DIM_MISMATCH" in detail["message"]
 
 
 # ---------------------------------------------------------------------------

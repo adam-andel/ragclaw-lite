@@ -159,4 +159,4 @@ async def test_delete_self_forbidden(client, admin_token):
         "Authorization": f"Bearer {admin_token}",
     })
     assert res.status_code == 400
-    assert "不能删除自己" in res.json()["detail"]
+    assert "USER_CANNOT_DELETE_SELF" in res.json()["detail"]

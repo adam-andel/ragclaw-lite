@@ -258,7 +258,7 @@ class TestSkillSwitcher:
         )
         await skill_switcher_node(state)
         fails = [s for s in steps if s["stage"] == "skill_switch_fail"]
-        assert fails and "skill-switch limit" in fails[0]["message"]
+        assert fails and "skill_switch_limit" in fails[0]["message"]
 
     @pytest.mark.asyncio
     async def test_use_skill_already_loaded_fails(self, patch_globals):

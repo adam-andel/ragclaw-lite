@@ -17,12 +17,13 @@ async def test_create_kb_admin(client, admin_token):
 
 
 @pytest.mark.asyncio
-async def test_create_kb_user_forbidden(client, user_token):
-    """POST /api/kb — normal user → 403."""
+async def test_create_kb_user_allowed(client, user_token):
+    """POST /api/kb — normal user can create KB → 201 (design: any authed user becomes owner)."""
     res = await client.post("/api/kb", json={
         "name": "用户知识库",
     }, headers={"Authorization": f"Bearer {user_token}"})
-    assert res.status_code == 403
+    assert res.status_code == 201
+    assert res.json()["id"]
 
 
 @pytest.mark.asyncio

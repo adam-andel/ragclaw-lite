@@ -166,7 +166,7 @@ class TestLoginInjection:
         })
         assert r.status_code == 401
         detail = r.json().get("detail", "")
-        assert "用户名或密码错误" in detail
+        assert "INVALID_CREDENTIALS" in detail
 
 
 # ===========================================================================

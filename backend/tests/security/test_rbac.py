@@ -29,13 +29,13 @@ def _get_user_id(token: str) -> str:
 # USER role — forbidden actions
 # ===========================================================================
 
-class TestUserCannotCreateKB:
+class TestUserCanCreateKB:
     @pytest.mark.asyncio
-    async def test_user_post_kb_forbidden(self, client, user_token):
+    async def test_user_post_kb_allowed(self, client, user_token):
         r = await client.post("/api/kb", json={
             "name": "user-kb", "description": "test",
         }, headers=_auth(user_token))
-        assert r.status_code == 403
+        assert r.status_code == 201
 
 
 class TestUserCannotDeleteKB:

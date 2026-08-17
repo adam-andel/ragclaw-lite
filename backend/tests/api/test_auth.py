@@ -61,7 +61,7 @@ async def test_login_disabled_user(client):
         "username": "disabled_user", "password": "pass1234",
     })
     assert res.status_code == 403
-    assert "禁用" in res.json()["detail"]
+    assert "USER_DISABLED" in res.json()["detail"]
 
 
 @pytest.mark.asyncio

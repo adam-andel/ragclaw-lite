@@ -257,13 +257,13 @@ class TestJsonParser:
         """Empty file is invalid JSON — should raise ValueError via safe_parse()."""
         json_file = tmp_path / "empty.json"
         json_file.write_text("", encoding="utf-8")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(json_file, "json")
 
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         json_file = tmp_path / "bad.json"
         json_file.write_text("{not valid json", encoding="utf-8")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(json_file, "json")
 
 
@@ -298,13 +298,13 @@ class TestExcelParser:
         """Empty file is not a valid xlsx — should raise ValueError."""
         xlsx = tmp_path / "empty.xlsx"
         xlsx.write_bytes(b"")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(xlsx, "xlsx")
 
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         xlsx = tmp_path / "bad.xlsx"
         xlsx.write_bytes(b"\x00\x01\x02\xff\xfe not a zip")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(xlsx, "xlsx")
 
 
@@ -338,7 +338,7 @@ class TestPptxParser:
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         pptx = tmp_path / "bad.pptx"
         pptx.write_bytes(b"\x00\x01\x02\xff\xfe not a zip")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(pptx, "pptx")
 
 
@@ -475,7 +475,7 @@ class TestEpubParser:
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         epub_file = tmp_path / "bad.epub"
         epub_file.write_bytes(b"\x00\x01\x02\xff\xfe not a zip")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(epub_file, "epub")
 
 
@@ -509,7 +509,7 @@ class TestNotebookParser:
     def test_corrupt_file_raises_valueerror(self, tmp_path):
         ipynb = tmp_path / "bad.ipynb"
         ipynb.write_text("{not valid notebook json", encoding="utf-8")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(ipynb, "ipynb")
 
 
@@ -533,5 +533,5 @@ class TestMsgParser:
         """A non-OLE file should fail gracefully via safe_parse()."""
         msg_file = tmp_path / "fake.msg"
         msg_file.write_bytes(b"\x00\x01\x02\xff\xfe not an OLE file")
-        with pytest.raises(ValueError, match="解析失败"):
+        with pytest.raises(ValueError, match="PARSER_PARSE_FAILED"):
             parser_service.parse(msg_file, "msg")

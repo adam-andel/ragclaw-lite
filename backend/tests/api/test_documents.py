@@ -41,7 +41,7 @@ async def test_upload_unsupported_format(client, admin_token, test_kb):
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert res.status_code == 400
-    assert "Unsupported" in res.json()["detail"]
+    assert "UNSUPPORTED_FILE_TYPE" in res.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -83,7 +83,7 @@ async def test_upload_user_forbidden(client, user_token, test_kb):
 async def test_upload_no_token(client, test_kb):
     """POST /api/documents/upload — no token → 401."""
     files = {"file": ("test.txt", b"content", "text/plain")}
-    res = await client.post("/api/documents/upload", files=files, data={
+    res = await client.post("/api/documents/upload", files=files, params={
         "kb_id": test_kb["id"],
     })
     assert res.status_code == 401
@@ -94,7 +94,7 @@ async def test_list_documents(client, admin_token, test_kb):
     """GET /api/documents?kb_id=xxx — list documents → 200."""
     # First upload a doc to have something to list
     files = {"file": ("doc.txt", b"List test document.", "text/plain")}
-    await client.post("/api/documents/upload", files=files, data={
+    await client.post("/api/documents/upload", files=files, params={
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"}, timeout=30)
 
@@ -103,9 +103,10 @@ async def test_list_documents(client, admin_token, test_kb):
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert res.status_code == 200
     body = res.json()
-    assert isinstance(body, list)
-    assert len(body) >= 1
-    for doc in body:
+    assert isinstance(body, dict)
+    assert isinstance(body.get("items"), list)
+    assert len(body["items"]) >= 1
+    for doc in body["items"]:
         assert "filename" in doc
         assert "status" in doc
 
@@ -115,7 +116,7 @@ async def test_get_document_status(client, admin_token, test_kb):
     """GET /api/documents/{doc_id}/status → 200 + status field."""
     # Upload a doc
     files = {"file": ("status_test.txt", b"Status check content.", "text/plain")}
-    upload_res = await client.post("/api/documents/upload", files=files, data={
+    upload_res = await client.post("/api/documents/upload", files=files, params={
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"}, timeout=30)
     doc_id = upload_res.json()["id"]
@@ -136,7 +137,7 @@ async def test_get_document_chunks(client, admin_token, test_kb):
     # Upload a doc with enough content to produce chunks
     md_content = b"# Title\n\n## Section 1\n\n" + b"Lorem ipsum " * 50 + b"\n\n## Section 2\n\nMore text here."
     files = {"file": ("chunk_test.md", md_content, "text/markdown")}
-    upload_res = await client.post("/api/documents/upload", files=files, data={
+    upload_res = await client.post("/api/documents/upload", files=files, params={
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {admin_token}"}, timeout=30)
     doc_id = upload_res.json()["id"]
@@ -146,8 +147,9 @@ async def test_get_document_chunks(client, admin_token, test_kb):
     })
     assert res.status_code == 200
     body = res.json()
-    assert isinstance(body, list)
-    for chunk in body:
+    assert isinstance(body, dict)
+    assert isinstance(body.get("items"), list)
+    for chunk in body["items"]:
         assert "content" in chunk
         assert "chunk_index" in chunk
 
