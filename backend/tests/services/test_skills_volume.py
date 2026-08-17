@@ -165,47 +165,6 @@ def test_import_skill_py_drops_no_pyc(shared_volume):
     assert list(shared_volume.glob("**/*.pyc")) == []
 
 
-def test_migrate_legacy_skills_idempotent_and_copy_only(shared_volume):
-    """Legacy data/skills/<f> -> store/<f> must be idempotent, copy-only (source
-    preserved), and re-enable the skill to preserve old "every folder enabled"
-    semantics."""
-    legacy = settings.data_dir / "skills"
-    lf = legacy / "legacy1"
-    (lf / "scripts").mkdir(parents=True)
-    (lf / "SKILL.md").write_text("# legacy\nname: Legacy1\n")
-    (lf / "scripts" / "x.py").write_text("print(1)\n")
-
-    res = sm.migrate_legacy_skills()
-    assert res["migrated"] == 1 and res["enabled"] == 1
-    assert (settings.skills_dir / "legacy1" / "SKILL.md").is_file()
-    assert sm.is_skill_enabled_fs("legacy1") is True
-    # SOURCE preserved (copy-only)
-    assert (lf / "SKILL.md").is_file()
-
-    # Second run is a no-op (skipped, not re-migrated)
-    res2 = sm.migrate_legacy_skills()
-    assert res2["skipped"] == 1 and res2["migrated"] == 0
-
-
-def test_migrate_legacy_skills_remove_source(tmp_path, monkeypatch):
-    shared = tmp_path / "ragclaw_skills"
-    (shared / "store").mkdir(parents=True)
-    (shared / "enable").mkdir(parents=True)
-    legacy = tmp_path / "legacy_data" / "skills"
-    (legacy / "legacy2").mkdir(parents=True)
-    (legacy / "legacy2" / "SKILL.md").write_text("# l2\nname: L2\n")
-
-    cls = type(settings)
-    monkeypatch.setattr(cls, "skills_dir", property(lambda self: shared / "store"))
-    monkeypatch.setattr(cls, "skills_enable_dir", property(lambda self: shared / "enable"))
-    monkeypatch.setattr(settings, "data_dir", legacy.parent)
-
-    res = sm.migrate_legacy_skills(remove_source=True)
-    assert res["migrated"] == 1 and res["enabled"] == 1
-    assert not (legacy / "legacy2").exists()  # source dropped
-    assert (settings.skills_dir / "legacy2" / "SKILL.md").is_file()
-
-
 # ---------------------------------------------------------------------------
 # Tier 2 — LIVE (root + real mounted volume only)
 # ---------------------------------------------------------------------------

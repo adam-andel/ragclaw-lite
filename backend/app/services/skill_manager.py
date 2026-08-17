@@ -237,66 +237,9 @@ def refresh_skill_readable(folder_name: str) -> None:
     _ensure_world_readable(get_skill_dir(folder_name))
 
 
-# ---- Legacy layout migration (data/skills/* -> shared store/*) ----
-#
-# Before the shared-volume design, skills lived directly under data/skills/ and
-# EVERY folder there was implicitly enabled (no enable-symlink concept). This
-# migration moves those folders into the canonical store/ and re-enables them so
-# existing deployments keep working without manual intervention.
-#
-# Copy-only by default: the legacy folder is NOT removed, so no skill is lost if
-# the shared skills volume is not yet mounted (Phase 7) and the container
-# restarts between migration and mount — the legacy copy simply re-supplies the
-# store on the next boot. Pass remove_source=True only AFTER the volume is
-# confirmed mounted and persistent, to drop the dead duplicate.
-
-def migrate_legacy_skills(remove_source: bool = False) -> dict:
-    """One-time, idempotent migration from the legacy data/skills/* layout.
-
-    Returns {"migrated": N, "skipped": M, "enabled": K} for logging.
-
-    - A legacy folder already present in store/ is skipped (and, when
-      remove_source, its legacy twin is dropped to avoid a duplicate source).
-    - A legacy folder missing from store/ is copied into store/, made
-      world-readable, and enabled (enable-symlink created) to preserve the old
-      "implicitly enabled" behaviour.
-    - Folders without a SKILL.md are left untouched (not skills).
-    - Any single failure is logged and skipped; the rest still migrate.
-    """
-    legacy_root = settings.data_dir / "skills"
-    if not legacy_root.exists():
-        return {"migrated": 0, "skipped": 0, "enabled": 0}
-
-    migrated = skipped = enabled = 0
-    for entry in sorted(legacy_root.iterdir()):
-        if not entry.is_dir():
-            continue
-        if not (entry / "SKILL.md").exists():
-            continue  # not a skill folder; leave it alone
-        dest = settings.skills_dir / entry.name
-        if dest.exists():
-            skipped += 1
-            if remove_source:
-                shutil.rmtree(entry, ignore_errors=True)
-            continue
-        try:
-            shutil.copytree(entry, dest)
-            _ensure_world_readable(dest)
-            # Preserve legacy "every folder is enabled" semantics.
-            enable_skill_fs(entry.name)
-            enabled += 1
-            migrated += 1
-            if remove_source:
-                shutil.rmtree(entry, ignore_errors=True)
-        except Exception as e:  # best-effort — never let one bad skill abort boot
-            print(f"[skill_manager] migrate_legacy_skills: failed on {entry.name}: {e}")
-    return {"migrated": migrated, "skipped": skipped, "enabled": enabled}
-
-
 # ---- Preset skill seeding (image/volume-baked factory defaults) ----
 #
-# Unlike migrate_legacy_skills (which reads the legacy data/skills/* layout that
-# the shared-volume design replaced), seed_preset_skills ships factory-default
+# seed_preset_skills ships factory-default
 # skills baked into the image at settings.skill_seed_dir (e.g.
 # backend/skill_seeds/skills). They auto-install on first boot. Copy-only and
 # idempotent: store/<folder> already present => skipped, so a user's later
@@ -309,8 +252,8 @@ def seed_preset_skills(seed_root: Path | None = None) -> dict:
 
     Returns {"seeded": N, "skipped": M, "enabled": K} for logging.
 
-    Mirrors migrate_legacy_skills (copy-only + enable_skill_fs) but the source is
-    the read-only preset directory, not the legacy data/skills layout. Each
+    Copy-only + enable_skill_fs, but the source is the read-only preset directory,
+    not a legacy data/skills layout. Each
     preset folder MUST contain a SKILL.md. enable_skill_fs creates the
     enable-symlink AND runs the skill's .ragclaw/init.sh adapter (which
     materialises runtime.conf etc.), exactly as for a manually added skill.
