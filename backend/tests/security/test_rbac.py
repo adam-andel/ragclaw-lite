@@ -66,7 +66,7 @@ class TestUserCannotUpload:
     async def test_user_upload_forbidden(self, client, user_token, test_kb):
         files = {"file": ("test.txt", b"hello", "text/plain")}
         r = await client.post("/api/documents/upload",
-            files=files, data={"kb_id": test_kb["id"]},
+            files=files, params={"kb_id": test_kb["id"]},
             headers=_auth(user_token))
         assert r.status_code == 403
 

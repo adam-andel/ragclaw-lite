@@ -63,7 +63,7 @@ async def test_upload_nonexistent_kb(client, admin_token):
     """POST /api/documents/upload — non-existent kb_id → 404."""
     fake_kb = str(uuid.uuid4())
     files = {"file": ("test.txt", b"content", "text/plain")}
-    res = await client.post("/api/documents/upload", files=files, data={
+    res = await client.post("/api/documents/upload", files=files, params={
         "kb_id": fake_kb,
     }, headers={"Authorization": f"Bearer {admin_token}"})
     assert res.status_code == 404
@@ -73,7 +73,7 @@ async def test_upload_nonexistent_kb(client, admin_token):
 async def test_upload_user_forbidden(client, user_token, test_kb):
     """POST /api/documents/upload — normal user → 403."""
     files = {"file": ("test.txt", b"content", "text/plain")}
-    res = await client.post("/api/documents/upload", files=files, data={
+    res = await client.post("/api/documents/upload", files=files, params={
         "kb_id": test_kb["id"],
     }, headers={"Authorization": f"Bearer {user_token}"})
     assert res.status_code == 403
