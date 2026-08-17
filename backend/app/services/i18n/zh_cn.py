@@ -154,6 +154,30 @@ MESSAGES = {
         "则可省略这一句（此时请遵循「文件生成回答规则」保持回答精简，不要再追加）。\n"
         "- 用与用户相同的语言书写。"
     ),
+
+    # Round-0 no-tool nudge prompt (Plan A, 2026-08-16 incident). No placeholders.
+    # Pushed as a user turn after the LLM emitted text but NO tool call on the very
+    # first tool round (with a skill active), giving it one corrective chance to emit
+    # a real call via tool_choice="auto".
+    "no_tool_nudge": (
+        "你上一条回复包含了一段话，但没有调用任何工具。请重新判断：\n"
+        "- 如果这个任务**需要**调用工具才能完成（例如检索信息、执行代码、读写文件、调用某个技能），"
+        "请**直接发起相应的工具调用**（按工具的参数格式输出）。\n"
+        "- 如果这只是一个闲聊、问候，或者你可以**直接回答**，请直接给出最终答案，不要输出任何工具调用。\n"
+        "不要重复你刚才那段话，直接行动或回答。"
+    ),
+
+    # Final-generation safety-net notice (Plan B, 2026-08-16 incident). No placeholders.
+    # Injected into the user turn ONLY when a skill was active but produced NO tool
+    # results — forces an honest reply instead of hallucinated tool-call code.
+    "no_tool_executed_notice": (
+        "## ⚠️ 本回合未执行任何工具\n"
+        "本回合没有任何工具被成功执行（工具结果为空）。你**没有**任何真实的检索、执行或产出来源。\n"
+        "如果用户的请求需要工具才能回答，请如实告知「本次未能执行检索/操作」，"
+        "**绝不要**臆造工具调用代码、命令或搜索结果，也**绝不要**编造一个「已执行」的过程。"
+        "若你原本就打算直接回答，也请只输出真实的答案内容。"
+    ),
+
     # Cron confirmation messages shown to the user (follows prompt_language).
     "cron_created_confirm": "已创建定时任务「{name}」，可在定时任务管理页查看。",
     "cron_created_confirm_detail": "已创建定时任务「{name}」，下次执行时间：{next_run}（{tz}），可在定时任务管理页查看。",

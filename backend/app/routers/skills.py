@@ -29,6 +29,8 @@ from app.services.skill_manager import (
     publish_skill, refresh_skill_readable,
 )
 from app.services.skill_script_loader import clear_cache as clear_script_cache
+from app.services.config_manager import config_manager
+from app.services import skill_secret as skill_secret_svc
 
 router = APIRouter(prefix="/api/skills", tags=["Skills"])
 
@@ -51,6 +53,7 @@ def _skill_to_response(skill: Skill, include_content: bool = False) -> SkillResp
         enabled=is_skill_enabled_fs(skill.folder_name),
         created_at=skill.created_at, updated_at=skill.updated_at,
         mcp_servers=mcp_servers, skill_md_content=skill_md_content,
+        api_key_configured=bool(config_manager.get_skill_api_key(skill.folder_name)),
     )
 
 
@@ -106,10 +109,15 @@ async def update_skill(skill_id: str, data: SkillUpdate, current_user=Depends(ge
     skill = await get_skill_by_id(db, skill_id)
     if not skill:
         raise HTTPException(404, "Skill not found")
-    update_skill_md(skill.folder_name, data.content)
-    parsed = parse_skill_md(data.content)
-    skill.name = parsed["name"] or skill.name
-    skill.description = (parsed["description"] or "")[:250]
+    # SKILL.md content update remains optional (api_key-only PATCH leaves it untouched).
+    if data.content is not None:
+        update_skill_md(skill.folder_name, data.content)
+        parsed = parse_skill_md(data.content)
+        skill.name = parsed["name"] or skill.name
+        skill.description = (parsed["description"] or "")[:250]
+    # Secret-zero: configure or clear the skill's injection-proxy API KEY.
+    if data.api_key is not None:
+        await skill_secret_svc.set_skill_api_key(skill.folder_name, data.api_key)
     skill.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(skill)
@@ -131,6 +139,12 @@ async def delete_skill(
     # Delete folder
     delete_skill_folder(skill.folder_name)
     clear_script_cache(skill.folder_name)
+    # Best-effort: drop the skill's proxy state (KEY + upstream mapping) so the
+    # injection proxy does not keep a stale route after deletion.
+    try:
+        await skill_secret_svc.delete_skill_secret_all(skill.folder_name)
+    except Exception as e:  # never block deletion on proxy cleanup failure
+        print(f"[skills] warning: failed to clear proxy state for {skill.folder_name}: {e}")
 
     # Delete DB index
     await db.delete(skill)
@@ -205,6 +219,7 @@ async def upload_folder(
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     return _skill_to_response(skill, include_content=True)
 
@@ -285,6 +300,7 @@ async def upload_zip(
     db.add(skill)
     await db.commit()
     await db.refresh(skill)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     return _skill_to_response(skill, include_content=True)
 
@@ -324,6 +340,7 @@ async def reupload_folder(
 
     replace_skill_folder(skill.folder_name, file_map)
     clear_script_cache(skill.folder_name)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
     skill_md_content = read_skill_md(skill.folder_name)
     parsed = parse_skill_md(skill_md_content)
@@ -374,8 +391,6 @@ async def reupload_zip(
     if len(top_dirs) != 1:
         raise HTTPException(400, "ZIP must contain a single top-level folder")
 
-    folder_name = sanitize_folder_name(top_dirs.pop())
-
     file_map = {}
     has_skill_md = False
     for name in names:
@@ -392,10 +407,11 @@ async def reupload_zip(
     if not has_skill_md:
         raise HTTPException(400, "ZIP must contain SKILL.md")
 
-    replace_skill_folder(folder_name, file_map)
+    replace_skill_folder(skill.folder_name, file_map)
     clear_script_cache(skill.folder_name)
+    await skill_secret_svc.register_skill_upstream(skill.folder_name)
 
-    skill_md_content = read_skill_md(folder_name)
+    skill_md_content = read_skill_md(skill.folder_name)
     parsed = parse_skill_md(skill_md_content)
     skill.name = parsed["name"] or skill.name
     skill.description = (parsed["description"] or "")[:250]

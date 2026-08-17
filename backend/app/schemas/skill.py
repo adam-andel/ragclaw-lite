@@ -16,8 +16,16 @@ class SkillCreate(BaseModel):
 
 
 class SkillUpdate(BaseModel):
-    """Update SKILL.md content directly."""
-    content: str = Field(..., description="Full SKILL.md content (front matter + body)")
+    """Update SKILL.md content and/or the secret-zero API KEY."""
+    content: str | None = Field(
+        None, description="Full SKILL.md content (front matter + body). Omit to leave unchanged."
+    )
+    api_key: str | None = Field(
+        None,
+        description="Secret-zero API KEY for injection-proxy routing. Set to enable "
+        "proxy injection; set to empty string to clear (fall back to vanilla). "
+        "Omit to leave unchanged.",
+    )
 
 
 class SkillResponse(BaseModel):
@@ -34,6 +42,8 @@ class SkillResponse(BaseModel):
     # Parsed from SKILL.md
     mcp_servers: list[str] = []
     skill_md_content: str | None = None  # Full SKILL.md text
+    # Secret-zero: True when an injection-proxy API KEY is configured for this skill.
+    api_key_configured: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { backendErrorMessage } from '@/utils/backendError'
 import { useI18n } from 'vue-i18n'
 import {
@@ -68,6 +68,13 @@ const zipInput = ref<HTMLInputElement>()
 const showDetail = ref(false)
 const detailSkill = ref<Skill | null>(null)
 const detailLoading = ref(false)
+
+// ── Secret-zero API KEY (per-skill injection proxy) ──
+const apiKeyInput = ref('')
+const apiKeySaving = ref(false)
+// Status badge: derived from the skill's server-computed flag. The key itself is
+// never sent back to the client — only whether one is configured.
+const apiKeyConfigured = computed(() => !!detailSkill.value?.api_key_configured)
 
 // ── Load ──
 
@@ -155,6 +162,37 @@ async function openDetail(skill: Skill) {
     detailSkill.value = skill
   } finally {
     detailLoading.value = false
+  }
+}
+
+// ── Secret-zero API KEY handlers ──
+async function saveApiKey() {
+  if (!detailSkill.value) return
+  apiKeySaving.value = true
+  try {
+    const updated = await updateSkill(detailSkill.value.id, { api_key: apiKeyInput.value })
+    detailSkill.value = updated
+    apiKeyInput.value = ''
+    message.success(t('skills.apiKeySaved'))
+  } catch (e: any) {
+    message.error(backendErrorMessage(e.message) || t('skills.saveFailed'))
+  } finally {
+    apiKeySaving.value = false
+  }
+}
+
+async function clearApiKey() {
+  if (!detailSkill.value) return
+  apiKeySaving.value = true
+  try {
+    const updated = await updateSkill(detailSkill.value.id, { api_key: '' })
+    detailSkill.value = updated
+    apiKeyInput.value = ''
+    message.success(t('skills.apiKeyCleared'))
+  } catch (e: any) {
+    message.error(backendErrorMessage(e.message) || t('skills.saveFailed'))
+  } finally {
+    apiKeySaving.value = false
   }
 }
 
@@ -728,6 +766,35 @@ onMounted(() => {
               </NSpace>
             </template>
             <span v-else class="sk-meta-muted">{{ t('skills.none') }}</span>
+          </NDescriptionsItem>
+          <NDescriptionsItem :label="t('skills.apiKey')">
+            <NSpace vertical :size="8" style="width: 100%">
+              <NTag :type="apiKeyConfigured ? 'success' : 'default'" size="small" :bordered="false">
+                {{ apiKeyConfigured ? t('skills.apiKeyActive') : t('skills.apiKeyVanilla') }}
+              </NTag>
+              <NSpace :size="8">
+                <NInput
+                  v-model:value="apiKeyInput"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('skills.apiKeyPlaceholder')"
+                  style="width: 260px"
+                  :disabled="apiKeySaving"
+                />
+                <NButton
+                  size="small"
+                  type="primary"
+                  :loading="apiKeySaving"
+                  :disabled="!apiKeyInput"
+                  @click="saveApiKey"
+                >{{ t('skills.apiKeySave') }}</NButton>
+                <NButton
+                  size="small"
+                  :disabled="!apiKeyConfigured || apiKeySaving"
+                  @click="clearApiKey"
+                >{{ t('skills.apiKeyClear') }}</NButton>
+              </NSpace>
+            </NSpace>
           </NDescriptionsItem>
           <NDescriptionsItem :label="t('common.status')">
             <NTag :type="detailSkill.is_active ? 'success' : 'default'" size="small">

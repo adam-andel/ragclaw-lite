@@ -236,8 +236,9 @@ def _sanitize_env(tz: str | None = None) -> dict:
         env["HTTPS_PROXY"] = proxy
         env["http_proxy"] = proxy
         env["https_proxy"] = proxy
-        env["NO_PROXY"] = "localhost,127.0.0.1,mcp-repl,ragclaw-lite"
-        env["no_proxy"] = "localhost,127.0.0.1,mcp-repl,ragclaw-lite"
+        no_proxy = f"localhost,127.0.0.1,mcp-repl,ragclaw-lite,{_EGRESS_HOST}"
+        env["NO_PROXY"] = no_proxy
+        env["no_proxy"] = no_proxy
     return env
 
 
