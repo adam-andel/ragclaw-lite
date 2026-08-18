@@ -75,6 +75,11 @@ class HybridSearchService:
         and the fast BM25 path overlap instead of running back-to-back.
         """
         final_top_k = final_top_k or settings.retrieval_final_top_k
+        # A truthy negative (e.g. -1) slips through the `or` above and would
+        # yield results[:-1] below, silently dropping the last chunk. Reject
+        # any non-positive value back to the system default.
+        if final_top_k < 1:
+            final_top_k = settings.retrieval_final_top_k
         threshold = threshold if threshold is not None else settings.retrieval_similarity_threshold
 
         # Build lookup: chunk_id -> scores

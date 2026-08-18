@@ -2136,6 +2136,15 @@ async def _execute_hybrid_search(state: dict, args: dict) -> dict:
             top_k = int(top_k)
         except (TypeError, ValueError):
             top_k = None
+        else:
+            # Clamp the LLM-supplied top_k: non-positive values fall back to the
+            # system default (a negative would otherwise reach fuse() and slice
+            # results[:-1]), and anything above retrieval_final_top_k is capped to
+            # avoid blowing up the context beyond the system's retrieval limit.
+            if top_k < 1:
+                top_k = None
+            else:
+                top_k = min(top_k, settings.retrieval_final_top_k)
     doc_ids = args.get("doc_ids")
     if not isinstance(doc_ids, list):
         doc_ids = None
