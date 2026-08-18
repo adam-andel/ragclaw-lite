@@ -243,6 +243,39 @@ PATCHES: list[Patch] = [
         applied=_tenant_normalized,
         apply=_normalize_tenant_ids,
     ),
+
+    # Per-KB retrieval configuration columns. Added 2026-08-18.
+    # These allow each knowledge base to override global retrieval defaults.
+    Patch(
+        name="knowledge_bases.vector_weight",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "vector_weight"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN vector_weight FLOAT"],
+    ),
+    Patch(
+        name="knowledge_bases.bm25_weight",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "bm25_weight"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN bm25_weight FLOAT"],
+    ),
+    Patch(
+        name="knowledge_bases.vector_top_k",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "vector_top_k"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN vector_top_k INTEGER"],
+    ),
+    Patch(
+        name="knowledge_bases.bm25_top_k",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "bm25_top_k"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN bm25_top_k INTEGER"],
+    ),
+    Patch(
+        name="knowledge_bases.final_top_k",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "final_top_k"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN final_top_k INTEGER"],
+    ),
+    Patch(
+        name="knowledge_bases.similarity_threshold",
+        applied=lambda insp: has_column(insp, "knowledge_bases", "similarity_threshold"),
+        apply=["ALTER TABLE knowledge_bases ADD COLUMN similarity_threshold FLOAT"],
+    ),
 ]
 
 

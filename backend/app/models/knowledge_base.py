@@ -1,7 +1,7 @@
 """KnowledgeBase ORM model."""
 
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime
+from sqlalchemy import String, Text, DateTime, Float, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,14 @@ class KnowledgeBase(Base):
     owner_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Per-KB retrieval configuration (nullable = use global defaults)
+    vector_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bm25_weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vector_top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bm25_top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    final_top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    similarity_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Many-to-many via kb_documents
     doc_links: Mapped[list["KBDocument"]] = relationship(

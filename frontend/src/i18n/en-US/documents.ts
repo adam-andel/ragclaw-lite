@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   // Generic UI labels
   newKb: 'New Knowledge Base',
   editKb: 'Edit Knowledge Base',
@@ -151,4 +151,28 @@ export default {
   confirmDeleteKb: 'Delete "{kb}"? Documents will not be deleted, only unlinked.',
   confirmUnlinkDoc: 'Unlink this document from "{kb}"?',
   confirmDeleteDoc: 'Delete document "{filename}"? It will be removed from all knowledge bases.',
+
+  // Retrieval configuration
+  retrievalConfig: 'Retrieval Config',
+  retrievalConfigDesc: 'Configure retrieval parameters for knowledge base {name}, leave fields empty to use global defaults.',
+  retrievalConfigUpdated: 'Retrieval configuration updated successfully',
+  retrievalConfigUpdateFailed: 'Failed to update retrieval configuration',
+  weightConfig: 'Weight Configuration',
+  vectorWeight: 'Vector Weight',
+  bm25Weight: 'BM25 Weight',
+  range: 'Range',
+  weightSumNote: 'Vector weight + BM25 weight should equal 1.0. Changing one will auto-adjust the other.',
+  topKConfig: 'Top-K Configuration',
+  vectorTopK: 'Vector Top-K',
+  bm25TopK: 'BM25 Top-K',
+  finalTopK: 'Final Top-K',
+  thresholdConfig: 'Threshold Configuration',
+  similarityThreshold: 'Similarity Threshold',
+  thresholdNote: 'Minimum similarity score for a result to be included. Higher values = more precise but fewer results.',
+  vectorWeightHint: 'Weight for vector semantic search, affects semantic similarity matching',
+  bm25WeightHint: 'Weight for BM25 keyword search, affects keyword matching precision',
+  vectorTopKHint: 'Number of candidates retrieved by vector search, larger values retrieve more but are slower',
+  bm25TopKHint: 'Number of candidates retrieved by BM25 search, larger values retrieve more but are slower',
+  finalTopKHint: 'Number of results finally returned to the LLM',
+  similarityThresholdHint: 'Filter results below this score, higher values are more precise but fewer results',
 }

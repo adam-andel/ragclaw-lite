@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     retrieval_final_top_k: int = 10
     retrieval_rrf_k: int = 60
     retrieval_similarity_threshold: float = 0.5
+    retrieval_vector_weight: float = 0.5
+    retrieval_bm25_weight: float = 0.5
 
     # --- LLM ---
     # llm_api_key / llm_context_window default to .env (LLM_API_KEY / LLM_CONTEXT_WINDOW);

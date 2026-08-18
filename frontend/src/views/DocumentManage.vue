@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -6,9 +6,9 @@ import {
   NButton, NTag, NSpace, NSpin, NEmpty, NProgress,
   NInput, NSelect, NPopconfirm, useMessage,
   NIcon, NCard, NDescriptions, NDescriptionsItem,
-  NCheckbox, NTooltip,
+  NCheckbox, NTooltip, NInputNumber,
 } from 'naive-ui'
-import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove } from '@vicons/ionicons5'
+import { CloudUpload, Search, DocumentText, Add, Create, Chatbubbles, People, Trash, Close, Remove, Settings, HelpCircle } from '@vicons/ionicons5'
 import PageHeader from '@/components/common/PageHeader.vue'
 import AppModal from '@/components/common/AppModal.vue'
 import AppPagination from '@/components/common/AppPagination.vue'
@@ -20,6 +20,8 @@ import {
   updateKnowledgeBase, deleteKnowledgeBase, addDocumentsToKB, removeDocumentFromKB,
 } from '@/api/documents'
 import client from '@/api/client'
+import { getKbRetrievalConfig, updateKbRetrievalConfig, type RetrievalConfig } from '@/api/retrieval'
+import { useRetrievalConfigStore } from '@/stores/retrievalConfig'
 import { budgetWarningTexts } from '@/utils/budgetWarning'
 import { useAuthStore } from '@/stores/auth'
 import type { DocumentItem, ChunkItem, KnowledgeBase } from '@/types'
@@ -90,6 +92,20 @@ const kbFormName = ref('')
 const kbFormDesc = ref('')
 const kbFormPrompt = ref('')
 const kbFormSaving = ref(false)
+
+// Retrieval config modal
+const showRetrievalConfig = ref(false)
+const retrievalConfigKbId = ref('')
+const retrievalConfig = ref<RetrievalConfig>({
+  vector_weight: null,
+  bm25_weight: null,
+  vector_top_k: null,
+  bm25_top_k: null,
+  final_top_k: null,
+  similarity_threshold: null
+})
+const retrievalConfigSaving = ref(false)
+const retrievalConfigStore = useRetrievalConfigStore()
 
 // Upload modal
 const showUploadModal = ref(false)
@@ -365,6 +381,43 @@ async function handleKbSubmit() {
     kbFormSaving.value = false
   }
 }
+
+async function openRetrievalConfig(kb: KnowledgeBase) {
+  retrievalConfigKbId.value = kb.id
+  // Load from store cache or fetch from API
+  // Backend now returns actual values (KB config or global defaults)
+  const config = await retrievalConfigStore.getConfig(kb.id)
+  retrievalConfig.value = { ...config }
+  showRetrievalConfig.value = true
+}
+
+async function handleRetrievalConfigSubmit() {
+  retrievalConfigSaving.value = true
+  try {
+    const updated = await updateKbRetrievalConfig(retrievalConfigKbId.value, retrievalConfig.value)
+    // Update store cache
+    retrievalConfigStore.updateConfig(retrievalConfigKbId.value, updated.data)
+    message.success(t('documents.retrievalConfigUpdated'))
+    showRetrievalConfig.value = false
+  } catch (e: any) {
+    message.error(t('documents.retrievalConfigUpdateFailed') + (e?.response?.data?.detail || e.message))
+  } finally {
+    retrievalConfigSaving.value = false
+  }
+}
+
+// Weight linkage: when vector_weight changes, auto-calculate bm25_weight
+watch(() => retrievalConfig.value.vector_weight, (newVal) => {
+  if (newVal !== null && newVal !== undefined) {
+    retrievalConfig.value.bm25_weight = Math.round((1 - newVal) * 10) / 10
+  }
+})
+
+watch(() => retrievalConfig.value.bm25_weight, (newVal) => {
+  if (newVal !== null && newVal !== undefined) {
+    retrievalConfig.value.vector_weight = Math.round((1 - newVal) * 10) / 10
+  }
+})
 
 async function handleDeleteKb(id: string) {
   try {
@@ -1043,6 +1096,59 @@ async function loadSupportedTypes() {
       </template>
     </AppModal>
 
+    <!-- Retrieval Config Modal -->
+    <AppModal v-model:show="showRetrievalConfig" :title="t('documents.retrievalConfig')" size="wide">
+      <div class="space-y-6">
+        <div class="text-sm text-gray-500">{{ t('documents.retrievalConfigDesc', { name: selectedKb?.name }) }}</div>
+        
+        <!-- Weight Configuration -->
+        <div class="border rounded-lg p-4">
+          <h3 class="font-medium mb-3">{{ t('documents.weightConfig') }}</h3>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.vectorWeight') }} ({{ t('documents.range') }}: 0.1-0.9)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.vectorWeightHint') }}</NTooltip></span></label>
+              <NInputNumber v-model:value="retrievalConfig.vector_weight" :min="0.1" :max="0.9" :step="0.1" :precision="1" style="width: 180px" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.bm25Weight') }} ({{ t('documents.range') }}: 0.1-0.9)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.bm25WeightHint') }}</NTooltip></span></label>
+              <NInputNumber v-model:value="retrievalConfig.bm25_weight" :min="0.1" :max="0.9" :step="0.1" :precision="1" style="width: 180px" />
+            </div>
+          </div>
+          <div class="text-xs text-gray-400 mt-2">{{ t('documents.weightSumNote') }}</div>
+        </div>
+
+        <!-- Top K Configuration -->
+        <div class="border rounded-lg p-4">
+          <h3 class="font-medium mb-3">{{ t('documents.topKConfig') }}</h3>
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.vectorTopK') }} ({{ t('documents.range') }}: 5-50)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.vectorTopKHint') }}</NTooltip></span></label>
+              <NInputNumber v-model:value="retrievalConfig.vector_top_k" :min="5" :max="50" :step="5" style="width: 180px" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.bm25TopK') }} ({{ t('documents.range') }}: 5-50)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.bm25TopKHint') }}</NTooltip></span></label>
+              <NInputNumber v-model:value="retrievalConfig.bm25_top_k" :min="5" :max="50" :step="5" style="width: 180px" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.finalTopK') }} ({{ t('documents.range') }}: 1-20)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.finalTopKHint') }}</NTooltip></span></label>
+              <NInputNumber v-model:value="retrievalConfig.final_top_k" :min="1" :max="20" :step="1" style="width: 180px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Threshold Configuration -->
+        <div class="border rounded-lg p-4">
+          <h3 class="font-medium mb-3">{{ t('documents.thresholdConfig') }}</h3>
+          <div>
+            <label class="block text-sm mb-1"><span class="label-with-help">{{ t('documents.similarityThreshold') }} ({{ t('documents.range') }}: 0.1-0.9)<NTooltip trigger="hover"><template #trigger><NIcon :component="HelpCircle" size="14" class="help-icon" /></template>{{ t('documents.similarityThresholdHint') }}</NTooltip></span></label>
+            <NInputNumber v-model:value="retrievalConfig.similarity_threshold" :min="0.1" :max="0.9" :step="0.05" :precision="2" style="width: 180px" />
+            <div class="text-xs text-gray-400 mt-2">{{ t('documents.thresholdNote') }}</div>
+          </div>
+        </div>
+      </div>
+      <template #footer><div style="display: flex; justify-content: flex-end; gap: 8px;"><NButton @click="showRetrievalConfig = false">{{ t('common.cancel') }}</NButton><NButton type="primary" :loading="retrievalConfigSaving" @click="handleRetrievalConfigSubmit">{{ t('common.save') }}</NButton></div></template>
+    </AppModal>
+
     <!-- Upload Modal -->
     <AppModal v-model:show="showUploadModal" :title="t('documents.uploadFile')" size="detail">
       <div class="upload-modal-body">
@@ -1124,6 +1230,10 @@ async function loadSupportedTypes() {
             <NButton size="small" @click="openRenameKb(selectedKb); blurActive()">
               <template #icon><NIcon size="14"><Create /></NIcon></template>
               {{ t('documents.editKb') }}
+            </NButton>
+            <NButton size="small" @click="openRetrievalConfig(selectedKb); blurActive()">
+              <template #icon><NIcon size="14"><Settings /></NIcon></template>
+              {{ t('documents.retrievalConfig') }}
             </NButton>
             <NButton size="small" @click="goToChat(selectedKb.id); blurActive()">
               <template #icon><NIcon size="14"><Chatbubbles /></NIcon></template>
@@ -1322,7 +1432,7 @@ async function loadSupportedTypes() {
       @after-leave="detailDoc = null; showDetailChunks = false"
     >
       <div v-if="detailDoc">
-        <NDescriptions bordered :column="1" size="small" label-placement="left" label-style="width: 120px">
+        <NDescriptions bordered :column="1" size="small" label-placement="left" label-style="width: 180px">
           <NDescriptionsItem :label="t('documents.fileName')">{{ detailDoc.filename }}</NDescriptionsItem>
           <NDescriptionsItem :label="t('documents.fileType')">
             {{ getFileTypeConfig(detailDoc.file_type).label }} ({{ detailDoc.file_type }})
@@ -1993,5 +2103,21 @@ async function loadSupportedTypes() {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.help-icon {
+  color: var(--color-text-muted);
+  cursor: help;
+  transition: color 0.15s;
+}
+
+.help-icon:hover {
+  color: var(--color-primary);
 }
 </style>

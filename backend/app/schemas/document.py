@@ -17,6 +17,27 @@ class KBUpdate(BaseModel):
     prompt: str | None = None
 
 
+class RetrievalConfigResponse(BaseModel):
+    """Per-KB retrieval configuration. Null means "use global default"."""
+    vector_weight: float | None = None
+    bm25_weight: float | None = None
+    vector_top_k: int | None = None
+    bm25_top_k: int | None = None
+    final_top_k: int | None = None
+    similarity_threshold: float | None = None
+    model_config = {"from_attributes": True}
+
+
+class RetrievalConfigUpdate(BaseModel):
+    """Update per-KB retrieval configuration. All fields optional; null means "reset to global default"."""
+    vector_weight: float | None = None
+    bm25_weight: float | None = None
+    vector_top_k: int | None = None
+    bm25_top_k: int | None = None
+    final_top_k: int | None = None
+    similarity_threshold: float | None = None
+
+
 class KBResponse(BaseModel):
     id: str
     name: str
@@ -31,6 +52,13 @@ class KBResponse(BaseModel):
     # endpoint; list/create responses always leave it empty. Each entry is
     # {"code": <BARE_CODE>, "params": {...}} -- the frontend localizes it.
     warnings: list[dict] = []
+    # Per-KB retrieval configuration (null = use global default)
+    vector_weight: float | None = None
+    bm25_weight: float | None = None
+    vector_top_k: int | None = None
+    bm25_top_k: int | None = None
+    final_top_k: int | None = None
+    similarity_threshold: float | None = None
 
     model_config = {"from_attributes": True}
 
