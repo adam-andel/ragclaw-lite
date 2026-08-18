@@ -531,6 +531,7 @@ const showSkillModal = ref(false)
 const skillSearchText = ref('')
 const emptyMode = ref<'kb' | ''>('')
 const showMoreConv = ref(false)
+const convSearchKeyword = ref("")
 const showMoreKb = ref(false)
 
 // ── Per-conversation selections (workspace dir + KB + skill) ──
@@ -579,7 +580,7 @@ const pagedConversations = computed(() => {
   return conversations.value.slice(start, start + convPageSize)
 })
 const convTotalPages = computed(() => Math.max(1, Math.ceil(conversations.value.length / convPageSize)))
-watch(showMoreConv, (v) => { if (v) { convPage.value = 1; loadConversations() } })
+watch(showMoreConv, (v) => { if (v) { convPage.value = 1; loadConversations() } else { convSearchKeyword.value = "" } })
 
 // ── Inline rename of a conversation from the history (all-conversations) modal ──
 const editingConvId = ref<string | null>(null)
@@ -943,7 +944,7 @@ async function openKbPicker() {
 
 async function loadConversations() {
   try {
-    conversations.value = await listConversations()
+    conversations.value = await listConversations(convSearchKeyword.value || undefined)
   } catch { conversations.value = [] }
 }
 
@@ -1939,6 +1940,10 @@ function handleKeydown(e: KeyboardEvent) {
 
     <!-- Modal: full conversation list -->
     <AppModal v-model:show="showMoreConv" :title="t('chat.allConversations')" size="detail">
+      <div class="conv-search-bar">
+        <NInput v-model:value="convSearchKeyword" :placeholder="t('chat.searchConversations')" size="small" clearable @keydown.enter="loadConversations" />
+        <NButton size="small" type="primary" @click="loadConversations">{{ t("chat.search") }}</NButton>
+      </div>
       <div class="picker-scroll">
         <div v-for="c in pagedConversations" :key="c.id" class="conv-row"
           role="button" tabindex="0"
@@ -2557,6 +2562,15 @@ function handleKeydown(e: KeyboardEvent) {
   justify-content: center;
   font-size: 24px;
   margin-bottom: 14px;
+}
+.conv-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+.conv-search-bar > .n-input {
+  flex: 1;
 }
 .conv-row {
   display: flex;

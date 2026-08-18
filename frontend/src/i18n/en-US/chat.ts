@@ -37,6 +37,8 @@ export default {
   next: 'Next',
   closeSearch: 'Close search',
   allConversations: 'All conversations',
+  searchConversations: "Search conversation titles...",
+  search: "Search",
   renameConversation: 'Rename conversation',
   conversationTitle: 'Conversation title',
   deleteConversation: 'Delete conversation',

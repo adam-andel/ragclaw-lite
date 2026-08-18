@@ -1758,14 +1758,14 @@ async def list_conversations(
 ):
     """List conversations: filter by user_id. Only super admin can view any user via param."""
     user_id_filter = request.query_params.get("user_id") or current_user.id
+    search = request.query_params.get("search", "").strip()
     # Only super admin can view other users' conversations
     if user_id_filter != current_user.id and current_user.role.value != "admin":
         user_id_filter = current_user.id
-    result = await db.execute(
-        select(Conversation)
-        .where(Conversation.user_id == user_id_filter)
-        .order_by(Conversation.updated_at.desc())
-    )
+    stmt = select(Conversation).where(Conversation.user_id == user_id_filter)
+    if search:
+        stmt = stmt.where(Conversation.title.ilike(f"%{search}%"))
+    result = await db.execute(stmt.order_by(Conversation.updated_at.desc()))
     convs = result.scalars().all()
 
     responses = []
