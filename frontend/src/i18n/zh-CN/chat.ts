@@ -37,6 +37,8 @@ export default {
   next: '下一个',
   closeSearch: '关闭查找',
   allConversations: '所有对话',
+  searchConversations: "搜索对话标题...",
+  search: "搜索",
   renameConversation: '重命名对话',
   conversationTitle: '对话标题',
   deleteConversation: '删除对话',

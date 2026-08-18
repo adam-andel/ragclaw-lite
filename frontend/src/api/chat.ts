@@ -119,9 +119,10 @@ export async function* streamChat(
 }
 
 // Conversations
-export const listConversations = () =>
-  authFetch('/api/conversations').then((r) => r.json()) as Promise<Conversation[]>
-
+export const listConversations = (search?: string) => {
+  const qs = search ? `?search=${encodeURIComponent(search)}` : ""
+  return authFetch("/api/conversations" + qs).then((r) => r.json()) as Promise<Conversation[]>
+}
 export const getConversation = (id: string, includeMessages = true) =>
   authFetch(`/api/conversations/${id}?include_messages=${includeMessages}`).then((r) => r.json())
 
