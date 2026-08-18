@@ -62,6 +62,7 @@ const showKbFilter = ref(false)
 // Batch selection / deletion
 const checkedRowKeys = ref<string[]>([])
 const batchDeleting = ref(false)
+const batchUnlinking = ref(false)
 const deletingIds = ref<Set<string>>(new Set())
 function toggleCheck(id: string) {
   const i = checkedRowKeys.value.indexOf(id)
@@ -844,6 +845,31 @@ async function handleDeleteChecked() {
   }
 }
 
+async function handleBatchUnlink() {
+  if (!filterKbId.value) return
+  const ids = checkedRowKeys.value
+  if (!ids.length || batchUnlinking.value) return
+  batchUnlinking.value = true
+  const kbId = filterKbId.value
+  const backup = docs.value
+  const backupTotal = total.value
+  deletingIds.value = new Set(ids)
+  docs.value = docs.value.filter(d => !ids.includes(d.id))
+  total.value -= ids.length
+  try {
+    await Promise.all(ids.map(id => removeDocumentFromKB(kbId, id)))
+    message.success(t('documents.batchUnlinked', { count: ids.length, kb: filterKbName.value }))
+  } catch (e: any) {
+    docs.value = backup
+    total.value = backupTotal
+    message.error(t('documents.batchUnlinkFailed') + (e?.response?.data?.detail || e.message))
+  } finally {
+    batchUnlinking.value = false
+    deletingIds.value = new Set()
+    clearChecked()
+  }
+}
+
 async function handleUnlink(doc: DocumentItem) {
   if (!filterKbId.value) return
   const kbId = filterKbId.value
@@ -1284,6 +1310,25 @@ async function loadSupportedTypes() {
       <NSelect v-model:value="filterType" :options="typeOptions" :placeholder="t('common.type')" size="small" style="width:120px" @update:value="onSearch" />
       <NButton size="small" @click="resetFilters" secondary>{{ t('common.reset') }}</NButton>
       <NPopconfirm
+        v-if="filterKbId"
+        :disabled="checkedRowKeys.length === 0"
+        @positive-click="handleBatchUnlink"
+      >
+        <template #trigger>
+          <NButton
+            size="small"
+            type="warning"
+            secondary
+            :disabled="checkedRowKeys.length === 0"
+            :loading="batchUnlinking"
+          >
+            <template #icon><NIcon><Remove /></NIcon></template>
+            {{ t('documents.batchUnlinkSelected', { count: checkedRowKeys.length }) }}
+          </NButton>
+        </template>
+        {{ t('documents.confirmBatchUnlink', { count: checkedRowKeys.length, kb: filterKbName }) }}
+      </NPopconfirm>
+      <NPopconfirm
         :disabled="checkedRowKeys.length === 0"
         @positive-click="handleDeleteChecked"
       >
@@ -1325,17 +1370,6 @@ async function loadSupportedTypes() {
             <div class="doc-card-title-wrap">
               <span class="doc-name" :title="doc.filename">{{ doc.filename }}</span>
             </div>
-            <NPopconfirm
-              v-if="filterKbId && doc.kb_ids.includes(filterKbId)"
-              @positive-click="handleUnlink(doc)"
-            >
-              <template #trigger>
-                <NButton size="tiny" quaternary type="error" class="doc-unlink-btn" @click.stop>
-                  <template #icon><NIcon><Remove /></NIcon></template>
-                </NButton>
-              </template>
-              {{ t('documents.confirmUnlinkDoc', { kb: filterKbName }) }}
-            </NPopconfirm>
             <NCheckbox
               class="dm-card-check"
               :checked="checkedRowKeys.includes(doc.id)"
