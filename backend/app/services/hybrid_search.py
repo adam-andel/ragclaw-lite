@@ -138,6 +138,19 @@ class HybridSearchService:
         results = list(scores.values())
 
         if doc_ids:
+            # Normalize doc_ids defensively: a non-string element (e.g. 123
+            # from an LLM) would make every r["doc_id"] in doc_ids comparison
+            # False and silently empty the result set. Coerce numerics to str
+            # so an id like "123" still matches, drop anything else, and treat
+            # an all-junk filter as "no filter" instead of "no results".
+            normalized: set[str] = set()
+            for d in doc_ids:
+                if isinstance(d, str):
+                    normalized.add(d)
+                elif isinstance(d, (int, float)) and not isinstance(d, bool):
+                    normalized.add(str(d))
+            doc_ids = normalized
+        if doc_ids:
             results = [r for r in results if r["doc_id"] in doc_ids]
 
         results = [r for r in results if r["fusion_score"] >= threshold]

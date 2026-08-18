@@ -46,6 +46,25 @@ def _make_vector_results(n: int) -> list[dict]:
     ]
 
 
+def _make_vector_results_with_doc_id(doc_id: str, n: int = 3) -> list[dict]:
+    """Like _make_vector_results but all chunks share the given doc_id."""
+    return [
+        {
+            "id": f"c{i}",
+            "content": f"content-{i}",
+            "score": 0.9 - i * 0.1,
+            "metadata": {
+                "doc_id": doc_id,
+                "filename": doc_id,
+                "heading": "",
+                "chunk_index": i,
+                "page": None,
+            },
+        }
+        for i in range(n)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # fuse() final_top_k clamping
 # ---------------------------------------------------------------------------
@@ -72,6 +91,34 @@ class TestFuseFinalTopK:
     def test_positive_respected(self):
         out = self._fuse(final_top_k=5)
         assert len(out) == 5
+
+
+# ---------------------------------------------------------------------------
+# fuse() doc_ids element normalization
+# ---------------------------------------------------------------------------
+
+class TestFuseDocIds:
+    def _fuse(self, doc_ids):
+        vec = _make_vector_results_with_doc_id("123", 3)
+        return HybridSearchService().fuse(vec, [], doc_ids=doc_ids)
+
+    def test_numeric_element_coerced_to_str(self):
+        # Without normalization, "123" in [123] is always False -> silent empty.
+        out = self._fuse([123])
+        assert len(out) == 3
+
+    def test_str_element_unchanged(self):
+        out = self._fuse(["123"])
+        assert len(out) == 3
+
+    def test_non_match_doc_id_filters(self):
+        out = self._fuse(["999"])
+        assert out == []
+
+    def test_junk_only_doc_ids_treated_as_no_filter(self):
+        # All-garbage filter must not silently empty the result set.
+        out = self._fuse([None, {"a": 1}])
+        assert len(out) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -140,3 +187,53 @@ class TestExecuteHybridSearchTopK:
         assert captured["top_k"] is None
         assert res["endpoint"] is None
         assert "[hybrid_search]" in res["result"]
+
+
+# ---------------------------------------------------------------------------
+# _execute_hybrid_search doc_ids element normalization (LLM-controlled input)
+# ---------------------------------------------------------------------------
+
+class TestExecuteHybridSearchDocIds:
+    async def _call(self, monkeypatch, doc_ids_value):
+        """Run _execute_hybrid_search with a mocked backend; return the doc_ids it passed through."""
+        captured = {}
+
+        async def fake_run(kb_id, query, doc_ids=None, top_k=None):
+            captured["doc_ids"] = doc_ids
+            return ("ctx", [])
+
+        monkeypatch.setattr(nodes.hybrid_search, "_run_hybrid_retrieval", fake_run)
+        args = {"query": "q", "doc_ids": doc_ids_value}
+        await nodes._execute_hybrid_search({"kb_id": "kb-1"}, args)
+        return captured["doc_ids"]
+
+    @pytest.mark.asyncio
+    async def test_numeric_element_coerced_to_str(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, [123])
+        assert doc_ids == ["123"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_elements_coerced(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, [123, "abc", 45.0])
+        assert doc_ids == ["123", "abc", "45.0"]
+
+    @pytest.mark.asyncio
+    async def test_str_elements_unchanged(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, ["abc", "def"])
+        assert doc_ids == ["abc", "def"]
+
+    @pytest.mark.asyncio
+    async def test_junk_elements_dropped_to_none(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, [None, {"a": 1}])
+        assert doc_ids is None
+
+    @pytest.mark.asyncio
+    async def test_not_a_list_becomes_none(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, "abc")
+        assert doc_ids is None
+
+    @pytest.mark.asyncio
+    async def test_empty_list_becomes_none(self, monkeypatch):
+        doc_ids = await self._call(monkeypatch, [])
+        assert doc_ids is None
+

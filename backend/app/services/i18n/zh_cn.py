@@ -307,7 +307,7 @@ MESSAGES = {
 "回答中若引用某条结果，请如实标注其发布日期；不要把搜索结果的发布日写成「今天」，也不要把当前日期当作某条结果的发布日。"
     ),
 
-    # 知识库按需检索元工具 hybrid_search 的使用指引（仅在用户选定知识库、kb_prompt 存在时由 get_kb_prompt 拼接）。
+    # 知识库按需检索元工具 hybrid_search 的使用指引（用户选定知识库时由 get_kb_prompt 拼接，即使 kb.prompt 为空也会返回本指引）。
     # 无占位符：纯静态指引，随 prompt_language 在两语间切换。落到 kb_prompt，告诉 LLM 何时/如何改写问题。
     "kb_hybrid_search_guidance": (
         "## 知识库按需检索（hybrid_search 元工具）\n"

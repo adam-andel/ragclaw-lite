@@ -389,7 +389,7 @@ MESSAGES = {
     ),
 
     # Usage guidance for the on-demand KB retrieval meta-tool hybrid_search (appended by
-    # get_kb_prompt only when a KB is selected and kb_prompt exists). No placeholders: a
+    # get_kb_prompt only when a KB is selected). No placeholders: a
     # static guidance that switches between locales via prompt_language. Tells the LLM when
     # and how to rewrite the question (resolve references before querying).
     "kb_hybrid_search_guidance": (

@@ -2148,6 +2148,21 @@ async def _execute_hybrid_search(state: dict, args: dict) -> dict:
     doc_ids = args.get("doc_ids")
     if not isinstance(doc_ids, list):
         doc_ids = None
+    else:
+        # LLM-supplied doc_ids may contain non-string elements (e.g. 123 instead
+        # of "123"). Coerce numerics to str so "123" can still match, drop other
+        # types with a warning — otherwise a stray element like 123 would make
+        # every r["doc_id"] in doc_ids comparison False and silently empty the
+        # result set.
+        cleaned: list[str] = []
+        for d in doc_ids:
+            if isinstance(d, str):
+                cleaned.append(d)
+            elif isinstance(d, (int, float)) and not isinstance(d, bool):
+                cleaned.append(str(d))
+            else:
+                logger.warning("hybrid_search: ignoring non-string doc_id %r", d)
+        doc_ids = cleaned or None
 
     try:
         rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query, doc_ids=doc_ids, top_k=top_k)
