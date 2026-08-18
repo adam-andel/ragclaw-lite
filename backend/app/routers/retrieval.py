@@ -65,6 +65,17 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
                 for c in chunks
             ])
 
+    # Load KB retrieval config for per-KB parameter overrides
+    kb = await db.get(KnowledgeBase, kb_id)
+    kb_config = {
+        "vector_weight": kb.vector_weight if kb else None,
+        "bm25_weight": kb.bm25_weight if kb else None,
+        "vector_top_k": kb.vector_top_k if kb else None,
+        "bm25_top_k": kb.bm25_top_k if kb else None,
+        "final_top_k": kb.final_top_k if kb else None,
+        "similarity_threshold": kb.similarity_threshold if kb else None,
+    }
+
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(
         None,
@@ -76,6 +87,7 @@ async def search(request: SearchRequest, current_user: User = Depends(get_curren
         final_top_k=request.top_k,
         threshold=request.threshold,
         doc_ids=request.doc_ids,
+        kb_config=kb_config,
     )
     )
 

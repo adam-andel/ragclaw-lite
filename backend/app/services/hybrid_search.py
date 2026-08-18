@@ -10,11 +10,13 @@ from app.services.bm25_index import bm25_index
 logger = logging.getLogger(__name__)
 
 
-def _resolve_param(kb_config: dict | None, key: str, default):
-    """Resolve a retrieval parameter: KB config > explicit arg > global default."""
+def _resolve_param(kb_config: dict | None, key: str, explicit_value, global_default):
+    """Resolve: explicit arg > KB config > global settings default."""
+    if explicit_value is not None:
+        return explicit_value
     if kb_config and kb_config.get(key) is not None:
         return kb_config[key]
-    return default
+    return global_default
 
 
 class HybridSearchService:
@@ -48,10 +50,10 @@ class HybridSearchService:
             List of result dicts with: chunk_id, content, doc_name,
             vector_score, bm25_score, fusion_score, heading, page
         """
-        vector_top_k = vector_top_k or _resolve_param(kb_config, "vector_top_k", settings.retrieval_vector_top_k)
-        bm25_top_k = bm25_top_k or _resolve_param(kb_config, "bm25_top_k", settings.retrieval_bm25_top_k)
-        vw = _resolve_param(kb_config, "vector_weight", vector_weight if vector_weight is not None else 0.5)
-        bw = _resolve_param(kb_config, "bm25_weight", bm25_weight if bm25_weight is not None else 0.5)
+        vector_top_k = _resolve_param(kb_config, "vector_top_k", vector_top_k, settings.retrieval_vector_top_k)
+        bm25_top_k = _resolve_param(kb_config, "bm25_top_k", bm25_top_k, settings.retrieval_bm25_top_k)
+        vw = _resolve_param(kb_config, "vector_weight", vector_weight, 0.5)
+        bw = _resolve_param(kb_config, "bm25_weight", bm25_weight, 0.5)
 
         # Vector search may fail (e.g. embedding model not installed) — degrade
         # gracefully and rely on BM25 only instead of erroring the whole request.
@@ -90,17 +92,15 @@ class HybridSearchService:
         concurrently (e.g. `parallel_retrieval_node`), so the slow vector path
         and the fast BM25 path overlap instead of running back-to-back.
         """
-        final_top_k = final_top_k or _resolve_param(kb_config, "final_top_k", settings.retrieval_final_top_k)
+        final_top_k = _resolve_param(kb_config, "final_top_k", final_top_k, settings.retrieval_final_top_k)
         # A truthy negative (e.g. -1) slips through the `or` above and would
         # yield results[:-1] below, silently dropping the last chunk. Reject
         # any non-positive value back to the system default.
         if final_top_k < 1:
             final_top_k = settings.retrieval_final_top_k
-        threshold = threshold if threshold is not None else _resolve_param(
-            kb_config, "similarity_threshold", settings.retrieval_similarity_threshold
-        )
-        vw = _resolve_param(kb_config, "vector_weight", vector_weight if vector_weight is not None else 0.5)
-        bw = _resolve_param(kb_config, "bm25_weight", bm25_weight if bm25_weight is not None else 0.5)
+        threshold = _resolve_param(kb_config, "similarity_threshold", threshold, settings.retrieval_similarity_threshold)
+        vw = _resolve_param(kb_config, "vector_weight", vector_weight, 0.5)
+        bw = _resolve_param(kb_config, "bm25_weight", bm25_weight, 0.5)
 
         # Build lookup: chunk_id -> scores
         scores: dict[str, dict] = {}
@@ -202,8 +202,8 @@ class HybridSearchService:
         Returns:
             ``(rag_context, citations)`` — same shape as ``agent_nodes._build_context``.
         """
-        v_top_k = _resolve_param(kb_config, "vector_top_k", settings.retrieval_vector_top_k)
-        b_top_k = _resolve_param(kb_config, "bm25_top_k", settings.retrieval_bm25_top_k)
+        v_top_k = _resolve_param(kb_config, "vector_top_k", None, settings.retrieval_vector_top_k)
+        b_top_k = _resolve_param(kb_config, "bm25_top_k", None, settings.retrieval_bm25_top_k)
 
         loop = asyncio.get_running_loop()
         # Overlap the slow vector path with the fast BM25 path (see
