@@ -387,4 +387,36 @@ MESSAGES = {
 "publication time, which is the date that article or page was actually published - they are not the same. When you cite a "
 "result, label its publication date accurately; never write a result's publish date as 'today', and never treat the current date as a result's publish date."
     ),
+
+    # Usage guidance for the on-demand KB retrieval meta-tool hybrid_search (appended by
+    # get_kb_prompt only when a KB is selected and kb_prompt exists). No placeholders: a
+    # static guidance that switches between locales via prompt_language. Tells the LLM when
+    # and how to rewrite the question (resolve references before querying).
+    "kb_hybrid_search_guidance": (
+        "## On-demand knowledge-base retrieval (hybrid_search meta-tool)\n"
+        "This conversation is attached to a knowledge base. The system already auto-retrieved "
+        "relevant material at the conversation entry point, but entry retrieval is often "
+        "insufficient for follow-up or anaphoric questions. You may call the `hybrid_search` "
+        "meta-tool to retrieve again, on demand, during the conversation.\n\n"
+        "### When to use it\n"
+        "- When the entry-retrieval material is not enough to answer the user's question.\n"
+        "- When the user's follow-up contains references (e.g. 'these meetings', 'them', 'the ones "
+        "above', 'those few') that can only be understood by combining them with the **conversation "
+        "history**.\n\n"
+        "### How to use it (key: resolve references first, then rewrite)\n"
+        "- **Do not** pass the user's raw follow-up as the search query. From the **conversation "
+        "history** (NOT the previous tool results), lock down what the reference points to, rewrite "
+        "it into a self-contained query, then pass it as the `query` argument.\n"
+        "- Example: user asks 'who hosted these meetings' → first confirm in history that 'these "
+        "meetings' = Meeting A, Meeting B, Meeting C → rewrite to 'who hosted Meeting A, Meeting B, "
+        "and Meeting C' before searching.\n"
+        "- After rewriting you may also pass `doc_ids` (e.g. search only within those meeting "
+        "documents) to narrow the scope, improve precision, and reduce noise.\n\n"
+        "### When NOT to overuse it\n"
+        "- If the existing conversation (entry retrieval, your own answer, or a prior hybrid_search "
+        "return) already contains enough to answer, do **not** call it again.\n"
+        "- Do not use it for 'double-check / verify once more' style redundant retrieval.\n"
+        "- Within a single turn, do not blindly search in a loop: stop once you have enough, to avoid "
+        "inflating the context."
+    ),
 }

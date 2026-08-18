@@ -659,13 +659,15 @@ def _route_by_keywords(query: str, skills: list) -> dict | None:
 
 # ── Skill Loader (Layer 2: SKILL.md full text + tools) ──
 
-def _build_meta_skill_tools() -> list[dict]:
+def _build_meta_skill_tools(include_kb: bool = False) -> list[dict]:
     """Always-available meta tools that let the LLM orchestrate skills (Route D).
 
     These are injected into available_tools whenever a skill is loaded, so the
-    LLM can list skills and chain into another skill mid-conversation.
+    LLM can list skills and chain into another skill mid-conversation. When
+    ``include_kb`` is True (i.e. the session has a selected knowledge base), the
+    ``hybrid_search`` meta-tool is added so the LLM can retrieve on demand.
     """
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -786,6 +788,46 @@ def _build_meta_skill_tools() -> list[dict]:
             "_source": "meta",
         },
     ]
+    if include_kb:
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "hybrid_search",
+                    "description": (
+                        "Search the user's currently selected knowledge base on demand. "
+                        "Use this when the entry retrieval did not surface enough, OR when the "
+                        "user's question contains references (e.g. 'these meetings', 'them', "
+                        "'the ones above') that can only be resolved from conversation context. "
+                        "BEFORE calling, resolve any reference against the conversation history "
+                        "and REWRITE the query to be self-contained (e.g. turn 'who hosted "
+                        "these meetings' into 'who hosted Meeting A, Meeting B, Meeting C'). "
+                        "Do NOT call when you already have enough information to answer."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "A SELF-CONTAINED search query with all references resolved. Never pass the user's raw follow-up verbatim if it contains references.",
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "description": "Optional max chunks to return. Defaults to system retrieval_final_top_k.",
+                            },
+                            "doc_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional restrict to specific doc_ids (e.g. only search within Meeting A and Meeting B).",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+                "_source": "meta",
+            }
+        )
+    return tools
 
 
 # Module-level cache of Python Executor meta tools (always-available native tools).
@@ -818,18 +860,20 @@ def _meta_control_names() -> set[str]:
     return {"list_skills", "use_skill", "done_skill"}
 
 
-async def _build_all_meta_tools() -> list[dict]:
+async def _build_all_meta_tools(include_kb: bool = False) -> list[dict]:
     """Always-available meta tools: control tools + Python Executor native tools.
 
     The Python Executor tools (e.g. run_python) are fetched from the server at
     startup; _refresh_meta_python_tools populates the cache, with a lazy fetch
-    here as a fallback if startup missed it (e.g. MCP not reachable yet).
+    here as a fallback if startup missed it (e.g. MCP not reachable yet). When
+    ``include_kb`` is True the ``hybrid_search`` meta-tool is included too (the
+    session has a selected knowledge base).
     """
     python_tools = _META_PYTHON_TOOLS
     if not python_tools:
         await _refresh_meta_python_tools()
         python_tools = _META_PYTHON_TOOLS
-    return _build_meta_skill_tools() + python_tools
+    return _build_meta_skill_tools(include_kb=include_kb) + python_tools
 
 
 async def _load_skill_body_and_tools(folder_name: str, user_id: str | None = None) -> tuple[str, list[dict]]:
@@ -979,7 +1023,7 @@ async def skill_loader_node(state: dict) -> dict:
     # Build the always-available meta tools (control + Python Executor native).
     # This runs before any skill check so run_python etc. are natively available
     # to every conversation, matching the ragclaw "native file/code execution" role.
-    meta_tools = await _build_all_meta_tools()
+    meta_tools = await _build_all_meta_tools(include_kb=bool(state.get("kb_id")))
 
     active_skill = state.get("active_skill")
     if not active_skill:
@@ -1319,24 +1363,12 @@ async def parallel_retrieval_node(state: dict) -> dict:
     t_start = time.time()
     loop = asyncio.get_running_loop()
 
-    # Run vector + BM25 concurrently. BM25 is an in-memory jieba+rank_bm25 call
-    # (sub-10ms); vector is the slow path (embedding + Chroma query). Overlapping
-    # them via separate executor threads drops total latency from
-    # T_vec + T_bm25 to max(T_vec, T_bm25). fuse() then merges both result sets.
-    v_task = loop.run_in_executor(None, vector_store.search, kb_id, query, settings.retrieval_vector_top_k)
-    b_task = loop.run_in_executor(None, bm25_index.search, kb_id, query, settings.retrieval_bm25_top_k)
-    v_res, b_res = await asyncio.gather(v_task, b_task, return_exceptions=True)
-
-    if isinstance(v_res, Exception):
-        logger.warning("Vector search error: %s", v_res)
-        v_res = []
-    if isinstance(b_res, Exception):
-        logger.warning("BM25 search error: %s", b_res)
-        b_res = []
-
-    retrieved = hybrid_search.fuse(v_res, b_res)
-    rag_context, citations = _build_context(retrieved)
-    chunk_count = len(retrieved) if isinstance(retrieved, list) else 0
+    # Document hybrid retrieval: concurrent vector + BM25, RRF fuse, render.
+    # Delegates to the shared HybridSearchService._run_hybrid_retrieval — the
+    # single source for the doc-path logic, also used by the hybrid_search meta
+    # tool (Step 3). Replaces the inline copy that previously lived here.
+    rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query)
+    chunk_count = len(citations)
     _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
 
     # ── Conversation memory recall (independent B namespace: mem_{conv_id}) ──
@@ -1375,31 +1407,6 @@ def _format_memory(retrieved: list[dict]) -> str:
     if not retrieved:
         return ""
     return MEM_CHUNK_DELIM.join(f"[Conversation Memory] {r['content']}" for r in retrieved)
-
-
-def _build_context(retrieved: list[dict]) -> tuple[str, list[dict]]:
-    if not retrieved:
-        return "No relevant documents found", []
-    parts, citations = [], []
-    # Defense-in-depth: collapse display-identical sources so the UI never
-    # shows what looks like the same chunk twice (e.g. same doc_id + chunk_index
-    # + heading). Distinct sections survive because their headings differ.
-    seen_keys: set[tuple] = set()
-    for i, r in enumerate(retrieved):
-        doc_name = r.get("doc_name") or r.get("doc_id", "?")[:8]
-        heading = r.get("heading", "") or ""
-        page = r.get("page")
-        if page == 0:
-            page = None
-        key = (r.get("doc_id", ""), r.get("chunk_index", 0), heading)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        parts.append(f"[{i + 1}] {doc_name} {heading}\n{r['content']}")
-        citations.append({"doc_id": r.get("doc_id", ""), "doc_name": doc_name,
-                          "chunk_index": r.get("chunk_index", 0), "heading": heading,
-                          "page": page, "score": round(r.get("fusion_score", 0), 4)})
-    return "\n\n---\n\n".join(parts), citations
 
 
 # ── Tool Decision ──
@@ -2101,6 +2108,62 @@ async def _execute_update_memory(state: dict, args: dict) -> dict:
     }
 
 
+async def _execute_hybrid_search(state: dict, args: dict) -> dict:
+    """Execute hybrid_search tool directly — on-demand KB retrieval mid-graph.
+
+    Unlike the entry retrieval node (parallel_retrieval_node), this runs when the
+    LLM decides it must re-retrieve with a rewritten, self-contained query (e.g.
+    to resolve anaphora like "those meetings" against conversation history). The
+    session-injected ``kb_id`` ensures the LLM cannot target an arbitrary KB.
+    Results are returned as plain text only and are NOT merged into
+    state["citations"], so no frontend citation rendering occurs.
+
+    Returns:
+        {"result": str, "endpoint": None} — same shape as the other meta tools.
+    """
+    kb_id = state.get("kb_id")
+    if not kb_id:
+        return {"result": "[hybrid_search] error: no knowledge base selected in this session", "endpoint": None}
+
+    query = (args.get("query") or "").strip()
+    if not query:
+        return {"result": "[hybrid_search] error: 'query' is required (self-contained, anaphora resolved)", "endpoint": None}
+
+    # Optional passthrough params — coerced defensively since args come from LLM JSON.
+    top_k = args.get("top_k")
+    if top_k is not None:
+        try:
+            top_k = int(top_k)
+        except (TypeError, ValueError):
+            top_k = None
+    doc_ids = args.get("doc_ids")
+    if not isinstance(doc_ids, list):
+        doc_ids = None
+
+    try:
+        rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query, doc_ids=doc_ids, top_k=top_k)
+    except Exception as e:
+        logger.exception("hybrid_search meta tool execution failed")
+        return {"result": f"[hybrid_search] error: {e}", "endpoint": None}
+
+    # Assemble result text. Citations are surfaced as a deduped doc list (for
+    # follow-up doc_ids narrowing) but NEVER written to state["citations"].
+    result = f"[hybrid_search] {rag_context}"
+    if citations:
+        seen: set[str] = set()
+        doc_lines = []
+        for c in citations:
+            did = c.get("doc_id") or "unknown"
+            if did in seen:
+                continue
+            seen.add(did)
+            dname = c.get("doc_name") or "?"
+            doc_lines.append(f"- {dname} (doc_id={did})")
+        if doc_lines:
+            result += "\n\nMatched documents (pass doc_ids to narrow a follow-up search):\n" + "\n".join(doc_lines)
+    return {"result": result, "endpoint": None}
+
+
 async def tool_executor_node(state: dict) -> dict:
     tool_calls = state.get("tool_calls", [])
     logger.warning(">>> tool_executor ENTER: tool_calls=%d round=%d <<<",
@@ -2185,6 +2248,10 @@ async def tool_executor_node(state: dict) -> dict:
         # ── update_memory: intercepted tool, append to user profile memory ──
         if tname == "update_memory":
             return await _execute_update_memory(state, args)
+
+        # ── hybrid_search: intercepted tool, retrieve from KB on demand (no MCP call) ──
+        if tname == "hybrid_search":
+            return await _execute_hybrid_search(state, args)
 
         # ── MCP tool path ──
         # Get MCP server config from tool definition metadata
