@@ -1348,6 +1348,26 @@ async def resume_replay_node(state: dict) -> dict:
 
 # ── Retrieval ──
 
+
+async def _load_kb_config(kb_id: str) -> dict:
+    """Load retrieval config for a knowledge base from the database."""
+    from sqlalchemy import select
+    from app.models.knowledge_base import KnowledgeBase
+
+    async with async_session() as db:
+        result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+        kb = result.scalar_one_or_none()
+    if not kb:
+        return {}
+    return {
+        "vector_weight": kb.vector_weight,
+        "bm25_weight": kb.bm25_weight,
+        "vector_top_k": kb.vector_top_k,
+        "bm25_top_k": kb.bm25_top_k,
+        "final_top_k": kb.final_top_k,
+        "similarity_threshold": kb.similarity_threshold,
+    }
+
 async def parallel_retrieval_node(state: dict) -> dict:
     if state.get("cache_hit"):
         return {}
@@ -1367,7 +1387,8 @@ async def parallel_retrieval_node(state: dict) -> dict:
     # Delegates to the shared HybridSearchService._run_hybrid_retrieval — the
     # single source for the doc-path logic, also used by the hybrid_search meta
     # tool (Step 3). Replaces the inline copy that previously lived here.
-    rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query)
+    kb_config = await _load_kb_config(kb_id)
+    rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query, kb_config=kb_config)
     chunk_count = len(citations)
     _emit(state, "retrieval_done", f"Retrieved {chunk_count} chunk(s)", detail=f"{chunk_count} chunk(s)")
 
@@ -1389,7 +1410,7 @@ async def parallel_retrieval_node(state: dict) -> dict:
         if isinstance(mb, Exception):
             logger.warning("Memory BM25 search error: %s", mb)
             mb = []
-        mem_retrieved = hybrid_search.fuse(mv, mb)
+        mem_retrieved = hybrid_search.fuse(mv, mb, kb_config=kb_config)
         if mem_retrieved:
             memory_context = _format_memory(mem_retrieved)
 
@@ -2165,7 +2186,8 @@ async def _execute_hybrid_search(state: dict, args: dict) -> dict:
         doc_ids = cleaned or None
 
     try:
-        rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query, doc_ids=doc_ids, top_k=top_k)
+        kb_config = await _load_kb_config(kb_id)
+        rag_context, citations = await hybrid_search._run_hybrid_retrieval(kb_id, query, doc_ids=doc_ids, top_k=top_k, kb_config=kb_config)
     except Exception as e:
         logger.exception("hybrid_search meta tool execution failed")
         return {"result": f"[hybrid_search] error: {e}", "endpoint": None}

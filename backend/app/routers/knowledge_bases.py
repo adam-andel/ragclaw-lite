@@ -8,12 +8,14 @@ from sqlalchemy import select, or_, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.config import settings
 from app.models.knowledge_base import KnowledgeBase
 from app.models.kb_access import KBUserAccess
 from app.models.document import Document, Chunk, KBDocument
 from app.models.user import User
 from app.schemas.document import (
     KBResponse, KBCreate, KBUpdate,
+    RetrievalConfigResponse, RetrievalConfigUpdate,
     DocKBLinkRequest, DocKBLinkResponse,
     DocumentResponse,
 )
@@ -59,6 +61,12 @@ async def _kb_to_response(
         doc_count=doc_count, vector_count=vec_count,
         created_at=kb.created_at, updated_at=kb.updated_at,
         warnings=warnings or [],
+        vector_weight=kb.vector_weight,
+        bm25_weight=kb.bm25_weight,
+        vector_top_k=kb.vector_top_k,
+        bm25_top_k=kb.bm25_top_k,
+        final_top_k=kb.final_top_k,
+        similarity_threshold=kb.similarity_threshold,
     )
 
 async def _rebuild_kb_bm25(db: AsyncSession, kb_id: str):
@@ -193,6 +201,69 @@ async def update_kb(
     await db.commit()
     await db.refresh(kb)
     return await _kb_to_response(kb, db, warnings)
+
+
+@router.get("/{kb_id}/retrieval-config", response_model=RetrievalConfigResponse)
+async def get_kb_retrieval_config(
+    kb_id: str, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get per-KB retrieval configuration."""
+    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+        if not await _user_has_kb_access(current_user.id, kb_id, db):
+            raise HTTPException(403, "ACCESS_DENIED")
+    return RetrievalConfigResponse(
+        vector_weight=kb.vector_weight if kb.vector_weight is not None else settings.retrieval_vector_weight,
+        bm25_weight=kb.bm25_weight if kb.bm25_weight is not None else settings.retrieval_bm25_weight,
+        vector_top_k=kb.vector_top_k if kb.vector_top_k is not None else settings.retrieval_vector_top_k,
+        bm25_top_k=kb.bm25_top_k if kb.bm25_top_k is not None else settings.retrieval_bm25_top_k,
+        final_top_k=kb.final_top_k if kb.final_top_k is not None else settings.retrieval_final_top_k,
+        similarity_threshold=kb.similarity_threshold if kb.similarity_threshold is not None else settings.retrieval_similarity_threshold,
+    )
+
+
+
+@router.put("/{kb_id}/retrieval-config", response_model=RetrievalConfigResponse)
+async def update_kb_retrieval_config(
+    kb_id: str, data: RetrievalConfigUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update per-KB retrieval configuration. Null fields reset to global defaults."""
+    result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+    kb = result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(404, "KNOWLEDGE_BASE_NOT_FOUND")
+    if current_user.role.value != "admin" and kb.owner_id != current_user.id:
+        raise HTTPException(403, "ONLY_OWNER_CAN_MODIFY")
+
+    if data.vector_weight is not None:
+        kb.vector_weight = data.vector_weight
+    if data.bm25_weight is not None:
+        kb.bm25_weight = data.bm25_weight
+    if data.vector_top_k is not None:
+        kb.vector_top_k = data.vector_top_k
+    if data.bm25_top_k is not None:
+        kb.bm25_top_k = data.bm25_top_k
+    if data.final_top_k is not None:
+        kb.final_top_k = data.final_top_k
+    if data.similarity_threshold is not None:
+        kb.similarity_threshold = data.similarity_threshold
+
+    await db.commit()
+    await db.refresh(kb)
+    return RetrievalConfigResponse(
+        vector_weight=kb.vector_weight if kb.vector_weight is not None else settings.retrieval_vector_weight,
+        bm25_weight=kb.bm25_weight if kb.bm25_weight is not None else settings.retrieval_bm25_weight,
+        vector_top_k=kb.vector_top_k if kb.vector_top_k is not None else settings.retrieval_vector_top_k,
+        bm25_top_k=kb.bm25_top_k if kb.bm25_top_k is not None else settings.retrieval_bm25_top_k,
+        final_top_k=kb.final_top_k if kb.final_top_k is not None else settings.retrieval_final_top_k,
+        similarity_threshold=kb.similarity_threshold if kb.similarity_threshold is not None else settings.retrieval_similarity_threshold,
+    )
 
 
 @router.delete("/{kb_id}")

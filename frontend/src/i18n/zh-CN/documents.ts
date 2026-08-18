@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   // Generic UI labels
   newKb: '新建知识库',
   editKb: '编辑知识库',
@@ -151,4 +151,28 @@ export default {
   confirmDeleteKb: '确定删除「{kb}」？文档不会被删除，仅解除关联。',
   confirmUnlinkDoc: '确定解除该文档与「{kb}」的关联？',
   confirmDeleteDoc: '确定删除文档「{filename}」？将从所有知识库中移除。',
+
+  // 检索配置
+  retrievalConfig: '检索配置',
+  retrievalConfigDesc: '为知识库{name}配置检索参数，留空则使用全局默认值。',
+  retrievalConfigUpdated: '检索配置更新成功',
+  retrievalConfigUpdateFailed: '检索配置更新失败',
+  weightConfig: '权重配置',
+  vectorWeight: '向量权重',
+  bm25Weight: 'BM25 权重',
+  range: '范围',
+  weightSumNote: '向量权重 + BM25 权重应等于 1.0。修改其中一个会自动调整另一个。',
+  topKConfig: 'Top-K 配置',
+  vectorTopK: '向量 Top-K',
+  bm25TopK: 'BM25 Top-K',
+  finalTopK: '最终 Top-K',
+  thresholdConfig: '阈值配置',
+  similarityThreshold: '相似度阈值',
+  thresholdNote: '结果包含的最小相似度分数。值越高 = 越精确但结果越少。',
+  vectorWeightHint: '向量语义搜索的权重，影响语义相似度的匹配程度',
+  bm25WeightHint: 'BM25 关键词搜索的权重，影响关键词匹配的精确度',
+  vectorTopKHint: '向量搜索召回的候选数量，值越大召回越多但速度越慢',
+  bm25TopKHint: 'BM25 搜索召回的候选数量，值越大召回越多但速度越慢',
+  finalTopKHint: '最终返回给大模型的结果数量',
+  similarityThresholdHint: '过滤低于此分数的结果，值越高结果越精确但数量越少',
 }
