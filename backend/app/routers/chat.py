@@ -1,4 +1,4 @@
-"""Chat API routes with SSE streaming."""
+﻿"""Chat API routes with SSE streaming."""
 
 import asyncio
 import json
@@ -1374,6 +1374,13 @@ async def chat_stream(
                         summary_msg_seq=getattr(conv, "summary_msg_seq", 0) or 0,
                         emit_usage_fn=emit_context_usage,
                     )
+                    # Carry forward agent_steps from prior suspensions so the full trace survives a refresh.
+                    if cleared_pending_msg_id:
+                        prev_agent_steps = await _load_pending_agent_steps(db, conv_id, cleared_pending_msg_id)
+                        initial_state["agent_steps"] = prev_agent_steps
+                        # Also seed stream_agent_steps so the final assistant message persists the full trace.
+                        stream_agent_steps[:0] = prev_agent_steps
+                        logger.info("resume: loaded %d prev_agent_steps from %s", len(prev_agent_steps), cleared_pending_msg_id)
 
                 # ── 1c. User manually stops: do not replay tools, do not generate an answer.
                 #        A stop is a termination of the current (suspended) turn, NOT a new
@@ -1421,6 +1428,7 @@ async def chat_stream(
                         bubble_id = str(uuid.uuid4())
                         # Persist agent-step traces under the bubble id (audit table, decoupled
                         # from messages — the key is just a stable grouping id here).
+                        logger.info("suspend: state_agent_steps=%d cleared_pending_msg_id=%s", len(state.get("agent_steps") or []), cleared_pending_msg_id)
                         await _persist_agent_steps(conv_id, bubble_id, state.get("agent_steps") or [])
                         snap = _snapshot_state(state)
                         snap["pending_msg_id"] = bubble_id
@@ -1917,7 +1925,30 @@ async def get_conversation_messages(
     )
 
 
+async def _load_pending_agent_steps(db: AsyncSession, conv_id: str, message_id: str) -> list[dict]:
+    """Load persisted agent_steps for a pending suspension bubble."""
+    if not message_id:
+        return []
+    result = await db.execute(
+        select(AgentStep)
+        .where(AgentStep.conversation_id == conv_id, AgentStep.message_id == message_id)
+        .order_by(AgentStep.seq.asc())
+    )
+    steps = result.scalars().all()
+    return [
+        {
+            "stage": s.stage,
+            "message": s.message,
+            "extra": s.extra,
+            "ts": s.created_at.isoformat() + "Z" if s.created_at else None,
+        }
+        for s in steps
+    ]
+
+
 @router.get("/conversations/{conv_id}/pending", response_model=PendingLimitResponse | None)
+
+
 async def get_pending_limit(
     conv_id: str,
     current_user: User = Depends(get_current_user),
@@ -1939,11 +1970,14 @@ async def get_pending_limit(
     if not pending:
         return None
     pl = pending.get("pending_limit") or {}
+    msg_id = pending.get("pending_msg_id") or ""
+    agent_steps = await _load_pending_agent_steps(db, conv_id, msg_id)
     return PendingLimitResponse(
         conversation_id=conv_id,
-        message_id=pending.get("pending_msg_id") or "",
+        message_id=msg_id,
         message=pl.get("message", ""),
         kind=pl.get("kind", ""),
+        agent_steps=agent_steps,
     )
 
 
@@ -1986,11 +2020,14 @@ async def get_conversation_status(
         pending_row = await _load_pending_state(db, conv_id)
         if pending_row:
             pl = pending_row.get("pending_limit") or {}
+            msg_id = pending_row.get("pending_msg_id") or ""
+            agent_steps = await _load_pending_agent_steps(db, conv_id, msg_id)
             pending = PendingLimitResponse(
                 conversation_id=conv_id,
-                message_id=pending_row.get("pending_msg_id") or "",
+                message_id=msg_id,
                 message=pl.get("message", ""),
                 kind=pl.get("kind", ""),
+                agent_steps=agent_steps,
             )
     return ConversationRunStatus(running=running, pending=pending)
 

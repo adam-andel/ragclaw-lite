@@ -1,4 +1,4 @@
-"""Pydantic schemas for Chat API."""
+﻿"""Pydantic schemas for Chat API."""
 
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -193,5 +193,6 @@ class PendingLimitResponse(BaseModel):
     message_id: str
     message: str
     kind: str
+    agent_steps: list[dict] = []
 
     model_config = {"from_attributes": True}

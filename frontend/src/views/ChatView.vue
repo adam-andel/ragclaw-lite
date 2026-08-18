@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, h, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -1214,6 +1214,7 @@ watch(() => route.fullPath, async () => {
               convId: pending.conversation_id || id,
               kind: pending.kind,
               messageId: pending.message_id,
+                agentSteps: pending.agent_steps,
             })
           }
         } catch {
@@ -1343,9 +1344,9 @@ async function loadConversation(id: string) {
           convId: status.pending.conversation_id || id,
           kind: status.pending.kind,
           messageId: status.pending.message_id,
+          agentSteps: status.pending.agent_steps,
         })
       } else {
-        // /status reported no durable pause. As a final fallback, query the
         // persisted pending-limit state directly (suspensions live in
         // pending_limit_states, NOT in the messages table, so we must ask the
         // server rather than scan locally-loaded messages).
@@ -1357,6 +1358,7 @@ async function loadConversation(id: string) {
               convId: pending.conversation_id || id,
               kind: pending.kind,
               messageId: pending.message_id,
+                agentSteps: pending.agent_steps,
             })
           }
         } catch {
@@ -1376,6 +1378,7 @@ async function loadConversation(id: string) {
             convId: pending.conversation_id || id,
             kind: pending.kind,
             messageId: pending.message_id,
+                agentSteps: pending.agent_steps,
           })
         }
       } catch {
@@ -1408,7 +1411,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
   queuePosition.value = null
   // Start with the retrieval status; as agent_step events arrive we reflect the REAL stage message
   // (routing / retrieval / skill / tool / generating) in the bubble so every phase is shown honestly.
-  assistantStage.value = t('chat.retrieving')
+  assistantStage.value = t('chat.thinking')
   abortCtl = new AbortController()
   try {
     for await (const event of streamChat(query, selectedKbId.value, conversationId.value, selectedSkillId.value || undefined, abortCtl.signal, skipCache, resumeAction, workspaceDir, Intl.DateTimeFormat().resolvedOptions().timeZone, attach)) {
@@ -1473,6 +1476,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
               convId: pending.conversation_id || id,
               kind: pending.kind,
               messageId: pending.message_id,
+                agentSteps: pending.agent_steps,
             })
           }
         } catch {
@@ -1495,6 +1499,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
         const currentView = conversationId.value
         const onChat = route.path.startsWith('/chat')
         if (onChat && (currentView === event.conv_id || currentView === undefined)) {
+          messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
           setPendingBubble({
             message: event.message,
             convId: event.conv_id,
@@ -1519,6 +1524,7 @@ async function doStream(query: string, proxyMsg: ChatMsg, userMsgId: string, ski
           // the user switches back. Only do this for the conversation we are actually on,
           // to avoid polluting a different conversation the user may have navigated to.
           if (currentView === event.conv_id) {
+            messages.value = messages.value.filter(m => m.id !== proxyMsg.id)
             setPendingBubble({
               message: event.message,
               convId: event.conv_id,
@@ -1706,7 +1712,7 @@ async function resumeRun(action: 'continue' | 'stop') {
   if (action === 'continue') {
     msg.content = ''
     msg.citations = []
-    msg.agentSteps = []
+      // Keep agentSteps so thinking process stays in one bubble across pause/resume
   }
   msg._pending = false
   const proxyMsg = msg
@@ -2191,6 +2197,7 @@ function handleKeydown(e: KeyboardEvent) {
           <template #icon><NIcon><Send /></NIcon></template>
         </NButton>
       </div>
+    </div>
 
       <AppModal
         v-model:show="showContextModal"
@@ -2448,7 +2455,6 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </template>
       </AppModal>
-    </div>
   </div>
 </template>
 
