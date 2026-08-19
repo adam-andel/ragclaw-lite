@@ -77,7 +77,7 @@ See [docs/api-docs.md](docs/api-docs.md) for Swagger access and the endpoint tab
 
 ## 🤝 Contributing
 
-Contributions are welcome. Please open an issue to discuss substantial changes first, then submit a PR against `main`. For commit conventions, code style, testing requirements, and security-sensitive areas, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome. Please open an issue to discuss substantial changes first, then submit a PR against `main`. For commit conventions, code style, testing requirements, and security-sensitive areas, see [CONTRIBUTING.md](docs/contributing-guide.md).
 
 ## 📄 License
 
