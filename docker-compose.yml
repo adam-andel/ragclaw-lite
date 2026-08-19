@@ -160,7 +160,7 @@ services:
       - /tmp:size=256M,exec
     security_opt:
       - no-new-privileges:true
-      - seccomp:./mcp/seccomp.json
+      - seccomp:./seccomp.json
     cap_drop:
       - ALL
     # Caps required for per-user isolation: SETUID/SETGID to drop children to
@@ -218,7 +218,7 @@ services:
   # MCP server writes via PUT /policy (shared volume, mtime hot-reload).
   ragclaw-egress:
     build:
-      context: ./mcp
+      context: ./egress
       dockerfile: Dockerfile.egress
     container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-egress
     user: "0"
@@ -248,7 +248,7 @@ services:
       - /tmp:size=64M,exec
     security_opt:
       - no-new-privileges:true
-      - seccomp:./mcp/seccomp.json
+      - seccomp:./seccomp.json
     cap_drop:
       - ALL
     # Only NET_BIND_SERVICE is needed (the allowlist-aware DNS service binds :53).
