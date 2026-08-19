@@ -55,13 +55,14 @@ For destructive or multi-step work, pass a callable instead of a SQL list::
 Note the inverted predicate for a drop: "applied" means "the desired end state is
 already true", so a drop patch is applied once the column is *gone*.
 
-Launch state (2026-08-17)
+Launch state (2026-08-19)
 -------------------------
 This project has never shipped, so there is **no pre-existing database** to
 upgrade. Every column the ORM models declare (conversations.summary_msg_seq,
 conversations.summary_archived_count, conversations.pinned_instruction,
-messages.seq, messages.content_token_count, users.timezone, ...) is already built
-by ``Base.metadata.create_all`` on a fresh install. The earlier "add column"
+messages.seq, messages.content_token_count, users.timezone, knowledge_bases
+retrieval config columns, ...) is already built by
+``Base.metadata.create_all`` on a fresh install. The earlier "add column"
 patches that once carried an older schema forward have therefore been removed: on
 a never-shipped database they would only ever no-op, and keeping them would be
 dead machinery that future readers mistake for required upgrade steps.
@@ -218,10 +219,10 @@ def _tenant_normalized(insp: Inspector) -> bool:
 # Append new patches at the END. Order matters only when one patch depends on
 # another's result (e.g. add a column, then backfill it). Never delete a patch.
 #
-# At launch this list intentionally holds only the tenant data-integrity guard.
-# See the module docstring ("Launch state") for why the old add-column patches
+# This list intentionally holds only the tenant data-integrity guard.
+# See the module docstring ("Launch state") for why all add-column patches
 # were dropped: with no pre-existing database, create_all already builds the
-# final schema, so those patches would only ever no-op.
+# final schema from ORM models, so those patches would only ever no-op.
 
 PATCHES: list[Patch] = [
     # Example — kept commented as a template for the next real patch.
@@ -244,40 +245,7 @@ PATCHES: list[Patch] = [
         apply=_normalize_tenant_ids,
     ),
 
-    # Per-KB retrieval configuration columns. Added 2026-08-18.
-    # These allow each knowledge base to override global retrieval defaults.
-    Patch(
-        name="knowledge_bases.vector_weight",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "vector_weight"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN vector_weight FLOAT"],
-    ),
-    Patch(
-        name="knowledge_bases.bm25_weight",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "bm25_weight"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN bm25_weight FLOAT"],
-    ),
-    Patch(
-        name="knowledge_bases.vector_top_k",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "vector_top_k"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN vector_top_k INTEGER"],
-    ),
-    Patch(
-        name="knowledge_bases.bm25_top_k",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "bm25_top_k"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN bm25_top_k INTEGER"],
-    ),
-    Patch(
-        name="knowledge_bases.final_top_k",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "final_top_k"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN final_top_k INTEGER"],
-    ),
-    Patch(
-        name="knowledge_bases.similarity_threshold",
-        applied=lambda insp: has_column(insp, "knowledge_bases", "similarity_threshold"),
-        apply=["ALTER TABLE knowledge_bases ADD COLUMN similarity_threshold FLOAT"],
-    ),
 ]
-
 
 def run_patches(conn: Connection) -> None:
     """Apply every patch whose desired end state is not yet reached.
