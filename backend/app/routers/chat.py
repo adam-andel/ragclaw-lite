@@ -710,8 +710,14 @@ def _build_resume_initial_state(pending, mode, current_user, history, kb_prompt,
     """
     pl = pending.get("pending_limit") or {}
     if mode == "continue":
-        quota_ss = pending["skill_switch_quota"] + config_manager.skill_switch_quota
-        quota_tr = pending["tool_round_quota"] + config_manager.agent_round_quota
+        if config_manager.skill_switch_quota == 0:
+            quota_ss = 0
+        else:
+            quota_ss = pending["skill_switch_quota"] + config_manager.skill_switch_quota
+        if config_manager.agent_round_quota == 0:
+            quota_tr = 0
+        else:
+            quota_tr = pending["tool_round_quota"] + config_manager.agent_round_quota
         tool_calls = pl.get("deferred_tool_call")
         resume_action = "continue"
     else:  # stop
