@@ -1,0 +1,195 @@
+﻿RAGClaw
+Copyright 2026 徐松夏（Xu Songxia）
+
+This product is licensed under the Apache License, Version 2.0.
+A copy of the Apache License is included in the LICENSE file.
+
+This product includes software developed by third parties.
+For full attribution and license details, see the sections below.
+
+
+================================================================================
+                    GNU LESSER GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+ This version of the GNU Lesser General Public License incorporates
+the terms and conditions of version 3 of the GNU General Public
+License, supplemented by the additional permissions listed below.
+
+ ----------------------------------------------------------------------
+
+ The following software is included in this distribution and is licensed
+ under the GNU Lesser General Public License v3.0:
+
+   fpdf2 - Simple & fast PDF generation for Python
+   Copyright Olivier PLATHEY, ported by Max
+   Maintainer: Lucas Cimon
+   https://github.com/py-pdf/fpdf2
+
+   This library is free software: you can redistribute it and/or modify
+   it under the terms of the GNU Lesser General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any other version.
+
+   This library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+   GNU Lesser General Public License for more details.
+
+   You should have received a copy of the GNU Lesser General Public License
+   along with this library. If not, see <https://www.gnu.org/licenses/>.
+
+   Full license text: https://github.com/py-pdf/fpdf2/blob/master/LICENSE
+
+
+================================================================================
+                         Apache License 2.0 Dependencies
+
+ The following components are licensed under the Apache License, Version 2.0.
+ Their full license texts can be obtained from the URLs below.
+
+   ChromaDB - Embedding database for AI
+   Copyright The Chroma Core Team
+   License: Apache License 2.0
+   https://github.com/chroma-core/chroma/blob/main/LICENSE
+
+   sentence-transformers - Text embedding frameworks
+   Copyright The Hugging Face Team
+   License: Apache License 2.0
+   https://github.com/huggingface/sentence-transformers/blob/main/LICENSE
+
+   cryptography - Cryptographic recipes and primitives for Python
+   Copyright The Python Cryptographic Authority and individual contributors
+   License: Apache License 2.0 OR BSD-3-Clause
+   https://github.com/pyca/cryptography/blob/main/LICENSE.APACHE
+
+   rank-bm25 - BM25 algorithms for document ranking
+   Copyright Dorian Brown
+   License: Apache License 2.0
+   https://github.com/dorianbrown/rank_bm25/blob/master/LICENSE
+
+
+================================================================================
+                         MIT / BSD License Dependencies
+
+ The following components are licensed under the MIT License or BSD License.
+ Their full license texts can be obtained from the URLs below.
+
+   pdfplumber - PDF text and table extraction
+   Copyright Jeremy Singer-Vine
+   License: MIT License
+   https://github.com/jsvine/pdfplumber/blob/stable/LICENSE.txt
+
+   FastAPI - Modern, high-performance Python web framework
+   Copyright Sebastian Ramirez
+   License: MIT License
+   https://github.com/tiangolo/fastapi/blob/master/LICENSE
+
+   SQLAlchemy - Python SQL toolkit and Object Relational Mapper
+   Copyright Mike Bayer
+   License: MIT License
+   https://github.com/sqlalchemy/sqlalchemy/blob/main/LICENSE
+
+   httpx - Python next-generation HTTP client
+   License: BSD-3-Clause License
+   https://github.com/encode/httpx/blob/master/LICENSE
+
+   Vue.js - Progressive JavaScript framework
+   Copyright Vue.js Core Team
+   License: MIT License
+   https://github.com/vuejs/core/blob/main/LICENSE
+
+   Naive UI - Vue 3 Component Library
+   Copyright Tu Simple
+   License: MIT License
+   https://github.com/tusen/naive-ui/blob/main/LICENSE
+
+   Pinia - Intuitive, type safe, light and flexible Store for Vue
+   Copyright Eduardo Pinho
+   License: MIT License
+   https://github.com/vuejs/pinia/blob/main/LICENSE
+
+   Vite - Next generation frontend tooling
+   Copyright Evan You
+   License: MIT License
+   https://github.com/vitejs/vite/blob/main/LICENSE
+
+   TypeScript - Type superset of JavaScript
+   Copyright Microsoft Corporation
+   License: Apache License 2.0
+   https://github.com/microsoft/TypeScript/blob/main/LICENSE
+
+   markdown-it - Markdown parser
+   Copyright Markdown-it Contributors
+   License: MIT License
+   https://github.com/markdown-it/markdown-it/blob/master/LICENSE
+
+   pandas - Powerful data structures for data analysis
+   Copyright Pandas Development Team
+   License: BSD-3-Clause License
+   https://github.com/pandas-dev/pandas/blob/main/LICENSE
+
+   matplotlib - Python plotting library
+   Copyright Matplotlib Development Team
+   License: PSF License
+   https://github.com/matplotlib/matplotlib/blob/main/LICENSE
+
+   reportlab - PDF generation library for Python
+   Copyright ReportLab Inc.
+   License: BSD-3-Clause License
+   https://github.com/reportlab/lab/blob/master/LICENSE
+
+   openpyxl - Python library to read/write Excel files
+   Copyright Eric Gazoni
+   License: MIT License
+   https://github.com/openpyxl/openpyxl/blob/main/LICENSE
+
+   python-docx - Create and update Microsoft Word files
+   Copyright Steve Canny
+   License: MIT License
+   https://github.com/python-docx/python-docx/blob/main/LICENSE
+
+   python-pptx - Create and update Microsoft PowerPoint files
+   Copyright Steve Canny
+   License: MIT License
+   https://github.com/python-pptx/python-pptx/blob/main/LICENSE
+
+   beautifulsoup4 - HTML/XML parsing library
+   Copyright Leonard Richardson
+   License: MIT License
+   https://github.com/aswang/beautifulsoup4/blob/main/LICENSE
+
+   lxml - XML and HTML processing library
+   Copyright lxml project
+   License: BSD-3-Clause License
+   https://github.com/lxml/lxml/blob/master/LICENSE
+
+   python-jose - Object Signing and Encryption
+   Copyright Michael Davis
+   License: MIT License
+   https://github.com/mpdavis/python-jose/blob/master/LICENSE
+
+   langchain-core - Building applications with LLMs
+   Copyright LangChain Inc.
+   License: MIT License
+   https://github.com/langchain-ai/langchain/blob/master/LICENSE
+
+
+================================================================================
+                              NOTICES
+
+ This file is provided for informational purposes only. The contents of
+ this file do not modify the Apache License 2.0 under which this product
+ is licensed.
+
+ The third-party software listed above is used in accordance with their
+ respective licenses. If you distribute this product, you may need to
+ comply with additional obligations imposed by those licenses, including
+ but not limited to providing access to source code for LGPL-licensed
+ components and preserving attribution notices.
+
+ For questions regarding licensing, please contact the project maintainers.
