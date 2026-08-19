@@ -1,4 +1,4 @@
-# Floating (unpinned) backend dependencies for the DEV image.
+﻿# Floating (unpinned) backend dependencies for the DEV image.
 # The dev build installs from this file, then `pip freeze` regenerates
 # requirements.lock (pinned) for production to consume — mirroring
 # frontend's package.json -> pnpm-lock.yaml flow.
@@ -13,7 +13,7 @@ aiosqlite>=0.20.0
 asyncpg>=0.29.0
 chromadb>=0.5.0
 sentence-transformers>=3.0.0
-pymupdf>=1.24.0
+pdfplumber>=0.11.0
 python-docx>=1.1.0
 markdown>=3.6
 jieba>=0.42.1
