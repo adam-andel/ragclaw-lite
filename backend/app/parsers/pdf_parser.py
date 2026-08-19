@@ -1,8 +1,8 @@
-"""PDF document parser using PyMuPDF."""
+﻿"""PDF document parser using pdfplumber."""
 
 import re
 from pathlib import Path
-import pymupdf
+import pdfplumber
 
 from app.parsers.base import BaseParser, ParsedDocument, ParsedSection, ParserPluginMeta
 
@@ -24,53 +24,51 @@ class PDFParser(BaseParser):
         )
 
     def parse(self, file_path: Path) -> ParsedDocument:
-        doc = pymupdf.open(file_path)
+        doc = pdfplumber.open(file_path)
         title = file_path.stem
         all_sections: list[ParsedSection] = []
 
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text = page.get_text("text")
+        for page_num, page in enumerate(doc.pages):
+            text = page.extract_text()
 
-            if not text.strip():
+            if not text or not text.strip():
                 continue
 
-            # Extract blocks for better structure detection
-            blocks = page.get_text("blocks")
-            blocks.sort(key=lambda b: (b[1], b[0]))  # sort by y, then x
+            words = page.extract_words(extra_attrs=["size"])
+            if not words:
+                continue
 
-            for block in blocks:
-                block_text = block[4].strip()
-                if not block_text:
+            lines = self._words_to_lines(words)
+            lines.sort(key=lambda l: (l["top"], l["x0"]))
+
+            for line in lines:
+                line_text = line["text"].strip()
+                if not line_text:
                     continue
 
-                # Detect if this looks like a heading (font size heuristic)
-                # In PyMuPDF, block[3]-block[1] is height, can approximate font size
-                font_size_approx = block[3] - block[1] if len(block) >= 4 else 0
+                font_size = line["size"]
 
-                if self._is_heading(block_text, font_size_approx):
-                    level = self._guess_heading_level(block_text, font_size_approx)
+                if self._is_heading(line_text, font_size):
+                    level = self._guess_heading_level(line_text, font_size)
                     all_sections.append(ParsedSection(
                         level=level,
-                        heading=block_text,
-                        content=block_text,
+                        heading=line_text,
+                        content=line_text,
                         page=page_num + 1,
                     ))
                 else:
-                    # Append to last section or create a new one
                     if all_sections:
-                        all_sections[-1].content += "\n" + block_text
+                        all_sections[-1].content += "\n" + line_text
                     else:
                         all_sections.append(ParsedSection(
                             level=0,
                             heading=title,
-                            content=block_text,
+                            content=line_text,
                             page=page_num + 1,
                         ))
 
         doc.close()
 
-        # Use filename as title if no obvious title found
         if not title:
             title = file_path.stem
 
@@ -79,9 +77,42 @@ class PDFParser(BaseParser):
             file_type="pdf",
             sections=all_sections,
             metadata={
-                "page_count": len(doc) if hasattr(doc, '__len__') else 0,
+                "page_count": len(doc.pages),
             },
         )
+
+    def _words_to_lines(self, words: list[dict]) -> list[dict]:
+        """Group words into lines by y-position proximity."""
+        if not words:
+            return []
+
+        sorted_words = sorted(words, key=lambda w: (w["top"], w["x0"]))
+        lines = []
+        current_line = {
+            "text": sorted_words[0]["text"],
+            "top": sorted_words[0]["top"],
+            "x0": sorted_words[0]["x0"],
+            "size": sorted_words[0].get("size", 0),
+            "word_count": 1,
+        }
+
+        for word in sorted_words[1:]:
+            if abs(word["top"] - current_line["top"]) <= 5:
+                current_line["text"] += " " + word["text"]
+                current_line["size"] = max(current_line["size"], word.get("size", 0))
+                current_line["word_count"] += 1
+            else:
+                lines.append(current_line)
+                current_line = {
+                    "text": word["text"],
+                    "top": word["top"],
+                    "x0": word["x0"],
+                    "size": word.get("size", 0),
+                    "word_count": 1,
+                }
+
+        lines.append(current_line)
+        return lines
 
     def _is_heading(self, text: str, font_size: float) -> bool:
         """Heuristic: short text with larger font is likely a heading."""
@@ -90,7 +121,6 @@ class PDFParser(BaseParser):
             return False
         if font_size > 12:
             return True
-       # Match patterns like "Chapter X", "1. ", "1.1 ", etc..
         heading_patterns = [
             r'^第[一二三四五六七八九十\d]+[章节]',
             r'^\d+(\.\d+)*\s+',
