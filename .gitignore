@@ -45,6 +45,7 @@ secrets/
 .workbuddy
 .claude/
 CLAUDE.md
+AGENTS.md
 *.swp
 *.swo
 

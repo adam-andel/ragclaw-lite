@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-﻿"""Async document processing pipeline with progress tracking.
+"""Async document processing pipeline with progress tracking.
 
 Runs parse → chunk → embed in a background thread, updating
 Document.status and Document.progress as each stage completes.

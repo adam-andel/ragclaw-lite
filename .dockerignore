@@ -27,6 +27,7 @@ data/
 .vscode
 *.swp
 CLAUDE.md
+AGENTS.md
 .claude
 .trae
 .codebuddy
