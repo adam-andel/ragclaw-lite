@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 export default {
-  brandSubtitle: 'RAG for grounding, Claw for action — retrieval plus native execution',
-  featureClaw: 'Claw runs Python, Shell & Node.js, and manages your files',
-  featureSandbox: 'Code runs in a hardened mcp-repl sandbox — safe to let it act',
-  featureWorkspace: 'A folder-like workspace you and the agent share',
-  featureSkill: 'Skills route intent and bind tools — managed via DB + UI',
-  featureMcp: 'MCP tools over HTTP/stdio, with multi-turn calls & graceful failure',
-  featureRag: 'Hybrid retrieval (vector + BM25) recalls & cites your docs',
+  brandSubtitle: 'A shared agent platform for private deployment in small & mid-sized orgs — easy, secure, fully controllable',
+  featureContext: 'Fine-grained context management, multi-level async compression, hybrid retrieval recall',
+  featureSandbox: 'Code runs in a hardened sandbox container — safe to let it act',
+  featureWorkspace: 'A folder-like workspace you and the agent share and manage together',
+  featureSkill: 'Skills are uploaded as whole packages; multi-user sharing without exposing API keys',
+  featureRag: 'RAG + BM25 parallel retrieval; LLM proactively triggers search on demand and resolves references for sharper results',
   welcomeBack: 'Welcome back',
   welcomeSubtitle: 'Log in to your agent workspace',
   username: 'Username',

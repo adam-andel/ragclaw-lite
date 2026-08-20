@@ -28,11 +28,10 @@ const { t } = useI18n()
 
 // Ordered to mirror the 6 README Core Features
 const featureKeys = [
-  'featureClaw',
+  'featureContext',
   'featureSandbox',
   'featureWorkspace',
   'featureSkill',
-  'featureMcp',
   'featureRag',
 ]
 
@@ -414,7 +413,7 @@ async function handleRegister() {
           </p>
         </template>
 
-        <p class="login-copy">© RAGClaw</p>
+        <p class="login-copy">© 2026 徐松夏（Xu Songxia）. All Rights Reserved.</p>
       </section>
     </div>
   </div>

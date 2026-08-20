@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 export default {
-  brandSubtitle: 'RAG 负责“懂”，Claw 负责“做”：检索增强 + 原生执行，双引擎合一',
-  featureClaw: 'Claw 直接运行 Python / Shell / Node.js，并管理你的文件',
-  featureSandbox: '代码跑在加固的 mcp-repl 沙盒里——放心让它“动手”',
-  featureWorkspace: '一片你和智能体共管、像本机文件夹的工作区',
-  featureSkill: '技能做意图路由、绑定工具，由 DB + UI 管理',
-  featureMcp: '通过 HTTP/stdio 接入 MCP 工具，支持多轮调用与降级',
-  featureRag: '混合检索（向量 + BM25）召回并标注引用你的文档',
+  brandSubtitle: '面向中小组织私有化部署的共享智能体平台，易用、安全、完全可控',
+  featureContext: '精细的上下文管理，多级异步压缩，混合检索召回',
+  featureSandbox: '代码跑在加固的沙盒容器里，放心让它“动手”',
+  featureWorkspace: '一片你和智能体共管的、像本机文件夹一样的工作区',
+  featureSkill: 'Skill整包上传，多用户共享Skill的同时不暴露API KEY',
+  featureRag: 'RAG + BM25并行检索，LLM按需主动发起检索，消除指代使检索更精准',
   welcomeBack: '欢迎回来',
   welcomeSubtitle: '登录以进入你的智能体工作台',
   username: '用户名',

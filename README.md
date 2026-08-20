@@ -79,6 +79,14 @@ See [docs/api-docs.md](docs/api-docs.md) for Swagger access and the endpoint tab
 
 Contributions are welcome. Please open an issue to discuss substantial changes first, then submit a PR against `main`. For commit conventions, code style, testing requirements, and security-sensitive areas, see [CONTRIBUTING.md](docs/contributing-guide.md).
 
+---
+
+## 📬 Contact & Support
+
+For bug reports and feature requests, please [open an issue](https://github.com/你的用户名/你的项目名/issues)
+
+---
+
 ## 📄 License
 
 Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
