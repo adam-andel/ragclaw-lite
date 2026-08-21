@@ -55,7 +55,7 @@ function Wait-ForBackend {
         if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
     }
     Write-Host " timeout!" -ForegroundColor Red
-    Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
+    Write-Host "  Check manually: docker logs $(Get-ProjectName)ragclaw-lite" -ForegroundColor Gray
     return $false
 }
 
@@ -195,7 +195,7 @@ switch ($Action) {
         Write-Host "=== RAGClaw Service Status ===" -ForegroundColor Cyan
         Write-Host "  Mode: Docker container" -ForegroundColor Cyan
         docker compose -f $ComposeFile ps
-        $running = docker ps -q -f "name=$(Get-ProjectName)-lite" 2>$null
+        $running = docker ps -q -f "name=$(Get-ProjectName)ragclaw-lite" 2>$null
         if ($running) {
             Resolve-Entry
             $portSrc = if ($env:RAGCLAW_PORT) { $env:RAGCLAW_PORT } else { "<random>" }

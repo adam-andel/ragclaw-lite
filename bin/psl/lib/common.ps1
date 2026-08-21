@@ -73,10 +73,10 @@ function Repair-EgressNetwork {
     if (-not (Test-Docker)) { return }
 
     # Resolve the project name the SAME way compose does, then derive the
-    # egress container name ("{project}-egress"). Never hardcode "ragclaw-egress"
+    # egress container name ("{project}ragclaw-egress"). Never hardcode "ragclaw-egress"
     # — a second instance (COMPOSE_PROJECT_NAME=dev) would otherwise never match.
     $proj = Get-ProjectName
-    $egressName = "$proj-egress"
+    $egressName = "${proj}ragclaw-egress"
 
     # 1) Remove any stale (non-running) egress broker container holding the IP.
     $egressId = docker ps -a -q -f "name=$egressName" 2>$null
@@ -92,7 +92,7 @@ function Repair-EgressNetwork {
 
     # 2) Force-remove the egress broker and then the internal network, releasing
     #    the daemon's IPAM lease. The internal network is named by compose as
-    #    {project}_ragclaw-internal. IMPORTANT: {project}-lite (backend) and
+    #    {project}_ragclaw-internal. IMPORTANT: {project}ragclaw-lite (backend) and
     #    mcp-repl are NORMAL members — we must NOT `docker rm -f` them (that would
     #    kill the live backend). Delete ONLY the egress broker; merely
     #    `disconnect` every other attached container; `up` then reconnects them.

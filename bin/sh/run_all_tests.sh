@@ -15,7 +15,7 @@
 # RAGClaw Backend Full Test Suite (container mode) — macOS / Linux
 # Usage: bash bin/sh/run_all_tests.sh
 #
-# Runs the pytest suite inside the 'ragclaw-lite' Docker container. Local Python
+# Runs the pytest suite inside the '<project>ragclaw-lite' Docker container. Local Python
 # execution is not supported — this project must run in container mode.
 # The ragclaw container is started on demand (compose up -d ragclaw) and the
 # tests are executed via `compose exec`.
@@ -40,8 +40,8 @@ if ! test_docker; then
 fi
 
 # Ensure the ragclaw container is up (it is the test execution environment).
-c_yellow "Ensuring ragclaw-lite container is running..."
-compose up -d ragclaw || { c_red "ERROR: failed to start ragclaw-lite container"; exit 1; }
+c_yellow "Ensuring $(proj_name)ragclaw-lite container is running..."
+compose up -d ragclaw || { c_red "ERROR: failed to start $(proj_name)ragclaw-lite container"; exit 1; }
 
 # Install test deps inside the container (idempotent, non-root image).
 c_yellow "[1/9] Installing dev dependencies in container (pytest, pytest-asyncio, pytest-html, httpx)..."
@@ -124,8 +124,8 @@ fi
 
 # ---- Cleanup: stop the ragclaw container we started on demand ----
 if [ "$RAGCLAW_KEEP_CONTAINER" = "1" ]; then
-  c_yellow "Leaving ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)"
+  c_yellow "Leaving $(proj_name)ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)"
 else
-  c_yellow "Stopping ragclaw-lite container used for tests..."
-  compose stop ragclaw >/dev/null 2>&1 && c_green "  ragclaw-lite stopped"
+  c_yellow "Stopping $(proj_name)ragclaw-lite container used for tests..."
+  compose stop ragclaw >/dev/null 2>&1 && c_green "  $(proj_name)ragclaw-lite stopped"
 fi

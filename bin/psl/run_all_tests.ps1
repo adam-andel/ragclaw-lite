@@ -1,7 +1,7 @@
 # RAGClaw Backend Full Test Suite (container mode)
 # Usage:   .\bin\psl\run_all_tests.ps1
 #
-# Runs the pytest suite inside the 'ragclaw-lite' Docker container. Local Python
+# Runs the pytest suite inside the '<project>ragclaw-lite' Docker container. Local Python
 # execution is no longer supported — this project must run in container mode.
 #
 # The ragclaw container is started on demand (docker compose up -d ragclaw) and the
@@ -22,10 +22,10 @@ if (-not (Test-Docker)) {
 }
 
 # Ensure the ragclaw container is up (it is the test execution environment)
-Write-Host "Ensuring ragclaw-lite container is running..." -ForegroundColor Yellow
+Write-Host "Ensuring $(Get-ProjectName)ragclaw-lite container is running..." -ForegroundColor Yellow
 docker compose -f $ComposeFile up -d ragclaw
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: failed to start ragclaw-lite container" -ForegroundColor Red
+    Write-Host "ERROR: failed to start $(Get-ProjectName)ragclaw-lite container" -ForegroundColor Red
     exit 1
 }
 
@@ -126,12 +126,12 @@ if ($failureLog.Count -gt 0) {
 # ---- Cleanup: stop the ragclaw container we started on demand ----
 # Set $env:RAGCLAW_KEEP_CONTAINER=1 to leave it running (e.g. to inspect logs).
 if ($env:RAGCLAW_KEEP_CONTAINER -eq "1") {
-    Write-Host "`nLeaving ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)" -ForegroundColor Yellow
+    Write-Host "`nLeaving $(Get-ProjectName)ragclaw-lite running (RAGCLAW_KEEP_CONTAINER=1)" -ForegroundColor Yellow
 }
 else {
-    Write-Host "`nStopping ragclaw-lite container used for tests..." -ForegroundColor Yellow
+    Write-Host "`nStopping $(Get-ProjectName)ragclaw-lite container used for tests..." -ForegroundColor Yellow
     docker compose -f $ComposeFile stop ragclaw 2>$null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  ragclaw-lite stopped" -ForegroundColor Green
+        Write-Host "  $(Get-ProjectName)ragclaw-lite stopped" -ForegroundColor Green
     }
 }

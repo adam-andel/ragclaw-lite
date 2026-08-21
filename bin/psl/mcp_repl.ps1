@@ -2,7 +2,7 @@
 # Usage: .\bin\psl\mcp_repl.ps1 [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
-# (ragclaw-mcp-repl). Local Python venv execution is no longer supported — this
+# (<project>ragclaw-mcp-repl). Local Python venv execution is no longer supported — this
 # project must run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down mcp-repl
@@ -51,7 +51,7 @@ function Get-BuildArgs {
 function Test-DockerRepl {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=$(Get-ProjectName)-mcp-repl" 2>$null
+        $id = docker ps -q -f "name=$(Get-ProjectName)ragclaw-mcp-repl" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -60,7 +60,7 @@ function Test-DockerRepl {
 function Test-DockerEgress {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=$(Get-ProjectName)-egress" 2>$null
+        $id = docker ps -q -f "name=$(Get-ProjectName)ragclaw-egress" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -126,17 +126,17 @@ function Start-DockerRepl {
         Write-Host "REPL server started (Docker)" -ForegroundColor Green
         Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
         Write-Host "  Workspace: persistent volume ragclaw_workspace (survives restart)" -ForegroundColor Gray
-        Write-Host "  Mode: Docker container (ragclaw-mcp-repl)" -ForegroundColor Gray
+        Write-Host "  Mode: Docker container ($(Get-ProjectName)ragclaw-mcp-repl)" -ForegroundColor Gray
         Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
         if (Test-DockerEgress) {
-            Write-Host "  Egress broker: running (ragclaw-egress)" -ForegroundColor Gray
+            Write-Host "  Egress broker: running ($(Get-ProjectName)ragclaw-egress)" -ForegroundColor Gray
         }
         else {
-            Write-Host "  Egress broker: NOT running (ragclaw-egress)" -ForegroundColor DarkYellow
+            Write-Host "  Egress broker: NOT running ($(Get-ProjectName)ragclaw-egress)" -ForegroundColor DarkYellow
         }
     }
     else {
-        Write-Host "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl" -ForegroundColor Yellow
+        Write-Host "WARNING: Container not responding, check: docker logs $(Get-ProjectName)ragclaw-mcp-repl" -ForegroundColor Yellow
     }
 }
 
@@ -169,8 +169,8 @@ function Show-Status {
     Write-Host "  Mode: Docker container (container mode only)" -ForegroundColor Cyan
 
     if (Test-DockerRepl) {
-        Write-Host "  Status: running (ragclaw-mcp-repl)" -ForegroundColor Green
-        $startedAt = docker inspect "$(Get-ProjectName)-mcp-repl" --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Status: running ($(Get-ProjectName)ragclaw-mcp-repl)" -ForegroundColor Green
+        $startedAt = docker inspect "$(Get-ProjectName)ragclaw-mcp-repl" --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
     }
     else {
@@ -178,8 +178,8 @@ function Show-Status {
     }
 
     if (Test-DockerEgress) {
-        Write-Host "  Egress broker: running (ragclaw-egress)" -ForegroundColor Green
-        $egressSince = docker inspect "$(Get-ProjectName)-egress" --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Egress broker: running ($(Get-ProjectName)ragclaw-egress)" -ForegroundColor Green
+        $egressSince = docker inspect "$(Get-ProjectName)ragclaw-egress" --format '{{.State.StartedAt}}' 2>$null
         if ($egressSince) { Write-Host "    Since:  $egressSince" -ForegroundColor Gray }
     }
     else {
@@ -258,16 +258,16 @@ switch ($Action) {
             Write-Host "REPL server reloaded (Docker)" -ForegroundColor Green
             Write-Host "  Endpoint: http://127.0.0.1:$Port/mcp" -ForegroundColor Gray
             Write-Host "  Workspace: persistent volume ragclaw_workspace (survives restart)" -ForegroundColor Gray
-            Write-Host "  Mode: Docker container (ragclaw-mcp-repl)" -ForegroundColor Gray
+            Write-Host "  Mode: Docker container ($(Get-ProjectName)ragclaw-mcp-repl)" -ForegroundColor Gray
             Write-Host "  Resources: memory=896M, cpus=2" -ForegroundColor Gray
         }
         else {
-            Write-Host "WARNING: Container not responding, check: docker logs ragclaw-mcp-repl" -ForegroundColor Yellow
+            Write-Host "WARNING: Container not responding, check: docker logs $(Get-ProjectName)ragclaw-mcp-repl" -ForegroundColor Yellow
         }
     }
 
     "logs" {
-        if (Test-DockerRepl) { docker logs --tail=50 -f ragclaw-mcp-repl }
+        if (Test-DockerRepl) { docker logs --tail=50 -f "$(Get-ProjectName)ragclaw-mcp-repl" }
         else { Write-Host "REPL server not running in Docker mode" -ForegroundColor Yellow }
     }
 

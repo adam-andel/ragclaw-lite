@@ -58,9 +58,10 @@ services:
       # ── Verbose LLM request-body dump (opt-in, dev only) ──
       # The chat_with_tools FULL request body (embeds the whole SKILL.md text, ~100KB/call)
       # is logged at DEBUG by default and stays out of docker logs. To temporarily see the
-      # full body for one debugging session, add the line below and `restart ragclaw-lite`:
+      # full body for one debugging session, add the line below and `restart <project>ragclaw-lite`
+      # (the backend container, e.g. `hubragclaw-lite` for the hub stack):
       #     - RAGCLAW_LLM_DUMP_BODY=1
-      # Then remove it (or comment it out) and `restart ragclaw-lite` again to go back to silent.
+      # Then remove it (or comment it out) and `restart <project>ragclaw-lite` again to go back to silent.
       # NOTE: setting RAGCLAW_ENV=debug is NOT enough — main.py re-applies setup_logging() on
       # every request and pins ragclaw.llm back to INFO, so the DEBUG body only shows via this flag.
     volumes:
@@ -161,7 +162,7 @@ services:
     # Prefix with the project name so a second clone (COMPOSE_PROJECT_NAME=dev)
     # does not collide on the host-wide-unique container name. Resolves to
     # ragclaw-frontend-dev for the default project (unchanged); dev-* for others.
-    container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-frontend-dev
+    container_name: ${COMPOSE_PROJECT_NAME}ragclaw-frontend-dev
     environment:
       # inside the docker network the backend resolves as `ragclaw`
       - VITE_PROXY_TARGET=http://ragclaw:8000

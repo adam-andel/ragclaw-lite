@@ -143,7 +143,7 @@ while read -r -u 3 file; do
   if compose restart "$SVC"; then
     c_green "  restarted."
   else
-    c_yellow "  restart failed (is $SVC up? check: docker logs $(proj_name)-mcp-repl)"
+    c_yellow "  restart failed (is $SVC up? check: docker logs $(proj_name)ragclaw-mcp-repl)"
   fi
   drain
   [ "$RESTART_INTERVAL" -gt 0 ] && sleep "$RESTART_INTERVAL"

@@ -16,7 +16,7 @@
 # Usage: bash bin/sh/mcp_repl.sh [start|stop|reload|status|build|logs]
 #
 # Container mode only: the REPL MCP server always runs as a Docker container
-# (ragclaw-mcp-repl). Local Python venv execution is not supported — this
+# (<project>ragclaw-mcp-repl). Local Python venv execution is not supported — this
 # project must run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down mcp-repl
@@ -76,7 +76,7 @@ test_compose_available() {
 
 test_docker_repl() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f "name=$(proj_name)-mcp-repl" 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f "name=$(proj_name)ragclaw-mcp-repl" 2>/dev/null)" ]
 }
 
 # ---- actions ----
@@ -124,15 +124,15 @@ start_docker_repl() {
     c_green "REPL server started (Docker)"
     c_dim "  Endpoint: http://127.0.0.1:$PORT/mcp"
     c_dim "  Workspace: persistent volume ragclaw_workspace (survives restart)"
-    c_dim "  Mode: Docker container (ragclaw-mcp-repl)"
+    c_dim "  Mode: Docker container ($(proj_name)ragclaw-mcp-repl)"
     c_dim "  Resources: memory=896M, cpus=2"
     if test_docker_egress; then
-      c_dim "  Egress broker: running (ragclaw-egress)"
+      c_dim "  Egress broker: running ($(proj_name)ragclaw-egress)"
     else
-      c_yellow "  Egress broker: NOT running (ragclaw-egress)"
+      c_yellow "  Egress broker: NOT running ($(proj_name)ragclaw-egress)"
     fi
   else
-    c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)-mcp-repl"
+    c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)ragclaw-mcp-repl"
   fi
 }
 
@@ -155,17 +155,17 @@ show_status() {
   c_dim "  Port: $PORT"
   c_cyan "  Mode: Docker container (container mode only)"
   if test_docker_repl; then
-    c_green "  Status: running (ragclaw-mcp-repl)"
+    c_green "  Status: running ($(proj_name)ragclaw-mcp-repl)"
     local since
-    since="$(docker inspect "$(proj_name)-mcp-repl" --format '{{.State.StartedAt}}' 2>/dev/null)"
+    since="$(docker inspect "$(proj_name)ragclaw-mcp-repl" --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$since" ] && c_dim "  Since:  $since"
   else
     c_red "  Status: REPL server NOT running"
   fi
   if test_docker_egress; then
-    c_green "  Egress broker: running (ragclaw-egress)"
+    c_green "  Egress broker: running ($(proj_name)ragclaw-egress)"
     local egress_since
-    egress_since="$(docker inspect ragclaw-egress --format '{{.State.StartedAt}}' 2>/dev/null)"
+    egress_since="$(docker inspect "$(proj_name)ragclaw-egress" --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$egress_since" ] && c_dim "    Since:  $egress_since"
   else
     c_yellow "  Egress broker: NOT running"
@@ -225,15 +225,15 @@ case "$ACTION" in
       c_green "REPL server reloaded (Docker)"
       c_dim "  Endpoint: http://127.0.0.1:$PORT/mcp"
       c_dim "  Workspace: persistent volume ragclaw_workspace (survives restart)"
-      c_dim "  Mode: Docker container (ragclaw-mcp-repl)"
+      c_dim "  Mode: Docker container ($(proj_name)ragclaw-mcp-repl)"
       c_dim "  Resources: memory=896M, cpus=2"
     else
-      c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)-mcp-repl"
+      c_yellow "WARNING: Container not responding, check: docker logs $(proj_name)ragclaw-mcp-repl"
     fi
     ;;
   logs)
     if test_docker_repl; then
-      compose logs --tail=50 -f ragclaw-mcp-repl
+      compose logs --tail=50 -f "$(proj_name)ragclaw-mcp-repl"
     else
       c_yellow "REPL server not running in Docker mode"
     fi

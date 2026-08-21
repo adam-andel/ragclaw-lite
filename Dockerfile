@@ -121,9 +121,19 @@ COPY backend/ backend/
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # ── Layer 6: Data dirs + non-root user (rarely changes) ──
-RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads /app/data/hf_cache /app/tls && \
+# /ragclaw_skills is the SHARED skills volume root (Phase 7). The backend runs
+# as the non-root `ragclaw` user and must create store/ + enable/ inside it at
+# import time (backend/app/database.py). A fresh named volume is initialized by
+# Docker as root:root/755, so the non-root backend cannot write into it on a
+# first run -> "PermissionError: /ragclaw_skills/store" and a crash loop.
+# Seeding the dir (with the correct owner) in the IMAGE lets Docker copy it into
+# the empty volume on first mount, so every fresh deploy is writable without a
+# manual chown. Keep this in sync with the ragclaw_skills volume mount in
+# docker-compose.yml.
+RUN mkdir -p /app/data/chroma /app/data/sqlite /app/data/uploads /app/data/hf_cache /app/tls /ragclaw_skills && \
     useradd -m -s /bin/bash ragclaw && \
-    chown -R ragclaw:ragclaw /app
+    chown -R ragclaw:ragclaw /app && \
+    chown ragclaw:ragclaw /ragclaw_skills
 
 USER ragclaw
 ENV PYTHONPATH=/app/backend

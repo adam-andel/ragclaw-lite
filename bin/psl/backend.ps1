@@ -1,7 +1,7 @@
 # RAGClaw Backend Control Script
 # Usage: .\bin\psl\backend.ps1 [start|stop|reload|status|build|logs]
 #
-# Container mode only: the backend always runs as a Docker container (ragclaw-lite).
+# Container mode only: the backend always runs as a Docker container (<project>ragclaw-lite).
 # Local Python / uvicorn execution is no longer supported — this project must
 # run in container mode.
 #
@@ -45,7 +45,7 @@ function Get-BuildArgs {
 function Test-DockerBackend {
     if (-not (Test-Docker)) { return $false }
     try {
-        $id = docker ps -q -f "name=$(Get-ProjectName)-lite" 2>$null
+        $id = docker ps -q -f "name=$(Get-ProjectName)ragclaw-lite" 2>$null
         return ($id -and $LASTEXITCODE -eq 0)
     }
     catch { return $false }
@@ -104,13 +104,13 @@ function Start-DockerBackend {
             Write-Host " OK" -ForegroundColor Green
             $realPort = Get-RagclawPublishedPort
             Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
-            Write-Host "  Mode: Docker container (ragclaw-lite)" -ForegroundColor Gray
+            Write-Host "  Mode: Docker container ($(Get-ProjectName)ragclaw-lite)" -ForegroundColor Gray
             return
         }
         if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
     }
     Write-Host " timeout!" -ForegroundColor Red
-    Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
+    Write-Host "  Check manually: docker logs $(Get-ProjectName)ragclaw-lite" -ForegroundColor Gray
 }
 
 function Stop-DockerBackend {
@@ -137,8 +137,8 @@ function Show-Status {
     if (Test-DockerBackend) {
         $realPort = Get-RagclawPublishedPort
         Write-Host "  Port: $realPort" -ForegroundColor Gray
-        Write-Host "  Status: running (ragclaw-lite)" -ForegroundColor Green
-        $startedAt = docker inspect "$(Get-ProjectName)-lite" --format '{{.State.StartedAt}}' 2>$null
+        Write-Host "  Status: running ($(Get-ProjectName)ragclaw-lite)" -ForegroundColor Green
+        $startedAt = docker inspect "$(Get-ProjectName)ragclaw-lite" --format '{{.State.StartedAt}}' 2>$null
         if ($startedAt) { Write-Host "  Since:  $startedAt" -ForegroundColor Gray }
         return
     }
@@ -195,17 +195,17 @@ switch ($Action) {
                 Write-Host " OK" -ForegroundColor Green
                 $realPort = Get-RagclawPublishedPort
                 Write-Host "  Swagger: http://127.0.0.1:$realPort/docs" -ForegroundColor Gray
-                Write-Host "  Mode: Docker container (ragclaw-lite)" -ForegroundColor Gray
+                Write-Host "  Mode: Docker container ($(Get-ProjectName)ragclaw-lite)" -ForegroundColor Gray
                 return
             }
             if ($i % 5 -eq 4) { Write-Host "." -NoNewline }
         }
         Write-Host " timeout!" -ForegroundColor Red
-        Write-Host "  Check manually: docker logs ragclaw-lite" -ForegroundColor Gray
+        Write-Host "  Check manually: docker logs $(Get-ProjectName)ragclaw-lite" -ForegroundColor Gray
     }
 
     "logs" {
-        if (Test-DockerBackend) { docker logs --tail=50 -f "$(Get-ProjectName)-lite" }
+        if (Test-DockerBackend) { docker logs --tail=50 -f "$(Get-ProjectName)ragclaw-lite" }
         else { Write-Host "Backend not running in Docker mode" -ForegroundColor Yellow }
     }
 

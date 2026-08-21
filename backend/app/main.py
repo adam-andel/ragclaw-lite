@@ -48,7 +48,8 @@ _BACKGROUND_TASKS: "set[_asyncio.Task]" = set()
 # almost always a deadlock or a sync blocking call on the loop thread. This
 # thread pings the loop every few seconds; if the loop stops responding we
 # dump every thread + asyncio coroutine stack to /tmp/loop_stall.txt so the
-# root cause can be read with `docker exec ragclaw-lite cat /tmp/loop_stall.txt`.
+# root cause can be read with `docker exec <project>ragclaw-lite cat /tmp/loop_stall.txt`
+# (the backend container, e.g. `hubragclaw-lite` for the hub stack).
 # ───────────────────────────────────────────────────────────────────────────
 _LOOP_STALL_PATH = "/tmp/loop_stall.txt"
 

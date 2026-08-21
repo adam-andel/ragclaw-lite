@@ -64,7 +64,7 @@ mode_label() { is_dev_mode && echo "dev" || echo "prod"; }
 
 # Resolve the Compose project name the SAME way `docker compose` does:
 #   $COMPOSE_PROJECT_NAME  >  .env (COMPOSE_PROJECT_NAME=)  >  directory basename.
-# Used to derive project-scoped container names (e.g. "{proj}-egress") so the
+# Used to derive project-scoped container names (e.g. "{proj}ragclaw-egress") so the
 # helper scripts work for ANY instance, not just the default "ragclaw" project.
 proj_name() {
   local p="${COMPOSE_PROJECT_NAME:-}"
@@ -81,7 +81,7 @@ repair_egress_network() {
   test_docker || return 0
   local proj egress_name egress_id running attached name net
   proj="$(proj_name)"
-  egress_name="${proj}-egress"
+  egress_name="${proj}ragclaw-egress"
   egress_id="$(docker ps -a -q -f "name=${egress_name}" 2>/dev/null)"
   if [ -n "$egress_id" ]; then
     running="$(docker ps -q -f "name=${egress_name}" 2>/dev/null)"
@@ -94,13 +94,13 @@ repair_egress_network() {
   fi
   [ "${1:-}" = "force" ] || return 0
   # The internal network is named by compose as {project}_ragclaw-internal and the
-  # egress container as "{project}-egress" (see compose container_name). Match by
+  # egress container as "{project}ragclaw-egress" (see compose container_name). Match by
   # the project-derived name — never a hardcoded "ragclaw-egress" — otherwise a
   # SECOND instance (e.g. COMPOSE_PROJECT_NAME=dev) would never be matched and its
   # stuck IPAM lease could not be released.
   net="${proj}_ragclaw-internal"
   # Force mode frees the egress IP IPAM lease by removing the internal network.
-  # BUT the backend ({project}-lite) and mcp-repl are NORMAL members of that
+  # BUT the backend ({project}ragclaw-lite) and mcp-repl are NORMAL members of that
   # network — removing it requires all endpoints detached first, and we must NOT
   # `docker rm -f` them (that would take down the live backend). Delete ONLY the
   # egress broker; merely `disconnect` every other attached container so the
@@ -124,7 +124,7 @@ repair_egress_network() {
 # ---- Egress broker running? ----
 test_docker_egress() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f "name=$(proj_name)-egress" 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f "name=$(proj_name)ragclaw-egress" 2>/dev/null)" ]
 }
 
 # ---- Wait for backend /api/health (model load may take ~30s) ----
@@ -145,6 +145,6 @@ wait_for_backend() {
     [ $((i % 5)) -eq 0 ] && echo -n "."
   done
   echo " timeout!"
-  c_dim "  Check manually: docker logs $(proj_name)-lite"
+  c_dim "  Check manually: docker logs $(proj_name)ragclaw-lite"
   return 1
 }

@@ -16,7 +16,7 @@
 # Usage: bash bin/sh/backend.sh [start|stop|reload|status|build|logs]
 #
 # Container mode only: the backend always runs as a Docker container
-# (ragclaw-lite). Local Python / uvicorn execution is not supported — this
+# (<project>ragclaw-lite). Local Python / uvicorn execution is not supported — this
 # project must run in container mode.
 #
 # Docker mode uses: docker compose -f docker-compose.yml up/down ragclaw
@@ -67,12 +67,12 @@ build_args() {
 test_compose_available() {
   [ -f "$COMPOSE_FILE" ] || return 1
   grep -qE '^[[:space:]]+ragclaw:' "$COMPOSE_FILE" && \
-    grep -qF 'container_name: ${COMPOSE_PROJECT_NAME:-ragclaw}-lite' "$COMPOSE_FILE"
+    grep -qF 'container_name: ${COMPOSE_PROJECT_NAME}ragclaw-lite' "$COMPOSE_FILE"
 }
 
 test_docker_backend() {
   test_docker || return 1
-  [ -n "$(docker ps -q -f "name=$(proj_name)-lite" 2>/dev/null)" ]
+  [ -n "$(docker ps -q -f "name=$(proj_name)ragclaw-lite" 2>/dev/null)" ]
 }
 
 test_backend() {
@@ -120,9 +120,9 @@ show_status() {
   c_dim "  Port: $PORT"
   c_cyan "  Mode: Docker container (container mode only)"
   if test_docker_backend; then
-    c_green "  Status: running (ragclaw-lite)"
+    c_green "  Status: running ($(proj_name)ragclaw-lite)"
     local started
-    started="$(docker inspect "$(proj_name)-lite" --format '{{.State.StartedAt}}' 2>/dev/null)"
+    started="$(docker inspect "$(proj_name)ragclaw-lite" --format '{{.State.StartedAt}}' 2>/dev/null)"
     [ -n "$started" ] && c_dim "  Since:  $started"
     return 0
   fi
