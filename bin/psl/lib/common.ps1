@@ -32,8 +32,11 @@ function Get-RagclawPublishedPort {
 function Get-ProjectName {
     $p = $env:COMPOSE_PROJECT_NAME
     if (-not $p) {
-        $envLine = Select-String -Path (Join-Path $Root ".env") -Pattern '^COMPOSE_PROJECT_NAME=' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($envLine) { $p = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
+        $envFile = Join-Path $Root ".env"
+        if (Test-Path $envFile) {
+            $envLine = Select-String -Path $envFile -Pattern '^COMPOSE_PROJECT_NAME=' | Select-Object -First 1
+            if ($envLine) { $p = ($envLine.Line -replace '^COMPOSE_PROJECT_NAME=').Trim() }
+        }
     }
     if (-not $p) { $p = Split-Path -Leaf $Root }
     return $p
