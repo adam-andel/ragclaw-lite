@@ -41,7 +41,7 @@ RAGClaw 是面向中小组织私有化部署的共享智能体（Agent）平台�
 
 - 各平台安装指引：<https://docs.docker.com/get-docker/>
 
-Docker 就绪后，最省事的部署方式是运行项目自带的 **控制菜单脚本**——交互式菜单，自动完成「构建镜像 → 启动容器」整套流程，按数字选一下即可。
+Docker 就绪后，最省事的部署方式是运行项目自带的 **控制菜单脚本**——交互式菜单，自动完成「构建镜像 → 启动容器」整套流程，按数字选一下即可。特别提醒：中文版控制菜单脚本默认配置了非官方镜像源（Docker 镜像源、APT 源及 pip 源），以加速依赖拉取，请在使用前确认其与您的网络环境及安全策略相符。
 
 ```bash
 # macOS / Linux
@@ -50,6 +50,8 @@ bash bin/sh/menu.sh          # 中文版：bash bin/sh/menu_zh.sh
 # Windows（CMD 双击 / 运行）
 bin\psl\menu.bat             # 中文版：bin\psl\menu_zh.bat
 ```
+
+---
 
 ## 🛠️ 开发模式（热重载）
 

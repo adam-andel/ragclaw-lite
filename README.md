@@ -39,7 +39,7 @@ RAGClaw is a shared agent (Agent) platform for private deployment in mid-size or
 
 **Prerequisite:** install Docker first — Docker Desktop on Windows / macOS, or Docker Engine on Linux. See the official installation guide at <https://docs.docker.com/get-docker/>.
 
-Once Docker is ready, the no-fuss way to deploy is the bundled **control menu script** — an interactive menu that drives the whole "build images → start containers" flow; just pick a number.
+Once Docker is ready, the no-fuss way to deploy is the bundled **control menu script** — an interactive menu that drives the whole "build images → start containers" flow; just pick a number. Note: the menu_zh script configures non-official mirror sources (Docker image registry, APT, and pip) by default to speed up dependency pulls; please verify they are consistent with your network environment and security policy before use.
 
 ```bash
 # macOS / Linux
