@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ${COMPOSE_PROJECT_NAME}ragclaw-lite
     container_name: ${COMPOSE_PROJECT_NAME}ragclaw-lite
     # ── Single-worker hard constraint ──
     # The backend runs uvicorn with EXACTLY ONE worker (pinned via --workers 1 in
@@ -222,6 +223,7 @@ services:
     build:
       context: ./egress
       dockerfile: Dockerfile.egress
+    image: ${COMPOSE_PROJECT_NAME}ragclaw-egress
     container_name: ${COMPOSE_PROJECT_NAME}ragclaw-egress
     user: "0"
     environment:

@@ -159,6 +159,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile.dev
+    image: ${COMPOSE_PROJECT_NAME}ragclaw-frontend-dev
     # Prefix with the project name so a second clone (COMPOSE_PROJECT_NAME=dev)
     # does not collide on the host-wide-unique container name. Resolves to
     # ragclaw-frontend-dev for the default project (unchanged); dev-* for others.
