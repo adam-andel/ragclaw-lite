@@ -39,6 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserInfo | null>(null)
   const llmConfigured = ref(false)
   const contextWindow = ref(128000)  // LLM max context window (tokens), from /api/health
+  const appVersion = ref('')         // Product version, from /api/health
 
   const isLoggedIn = computed(() => !!token.value && !!user.value)
   const isAdmin = computed(() => user.value?.role === 'admin')
@@ -114,6 +115,22 @@ export const useAuthStore = defineStore('auth', () => {
     return !!res.data.needs_setup
   }
 
+  // Fetch the product version from /api/health. Used on the login page, where
+  // no user token exists yet (needsSetup only calls /auth/setup). Best-effort;
+  // failures leave appVersion empty and are ignored. fetchMe/refreshLlmStatus
+  // refresh the same ref once the user is logged in.
+  async function fetchAppVersion() {
+    try {
+      const hr = await fetch('/api/health')
+      if (hr.ok) {
+        const health = await hr.json()
+        if (health.version) appVersion.value = health.version
+      }
+    } catch {
+      // backend not ready yet — keep whatever we have
+    }
+  }
+
   // Refresh LLM reachability status from /api/health with backoff.
   //
   // llmConfigured now means the LLM API is *actually reachable* (verified by a
@@ -135,6 +152,7 @@ export const useAuthStore = defineStore('auth', () => {
         if (hr.ok) {
           const health = await hr.json()
           if (health.context_window) contextWindow.value = health.context_window
+          if (health.version) appVersion.value = health.version
           if (health.llm_reachable) {
             llmConfigured.value = true
             return
@@ -171,6 +189,7 @@ export const useAuthStore = defineStore('auth', () => {
       const health = await hr.json()
       llmConfigured.value = !!health.llm_reachable
       if (health.context_window) contextWindow.value = health.context_window
+      if (health.version) appVersion.value = health.version
     } catch (e: any) {
       // Do NOT clearAuth() here. A 401 (expired access token) is already
       // handled by the client response interceptor, which refreshes the token
@@ -205,5 +224,5 @@ export const useAuthStore = defineStore('auth', () => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
   }
 
-  return { token, refreshToken, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, login, register, needsSetup, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth, refresh }
+  return { token, refreshToken, user, isLoggedIn, isAdmin, isStaff, llmConfigured, contextWindow, appVersion, login, register, needsSetup, fetchAppVersion, logout, fetchMe, refreshLlmStatus, setAuth, clearAuth, refresh }
 })

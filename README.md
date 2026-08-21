@@ -2,6 +2,8 @@
 
 > A shared agent platform for private deployment in small & mid-sized organizations
 
+[![GitHub Release](https://img.shields.io/github/v/release/adam-andel/ragclaw-lite?style=flat-square&label=Release)](https://github.com/adam-andel/ragclaw-lite/releases)
+
 **[简体中文](./README_zh.md) | English**
 
 ---

@@ -30,6 +30,7 @@ from app.config import settings
 from app.database import init_db, async_session
 from app.models.system_setting import SystemSetting  # noqa: F401
 from app.logging_config import setup_logging
+from app.version import __version__
 
 # Apply RAGClaw logging config as early as possible (defensive — the lifespan
 # re-applies it after uvicorn's own config is installed at startup).
@@ -347,7 +348,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="RAGClaw-Lite",
-    version="0.5.0",
+    version=__version__,
     description="Enterprise-grade Agentic RAG platform - Lite edition (multi-tenant, SKILL + MCP)",
     lifespan=lifespan,
 )
@@ -429,7 +430,7 @@ async def health_check():
     return {
         "status": "ok",
         "service": "RAGClaw-Lite",
-        "version": "0.5.0",
+        "version": __version__,
         "llm_reachable": llm_reachable,
         "context_window": config_manager.context_window,
     }

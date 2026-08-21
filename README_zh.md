@@ -2,6 +2,8 @@
 
 > 面向中小组织私有化部署的共享智能体（Agent）平台
 
+[![GitHub Release](https://img.shields.io/github/v/release/adam-andel/ragclaw-lite?style=flat-square&label=Release)](https://github.com/adam-andel/ragclaw-lite/releases)
+
 **[English](./README.md) | 简体中文**
 
 ---

@@ -123,7 +123,7 @@ function goToNotifications() {
   <aside class="sidebar">
     <div class="sidebar-header">
       <span class="logo">RAGClaw</span>
-      <span class="version">Lite</span>
+      <span class="version">Lite<span v-if="auth.appVersion" class="version-num"> · v{{ auth.appVersion }}</span></span>
     </div>
 
     <div class="sidebar-nav">

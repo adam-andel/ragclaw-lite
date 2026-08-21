@@ -174,6 +174,7 @@ function animateParticles() {
 
 onMounted(() => {
   determineMode()
+  auth.fetchAppVersion()
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
   initParticles()
   animateParticles()
@@ -413,7 +414,10 @@ async function handleRegister() {
           </p>
         </template>
 
-        <p class="login-copy">© 2026 徐松夏（Xu Songxia）. All Rights Reserved.</p>
+        <p class="login-copy">
+          © 2026 徐松夏（Xu Songxia）. All Rights Reserved.
+          <span v-if="auth.appVersion" class="login-version">· v{{ auth.appVersion }}</span>
+        </p>
       </section>
     </div>
   </div>
