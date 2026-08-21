@@ -47,4 +47,7 @@ export default {
   registerSuccess: '管理员账号创建成功，正在进入…',
   registerFailed: '注册失败，请稍后重试',
   setupHint: '这是系统的第一位用户，将自动成为超级管理员。',
+  licenseNoticePrefix: '本软件使用 ',
+  licenseNoticeSuffix: ' 许可',
+  licenseName: 'Apache License 2.0',
 }

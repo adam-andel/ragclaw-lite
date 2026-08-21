@@ -418,6 +418,11 @@ async function handleRegister() {
           © 2026 徐松夏（Xu Songxia）. All Rights Reserved.
           <span v-if="auth.appVersion" class="login-version">· v{{ auth.appVersion }}</span>
         </p>
+        <p class="login-license">
+          {{ t('login.licenseNoticePrefix') }}
+          <a href="https://github.com/adam-andel/ragclaw-lite/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">{{ t('login.licenseName') }}</a>
+          {{ t('login.licenseNoticeSuffix') }}
+        </p>
       </section>
     </div>
   </div>
@@ -788,6 +793,22 @@ html:not(.dark) .login-hint {
 }
 html:not(.dark) .login-copy {
   color: #94a3b8;
+}
+.login-license {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+html:not(.dark) .login-license {
+  color: #94a3b8;
+}
+.login-license a {
+  color: inherit;
+  text-decoration: underline;
+}
+.login-license a:hover {
+  color: var(--color-primary, #6366f1);
 }
 
 /* ===== Responsive ===== */

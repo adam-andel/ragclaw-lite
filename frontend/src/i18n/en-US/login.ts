@@ -47,4 +47,7 @@ export default {
   registerSuccess: 'Admin account created. Redirecting…',
   registerFailed: 'Registration failed, please try again',
   setupHint: "This is the system's first user and will automatically become the super admin.",
+  licenseNoticePrefix: 'This software is licensed under ',
+  licenseNoticeSuffix: '',
+  licenseName: 'Apache License 2.0',
 }
