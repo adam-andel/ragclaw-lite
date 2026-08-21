@@ -709,6 +709,10 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
                 name=fs_skill["name"],
                 description=(fs_skill["description"] or "")[:250],
                 is_active=fs_enabled,
+                # Direction B: preset/synced skills are tenant-agnostic on disk
+                # but the list endpoint filters by the caller's tenant. Under the
+                # single shared tenant this stamps the default so they stay visible.
+                tenant_id=settings.default_tenant_id,
             )
             session.add(new_skill)
             added += 1
@@ -725,6 +729,13 @@ async def sync_skills_to_db(session: AsyncSession) -> dict:
             # Keep is_active as a faithful cache of the enable-symlink state.
             if db_skill.is_active != fs_enabled:
                 db_skill.is_active = fs_enabled
+                changed = True
+            # Direction B: preset/legacy rows synced from disk carry tenant_id
+            # NULL (seed never stamps it). Under the single shared tenant this
+            # folds NULL (and any drifted value) into the default so they remain
+            # visible through the tenant-filtered list endpoint.
+            if db_skill.tenant_id != settings.default_tenant_id:
+                db_skill.tenant_id = settings.default_tenant_id
                 changed = True
             if changed:
                 updated += 1

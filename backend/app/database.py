@@ -225,6 +225,7 @@ async def _seed_db():
             session.add(MCPServer(
                 id=mcp_id,
                 name="Python Executor",
+                tenant_id=settings.default_tenant_id,
                 transport_type="http",
                 endpoint="http://mcp-repl:9200/mcp",
                 timeout_seconds=30,
@@ -243,11 +244,15 @@ async def _seed_db():
                 else sqlite_insert(MCPServer)
             ).values(
                 id=mcp_id, name="Python Executor", transport_type="http",
+                tenant_id=settings.default_tenant_id,
                 endpoint="http://mcp-repl:9200/mcp", timeout_seconds=30,
                 is_active=True, is_builtin=True,
             ).on_conflict_do_update(
                 index_elements=[MCPServer.id],
-                set_={MCPServer.is_builtin.key: True},
+                set_={
+                    MCPServer.is_builtin.key: True,
+                    MCPServer.tenant_id.key: settings.default_tenant_id,
+                },
             )
             await session.execute(insert_stmt)
             print("[seed] MCP Server 'Python Executor' already exists")
